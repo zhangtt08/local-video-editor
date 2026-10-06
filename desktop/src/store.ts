@@ -35,6 +35,7 @@ import type {
   Property,
   Marker,
   RenderFit,
+  RenderRange,
 } from "./engine";
 import { FIT_MODES } from "./engine";
 import { align, frameTicks, sampleTicks, ticks, TIMEBASE } from "./time";
@@ -1046,6 +1047,41 @@ export function setSourcePlaying(sourcePlaying: boolean) {
 }
 export function setSourceTarget(targetTrack: string) { set({ targetTrack }); }
 export function setSourceRipple(sourceRippleAll: boolean) { set({ sourceRippleAll }); }
+/** 时间线入出点：区间导出与四点剪辑共用的一对整数刻度。写入只走工程设置这一条命令。 */
+export async function setSequenceMark(side: "in" | "out", atTicks: number) {
+  const project = editableProject(state);
+  if (!project) return false;
+  const settings = project.settings;
+  const frame = frameTicks(settings.frame_rate);
+  const end = Math.max(0, ...Object.values(project.clips).map((clip) => clip.position_ticks + clip.duration_ticks));
+  if (!end) { toast("warn", "时间线还是空的", "先把素材放上轨道，再设入出点。"); return false; }
+  const horizon = Math.ceil(end / frame) * frame;
+  const snapped = Math.max(0, Math.min(Math.floor(atTicks / frame) * frame, horizon - frame));
+  const inTicks = side === "in" ? snapped : settings.in_ticks ?? 0;
+  const outTicks = side === "out" ? snapped + frame : settings.out_ticks ?? Math.max(inTicks + frame, snapped + frame);
+  if (inTicks >= outTicks) {
+    toast("warn", side === "in" ? "入点必须早于出点" : "出点必须晚于入点",
+      `这样会是 ${(inTicks / TIMEBASE).toFixed(2)} – ${(outTicks / TIMEBASE).toFixed(2)} 秒；把播放头移到区间之外再按 ${side === "in" ? "I" : "O"}。`);
+    return false;
+  }
+  await updateProjectMeta({ settings: { ...settings, in_ticks: inTicks, out_ticks: outTicks } });
+  return true;
+}
+
+export function markSequence(point: "in" | "out" | "clear") {
+  const project = editableProject(state);
+  if (!project) return;
+  if (point === "clear") {
+    if (project.settings.in_ticks == null && project.settings.out_ticks == null) {
+      toast("info", "当前没有入出点区间");
+      return;
+    }
+    void updateProjectMeta({ settings: { ...project.settings, in_ticks: null, out_ticks: null } });
+    return;
+  }
+  void setSequenceMark(point, playhead.value);
+}
+
 export function markSource(point: "in" | "out" | "clear") {
   const source = selectedSource(); if (!source || source.kind === "image" || source.end < source.q) return;
   if (point === "clear") { const marks = { ...state.sourceMarks }; delete marks[source.key]; set({ sourceMarks: marks }); return; }
@@ -1771,7 +1807,7 @@ export async function loadJobs(id?: string) {
   }
 }
 
-export async function startRender(presetId: string, filename: string, folder?: string, fit: RenderFit = "contain") {
+export async function startRender(presetId: string, filename: string, folder?: string, fit: RenderFit = "contain", range: RenderRange = "full") {
   if (!engine || !state.project) return null;
   const project = state.project;
   if (folder) {
@@ -1785,9 +1821,9 @@ export async function startRender(presetId: string, filename: string, folder?: s
   }
   set({ busy: "排队渲染…" });
   try {
-    const result = await engine.render(project.id, project.revision, presetId, filename, folder, state.sequenceId, fit);
+    const result = await engine.render(project.id, project.revision, presetId, filename, folder, state.sequenceId, fit, range);
     set({ jobs: [result.job, ...state.jobs] });
-    toast("ok", "开始导出", `锁定 r${project.revision}，进度在右下角导出面板。`);
+    toast("ok", range === "marks" ? "开始导出区间" : "开始导出", `锁定 r${project.revision}，进度在右下角导出面板。`);
     void watchJob(result.job.id);
     return result.job;
   } catch (error) {
@@ -1841,7 +1877,7 @@ export async function cancelJob(jobId: string) {
 
 /** 一次交付多个画幅：所有条目都在服务端编译通过才入队，坏一条就整批不排队。 */
 export async function startRenderBatch(
-  items: { preset_id: string; filename: string; fit: RenderFit }[],
+  items: { preset_id: string; filename: string; fit: RenderFit; range?: RenderRange }[],
   folder?: string
 ) {
   if (!engine || !state.project || !items.length) return null;
@@ -1870,14 +1906,18 @@ export async function startRenderBatch(
   }
 }
 
-export function renderPlanPreview(presetId: string, fit: RenderFit = "contain") {
+export function renderPlanPreview(presetId: string, fit: RenderFit = "contain", range: RenderRange = "full") {
   if (!engine || !state.project) return;
   void engine
-    .renderPlan(state.project.id, presetId, state.project.revision, state.sequenceId, fit)
+    .renderPlan(state.project.id, presetId, state.project.revision, state.sequenceId, fit, range)
     .then((result) => {
       const argv = result.argv_preview.join(" ");
       const mode = FIT_MODES.find((item) => item.id === fit);
-      toast("info", "已生成渲染计划", `按「${mode?.label ?? fit}」由服务端编译，界面只读：${argv.slice(0, 160)}…`);
+      const span = result.plan.range as { in_ticks?: number; out_ticks?: number } | undefined;
+      const window = span?.in_ticks != null && span?.out_ticks != null
+        ? `，区间 ${(span.in_ticks / TIMEBASE).toFixed(2)}–${(span.out_ticks / TIMEBASE).toFixed(2)} 秒`
+        : "";
+      toast("info", "已生成渲染计划", `按「${mode?.label ?? fit}」由服务端编译${window}，界面只读：${argv.slice(0, 160)}…`);
     })
     .catch((error: unknown) => {
       const { title, detail } = describe(error);

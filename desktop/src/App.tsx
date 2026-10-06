@@ -23,6 +23,7 @@ import {
   redoStep,
   jumpEditPoint,
   editSource,
+  markSequence,
   markSource,
   selectedSource,
   setSourceCursor,
@@ -134,6 +135,8 @@ function useGlobalKeys() {
       if (app.view === "editor" && key === "m" && !event.ctrlKey && !event.metaKey && !event.altKey) { event.preventDefault(); addMarker(); return; }
       if ((event.ctrlKey || event.metaKey) && ["g", "l"].includes(key)) { event.preventDefault(); if (key === "g") groupSelection(event.shiftKey); else linkSelection(event.shiftKey); return; }
       if (event.ctrlKey || event.metaKey) return;
+      if (app.monitorMode !== "source" && (key === "i" || key === "o")) { event.preventDefault(); markSequence(key === "i" ? "in" : "out"); return; }
+      if (app.monitorMode !== "source" && key === "x" && event.altKey) { event.preventDefault(); markSequence("clear"); return; }
       if (app.monitorMode === "source") {
         const source = selectedSource();
         if (key === "i" || key === "o") { event.preventDefault(); markSource(key === "i" ? "in" : "out"); return; }

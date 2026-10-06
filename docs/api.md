@@ -717,3 +717,27 @@ v11，`parallel` 是新增的 `kind`，旧载荷里没有它，因此 v1–v10 �
 LUT 导入、色域矩阵与色彩管理（这三者都需要跨通道的 3D 查找表，而浏览器侧目前只有每通道的
 `feComponentTransfer`，两端不同源就不能声称预览等于导出）、路径遮罩顶点动画、自动语音字幕、
 缩略图与波形磁盘配额、代码签名。
+
+
+## 1.40 时间线入出点与区间导出（工程 schema v11，不新增命令）
+
+剪映和达芬奇都能「只出这一段」：标尺上打一入一出两个点，导出面板选区间。这一版把它做成**工程设置里的一对整数刻度**加一个渲染参数，不新增任何编辑命令。
+
+- `SequenceSettings.in_ticks / out_ticks`（`int | None`，默认都是 `null`）：要么都给、要么都不给；必须落在整帧上（`% frame_ticks == 0`）；`in < out`。越过当前内容的出点由 `validate_timeline` 一处判定，返回 `INVALID_MARKS`（422，带 `in_ticks`/`out_ticks`），整笔不写、revision 不动——与 1.29 的标记同一口径：能打在哪、能导到哪，读同一个 `project_content_ticks`。
+- 写入走既有的 `POST /v1/projects/{id}`（`settings` 整体替换，与 1.37 的母带增益同一条路），所以一次设点 = 一个 revision，撤销、历史、去重回执全部继承；MCP 的 `project_get` 读得到，也不需要新工具。
+- `RenderRequest.range: "full" | "marks"`（默认 `full`）与 `RenderBatchItem.range` 同名；`GET /render-plan?range=marks` 只读预演。`jobs.plan_for()` 是唯一把 `range` 翻成刻度的地方（`marked_range(project)`），渲染计划、排队任务与 worker 三处共用，所以「面板上看到的区间」与「落盘的区间」不可能不同源。没有入出点却请求 `range=marks` 直接 422 `INVALID_MARKS`，不会静默出一版整片。
+- 裁剪位置是刻意的：`compile_render_plan` 在 `[vout]`/`[aout]` **之后**追加 `trim=start_frame=N:end_frame=M,setpts=PTS-STARTPTS` 与 `atrim=start=S:end=E,asetpts=PTS-STARTPTS`；画面已经过 `fps=` 归一化所以帧号精确，声音用秒。也就是说区间成片走的是整片同一张合成图、同一次 `amix`、同一个母带增益与限制器，不是重算一遍的近似。`plan.duration_ticks` 改成区间长度，输出 `-t` 跟着变，`plan.range` 回显 `{in_ticks,out_ticks,seconds}`。
+- 回执兼容：`range` 只在**不等于 `full`** 时进入去重指纹，因此 1.39 及更早写下的渲染回执继续原样重放（实测同一 `request_id` 重放 `replayed=true` 且 job id 不变）；把 `range` 改成 `marks` 得到 409 `IDEMPOTENCY_CONFLICT`，不会静默复用旧文件。
+- 工程 schema 仍为 v11：两个新字段带默认值，旧工程读出来就是 `null`，无需迁移。capabilities 增 `timeline_marks` 与 `range_export`。
+
+验收（`tests/marks_check.py`，素材由 FFmpeg 生成红/绿/蓝三段各 2 秒、440/880/1320 Hz 各一段）：
+
+- 契约：半写区间、非整帧、`in == out`、`in > out` 全部 `ValidationError`；不设点时 `in_ticks is None`。
+- 计划：`range_ticks` 越出时间线（超总长、零长、负起点）都被拒；`start_frame=30:end_frame=150` 精确对应 1–5 秒。
+- HTTP：出点越过内容 → 422 `INVALID_MARKS` 且 revision 不动；设点一次一个 revision；`render-plan?range=marks` 的 argv 含 `trim=start_frame=60:end_frame=120` 与 `atrim=start=2.000000:end=4.000000`，整片计划里两者都没有；`plan.duration_seconds` 分别是 2.0 与 6.0；清除区间一个 revision；无点时 `range=marks` 得 422 且不排队任务；`restore` 回到设点那一版时区间一起回来（新 revision）。
+- 成片：整片 6.000 秒、区间 2.000 秒（ffprobe），区间文件更小；区间首帧是绿段（G>90、R<40）而整片首帧仍是红；区间第 0.2 秒音高 **879 Hz**、整片同点 **439 Hz**（过零率测得）；区间第 0.5 秒与整片第 2.5 秒逐通道最大差 **0 阶**——区间成片就是那一段，不是重新编译的另一版。
+- 批量：一次两条（整片 + 区间）实测落盘 6.000 秒与 2.000 秒两个文件。
+- 界面（vite 渲染层 + 同一引擎 HTTP，1280×800 同源 iframe 真实按键/指针事件）：`Home` + 60 次 `→` 后按 `I` → r1→r2（库里 `in_ticks` 恰为第 60 帧）；再 60 次 `→` 按 `O` → r3（`out_ticks` 第 120 帧）；标尺出现 `.ruler-range`（`left:124px; width:124px`，62 px/秒）与两个手柄；按住「入点」手柄左拖约 1 秒松手 → r4，`left` 变 57.8667px（第 28 帧，整帧量化）而出点不动；导出面板「入出点区间」chip 由禁用变可用，选中后点「查看渲染计划」，提示条原样读出服务端回包「按「完整保留」由服务端编译，**区间 0.93–4.00 秒**」；点「开始导出」→ 任务 `range=marks`、`total_ticks=216384000`，产物 ffprobe **3.067 秒** 1920×1080 H.264 + AAC；`Alt+X` → r5，区间带消失、chip 回到禁用。1040×660 下 `scrollWidth == clientWidth == 1040`（无横向溢出），五个 chip（三种画幅 + 两种范围）宽度 70/82 全部可见。
+- 门禁同步：`ruff check`、`ruff format --check`（66 文件）、`npm run typecheck`、39 项 Python 检查与 5 项 esbuild 桌面检查。本轮无新命令、无新 MCP 工具、无新依赖、无 schema 变更。
+
+仍未完成：四点剪辑（源入出点 + 时间线入出点一次算成插入/覆盖命令，含按区间长度写变速曲线或裁尾）、图层节点与连线视图、亮度曲线与 LUT、色域矩阵与色彩管理、路径遮罩顶点动画、多目标与长时遮挡跟踪、自动语音字幕、缩略图与波形磁盘配额、代码签名。

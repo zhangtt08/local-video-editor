@@ -2,10 +2,10 @@ import { useEffect, useState } from "react";
 
 import { bridge } from "../bridge";
 import { Btn, Empty, Field, Icon, Tag } from "../ui";
-import { humanDuration, prettyBytes, rateLabel, timecode } from "../time";
+import { humanDuration, prettyBytes, rateLabel, TIMEBASE, timecode } from "../time";
 import type { RenderJob } from "../engine";
 import { cancelJob, loadJobs, renderPlanPreview, startRender, startRenderBatch, timelineEnd, useApp } from "../store";
-import { FIT_MODES, type RenderFit } from "../engine";
+import { FIT_MODES, type RenderFit, type RenderRange } from "../engine";
 
 const POLL_MS = 1500;
 
@@ -35,6 +35,7 @@ export function ExportPanel(): JSX.Element {
   const app = useApp();
   const [presetId, setPresetId] = useState("");
   const [fit, setFit] = useState<RenderFit>("contain");
+  const [range, setRange] = useState<RenderRange>("full");
   const [alsoVertical, setAlsoVertical] = useState(false);
   const [filename, setFilename] = useState("");
   const [folder, setFolder] = useState("");
@@ -91,6 +92,14 @@ export function ExportPanel(): JSX.Element {
       ? "导出比例与时间线一致，三种适配的结果相同"
       : `时间线 ${project.settings.width}×${project.settings.height} 要放进 ${outSize[0]}×${outSize[1]}，这里决定多出来的部分怎么处理`;
   const verticalName = `${(filename.trim() || sanitizeName(timelineName)).replace(/\.[A-Za-z0-9]+$/, "")}-9x16.mp4`;
+  const inTicks = project.settings.in_ticks ?? null;
+  const outTicks = project.settings.out_ticks ?? null;
+  const marked = inTicks != null && outTicks != null;
+  const rangeSeconds = inTicks != null && outTicks != null ? ((outTicks - inTicks) / TIMEBASE).toFixed(2) : "0";
+  const timelineSeconds = Math.max(0, ...clips.map((clip) => clip.position_ticks + clip.duration_ticks)) / TIMEBASE;
+  const rangeHint = marked
+    ? `整条 ${timelineSeconds.toFixed(2)} 秒，或只导出入出点之间的 ${rangeSeconds} 秒（当前：${range === "marks" ? "区间" : "整条"}）`
+    : "整条时间线。想只导出一段：把播放头放到起点按 I、放到终点按 O。";
   const finalName = `${(filename.trim() || sanitizeName(timelineName)).replace(/\.[A-Za-z0-9]+$/, "")}.${preset?.container ?? "mp4"}`;
 
   async function chooseFolder() {
@@ -182,6 +191,32 @@ export function ExportPanel(): JSX.Element {
             </div>
           </Field>
 
+          <Field label="导出范围" hint={rangeHint}>
+            <div className="fit-row" role="radiogroup" aria-label="导出范围">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={range === "full"}
+                className={`fit-chip${range === "full" ? " active" : ""}`}
+                title="导出整条时间线"
+                onClick={() => setRange("full")}
+              >
+                整条时间线
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={range === "marks"}
+                disabled={!marked}
+                className={`fit-chip${range === "marks" ? " active" : ""}`}
+                title={marked ? `只导出入点到出点之间的 ${rangeSeconds} 秒` : "先在时间线上按 I 和 O 设入出点，才能只导出区间"}
+                onClick={() => { if (marked) setRange("marks"); }}
+              >
+                入出点区间
+              </button>
+            </div>
+          </Field>
+
           <Field label="文件名" hint="不用写扩展名，引擎会按容器补上">
             <div className="input-row">
               <input
@@ -235,7 +270,7 @@ export function ExportPanel(): JSX.Element {
 
           <div className="export-actions">
             <Btn
-              onClick={() => renderPlanPreview(preset.id, fit)}
+              onClick={() => renderPlanPreview(preset.id, fit, range)}
               disabled={!clips.length}
               title="只读：让服务端编译渲染计划，不会写任何文件"
             >
@@ -257,12 +292,12 @@ export function ExportPanel(): JSX.Element {
                 alsoVertical
                   ? void startRenderBatch(
                       [
-                        { preset_id: preset.id, filename: finalName, fit },
-                        { preset_id: "h264-1080x1920-vertical", filename: verticalName, fit: "cover" },
+                        { preset_id: preset.id, filename: finalName, fit, range },
+                        { preset_id: "h264-1080x1920-vertical", filename: verticalName, fit: "cover", range },
                       ],
                       folder || undefined
                     )
-                  : void startRender(preset.id, finalName, folder || undefined, fit)
+                  : void startRender(preset.id, finalName, folder || undefined, fit, range)
               }
               disabled={Boolean(blocked) || Boolean(app.busy)}
               title={blocked || (alsoVertical

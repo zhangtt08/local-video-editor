@@ -50,6 +50,7 @@ from .contracts import (
     ProxyRequest,
     RenderBatch,
     RenderFit,
+    RenderRange,
     RenderRequest,
     RestoreProject,
     Revision,
@@ -60,7 +61,7 @@ from .contracts import (
     capabilities,
     render_presets,
 )
-from .jobs import JobRuntime
+from .jobs import JobRuntime, plan_for
 from .loudness import master_plan, normalize_gain, probe_mix, volume_problem
 from .loudness import measure as measure_loudness
 from .masks import mask_image
@@ -1168,9 +1169,10 @@ def create_app(
         revision: Revision | None = None,
         sequence_id: Identifier | None = None,
         fit: RenderFit = "contain",
+        range: RenderRange = "full",
     ):
         project = projects.get(project_id, revision)
-        plan = compile_render_plan(project, preset_id, sequence_id=sequence_id, fit=fit)
+        plan = plan_for(project, preset_id, sequence_id=sequence_id, fit=fit, range_mode=range)
         return {"plan": plan.as_dict(), "argv_preview": plan.ffmpeg_argv("ffmpeg", "out.mp4")}
 
     @app.post("/v1/projects/{project_id}/master/loudness", dependencies=auth)

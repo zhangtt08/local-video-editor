@@ -45,6 +45,16 @@ def validate_timeline(project: Project) -> None:
         raise EditorError("PROJECT_LIMIT", "root and sequence clips exceed 20000")
     if len({marker.id for marker in project.markers}) != len(project.markers):
         raise EditorError("INVALID_PROJECT", "marker ids have to be unique")
+    if project.settings.out_ticks is not None:
+        horizon = project_content_ticks(project)
+        if project.settings.out_ticks > horizon:
+            raise EditorError(
+                "INVALID_MARKS",
+                f"the out point has to sit inside the current content (0..{horizon} ticks)",
+                422,
+                in_ticks=project.settings.in_ticks,
+                out_ticks=project.settings.out_ticks,
+            )
     for key, asset in project.assets.items():
         if key != asset.id:
             raise EditorError("INVALID_PROJECT", "asset map key must match asset id")

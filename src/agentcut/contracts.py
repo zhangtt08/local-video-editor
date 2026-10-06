@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 11  # v11 added project markers; older rows still validate (ge=1).
-APP_VERSION = "1.39.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.40.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -32,6 +32,11 @@ class SequenceSettings(Contract):
     master_gain: Annotated[float, Field(ge=0, le=4)] = 1.0
     master_limiter: bool = False
     master_ceiling_dbtp: Annotated[float, Field(ge=-12.0, le=0.0)] = -1.0
+    # A marked range, in whole frames, for partial export and four-point editing. Both or neither:
+    # half a range has no meaning, and a sub-frame mark would make the exporter's frame count and
+    # the interface's ruler disagree.
+    in_ticks: Annotated[int, Field(ge=0)] | None = None
+    out_ticks: Annotated[int, Field(ge=0)] | None = None
 
     @model_validator(mode="after")
     def exact_frame_clock(self):
@@ -39,6 +44,13 @@ class SequenceSettings(Contract):
             raise ValueError("frame rate cannot be represented exactly by this timebase")
         if self.timebase % self.sample_rate:
             raise ValueError("sample rate cannot be represented exactly by this timebase")
+        if (self.in_ticks is None) != (self.out_ticks is None):
+            raise ValueError("a marked range needs both an in and an out point")
+        if self.in_ticks is not None:
+            if self.in_ticks % self.frame_ticks or self.out_ticks % self.frame_ticks:
+                raise ValueError("marks have to sit on whole frames")
+            if self.in_ticks >= self.out_ticks:
+                raise ValueError("the in point has to be before the out point")
         return self
 
     @property
@@ -1123,6 +1135,7 @@ class ProxyPrune(Contract):
 
 
 RenderFit = Literal["contain", "cover", "stretch"]
+RenderRange = Literal["full", "marks"]
 
 
 class RenderRequest(Contract):
@@ -1133,6 +1146,9 @@ class RenderRequest(Contract):
     folder: Annotated[str | None, Field(max_length=2048)] = None
     sequence_id: Identifier | None = None
     fit: RenderFit = "contain"
+    # `marks` renders only the sequence's marked range; `full` is every render made before this
+    # field existed, so the default keeps old requests and old receipts meaning the same thing.
+    range: RenderRange = "full"
 
     @model_validator(mode="after")
     def safe_filename(self):
@@ -1177,6 +1193,7 @@ class RenderBatchItem(Contract):
     folder: Annotated[str | None, Field(max_length=2048)] = None
     sequence_id: Identifier | None = None
     fit: RenderFit = "contain"
+    range: RenderRange = "full"
 
     @model_validator(mode="after")
     def safe_filename(self):
@@ -1211,6 +1228,7 @@ class RenderJob(Contract):
     sequence_id: Identifier | None = None
     preset_id: Identifier
     fit: RenderFit = "contain"
+    range: RenderRange = "full"
     filename: Annotated[str, Field(max_length=2048)]
     status: Literal["queued", "running", "succeeded", "failed", "cancelled"]
     total_ticks: Ticks = 0
@@ -1432,6 +1450,8 @@ def capabilities(media_ready: bool = False) -> dict:
             "grade_node_mix": True,
             "grade_node_blend_modes": True,
             "grade_parallel_branches": True,
+            "timeline_marks": True,
+            "range_export": True,
             "color_space_transform": True,
             "proxy_playback": media_ready,
             "text_titles": True,

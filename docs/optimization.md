@@ -866,4 +866,39 @@ SHA256 92E2AAC2F5135CDF21DADA4C8795B27557DE1C9F62A6FF22752D9A18776A2F1E；根目
 
 全量门禁（本轮结束时）：`ruff check`、`ruff format --check`（65 文件）、38 项 Python 检查（含
 `tests/grade_check.py` 的 parallel 三套）串行全绿、5 项 esbuild 桌面检查全绿、`npm run typecheck` 通过。
-完整记录见 `C:/Users/Administrator/Documents/Codex/2026-10-04/du/outputs/AgentCut-1.39-交付记录.md`。。
+完整记录见 `C:/Users/Administrator/Documents/Codex/2026-10-04/du/outputs/AgentCut-1.39-交付记录.md`。
+
+## 1.40 时间线入出点与区间导出（2026-10-07）
+
+剪映与达芬奇的「只出这一段」是交付日常里最常用的动作之一：横版整片 + 竖版片段、审片只发中间 20 秒、
+把一条长口播按标记切成几段分别出片。1.35 给了画幅三种适配、1.36 给了批量交付，但导出对象只能是整条
+时间线。这一版补上区间，并且刻意**不新增编辑命令**：区间是工程设置里的一对整数刻度，导出只是一个参数。
+
+- 契约：`SequenceSettings.in_ticks / out_ticks`（默认 `null`）。要么都给要么都不给、必须整帧、`in < out`；
+  出点越过当前内容由 `validate_timeline` 一处判 `INVALID_MARKS`（与 1.29 的标记共用
+  `project_content_ticks` 这一个「时间线有多长」的权威）。写入走既有 `POST /v1/projects/{id}` 的
+  `settings` 替换，所以一次设点恰好一个 revision，撤销/历史/去重回执全部继承；schema 仍 v11。
+- 渲染：`RenderRequest.range: "full" | "marks"`（批量项同名）。`jobs.plan_for()` 是唯一把 `range` 翻成
+  刻度的地方，计划预演、排队任务、worker 三处共用；没有点却请求 `marks` 一律 422，不会静默出整片。
+- **裁在哪里**很关键：`compile_render_plan` 在 `[vout]`/`[aout]` 之后才 `trim=start_frame:end_frame` +
+  `atrim=start:end`，也就是区间成片用的是整片同一张合成图、同一次 `amix`、同一个母带增益与限制器。
+  如果反过来「按区间重规划一遍时间线」，淡入淡出、转场权重、母带探测都会跟着变，区间版本就不是整片
+  版本的那一段了。画面已 `fps=` 归一化，所以帧号精确；声音用秒。
+- 回执：`range` 只在非默认值时进入去重指纹，1.39 及更早的渲染回执继续原样重放；改 `range` 得 409，
+  不会把旧文件当成新交付。
+- 界面：标尺上一条 `.ruler-range` 带子加两个手柄（拖动走与片段同一套整帧量化，方向键微调一帧、
+  Shift 十帧），`I`/`O` 在序列监视器下给时间线打点（素材监视器下仍是素材入出点），`Alt+X` 清除；
+  导出面板多一排「整条时间线 / 入出点区间」chip，没有点时后者禁用并把原因写在 title 里。
+- 验收（`tests/marks_check.py`，39 项 Python 检查之一）：见 `docs/api.md` 的 1.40 节，关键数字——
+  整片 6.000 秒 vs 区间 2.000 秒；区间首帧绿、音高 879 Hz（整片同点 439 Hz）；区间第 0.5 秒与整片
+  第 2.5 秒逐通道差 **0 阶**；界面 `I→O→拖手柄→导出→Alt+X` 逐笔 r1→r5，UI 触发的那次导出任务
+  `range=marks`、产物 ffprobe 3.067 秒；1040×660 无横向溢出。
+- 变异验收（两次都改 `render.py`，跑完 `cmp` 确认逐字节还原）：① 把 `trim` 的 `end_frame=` 换成
+  `duration=`（滤镜仍合法、画面仍从头开始）→ `plan_suite` 当场报
+  `[vout]trim=start_frame=30:duration=4.000000,setpts=PTS-STARTPTS[vrange]`；② 让区间情况下
+  `plan.duration_ticks` 仍等于整片长度 → 同一套里 `assert plan.duration_ticks == 4 * T` 报
+  `423360000`。两条都证明门禁看的是产物里的帧窗与时长，而不是实现意图。
+
+仍未完成：四点剪辑（源入出点 + 时间线入出点一次算成插入/覆盖，含按区间长度写变速曲线或裁尾）、
+图层节点与连线视图、亮度曲线与 LUT、色域矩阵与色彩管理、路径遮罩顶点动画、多目标与长时遮挡跟踪、
+自动语音字幕、缩略图与波形磁盘配额、代码签名。。

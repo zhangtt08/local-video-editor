@@ -158,6 +158,8 @@ export type Project = {
     master_gain?: number;
     master_limiter?: boolean;
     master_ceiling_dbtp?: number;
+    in_ticks?: number | null;
+    out_ticks?: number | null;
   };
   assets: Record<string, Asset>;
   tracks: Track[];
@@ -209,6 +211,8 @@ export type ProbeRow = { id: string; path: string; created_at: string };
 
 /** 交付画幅：完整保留（加边）、裁切填满、拉伸填满。与引擎的 RenderFit 同一组词。 */
 export type RenderFit = "contain" | "cover" | "stretch";
+/** 导出整条时间线，还是只导出入出点区间。与引擎的 RenderRange 同一组词。 */
+export type RenderRange = "full" | "marks";
 
 export const FIT_MODES: { id: RenderFit; label: string; hint: string }[] = [
   { id: "contain", label: "完整保留", hint: "画面全部留下，多出来的地方补黑边" },
@@ -620,11 +624,12 @@ export class Engine {
     );
   }
 
-  renderPlan(projectId: string, presetId: string, revision?: number, sequenceId: string | null = null, fit: RenderFit = "contain") {
+  renderPlan(projectId: string, presetId: string, revision?: number, sequenceId: string | null = null, fit: RenderFit = "contain", range: RenderRange = "full") {
     const query = new URLSearchParams({ preset_id: presetId });
     if (revision !== undefined) query.set("revision", String(revision));
     if (sequenceId) query.set("sequence_id", sequenceId);
     if (fit !== "contain") query.set("fit", fit);
+    if (range !== "full") query.set("range", range);
     return this.request<{ plan: Record<string, unknown>; argv_preview: string[] }>(
       "GET",
       `/v1/projects/${projectId}/render-plan?${query.toString()}`
@@ -660,7 +665,7 @@ export class Engine {
     return this.request<{ revision: number; srt: string }>("GET", `/v1/projects/${projectId}/captions/${trackId}?revision=${revision}${sequenceId ? `&sequence_id=${sequenceId}` : ""}`);
   }
 
-  render(projectId: string, revision: number, presetId: string, filename: string, folder?: string, sequenceId: string | null = null, fit: RenderFit = "contain") {
+  render(projectId: string, revision: number, presetId: string, filename: string, folder?: string, sequenceId: string | null = null, fit: RenderFit = "contain", range: RenderRange = "full") {
     return this.request<{ job: RenderJob; plan: Record<string, unknown> }>(
       "POST",
       `/v1/projects/${projectId}/renders`,
@@ -672,6 +677,7 @@ export class Engine {
         folder: folder ?? null,
         sequence_id: sequenceId,
         fit,
+        range,
       }
     );
   }
@@ -679,7 +685,7 @@ export class Engine {
   renderBatch(
     projectId: string,
     revision: number,
-    items: { preset_id: string; filename: string; fit: RenderFit }[],
+    items: { preset_id: string; filename: string; fit: RenderFit; range?: RenderRange }[],
     folder?: string
   ) {
     return this.request<{ committed: boolean; jobs: RenderJob[] }>(

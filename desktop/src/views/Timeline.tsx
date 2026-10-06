@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Icon, IconBtn } from "../ui";
-import { TIMEBASE, align, humanDuration, timecode } from "../time";
+import { TIMEBASE, align, frameTicks, humanDuration, timecode } from "../time";
 import type { Clip, Marker, Project, Track } from "../engine";
 import {
   addLibraryItemToTimeline,
@@ -12,6 +12,7 @@ import {
   redoStep,
   removeTrack,
   selectClip,
+  setSequenceMark,
   snapTo,
   splitClip,
   timelineEnd,
@@ -285,6 +286,7 @@ export function Timeline() {
               }}
             >
               {rulerMarks(contentTicks, px, project)}
+              <RangeHandles project={project} px={px} />
               {(project.markers ?? []).map((mark) => {
                 const at = markerDrag?.id === mark.id ? markerDrag.ticks : mark.at_ticks;
                 const mq = quantum(project, "video");
@@ -788,6 +790,72 @@ function WaveBars({ values, width }: { values: number[]; width: number }) {
 }
 
 /** 标记的名字与颜色：一次点击 = 一条 marker.set，和 Agent 用的是同一个命令。 */
+/** 标尺上的入出点区间：一条带子加两个可拖的手柄，落点走整帧量化。 */
+function RangeHandles({ project, px }: { project: Project; px: number }) {
+  const [draft, setDraft] = useState<{ side: "in" | "out"; ticks: number } | null>(null);
+  const from = project.settings.in_ticks;
+  const to = project.settings.out_ticks;
+  if (from == null || to == null) return null;
+  const mq = quantum(project, "video");
+  const shown = {
+    in: draft?.side === "in" ? draft.ticks : from,
+    out: draft?.side === "out" ? draft.ticks : to,
+  };
+  const commit = (side: "in" | "out", ticks: number) => {
+    setDraft(null);
+    void setSequenceMark(side, ticks);
+  };
+  return <>
+    <span
+      className="ruler-range"
+      style={{ left: (shown.in / TIMEBASE) * px, width: Math.max(0, ((shown.out - shown.in) / TIMEBASE) * px) }}
+      title={`导出区间 ${(shown.in / TIMEBASE).toFixed(2)} – ${(shown.out / TIMEBASE).toFixed(2)} 秒`}
+      aria-hidden="true"
+    />
+    {(["in", "out"] as const).map((side) => <span
+      key={side}
+      role="slider"
+      tabIndex={0}
+      aria-label={side === "in" ? "入点" : "出点"}
+      aria-valuenow={shown[side]}
+      className={`ruler-range-handle ${side}${draft?.side === side ? " dragging" : ""}`}
+      style={{ left: (shown[side] / TIMEBASE) * px }}
+      title={`${side === "in" ? "入点" : "出点"} ${(shown[side] / TIMEBASE).toFixed(2)} 秒 · 左右拖动改区间（整帧），方向键微调，Alt+X 清除`}
+      onPointerDown={(event) => {
+        event.stopPropagation();
+        if (event.button !== 0) return;
+        const ruler = event.currentTarget.parentElement as HTMLElement;
+        const startX = event.clientX;
+        let moved = false;
+        const at = (clientX: number) => Math.max(0, align(((clientX - ruler.getBoundingClientRect().left) / px) * TIMEBASE, mq, 0));
+        const move = (ev: PointerEvent) => {
+          if (Math.abs(ev.clientX - startX) > 2) moved = true;
+          setDraft({ side, ticks: at(ev.clientX) });
+        };
+        const stop = (ev: PointerEvent) => {
+          window.removeEventListener("pointermove", move);
+          window.removeEventListener("pointerup", stop);
+          window.removeEventListener("pointercancel", stop);
+          if (moved) commit(side, at(ev.clientX));
+          else setDraft(null);
+        };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", stop);
+        window.addEventListener("pointercancel", stop);
+      }}
+      onKeyDown={(event) => {
+        const step = (event.shiftKey ? 10 : 1) * frameTicks(project.settings.frame_rate);
+        if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+          event.preventDefault();
+          commit(side, shown[side] + (event.key === "ArrowRight" ? step : -step));
+        } else if (event.key === "Escape") {
+          setDraft(null);
+        }
+      }}
+    />)}
+  </>;
+}
+
 function MarkerEditor({ mark, onDone }: { mark: Marker; onDone: () => void }) {
   const [name, setName] = useState(mark.name);
   const colours: NonNullable<Marker["color"]>[] = ["amber", "cyan", "green", "red", "violet"];

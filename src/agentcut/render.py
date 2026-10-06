@@ -265,6 +265,7 @@ class RenderPlan:
             "resolution": self.summary.get("resolution"),
             "frame_rate": self.summary.get("frame_rate"),
             "segments": self.summary.get("segments"),
+            "range": self.summary.get("range"),
             "layers": self.summary.get("layers"),
             "audio_layers": self.summary.get("audio_layers"),
             "sources": self.summary.get("sources"),
@@ -303,6 +304,7 @@ def compile_render_plan(
     preview_size: tuple[int, int] | None = None,
     sequence_id: str | None = None,
     fit: str = "contain",
+    range_ticks: tuple[int, int] | None = None,
     _transparent: bool = False,
     _duration_ticks: int | None = None,
 ) -> RenderPlan:
@@ -811,6 +813,40 @@ def compile_render_plan(
     plan.audio_label = "[aout]"
     plan.summary["audio_layers"] = count
 
+    if range_ticks is not None:
+        # Cut the marked window out of the finished mix rather than re-planning the timeline: the
+        # frames, the mix, the master gain and the limiter are exactly what the full export would
+        # have produced, so a partial deliverable cannot quietly differ from the reviewed one.
+        # Frames for the picture (the stream is already `fps=` normalised), seconds for the sound.
+        start, end = range_ticks
+        if not 0 <= start < end <= total:
+            raise EditorError(
+                "INVALID_MARKS",
+                f"a rendered range has to sit inside the timeline (0..{total} ticks)",
+                422,
+                in_ticks=start,
+                out_ticks=end,
+            )
+        frame = settings.frame_ticks
+        plan.filters.append(
+            f"{plan.video_label}trim=start_frame={start // frame}:end_frame={end // frame},"
+            f"setpts=PTS-STARTPTS[vrange]"
+        )
+        plan.video_label = "[vrange]"
+        plan.filters.append(
+            f"{plan.audio_label}atrim=start={sec(start)}:end={sec(end)},"
+            f"asetpts=PTS-STARTPTS[arange]"
+        )
+        plan.audio_label = "[arange]"
+        plan.duration_ticks = end - start
+        plan.summary["range"] = {
+            "in_ticks": start,
+            "out_ticks": end,
+            "seconds": round((end - start) / TIMEBASE, 3),
+        }
+    else:
+        plan.duration_ticks = total
+
     plan.output_args = [
         "-c:v",
         preset["codec"],
@@ -835,7 +871,6 @@ def compile_render_plan(
         "-movflags",
         "+faststart",
     ]
-    plan.duration_ticks = total
     plan.summary.update(
         {
             "encoder": f"{preset['label']} ({preset['container']})",
@@ -864,6 +899,18 @@ def compile_render_plan(
         }
     )
     return plan
+
+
+def marked_range(project: Project) -> tuple[int, int] | None:
+    """The sequence's marked window, or None when nothing is marked.
+
+    One place reads the marks, so the queued job, the render-plan preview and the worker cannot
+    disagree about what `range=marks` means for the same project.
+    """
+    settings = project.settings
+    if settings.in_ticks is None or settings.out_ticks is None:
+        return None
+    return settings.in_ticks, settings.out_ticks
 
 
 def timeline_duration(project: Project) -> int:

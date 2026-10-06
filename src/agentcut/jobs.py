@@ -18,11 +18,39 @@ from uuid import uuid4
 
 from .contracts import TIMEBASE, EditorError, Project, RenderBatch, RenderJob, RenderRequest
 from .media import _NO_WINDOW
-from .render import compile_render_plan
+from .render import RenderPlan, compile_render_plan, marked_range
 
 STATUS_STEPS = ("queued", "running", "succeeded", "failed", "cancelled")
 TERMINAL = ("succeeded", "failed", "cancelled")
 MAX_LOG = 3000
+
+
+def plan_for(
+    project: Project,
+    preset_id: str,
+    *,
+    sequence_id: str | None = None,
+    fit: str = "contain",
+    range_mode: str = "full",
+) -> RenderPlan:
+    """One place that turns a request's `range` into the ticks the exporter trims to, so the
+    render-plan preview, the queued job and the worker all read the same marks."""
+    ticks = None
+    if range_mode == "marks":
+        ticks = marked_range(project)
+        if ticks is None:
+            raise EditorError(
+                "INVALID_MARKS",
+                "this sequence has no in/out marks, so there is no range to export",
+                422,
+            )
+    return compile_render_plan(
+        project,
+        preset_id,
+        sequence_id=sequence_id,
+        fit=fit,
+        range_ticks=ticks,
+    )
 
 
 class JobRuntime:
@@ -211,6 +239,9 @@ class JobRuntime:
             raise EditorError("MEDIA_TOOL_MISSING", "ffmpeg is not configured, cannot render", 503)
         canonical = json.dumps(
             [project.id, request.preset_id, request.filename, request.folder, request.fit]
+            # Only a non-default range joins the fingerprint, so a receipt written before this field
+            # existed still replays as itself instead of turning into a conflict.
+            + ([request.range] if request.range != "full" else [])
             + ([request.sequence_id] if request.sequence_id is not None else []),
             ensure_ascii=False,
             separators=(",", ":"),
@@ -232,8 +263,12 @@ class JobRuntime:
                     request_id=request.request_id,
                 )
             try:
-                plan = compile_render_plan(
-                    project, request.preset_id, sequence_id=request.sequence_id, fit=request.fit
+                plan = plan_for(
+                    project,
+                    request.preset_id,
+                    sequence_id=request.sequence_id,
+                    fit=request.fit,
+                    range_mode=request.range,
                 ).as_dict()
             except EditorError:
                 plan = {}
@@ -246,8 +281,12 @@ class JobRuntime:
                 expected_revision=request.expected_revision,
                 actual_revision=project.revision,
             )
-        plan = compile_render_plan(
-            project, request.preset_id, sequence_id=request.sequence_id, fit=request.fit
+        plan = plan_for(
+            project,
+            request.preset_id,
+            sequence_id=request.sequence_id,
+            fit=request.fit,
+            range_mode=request.range,
         )
         target = self._target_path(request)
         now = time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -258,6 +297,7 @@ class JobRuntime:
             sequence_id=request.sequence_id,
             preset_id=request.preset_id,
             fit=request.fit,
+            range=request.range,
             filename=target.name,
             status="queued",
             total_ticks=plan.duration_ticks,
@@ -286,8 +326,12 @@ class JobRuntime:
         """
         with self.submit_lock:
             for item in batch.items:
-                compile_render_plan(
-                    project, item.preset_id, sequence_id=item.sequence_id, fit=item.fit
+                plan_for(
+                    project,
+                    item.preset_id,
+                    sequence_id=item.sequence_id,
+                    fit=item.fit,
+                    range_mode=item.range,
                 )
             results: list[tuple[RenderJob, dict]] = []
             for index, item in enumerate(batch.items):
@@ -299,6 +343,7 @@ class JobRuntime:
                     folder=item.folder,
                     sequence_id=item.sequence_id,
                     fit=item.fit,
+                    range=item.range,
                 )
                 if batch.dry_run:
                     results.append(
@@ -309,14 +354,16 @@ class JobRuntime:
                                 revision=project.revision,
                                 preset_id=item.preset_id,
                                 fit=item.fit,
+                                range=item.range,
                                 filename=item.filename,
                                 status="queued",
                             ),
-                            compile_render_plan(
+                            plan_for(
                                 project,
                                 item.preset_id,
                                 sequence_id=item.sequence_id,
                                 fit=item.fit,
+                                range_mode=item.range,
                             ).as_dict(),
                         )
                     )
@@ -420,7 +467,13 @@ class JobRuntime:
                 )
             )
             return
-        plan = compile_render_plan(project, job.preset_id, sequence_id=job.sequence_id, fit=job.fit)
+        plan = plan_for(
+            project,
+            job.preset_id,
+            sequence_id=job.sequence_id,
+            fit=job.fit,
+            range_mode=job.range,
+        )
         target = Path(job.output_path or (self.output_dir / job.filename))
         target.parent.mkdir(parents=True, exist_ok=True)
         temp = target.with_suffix(".part.mp4")

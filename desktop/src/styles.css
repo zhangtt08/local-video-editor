@@ -890,6 +890,14 @@ table.table tr.current td { background: var(--accent-soft); }
 .fit-chip.active { border-color: #d9a441; color: #f2c66d; background: #2b2418; }
 .ruler-marker { cursor: grab; }
 .ruler-marker.dragging { cursor: grabbing; opacity: .75; }
+.ruler-range { position: absolute; top: 0; height: 100%; background: rgba(217,164,65,.16); border-left: 1px solid #d9a441; border-right: 1px solid #d9a441; pointer-events: none; }
+.ruler-range-handle { position: absolute; top: 0; width: 11px; height: 100%; margin-left: -5px; cursor: ew-resize; }
+.ruler-range-handle::before { content: ""; position: absolute; left: 4px; top: 0; width: 2px; height: 100%; background: #f2c66d; }
+.ruler-range-handle::after { content: ""; position: absolute; top: 0; border: 5px solid transparent; border-top-color: #f2c66d; }
+.ruler-range-handle.in::after { left: -2px; }
+.ruler-range-handle.out::after { right: -2px; }
+.ruler-range-handle.dragging { opacity: .7; }
+.ruler-range-handle:focus-visible { outline: 1px solid #f2c66d; outline-offset: 1px; }
 .marker-edit { position: absolute; top: 14px; left: 0; z-index: 6; display: flex; gap: 4px; align-items: center; padding: 4px 6px; background: var(--panel, #1b1917); border: 1px solid #3a352f; border-radius: 4px; box-shadow: 0 6px 18px rgba(0,0,0,.45); white-space: nowrap; }
 .marker-edit .input { width: 128px; height: 22px; font-size: 12px; }
 .marker-swatch { width: 14px; height: 14px; padding: 0; border: 1px solid #4a443c; border-radius: 50%; background: currentColor; cursor: pointer; }
