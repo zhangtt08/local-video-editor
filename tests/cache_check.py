@@ -229,6 +229,31 @@ def main() -> None:
     plan = shelter.prune_cache(0)
     assert plan["removed"] == [] and tree_bytes(nested) == before, plan
     print("   cache: with the cache inside a registered media root, prune deletes nothing")
+    # A budget is only a budget if it holds without anyone remembering to ask for it. Sources stay
+    # outside the cache here: the media-root guard would (correctly) refuse to evict anything.
+    tight = folder / "tight"
+    tight_sources = tight / "sources"
+    tight_sources.mkdir(parents=True)
+    os.environ["AGENTCUT_CACHE_BYTES"] = "60000"
+    try:
+        bounded = MediaService(
+            folder / "cc-tight.sqlite3", [tight_sources], tight / "cache", FFMPEG, FFPROBE
+        )
+        for item in make_media(tight_sources):
+            bounded.build_cache(
+                bounded.summarize(item, "video" if item.suffix == ".mp4" else "image")
+            )
+        inside = tree_bytes(tight / "cache")
+        survivors = {entry["digest"] for entry in bounded.cache_inventory()["entries"]}
+        assert inside <= 60000, f"the cache grew past its own budget: {inside} bytes"
+        assert len(survivors) == 1, survivors
+        print(
+            f"   cache: building three entries past a 60,000-byte budget bounded it at {inside}"
+            f" bytes with {len(survivors)} entry left, on its own"
+        )
+    finally:
+        del os.environ["AGENTCUT_CACHE_BYTES"]
+
     shutil.rmtree(folder, ignore_errors=True)
     print("PASS: the derived cache is inventoried honestly, bounded in LRU order, and rebuilds")
 

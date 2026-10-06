@@ -339,6 +339,9 @@ class MediaService:
         staging = target / "cache.json.part"
         staging.write_text(json.dumps(cached, separators=(",", ":")), encoding="utf-8")
         staging.replace(manifest_path)
+        # The budget only means something if it holds without someone remembering to ask: bound the
+        # cache right after growing it, protecting the entry that was just built.
+        self._prune_cache_locked(cache_limit_bytes(), (verified.content_sha256,), False)
         return cached
 
     def _thumbnails(self, verified: VerifiedMedia, target: Path) -> list[str]:
@@ -704,43 +707,52 @@ class MediaService:
         keep: tuple[str, ...] = (),
         dry_run: bool = False,
     ) -> dict:
+        budget = cache_limit_bytes() if max_bytes is None else max_bytes
+        with self._cache_lock:
+            return self._prune_cache_locked(budget, keep, dry_run)
+
+    def _prune_cache_locked(
+        self,
+        budget: int,
+        keep: tuple[str, ...] = (),
+        dry_run: bool = False,
+    ) -> dict:
         """Delete the least recently used derived entries until the cache fits the budget.
 
         Sources and project files live outside this directory and are never candidates; neither is
         anything inside a registered media root. A deleted entry comes back on the next request
-        that needs it, because `cache_path` rebuilds what the manifest lost.
+        that needs it, because `cache_path` rebuilds what the manifest lost. The caller holds
+        `self._cache_lock`; `prune_cache` is the public entry point.
         """
-        budget = cache_limit_bytes() if max_bytes is None else max_bytes
-        with self._cache_lock:
-            entries = self.scan_cache()
-            before = sum(item["size_bytes"] for item in entries)
-            used = before
-            removed: list[dict] = []
-            for item in reversed(entries):
-                if used <= budget:
-                    break
-                if item["digest"] in keep or self._is_media_root(Path(item["path"])):
-                    continue
-                removed.append(
-                    {
-                        "digest": item["digest"],
-                        "size_bytes": item["size_bytes"],
-                        "files": item["files"],
-                        "has_proxy": item["has_proxy"],
-                    }
-                )
-                used -= item["size_bytes"]
-                if not dry_run:
-                    shutil.rmtree(Path(item["path"]), ignore_errors=True)
-            return {
-                "limit_bytes": budget,
-                "dry_run": dry_run,
-                "used_bytes_before": before,
-                "used_bytes_after": used,
-                "freed_bytes": sum(item["size_bytes"] for item in removed),
-                "removed": removed,
-                "kept": len(entries) - len(removed),
-            }
+        entries = self.scan_cache()
+        before = sum(item["size_bytes"] for item in entries)
+        used = before
+        removed: list[dict] = []
+        for item in reversed(entries):
+            if used <= budget:
+                break
+            if item["digest"] in keep or self._is_media_root(Path(item["path"])):
+                continue
+            removed.append(
+                {
+                    "digest": item["digest"],
+                    "size_bytes": item["size_bytes"],
+                    "files": item["files"],
+                    "has_proxy": item["has_proxy"],
+                }
+            )
+            used -= item["size_bytes"]
+            if not dry_run:
+                shutil.rmtree(Path(item["path"]), ignore_errors=True)
+        return {
+            "limit_bytes": budget,
+            "dry_run": dry_run,
+            "used_bytes_before": before,
+            "used_bytes_after": used,
+            "freed_bytes": sum(item["size_bytes"] for item in removed),
+            "removed": removed,
+            "kept": len(entries) - len(removed),
+        }
 
     # ---------- probe registry (server-issued handles) ----------
 
