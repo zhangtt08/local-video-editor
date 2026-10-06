@@ -830,8 +830,6 @@ table.table tr.current td { background: var(--accent-soft); }
 
 /* 调色节点：曲线盘、色轮盘与节点列表 */
 .grade-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
-.grade-list { display: flex; flex-direction: column; gap: 3px; margin: 8px 0; }
-.grade-row { display: grid; grid-template-columns: minmax(0,1fr) auto 24px 24px 24px; gap: 4px; align-items: center; }
 .grade-pick { text-align: left; background: var(--panel); border: 1px solid var(--line); color: var(--ink-2); border-radius: var(--r-sm); padding: 5px 7px; font-size: 11px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .grade-pick.active { border-color: var(--accent); color: var(--ink); background: var(--accent-soft); }
 .grade-switch { display: flex; gap: 3px; align-items: center; font-size: 11px; color: var(--ink-3); white-space: nowrap; }
@@ -904,6 +902,22 @@ table.table tr.current td { background: var(--accent-soft); }
 .marker-edit .input { width: 128px; height: 22px; font-size: 12px; }
 .marker-swatch { width: 14px; height: 14px; padding: 0; border: 1px solid #4a443c; border-radius: 50%; background: currentColor; cursor: pointer; }
 .marker-swatch.active { outline: 2px solid #f2c66d; outline-offset: 1px; }
+.grade-graph { display: flex; flex-wrap: wrap; align-items: stretch; gap: 0; padding: 4px 0 2px; }
+.grade-graph .gg-io { align-self: center; padding: 4px 6px; font-size: 10px; color: #9c948a; border: 1px solid #3a352f; border-radius: 3px; white-space: nowrap; }
+.grade-graph .gg-wire { align-self: center; width: 14px; height: 1px; background: #5a524a; position: relative; }
+.grade-graph .gg-wire::after { content: ""; position: absolute; right: 0; top: -2px; border: 3px solid transparent; border-left-color: #8a7f73; }
+.gg-card { display: flex; flex-direction: column; gap: 3px; min-width: 132px; padding: 4px 6px; background: #1f1c19; border: 1px solid #3a352f; border-radius: 4px; cursor: grab; }
+.gg-card.active { border-color: #d9a441; box-shadow: 0 0 0 1px #d9a44155; }
+.gg-card.off { opacity: .55; }
+.gg-card.over { border-style: dashed; border-color: #f2c66d; }
+.gg-card .gg-pick { display: flex; flex-direction: column; gap: 1px; padding: 0; text-align: left; background: none; border: 0; color: inherit; font: inherit; cursor: pointer; }
+.gg-card .gg-pick b { font-size: 12px; font-weight: 600; }
+.gg-card .gg-pick em { font-size: 10px; font-style: normal; }
+.gg-lanes { display: flex; flex-direction: column; gap: 1px; padding-left: 6px; border-left: 2px solid #4a443c; }
+.gg-lane { font-size: 10px; color: #b9b1a4; }
+.gg-lane.off { text-decoration: line-through; opacity: .7; }
+.gg-card .gg-tools { display: flex; align-items: center; gap: 3px; }
+.gg-card .gg-drag { font-size: 9px; opacity: .55; }
 .recipe-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .recipe-chip { display: inline-flex; align-items: stretch; background: #211e1b; border: 1px solid #3a352f; border-radius: 999px; overflow: hidden; }
 .recipe-chip > button:first-child { display: inline-flex; gap: 6px; align-items: baseline; padding: 3px 10px; font-size: 12px; color: var(--text, #e8e2d6); background: transparent; border: 0; cursor: pointer; }

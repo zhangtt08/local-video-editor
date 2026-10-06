@@ -1,16 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 
-import {DEFAULT_TRANSFER, COLOR_SPACES, DEFAULT_CURVE_POINTS, DEFAULT_WHEELS, type GradeChannel, type GradeCurvePoint, type GradeNode, type GradeOperation, type GradeParallel, type ColorSpace, BLEND_MODES, blendLabel, type BlendMode} from "../engine";
+import {DEFAULT_TRANSFER, COLOR_SPACES, DEFAULT_CURVE_POINTS, DEFAULT_WHEELS, type GradeChannel, type GradeCurvePoint, type GradeNode, type GradeOperation, type GradeParallel, type ColorSpace, BLEND_MODES, type BlendMode} from "../engine";
 import { editableProject, setClipColor, useApp } from "../store";
+import { NODE_NAMES, cardsFor, moveWithin } from "../gradeGraph";
 
 const CHANNELS: [GradeChannel, string][] = [["rgb", "主色"], ["red", "红"], ["green", "绿"], ["blue", "蓝"]];
-const NODE_NAMES: Record<GradeNode["kind"], string> = {
-  curve: "色调曲线",
-  white_balance: "白平衡",
-  wheels: "RGB 增益",
-  transfer: "色彩空间",
-  parallel: "并联",
-};
 const GREEN_MAGENTA = [0.70710678, -0.70710678, 0];
 const BLUE_YELLOW = [0.40824829, 0.40824829, -0.81649758];
 const MAX_NODES = 8;
@@ -253,7 +247,9 @@ export function GradeFields({ clipId }: { clipId: string }) {
   const project = editableProject(app);
   const [active, setActive] = useState(0);
   const [branchSlot, setSlot] = useState(0);
+  const [hover, setHover] = useState<number | null>(null);
   const pending = useRef<number | null>(null);
+  const dragging = useRef<number | null>(null);
   const clip = project?.clips[clipId];
   const nodes = clip?.color?.grade ?? [];
   const locked = Boolean(app.busy || !project || project.tracks.find((track) => track.id === clip?.track_id)?.locked);
@@ -268,14 +264,13 @@ export function GradeFields({ clipId }: { clipId: string }) {
   }, [active, nodes.length]);
 
   const write = (next: GradeNode[]) => setClipColor(clipId, { grade: next });
+  const cards = cardsFor(nodes);
   const replace = (index: number, node: GradeNode) => write(nodes.map((entry, position) => position === index ? node : entry));
-  const move = (index: number, delta: number) => {
-    const target = index + delta;
-    if (target < 0 || target >= nodes.length) return;
-    const next = nodes.slice();
-    next.splice(target, 0, next.splice(index, 1)[0]);
+  const move = (index: number, target: number) => {
+    const next = moveWithin(nodes, index, target);
+    if (next === nodes) return;
     write(next);
-    setActive(target);
+    setActive(Math.min(Math.max(0, target), next.length - 1));
   };
   const add = (kind: GradeNode["kind"]) => {
     if (nodes.length >= MAX_NODES) return;
@@ -311,14 +306,41 @@ export function GradeFields({ clipId }: { clipId: string }) {
       <div className="batch-actions">
         {(["curve", "white_balance", "wheels", "transfer", "parallel"] as const).map((kind) => <button key={kind} className="btn tiny" disabled={nodes.length >= MAX_NODES} onClick={() => add(kind)}>+{NODE_NAMES[kind]}</button>)}
       </div>
-      {nodes.length ? <div className="grade-list" role="list">
-        {nodes.map((node, index) => <div className="grade-row" key={index} role="listitem">
-          <button className={`grade-pick${index === active ? " active" : ""}`} onClick={() => setActive(index)} aria-label={`选择${NODE_NAMES[node.kind]}节点`}>{index + 1}. {NODE_NAMES[node.kind]}{node.kind === "parallel" ? ` · ${node.branches.length} 支` : ""}{node.blend && node.blend !== "normal" ? ` · ${blendLabel(node.blend)}` : ""}{node.mix === undefined || node.mix === 1 ? "" : ` · ${Math.round(node.mix * 100)}%`}</button>
-          <label className="grade-switch"><input type="checkbox" checked={node.enabled} onChange={(e) => replace(index, { ...node, enabled: e.target.checked })} />启用</label>
-          <button className="btn tiny" disabled={index === 0} onClick={() => move(index, -1)} aria-label="上移节点">↑</button>
-          <button className="btn tiny" disabled={index === nodes.length - 1} onClick={() => move(index, 1)} aria-label="下移节点">↓</button>
-          <button className="btn tiny danger" onClick={() => { write(nodes.filter((_, position) => position !== index)); setActive(Math.max(0, index - 1)); }} aria-label="移除节点">删</button>
-        </div>)}
+      {nodes.length ? <div className="grade-graph" role="list" aria-label="调色节点链">
+        <span className="gg-io">输入</span>
+        {cards.map((card) => <Fragment key={card.index}>
+          <span className="gg-wire" aria-hidden="true" />
+          <div className={`gg-card${card.index === active ? " active" : ""}${card.enabled ? "" : " off"}${hover === card.index ? " over" : ""}`}
+            draggable
+            onDragStart={(event) => { dragging.current = card.index; event.dataTransfer.effectAllowed = "move"; }}
+            onDragOver={(event) => { event.preventDefault(); setHover(card.index); }}
+            onDragLeave={() => setHover((current) => (current === card.index ? null : current))}
+            onDrop={(event) => {
+              event.preventDefault();
+              const from = dragging.current;
+              setHover(null);
+              dragging.current = null;
+              if (from !== null && from !== card.index) move(from, card.index);
+            }}
+            onDragEnd={() => { dragging.current = null; setHover(null); }}>
+            <button className="gg-pick" onClick={() => setActive(card.index)} aria-label={`选择${card.label}节点`}>
+              <b>{card.label}</b>
+              {card.detail ? <em className="dim">{card.detail}</em> : null}
+            </button>
+            {card.lanes.length ? <div className="gg-lanes" aria-hidden="true">
+              {card.lanes.map((lane, index) => <span key={index} className={`gg-lane${lane.enabled ? "" : " off"}`}>{index + 1}. {lane.label}</span>)}
+            </div> : null}
+            <span className="gg-tools">
+              <label className="grade-switch"><input type="checkbox" checked={card.enabled} onChange={(event) => replace(card.index, { ...nodes[card.index], enabled: event.target.checked })} />启用</label>
+              <button className="btn tiny" disabled={card.index === 0} onClick={() => move(card.index, card.index - 1)} aria-label="上移节点">↑</button>
+              <button className="btn tiny" disabled={card.index === nodes.length - 1} onClick={() => move(card.index, card.index + 1)} aria-label="下移节点">↓</button>
+              <button className="btn tiny danger" onClick={() => { write(nodes.filter((_, position) => position !== card.index)); setActive(Math.max(0, card.index - 1)); }} aria-label="移除节点">删</button>
+            </span>
+            <span className="gg-drag dim">拖动可改顺序</span>
+          </div>
+        </Fragment>)}
+        <span className="gg-wire" aria-hidden="true" />
+        <span className="gg-io">输出</span>
       </div> : <p className="hint">曝光、对比度、饱和度之后按顺序执行这些节点。曲线、白平衡、RGB 增益、色彩空间与并联都只改每通道值，预览与导出共用同一张表。</p>}
 
       {current && current.kind !== "parallel" ? <OpFields node={current} idPrefix="grade" onCommit={(next) => replace(active, next)} /> : null}
