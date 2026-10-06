@@ -901,4 +901,31 @@ SHA256 92E2AAC2F5135CDF21DADA4C8795B27557DE1C9F62A6FF22752D9A18776A2F1E；根目
 
 仍未完成：四点剪辑（源入出点 + 时间线入出点一次算成插入/覆盖，含按区间长度写变速曲线或裁尾）、
 图层节点与连线视图、亮度曲线与 LUT、色域矩阵与色彩管理、路径遮罩顶点动画、多目标与长时遮挡跟踪、
-自动语音字幕、缩略图与波形磁盘配额、代码签名。。
+自动语音字幕、缩略图与波形磁盘配额、代码签名。
+
+1.40.0 发布验收：冻结引擎 `--verify` 通过（`app_version=1.40.0`、`frozen=true`、带素材冷启动 676 ms、
+裸启动 613 ms、`mcp` 存活、`tools`/`--help` 退出 0）后 `npm run dist` 重新打包。包内验收
+（`package_check_140.py` 驱动 `release/win-unpacked` 内引擎，实例 7f7a726814cd）：capabilities 报
+`project_schema_version=11`、`timeline_marks=true`、`range_export=true`；没有入出点时请求
+`range=marks` 得 422 `INVALID_MARKS` 且不排队任务；`project.update` 写入第 60–120 帧恰好一个 revision
+（r2）；`GET /render-plan?range=marks` 的 argv 含 `trim=start_frame=60:end_frame=120` 与
+`atrim=start=2.000000:end=4.000000` 且 `duration_seconds=2.0`，不带 `range` 的那一份两者都没有、
+`duration_seconds=6.0`；真实导出两份：整片报告 6.000 秒 / ffprobe 6.000 秒，区间报告 2.000 秒 /
+ffprobe 2.000 秒，区间首帧为绿段而整片首帧仍为红，区间第 0.2 秒音高 **879 Hz** 对整片同点 **439 Hz**，
+区间第 0.5 秒与整片第 2.5 秒逐通道差 **0 阶**。包内 `agentcut.exe mcp`：`tools/list` 与上一版完全相同
+的 35 个工具（本版没有新工具），`project_update` 移动入出点 r2→r3 原样读回，`render_start`
+带 `range=marks` 出 3.000 秒成片。包内容器核对（`asar_compare.py`）：`app.asar` 内 5 个 renderer/shell
+文件与本地构建**逐字节相同**、包内 `agentcut.exe` 与验收用的冻结引擎逐字节相同、ASAR 内
+`package.json` 版本 1.40.0，并实测含「入出点区间 / ruler-range-handle / 整条时间线 / in_ticks /
+"marks"」五个串。产物：便携版 132,491,248 字节 SHA256 CF56ED1A9B120DF070647A7E2B48A41576FDB65A192226520A374F6705A807BB；
+安装版 132,651,956 字节 SHA256 B04C3CB59931C98C6E875F02669DEF64895650B33037FAB2B696EB984464FD3A；
+根目录 `AgentCut.exe` 与便携版 `cmp` 逐字节一致。全量门禁：`ruff check`、`ruff format --check`
+（66 文件）、39 项 Python 检查（含新增 `tests/marks_check.py`）、5 项 esbuild 桌面检查与
+`npm run typecheck` 全绿。
+
+一条必须如实记录的证据边界：本轮也启动了包内 `win-unpacked/AgentCut.exe` 并用 `PrintWindow(flags=2)`
+采到 1480×900 的「AgentCut 剪辑台」窗口（该会话是用户 `%APPDATA%` 下的真实工程，只截图未编辑，
+`CloseMainWindow()` 后 `Get-Process` 查无残留），但得到的 PNG 与 1.39 那张**逐字节相同**——首页在两个
+版本之间确实没有可见差异（新区间 UI 在时间线标尺与导出面板里），所以这张图不能单独作为「1.40 渲染
+成功」的证据；包内内容的证据是上面那条 ASAR/引擎逐字节比对。未签名，NSIS 向导未点击验收。完整记录见
+`C:/Users/Administrator/Documents/Codex/2026-10-04/du/outputs/AgentCut-1.40-交付记录.md`。。
