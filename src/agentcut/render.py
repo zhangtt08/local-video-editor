@@ -584,10 +584,18 @@ def compile_render_plan(
                     if clip.mask and animated & set(MASK_FIELDS)
                     else None
                 )
+                alpha = []
+                if clip.mask and not path_mask:
+                    alpha.append(f"({alpha_expression(clip.mask, mask_values)})")
+                if clip.effects.opacity != 1 or "opacity" in animated or mixed_track:
+                    alpha.append(f"({opacity})")
+                # One alpha pass, and it has to happen before the size can move: `geq` allocates
+                # against the frame it is given, so feeding it the output of a
+                # `scale=…:eval=frame` whose dimensions change every frame kills FFmpeg outright
+                # (measured: exit 0xC0000409 with no stderr at all).
                 transform = (
-                    "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
-                    f"a='alpha(X,Y)*({alpha_expression(clip.mask, mask_values)})',"
-                    if clip.mask and not path_mask
+                    (f"geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*{'*'.join(alpha)}',")
+                    if alpha
                     else ""
                 )
                 if clip.effects.scale != 1 or "scale" in animated:
@@ -600,8 +608,6 @@ def compile_render_plan(
                         f"rotate=angle='({rotation})*PI/180':ow='hypot(iw,ih)':"
                         "oh='hypot(iw,ih)':c=black@0,"
                     )
-                if clip.effects.opacity != 1 or "opacity" in animated or mixed_track:
-                    transform += f"geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*({opacity})',"
                 chain = plan.tag("layer")
                 title = ""
                 if clip.text:
