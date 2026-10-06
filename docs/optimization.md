@@ -1020,8 +1020,9 @@ r3→r4、引擎读回该项确实是 2 条、芯片同步显示「2 条」，�
 1920×1080（2,587,407 字节）与 1080×1920（950,159 字节）各 4.000 秒。
 
 两处如实记录：驱动脚本一开始用 `dispatchEvent(new Event("change"))` 勾复选框，React 在 `click` 上归一化 checkbox，
-于是「覆盖」只写进 1 条——是脚本的问题，改成真实 `click()` 后一切对得上；原生截图没做（本机 in-app browser 截图
-返回 `visibilityState=hidden`），界面证据是 DOM 层与引擎回包，不是像素。
+于是「覆盖」只写进 1 条——是脚本的问题，改成真实 `click()` 后一切对得上；这一步当时没有像素证据（本机 in-app browser
+截图返回 `visibilityState=hidden`），界面证据是 DOM 层与引擎回包。发布包的 1480×900 原生截图随后补上了这一块，
+见下面的 1.42.0 发布验收——它同时证明标题栏的 `引擎在线 v1.42.0` 真的画出来了。
 
 门禁：`ruff check` / `ruff format --check` 全绿，`tests/suite_check.py` 从 39 项增至 **40 项**（新增 `recipe_check.py`）全绿。
 schema 从 v11 升到 v12 时 `grade / link / marker / transition` 四处硬编码 `== 11` 当场变红、逐条改到 12；
@@ -1029,3 +1030,18 @@ schema 从 v11 升到 v12 时 `grade / link / marker / transition` 四处硬编�
 
 仍未完成（截至 1.42）：图层节点与连线视图、亮度曲线与 LUT、色域矩阵与色彩管理、路径遮罩顶点动画、
 多目标与长时遮挡跟踪、旋转估计、自动语音字幕、缩略图与波形磁盘配额、cover 主体跟随重构图、代码签名。
+
+1.42.0 发布验收：冻结引擎 `--verify --measure 2` 通过（裸启动 4 次 min 582 ms / median 594 ms / max 676 ms，staged
+97 个文件）。包内 `/v1/capabilities` 报 `app_version=1.42.0` 且与 `/v1/info` 同一个值、`project_schema_version=12`、
+`delivery_recipes` 与两条 recipe 命令都在；`dry_run` 返回候选工程而库里 revision 不动，一次保存 r1→r2，同
+`request_id` 重放不涨也不复制方案，未知预设 422 `INVALID_RECIPE` 点名 `not-a-preset` 且不烧版本；包内 MCP
+`timeline_edit` 的 inputSchema 里确实有 `recipe.set`（本版没新增工具），调用它写入第二个方案 r2→r3。把库里读回的
+`items` 原样发给 `/renders/batch`，两条都出货：**1920×1080 / 6.000 秒** 与 **1080×1920 / 6.000 秒**；`restore` 回到
+有方案之前留下空列表与新 revision。ASAR 内 `交付方案` / `存为方案` / `recipe.set` 字节级存在，渲染层与本地构建
+逐字节一致、ASAR 版本 1.42.0。便携版 132,498,515 字节 SHA256 `f33c7f6d…e2051`，安装版 132,659,233 字节
+`6e0b4a23…b51c`，根目录 `AgentCut.exe` 与便携版逐字节相同。
+
+同一版补掉了 1.40/1.41 记录里那条证据边界：capabilities 新增 `app_version`、标题栏徽章显示「引擎在线 v1.42.0」、
+`self_check` 断言它等于 `APP_VERSION`（缺字段直接 KeyError）。于是 1.42 的原生截图 MD5 从连续三版相同的
+`31270d1b…` 变成 `c980d6b8…`，截图第一次真正具备版本区分力。完整记录见
+`C:/Users/Administrator/Documents/Codex/2026-10-04/du/outputs/AgentCut-1.42-交付记录.md`。
