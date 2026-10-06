@@ -177,6 +177,8 @@ uv run python tests/suite_check.py grade marks fourpoint   # 只跑名字含这�
 过去只能手动一个个跑——于是「门禁全绿」并不能证明这些检查真的执行过。该入口对每项打印 `PASS/FAIL` 与耗时，
 失败时贴出子进程的末尾输出，任一失败以非零码退出（用一条故意失败的探针验证过它确实会红）。
 
+渲染层的 6 个 TypeScript 检查（`tests/desktop_*_check.ts`、`tests/scope_check.ts`）以前只能手动一个个跑，「套件全绿」并不能证明它们执行过；`tests/desktop_ts_check.py` 现在用 desktop 自带的 esbuild 打包、node 执行，作为 `tests/*_check.py` 的一员被上面的入口发现（同样用故意失败的探针验证过它会红：探针不在 `desktop_*_check.ts` 这个命名模式里时它压根没被跑到，这也是这个模式必须写清楚的原因）。
+
 `media_check.py` 需要 FFmpeg：脚本会先找 `desktop/resources/bin`（随包分发的二进制），再找 `desktop/node_modules`，
 也可用 `AGENTCUT_FFMPEG` / `AGENTCUT_FFPROBE` 指定。
 

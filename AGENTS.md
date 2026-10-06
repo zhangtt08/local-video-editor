@@ -34,6 +34,6 @@
 ## 完成标准
 
 运行 `uv run ruff check src tests examples`、`uv run ruff format --check src tests examples` 和 `uv run python tests/self_check.py`。
-`self_check.py` 只覆盖它自己拉起的 HTTP/MCP 链路，逐功能的验收在 `tests/*_check.py` 里；一并运行 `uv run python tests/suite_check.py`（可加名字子串只跑相关的几个，例如 `tests/suite_check.py grade marks`），任一子检查失败该入口以非零码退出。
+`self_check.py` 只覆盖它自己拉起的 HTTP/MCP 链路，逐功能的验收在 `tests/*_check.py` 里；一并运行 `uv run python tests/suite_check.py`（可加名字子串只跑相关的几个，例如 `tests/suite_check.py grade marks`），任一子检查失败该入口以非零码退出。渲染层自己的 TypeScript 检查（`tests/desktop_*_check.ts`、`tests/scope_check.ts`）由 `tests/desktop_ts_check.py` 用 desktop 自带的 esbuild + node 跑，因此也在这个入口里——「门禁全绿」不再依赖有人手动去跑壳层检查。
 涉及媒体输出时另验真实媒体、流元数据及声画同步。
 交付说明须列明实际完成、验证证据及未完成的边界；功能未实现时能力接口不得声明可用。
