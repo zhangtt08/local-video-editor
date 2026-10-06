@@ -551,6 +551,38 @@ async function resolveProxies(width: number) {
 }
 
 /** Follow the picture with the clip's box mask: the engine analyses the media, the write is a normal command. */
+/** 主体跟随重构图：把已经跟好的遮罩路径交给引擎，换回一条把主体锁在画面中间的平移 + 缩放。 */
+export async function reframeClip(clipId: string, maxScale = 4) {
+  const project = state.project;
+  if (!engine || !project) return;
+  set({ busy: "计算主体跟随…" });
+  try {
+    const planned = await engine.reframe(project.id, clipId, {
+      request_id: newId("reframe-"), expected_revision: project.revision,
+      max_scale: maxScale, apply: false, dry_run: false,
+    });
+    const stats = planned["reframe"] as {
+      followed_points?: number; max_scale?: number; clamped_points?: number; warning?: string;
+    } | undefined;
+    if (!planned.commands.length || !stats) {
+      toast("warn", "没有可写入的跟随曲线", "引擎认为这条片段不需要（或还不能）重构图。");
+      return;
+    }
+    submit(planned.commands as Command[], "主体跟随重构图");
+    const detail = [
+      `跟随 ${stats.followed_points} 个跟好的点`,
+      `最多放大 ${stats.max_scale?.toFixed(2) ?? "?"} 倍`,
+      stats.warning ?? "画面边缘始终被盖住，没有黑边",
+    ].join(" · ");
+    toast("ok", "主体跟随已写入", `${detail}。撤销一步回到跟随前。`);
+  } catch (error) {
+    const { title, detail } = describe(error);
+    toast("error", title, detail);
+  } finally {
+    set({ busy: "" });
+  }
+}
+
 export async function trackMask(clipId: string, fromTicks: number, frames: number) {
   const project = state.project;
   if (!engine || !project) return;

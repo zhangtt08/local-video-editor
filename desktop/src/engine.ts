@@ -237,6 +237,8 @@ export type CachePruneResult = {
   kept: number;
 };
 
+export type EditPlan = { committed: boolean; project: Project; commands: Record<string, unknown>[]; [key: string]: unknown };
+
 export type Probe = {
   id: string;
   verified: VerifiedMedia;
@@ -570,6 +572,13 @@ export class Engine {
 
   cacheInventory() {
     return this.request<CacheUsage>("GET", "/v1/media/cache");
+  }
+
+  /** 四点式之外的另一个「引擎替你算」的入口：把跟好的遮罩路径变成跟随用的平移+缩放。 */
+  reframe(projectId: string, clipId: string, body: Record<string, unknown>) {
+    return this.request<EditPlan>(
+      "POST", `/v1/projects/${projectId}/clips/${clipId}/reframe`, body, 120000
+    );
   }
 
   maskTrack(projectId: string, clipId: string, body: Record<string, unknown>) {

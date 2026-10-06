@@ -54,7 +54,7 @@ import {
   nestSelection,
   openSequence,
   updateSequence,
-  trackMask,
+  reframeClip, trackMask,
   cutSilence,
   normaliseLoudness,
   alignMasterLoudness,
@@ -338,6 +338,7 @@ function MaskFields({ clip }: { clip: Clip }) {
         <label><input type="checkbox" checked={mask.inverted} onChange={(e) => setClipMask(clip.id, { ...mask, inverted: e.target.checked })} />反转遮罩</label>
         <div className="insp-actions"><button className={`btn tiny${app.maskEditing ? " active" : ""}`} aria-pressed={app.maskEditing} onClick={() => setMaskEditing(!app.maskEditing)}>画面中编辑</button>
           {animatable && project ? <button className="btn tiny" disabled={disabled} title="从播放头开始逐帧分析画面，把遮罩中心与大小写成关键帧；主体被挡住时按匀速补一段，跟丢时会停下来说明" onClick={() => { const rate = project.settings.frame_rate; const whole = Math.floor(((clip.duration_ticks - at) * rate.numerator) / (TIMEBASE * rate.denominator)); trackMask(clip.id, at, Math.max(2, Math.min(300, whole))); }}>跟踪主体</button> : null}
+          {animatable && project ? <button className="btn tiny" disabled={disabled} title="读取刚跟踪出来的遮罩路径，写入把主体保持在画面正中的平移与缩放曲线；竖屏裁切出货时主体不会跑出画面。放大上限 4 倍，跟不到时会说明" onClick={() => void reframeClip(clip.id)}>主体跟随重构图</button> : null}
           <button className="btn tiny" onClick={() => setClipMask(clip.id, { ...DEFAULT_MASK, shape: mask.shape, vertices: mask.shape === "path" ? DEFAULT_PATH.map((vertex) => ({ ...vertex, handle_out: [...vertex.handle_out] as [number, number], handle_in: [...vertex.handle_in] as [number, number] })) : null })}>重置遮罩</button></div>
         <p className="hint">遮罩随片段变换；矩形/椭圆拖中间移动、拖四角缩放，羽化占半径比例。中心与大小可按◇打关键帧，「跟踪主体」会一次写入整条路径（路径遮罩与反相遮罩不支持）。声音保持原样。</p>
       </> : null}

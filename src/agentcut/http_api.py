@@ -25,6 +25,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from . import duck, silence
 from . import fourpoint as fourpoint_module
 from . import markers as marker_plan
+from . import reframe as reframe_plan
 from .animation import graph_curve, preview_manifest, sample_values
 from .bundles import MAX_BUNDLE_BYTES, export_bundle, import_bundle
 from .contracts import (
@@ -51,6 +52,7 @@ from .contracts import (
     Property,
     ProxyPrune,
     ProxyRequest,
+    ReframeRequest,
     RenderBatch,
     RenderFit,
     RenderRange,
@@ -843,6 +845,31 @@ def create_app(
         )
         mutation = projects.mutate(project_id, batch).model_dump()
         return {**mutation, "markers": plan}
+
+    @app.post("/v1/projects/{project_id}/clips/{clip_id}/reframe", dependencies=auth)
+    def reframe(
+        project_id: Identifier, clip_id: Identifier, request: ReframeRequest, projects: Store
+    ):
+        """Follow the tracked subject: plan the pan-and-zoom that keeps it centred.
+
+        The path comes from mask keyframes the tracker already wrote, so this endpoint adds no
+        new editorial state — it converts one curve into another and hands back ordinary
+        `keyframes.replace` commands. The reducer stays the only place that decides what a legal
+        keyframe write is.
+        """
+        project = projects.get(project_id)
+        commands, notes = reframe_plan.plan(project, clip_id=clip_id, max_scale=request.max_scale)
+        body = {"reframe": notes, "commands": commands}
+        if not request.apply:
+            return {"committed": False, "project": project.model_dump(), **body}
+        batch = EditBatch(
+            request_id=request.request_id,
+            expected_revision=request.expected_revision,
+            commands=commands,
+            dry_run=request.dry_run,
+        )
+        mutation = projects.mutate(project_id, batch).model_dump()
+        return {**mutation, **body}
 
     @app.post("/v1/projects/{project_id}/four-point", dependencies=auth)
     def four_point(project_id: Identifier, request: FourPointRequest, projects: Store):

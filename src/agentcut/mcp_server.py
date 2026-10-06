@@ -28,6 +28,7 @@ from .contracts import (
     Project,
     ProjectUpdate,
     Property,
+    ReframeRequest,
     RenderBatch,
     RenderFit,
     RenderRequest,
@@ -236,6 +237,23 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         return await call(
             "POST",
             f"/v1/projects/{project_id}/markers/split",
+            request.model_dump(mode="json") | {"apply": False, "dry_run": False},
+            timeout=120,
+        )
+
+    @server.tool(annotations=read)
+    async def clip_reframe(
+        project_id: Identifier, clip_id: Identifier, request: ReframeRequest
+    ) -> dict[str, Any]:
+        """Plan the pan-and-zoom that keeps a tracked subject centred.
+
+        Read-only here: `apply` and `dry_run` are forced off. The answer says how many points it
+        follows, how far it has to zoom, and whether the framing had to stop short; submit the
+        returned `commands` with `timeline_edit` for one atomic revision.
+        """
+        return await call(
+            "POST",
+            f"/v1/projects/{project_id}/clips/{clip_id}/reframe",
             request.model_dump(mode="json") | {"apply": False, "dry_run": False},
             timeout=120,
         )

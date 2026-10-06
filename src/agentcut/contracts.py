@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 12  # v12 added project recipes; older rows still validate (ge=1).
-APP_VERSION = "1.44.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.45.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -475,6 +475,20 @@ def checked_render_name(value):
     if not name.lower().endswith(".mp4"):
         raise ValueError("filename must end with .mp4")
     return value
+
+
+class ReframeRequest(Contract):
+    """Turn the mask path a track produced into the layer motion that keeps the subject centred.
+
+    `max_scale` is how far the engine may zoom to hide the edge a pan would expose: a
+    full-frame layer shifted half a frame wide needs twice the size to still cover the picture.
+    """
+
+    request_id: Identifier
+    expected_revision: Revision
+    max_scale: Annotated[float, Field(ge=1.0, le=4.0)] = 2.0
+    apply: bool = False
+    dry_run: bool = False
 
 
 class RenderBatchItem(Contract):
@@ -1525,6 +1539,7 @@ def capabilities(media_ready: bool = False) -> dict:
             "timeline_markers": True,
             "delivery_recipes": media_ready,
             "safe_area_guides": True,
+            "subject_reframe": True,
             "cache_pruning": media_ready,
             "slip_slide_editing": True,
             "track_blend_modes": True,
