@@ -786,4 +786,84 @@ AgentCut.exe 与便携版逐字节一致。
 另外：第一次 `npm run dist` 在下载 Electron 运行时时被服务端中断（got ReadError），产物未更新，重试一次才
 成功——本轮时间戳以 21:34 那次为准。原生窗口截图本轮未采（1.37 同一脚本连试两遍只拿到 160×28 隐藏窗口，
 说明取样时机不稳；原生渲染证据沿用 1.32/1.33/1.34/1.36 的完整画面 + 本轮 ASAR 逐字节一致）。未签名，
-NSIS 向导未点击验收。完整记录见 `C:/Users/Administrator/Documents/Codex/2026-10-04/du/outputs/AgentCut-1.38-交付记录.md`。
+NSIS 向导未点击验收。完整记录见 `C:/Users/Administrator/Documents/Codex/2026-10-04/du/outputs/AgentCut-1.38-交付记录.md`
+
+## 1.39 调色节点·并联分支（2026-10-07）
+
+达芬奇给每个节点一张图：串行、并联、图层。1.32 给了串行 + 每通道混合方式，1.31 给了传递函数，
+但「两支从同一处分开、各调各的、再合起来」一直缺。这一版补上并联节点，并且刻意只做**能保持一张
+每通道表**的那种图。
+
+- 契约：`GradeParallel {kind:"parallel", branches:[1..4 个操作], enabled, mix, blend}`，支的取值就是
+  `curve`/`white_balance`/`wheels`/`transfer` 四种，各自带 `mix` 与 `blend`；支不得再嵌并联（判别联合
+  直接拒绝），所以图只有一层。命令仍是 `clip.grade` / `clip.patch.color.grade`，端点、MCP 工具、
+  回执结构一律不变，capabilities 增 `grade_parallel_branches`，工程 schema 仍 v11（`parallel` 是新
+  `kind`，旧载荷里没有它，v1–v10 的载荷与回执继续原样重放）。
+- 语义：`node_out = mean_j( step_j(in) )`，再按节点自己的 `blend`/`mix` 与 `in` 混合。停用一支**贡献它的
+  输入**（达芬奇里被绕过的链输出就是它的输入），所以「一支有效、其余停用」等于该支按 `1/支数` 生效，
+  而不是把支数改掉——这条语义被写成一条可执行的等价断言：并联 `[曲线, 停用]` 的表 ≡ 曲线 `mix=0.5` 的表。
+- 为什么两端仍然同源：串行是复合、并联是平均、混合方式是 W3C 的逐通道可分函数，三者都不跨通道，
+  所以整个图仍塌缩成每通道一条折线。`grade.py` 的改动只有 `node_function` 多一种 `kind`（返回求各支
+  `step_function` 后取均值的函数），折线合成、自适应打点、`lutrgb` 表达式、`feComponentTransfer` 表
+  一行没动；界面也**不需要**为并联新增第二条预览路径。亮度曲线、LUT、色域矩阵之所以还没做，正是因为
+  它们跨通道，需要 3D 查找表，而浏览器侧只有每通道的 `feComponentTransfer`——两端不同源就不能声称
+  预览等于导出，宁可显式说未实现。
+- 顺带修掉一处会长期复发的缺陷：`app_version` 原本手写在 `__main__.py` 与 `http_api.py` 两处、
+  桌面 `package.json` 第三处（1.29 把 schema 版本号收成一处正是同一个教训）。现在三处都读
+  `contracts.APP_VERSION`，本轮 `GET /v1/info` 实测报 `app_version=1.39.0`。
+- 验收（`tests/grade_check.py` 的 parallel 三套）：三支（色温 +0.8 / 色调 +0.6 / 恒等）浏览器 256 项表
+  与测试内**独立重写的平均算术**逐格比较最差 **0.434 阶**；同两个操作串起来的表与并联差 **24.6 阶**；
+  串行换序改变 **53.2 阶**，而并联换支序逐位相同（<1e-9）；+0.3/−0.3 色温平均在 234/256 档恒等（顶部
+  22 档因 1.09× 削顶），同对节点串行在中灰仍偏 **1.04 阶**；只动红通道的支不改变绿/蓝表；`mix=0` 的
+  并联节点不产生任何滤镜阶段；成片三档色带九通道对独立参考最大偏差 **2.01 阶**、与串行导出相差
+  **23.0 阶**；HTTP 一笔写图一个 revision、重放不涨、旧 revision 409、`dry_run` 不写、空支/5 支/嵌套
+  并联 422 且不烧版本、`restore` 把支数与强度一起还原。变异验收：把 `average` 改成「取最后一支」，
+  数学门禁当场报 **55.44 阶**。
+- 界面（vite 渲染层 + 同一引擎 HTTP，工程「并联节点界面验收」，真实导入 640×360 4 秒素材）：选片段 →
+  「+并联」→ r1→r2，节点行「1. 并联 · 2 支」→「+支」→ r3（三个支标签）→ 支 1 色温 80 → r4 → 支 2
+  色调 60 → r5 → 支 1 强度 50 → r6，每笔恰好一个 revision。每一笔后读 DOM `<filter id="g…">` 三条
+  `feFunc* tableValues` 与页面内独立重算的三支平均比较，最大偏差 **1.2e-7**；换强度后滤镜 id 由
+  `g03025c48aabec4d9` 变成 `g9fb569a043120063` 并再次逐位吻合。随后同一工程提交 `h264-720p-web` 导出，
+  任务 `succeeded`，把成片与源在同一时刻逐像素比对（只取两侧都平坦的区域）：**16,955 个像素**按通道
+  检查「成片值 = 浏览器表在源值处的输出」，最差 **5 阶**（出现在输入 255 的削顶处）。同一次验证还
+  证明了输出根守卫：`folder` 指向未授权目录时服务端返回 `OUTPUT_NOT_ALLOWED`，不写文件。
+- 门禁同步：`ruff check`、`ruff format --check`（65 文件）、`npm run typecheck`、38 项 Python 检查
+  与 5 项 esbuild 桌面检查全绿；本轮无新命令、无新 MCP 工具、无新依赖。
+
+仍未完成：图层节点（第二路输入取自图中另一个节点，需要节点连线视图与跨节点求值）、亮度曲线与
+LUT 导入、色域矩阵与完整色彩管理（三者都要跨通道的 3D 表，浏览器侧只有每通道 `feComponentTransfer`）、
+路径遮罩顶点动画、多目标与长时遮挡跟踪、旋转估计、自动语音字幕、缩略图与波形磁盘配额、代码签名。
+
+1.39.0 发布验收：本轮开始时先确认并修掉一条**已发生的交付缺陷**——`desktop/release/` 整个目录（README
+「直接用（桌面版）」表格里指向的 `AgentCut-安装版.exe`，以及 1.16–1.38 每一轮都记了 SHA256 的安装版产物）
+在本会话之前已被删除，仓库里只剩根目录的便携版；`desktop/node_modules/` 同样不在。便携版经
+`sha256sum` 核对与 1.38 记录逐字节一致（`4E1DBC56…F961`，132,484,994 字节），因此缺失的是安装版与
+win-unpacked。修法就是按文档里的重建路径重做一遍：`npm ci`（398 包，与锁文件一致）→
+`uv run python scripts/build_engine.py --verify` → `npm run dist`。
+
+冻结引擎 `--verify` 通过：`app_version=1.39.0`、`frozen=true`、裸启动冷启动 603 ms、`mcp` 模式存活、
+`tools` 与 `--help` 退出 0。发布包验收（`package_check_139.py` 驱动 `release/win-unpacked` 内的包内引擎，
+实例 a0af937317b5 / 6ae1904283e9）：capabilities 报 `grade_parallel_branches=true` 且 `commands` 含
+`clip.grade`；三支并联（色温 +0.8 强度 50 / 色调 +0.6 / 恒等）一次写入得 r2、`branches` 与强度原样读回、
+同 `request_id` 重放不涨版本、空支表 422 且不烧 revision；`GET /preview-manifest` 的 256 项表与验收脚本内
+**独立重写的分支平均**（含每支各自钳位）逐格比较最差 **0.273 阶**；真实导出 `h264-720p-web` 与同素材
+无调色对照各测三条色带的到达值（30 / 126 / 222），逐通道比较「成片值 = 表在到达值处的输出」最差
+**2.0 阶**；ASAR 内实测含「并联」「grade-b」「"parallel"」「branches」四串；包内 `agentcut.exe mcp` 用
+`timeline_edit` 写一个两支并联（wheels + white_balance）使 r2→r3 并原样读回。产物：便携版 132,487,482
+字节 SHA256 DFD29114392B9CA6B870466DC11E6BB6B4A469B28766700A0AC6DF1D36B47FFD；安装版 132,648,205 字节
+SHA256 92E2AAC2F5135CDF21DADA4C8795B27557DE1C9F62A6FF22752D9A18776A2F1E；根目录 `AgentCut.exe` 已与便携版
+`cmp` 逐字节一致。原生窗口本轮**再次拿到截图**：`Start-Process` 脱离父 shell 启动包内
+`win-unpacked/AgentCut.exe`，45 秒后该 PID 下枚举到 1 个可见窗口「AgentCut 剪辑台」1480×900，
+`PrintWindow(flags=2)` 采到完整画面（`agentcut139.png`：标题栏工程名 + r7、素材库 1 条真实素材带缩略图、
+画面/主画面/声音三轨、检查器显示母带音量 1.000 与「限制器 -7 dBTP」勾选、状态栏「吸附 开 · 62px/s」），
+随后 `CloseMainWindow()` 优雅关闭，`Get-Process AgentCut,agentcut` 查无残留；该会话加载的是用户
+`%APPDATA%` 下的真实工程，只截图未编辑。未签名，NSIS 向导未点击验收。
+
+本轮两条台架事实记录在案（都是我的验收写错、不是产品错，改对了才算门禁有效）：① 第一版包内参考实现把
+钳位放在**求平均之后**，而产品是每支各自钳位再平均，于是报出 7.31 阶的假偏差；② 第一版成片比较用
+「源文件解码值」当表的输入，忽略了图内部 yuv→rgb 与验收脚本解码的到达值不同，报出 4 阶假偏差；改成
+「同一次编码、无调色对照的到达值」作输入后，实测 2.0 阶。
+
+全量门禁（本轮结束时）：`ruff check`、`ruff format --check`（65 文件）、38 项 Python 检查（含
+`tests/grade_check.py` 的 parallel 三套）串行全绿、5 项 esbuild 桌面检查全绿、`npm run typecheck` 通过。
+完整记录见 `C:/Users/Administrator/Documents/Codex/2026-10-04/du/outputs/AgentCut-1.39-交付记录.md`。。

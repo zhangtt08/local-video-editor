@@ -63,11 +63,15 @@ export const BLEND_MODES: [BlendMode, string][] = [
 export const blendLabel = (mode: BlendMode): string =>
   BLEND_MODES.find(([value]) => value === mode)?.[1] ?? mode;
 
-export type GradeNode =
+export type GradeOperation =
   | { kind: "curve"; channel: GradeChannel; points: GradeCurvePoint[]; enabled: boolean; mix?: number; blend?: BlendMode }
   | { kind: "white_balance"; temperature: number; tint: number; enabled: boolean; mix?: number; blend?: BlendMode }
   | { kind: "wheels"; lift: number[]; gamma: number[]; gain: number[]; enabled: boolean; mix?: number; blend?: BlendMode }
   | { kind: "transfer"; input_space: ColorSpace; output_space: ColorSpace; enabled: boolean; mix?: number; blend?: BlendMode };
+/** A parallel node's branch is always a single operation, so the graph never nests. */
+export type GradeBranch = GradeOperation;
+export type GradeParallel = { kind: "parallel"; branches: GradeBranch[]; enabled: boolean; mix?: number; blend?: BlendMode };
+export type GradeNode = GradeOperation | GradeParallel;
 export type ColorSpace =
   | "linear" | "srgb" | "gamma18" | "gamma20" | "gamma22" | "gamma24" | "rec709";
 export const COLOR_SPACES: [ColorSpace, string][] = [

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import {DEFAULT_TRANSFER, COLOR_SPACES, DEFAULT_CURVE_POINTS, DEFAULT_WHEELS, type GradeChannel, type GradeCurvePoint, type GradeNode, type ColorSpace, BLEND_MODES, blendLabel, type BlendMode} from "../engine";
+import {DEFAULT_TRANSFER, COLOR_SPACES, DEFAULT_CURVE_POINTS, DEFAULT_WHEELS, type GradeChannel, type GradeCurvePoint, type GradeNode, type GradeOperation, type GradeParallel, type ColorSpace, BLEND_MODES, blendLabel, type BlendMode} from "../engine";
 import { editableProject, setClipColor, useApp } from "../store";
 
 const CHANNELS: [GradeChannel, string][] = [["rgb", "主色"], ["red", "红"], ["green", "绿"], ["blue", "蓝"]];
@@ -9,11 +9,13 @@ const NODE_NAMES: Record<GradeNode["kind"], string> = {
   white_balance: "白平衡",
   wheels: "RGB 增益",
   transfer: "色彩空间",
+  parallel: "并联",
 };
 const GREEN_MAGENTA = [0.70710678, -0.70710678, 0];
 const BLUE_YELLOW = [0.40824829, 0.40824829, -0.81649758];
 const MAX_NODES = 8;
 const MAX_POINTS = 16;
+const MAX_BRANCHES = 4;
 
 function clamp(value: number, lo: number, hi: number) {
   return Math.min(hi, Math.max(lo, value));
@@ -184,11 +186,73 @@ function CurvePad({ points, onCommit }: { points: GradeCurvePoint[]; onCommit: (
   </div>;
 }
 
-/** 调色节点：一条串行链，引擎把它编译成每通道一张表，预览与导出共用。 */
+/** 一个操作的编辑控件：曲线、白平衡、色彩空间、RGB 增益。串行节点与并联分支共用这一套。 */
+function OpFields({ node, idPrefix, onCommit }: { node: GradeNode; idPrefix: string; onCommit: (next: GradeNode) => void }) {
+  if (node.kind === "curve") {
+    return <div className="grade-body">
+      <label className="mask-shape">通道 <select className="input" aria-label="曲线通道" value={node.channel} onChange={(e) => onCommit({ ...node, channel: e.target.value as GradeChannel })}>{CHANNELS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <CurvePad points={node.points} onCommit={(points) => onCommit({ ...node, points })} />
+      <p className="hint">{node.channel === "rgb" ? "主色曲线同时作用于三个通道" : `只改${CHANNELS.find(([value]) => value === node.channel)?.[1]}通道`}，共 {node.points.length} 个点。</p>
+    </div>;
+  }
+  if (node.kind === "white_balance") {
+    return <div className="grade-body">
+      <Num id={`${idPrefix}-temp`} label="色温" value={node.temperature * 100} min={-100} max={100} step={1} unit="±" onCommit={(value) => onCommit({ ...node, temperature: round(value / 100) })} />
+      <Num id={`${idPrefix}-tint`} label="色调" value={node.tint * 100} min={-100} max={100} step={1} unit="±" onCommit={(value) => onCommit({ ...node, tint: round(value / 100) })} />
+      <p className="hint">正值偏暖，色调正值偏绿；按通道增益实现，不做色彩管理转换。</p>
+    </div>;
+  }
+  if (node.kind === "transfer") {
+    return <div className="grade-body">
+      <label className="mask-shape">输入色彩空间 <select className="input" aria-label="输入色彩空间" value={node.input_space} onChange={(e) => onCommit({ ...node, input_space: e.target.value as ColorSpace })}>{COLOR_SPACES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <label className="mask-shape">输出色彩空间 <select className="input" aria-label="输出色彩空间" value={node.output_space} onChange={(e) => onCommit({ ...node, output_space: e.target.value as ColorSpace })}>{COLOR_SPACES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <p className="hint">只换算传递函数（gamma / sRGB / BT.1886），不动色域基色也不做矩阵变换：手机素材与屏幕录制是 sRGB，广播时间线是 BT.1886（等于 gamma 2.4），这一节把前者的暗部按发布标准抬到后者。预览与导出共用同一张每通道表，暗部拐点用自适应打点，误差不超过半个色阶。</p>
+    </div>;
+  }
+  if (node.kind === "wheels") {
+    return <div className="grade-body wheels-body">
+      {([["lift", "阴影", 0, -0.5, 0.5, 0.5], ["gamma", "中间调", 1, 0.1, 10, 0.5], ["gain", "亮部", 1, 0, 4, 0.5]] as const).map(([field, label, base, lo, hi, span]) => <div className="wheel-group" key={field}>
+        <WheelPad values={node[field]} base={base} span={span} lo={lo} hi={hi} onCommit={(next) => onCommit({ ...node, [field]: next.map(round) })} />
+        <span className="panel-label">{label}</span>
+        {(["红", "绿", "蓝"] as const).map((name, index) => <Num key={name} id={`${idPrefix}-${field}-${index}`} label={name} value={node[field][index] - base} min={lo - base} max={hi - base} step={0.01} onCommit={(value) => { const next = node[field].slice(); next[index] = round(value + base); onCommit({ ...node, [field]: next }); }} />)}
+      </div>)}
+      <p className="hint">圆盘左绿右品红、上黄下蓝，只改彩度；要整体提亮请用右侧数值。达芬奇式的色轮盘面方向一致，但这里不是完整的色彩管理。</p>
+    </div>;
+  }
+  return null;
+}
+
+/** 强度与混合方式：节点有自己的一对，并联分支也有，语义相同——都只与该支/该节点的输入比较。 */
+function MixFields({ node, idPrefix, label, onCommit }: { node: GradeNode; idPrefix: string; label: string; onCommit: (next: GradeNode) => void }) {
+  return <div className="grade-body">
+    <label className="mask-shape">混合方式
+      <select className="input" aria-label={`${label}混合方式`} value={node.blend ?? "normal"} onChange={(e) => onCommit({ ...node, blend: e.target.value as BlendMode })}>
+        {BLEND_MODES.map(([value, name]) => <option key={value} value={value}>{name}</option>)}
+      </select>
+    </label>
+    <Num id={`${idPrefix}-mix`} label={`${label}强度`} value={(node.mix ?? 1) * 100} min={0} max={100} step={5} unit="%"
+      onCommit={(value) => onCommit({ ...node, mix: round(value / 100) })} />
+    <p className="hint">强度把该{label === "节点" ? "节点" : "支"}的结果与它的输入按比例混合，0% 等于跳过；达芬奇的 Mix 语义，预览与导出仍共用同一张每通道表。</p>
+  </div>;
+}
+
+/** 新建一个操作：串行节点与并联分支的起点都一样，全部是「不动画面」的中性值。 */
+function newOperation(kind: GradeOperation["kind"]): GradeOperation {
+  return kind === "curve"
+    ? { kind: "curve", channel: "rgb", points: DEFAULT_CURVE_POINTS.map((point) => ({ ...point })), enabled: true }
+    : kind === "white_balance"
+      ? { kind: "white_balance", temperature: 0, tint: 0, enabled: true }
+      : kind === "transfer"
+        ? { kind: "transfer", ...DEFAULT_TRANSFER, enabled: true }
+        : { kind: "wheels", lift: [...DEFAULT_WHEELS.lift], gamma: [...DEFAULT_WHEELS.gamma], gain: [...DEFAULT_WHEELS.gain], enabled: true };
+}
+
+/** 调色节点：串行链与并联分支，引擎都编译成每通道一张表，预览与导出共用。 */
 export function GradeFields({ clipId }: { clipId: string }) {
   const app = useApp();
   const project = editableProject(app);
   const [active, setActive] = useState(0);
+  const [branchSlot, setSlot] = useState(0);
   const pending = useRef<number | null>(null);
   const clip = project?.clips[clipId];
   const nodes = clip?.color?.grade ?? [];
@@ -215,72 +279,65 @@ export function GradeFields({ clipId }: { clipId: string }) {
   };
   const add = (kind: GradeNode["kind"]) => {
     if (nodes.length >= MAX_NODES) return;
-    const node: GradeNode = kind === "curve"
-      ? { kind: "curve", channel: "rgb", points: DEFAULT_CURVE_POINTS.map((point) => ({ ...point })), enabled: true }
-      : kind === "white_balance"
-        ? { kind: "white_balance", temperature: 0, tint: 0, enabled: true }
-        : kind === "transfer"
-          ? { kind: "transfer", ...DEFAULT_TRANSFER, enabled: true }
-          : { kind: "wheels", lift: [...DEFAULT_WHEELS.lift], gamma: [...DEFAULT_WHEELS.gamma], gain: [...DEFAULT_WHEELS.gain], enabled: true };
+    const node: GradeNode = kind === "parallel"
+      ? { kind: "parallel", branches: [newOperation("white_balance"), newOperation("white_balance")], enabled: true }
+      : newOperation(kind);
     write([...nodes, node]);
     pending.current = nodes.length;
   };
 
   const current = nodes[active];
+  const branches = current?.kind === "parallel" ? current.branches : [];
+  // Clamped here instead of in an effect, so a stale slot from another node can never edit the wrong branch.
+  const slot = Math.min(branchSlot, Math.max(0, branches.length - 1));
+  const shown = branches[slot] ?? null;
+  const replaceBranch = (node: GradeParallel, index: number, next: GradeNode) => replace(active, {
+    ...node,
+    branches: node.branches.map((entry, position) => position === index && next.kind !== "parallel" ? next : entry),
+  });
+  const addBranch = (node: GradeParallel) => {
+    replace(active, { ...node, branches: [...node.branches, newOperation("white_balance")] });
+    setSlot(node.branches.length);
+  };
+  const removeBranch = (node: GradeParallel) => {
+    const next = node.branches.filter((_, position) => position !== slot);
+    replace(active, { ...node, branches: next });
+    setSlot(Math.max(0, slot - 1));
+  };
 
   return <details className="insp-section grade-section" open={nodes.length > 0}>
     <summary className="panel-label">调色节点{nodes.length ? ` · ${nodes.length} 个` : ""}</summary>
     <fieldset className="effects-fields" disabled={locked}>
       <div className="batch-actions">
-        {(["curve", "white_balance", "wheels", "transfer"] as const).map((kind) => <button key={kind} className="btn tiny" disabled={nodes.length >= MAX_NODES} onClick={() => add(kind)}>+{NODE_NAMES[kind]}</button>)}
+        {(["curve", "white_balance", "wheels", "transfer", "parallel"] as const).map((kind) => <button key={kind} className="btn tiny" disabled={nodes.length >= MAX_NODES} onClick={() => add(kind)}>+{NODE_NAMES[kind]}</button>)}
       </div>
       {nodes.length ? <div className="grade-list" role="list">
         {nodes.map((node, index) => <div className="grade-row" key={index} role="listitem">
-          <button className={`grade-pick${index === active ? " active" : ""}`} onClick={() => setActive(index)} aria-label={`选择${NODE_NAMES[node.kind]}节点`}>{index + 1}. {NODE_NAMES[node.kind]}{node.blend && node.blend !== "normal" ? ` · ${blendLabel(node.blend)}` : ""}{node.mix === undefined || node.mix === 1 ? "" : ` · ${Math.round(node.mix * 100)}%`}</button>
+          <button className={`grade-pick${index === active ? " active" : ""}`} onClick={() => setActive(index)} aria-label={`选择${NODE_NAMES[node.kind]}节点`}>{index + 1}. {NODE_NAMES[node.kind]}{node.kind === "parallel" ? ` · ${node.branches.length} 支` : ""}{node.blend && node.blend !== "normal" ? ` · ${blendLabel(node.blend)}` : ""}{node.mix === undefined || node.mix === 1 ? "" : ` · ${Math.round(node.mix * 100)}%`}</button>
           <label className="grade-switch"><input type="checkbox" checked={node.enabled} onChange={(e) => replace(index, { ...node, enabled: e.target.checked })} />启用</label>
           <button className="btn tiny" disabled={index === 0} onClick={() => move(index, -1)} aria-label="上移节点">↑</button>
           <button className="btn tiny" disabled={index === nodes.length - 1} onClick={() => move(index, 1)} aria-label="下移节点">↓</button>
           <button className="btn tiny danger" onClick={() => { write(nodes.filter((_, position) => position !== index)); setActive(Math.max(0, index - 1)); }} aria-label="移除节点">删</button>
         </div>)}
-      </div> : <p className="hint">曝光、对比度、饱和度之后按顺序执行这些节点。曲线、白平衡、RGB 增益与色彩空间都只改每通道值，预览与导出共用同一张表。</p>}
+      </div> : <p className="hint">曝光、对比度、饱和度之后按顺序执行这些节点。曲线、白平衡、RGB 增益、色彩空间与并联都只改每通道值，预览与导出共用同一张表。</p>}
 
-      {current?.kind === "curve" ? <div className="grade-body">
-        <label className="mask-shape">通道 <select className="input" aria-label="曲线通道" value={current.channel} onChange={(e) => replace(active, { ...current, channel: e.target.value as GradeChannel })}>{CHANNELS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        <CurvePad points={current.points} onCommit={(points) => replace(active, { ...current, points })} />
-        <p className="hint">{current.channel === "rgb" ? "主色曲线同时作用于三个通道" : `只改${CHANNELS.find(([value]) => value === current.channel)?.[1]}通道`}，共 {current.points.length} 个点。</p>
+      {current && current.kind !== "parallel" ? <OpFields node={current} idPrefix="grade" onCommit={(next) => replace(active, next)} /> : null}
+
+      {current?.kind === "parallel" ? <div className="grade-body">
+        <div className="batch-actions">
+          {current.branches.map((branch, index) => <button key={index} className={`grade-pick${index === slot ? " active" : ""}`} onClick={() => setSlot(index)} aria-label={`选择第 ${index + 1} 支`}>{index + 1}. {NODE_NAMES[branch.kind]}{branch.mix === undefined || branch.mix === 1 ? "" : ` · ${Math.round(branch.mix * 100)}%`}</button>)}
+          <button className="btn tiny" disabled={current.branches.length >= MAX_BRANCHES} onClick={() => addBranch(current)} aria-label="增加一支">+支</button>
+          <button className="btn tiny danger" disabled={current.branches.length <= 1} onClick={() => removeBranch(current)} aria-label="删除本支">删支</button>
+        </div>
+        {shown ? <>
+          <OpFields node={shown} idPrefix={`grade-b${slot}`} onCommit={(next) => replaceBranch(current, slot, next)} />
+          <MixFields node={shown} idPrefix={`grade-b${slot}`} label="支" onCommit={(next) => replaceBranch(current, slot, next)} />
+          <label className="grade-switch"><input type="checkbox" checked={shown.enabled} onChange={(e) => replaceBranch(current, slot, { ...shown, enabled: e.target.checked })} />启用本支</label>
+        </> : null}
+        <p className="hint">并联的每一支都从本节点的输入重新开始算，节点输出取各支的平均值；停用一支等于那支直通，不会改变支数。平均的对象仍然是每通道函数，所以整个并联节点还是一张表，预览与导出共用。</p>
       </div> : null}
 
-      {current?.kind === "white_balance" ? <div className="grade-body">
-        <Num id="grade-temp" label="色温" value={current.temperature * 100} min={-100} max={100} step={1} unit="±" onCommit={(value) => replace(active, { ...current, temperature: round(value / 100) })} />
-        <Num id="grade-tint" label="色调" value={current.tint * 100} min={-100} max={100} step={1} unit="±" onCommit={(value) => replace(active, { ...current, tint: round(value / 100) })} />
-        <p className="hint">正值偏暖，色调正值偏绿；按通道增益实现，不做色彩管理转换。</p>
-      </div> : null}
-
-      {current?.kind === "transfer" ? <div className="grade-body">
-        <label className="mask-shape">输入色彩空间 <select className="input" aria-label="输入色彩空间" value={current.input_space} onChange={(e) => replace(active, { ...current, input_space: e.target.value as ColorSpace })}>{COLOR_SPACES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        <label className="mask-shape">输出色彩空间 <select className="input" aria-label="输出色彩空间" value={current.output_space} onChange={(e) => replace(active, { ...current, output_space: e.target.value as ColorSpace })}>{COLOR_SPACES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        <p className="hint">只换算传递函数（gamma / sRGB / BT.1886），不动色域基色也不做矩阵变换：手机素材与屏幕录制是 sRGB，广播时间线是 BT.1886（等于 gamma 2.4），这一节把前者的暗部按发布标准抬到后者。预览与导出共用同一张每通道表，暗部拐点用自适应打点，误差不超过半个色阶。</p>
-      </div> : null}
-
-      {current?.kind === "wheels" ? <div className="grade-body wheels-body">
-        {([["lift", "阴影", 0, -0.5, 0.5, 0.5], ["gamma", "中间调", 1, 0.1, 10, 0.5], ["gain", "亮部", 1, 0, 4, 0.5]] as const).map(([field, label, base, lo, hi, span]) => <div className="wheel-group" key={field}>
-          <WheelPad values={current[field]} base={base} span={span} lo={lo} hi={hi} onCommit={(next) => replace(active, { ...current, [field]: next.map(round) })} />
-          <span className="panel-label">{label}</span>
-          {(["红", "绿", "蓝"] as const).map((name, index) => <Num key={name} id={`grade-${field}-${index}`} label={name} value={current[field][index] - base} min={lo - base} max={hi - base} step={0.01} onCommit={(value) => { const next = current[field].slice(); next[index] = round(value + base); replace(active, { ...current, [field]: next }); }} />)}
-        </div>)}
-        <p className="hint">圆盘左绿右品红、上黄下蓝，只改彩度；要整体提亮请用右侧数值。达芬奇式的色轮盘面方向一致，但这里不是完整的色彩管理。</p>
-      </div> : null}
-
-      {current ? <div className="grade-body">
-        <label className="mask-shape">混合方式
-          <select className="input" aria-label="节点混合方式" value={current.blend ?? "normal"} onChange={(e) => replace(active, { ...current, blend: e.target.value as BlendMode })}>
-            {BLEND_MODES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
-        </label>
-        <Num id={`grade-mix-${active}`} label="节点强度" value={(current.mix ?? 1) * 100} min={0} max={100} step={5} unit="%"
-          onCommit={(value) => replace(active, { ...current, mix: round(value / 100) })} />
-        <p className="hint">强度把该节点的结果与它的输入按比例混合，0% 等于跳过该节点；达芬奇的 Mix 语义，预览与导出仍共用同一张每通道表。</p>
-      </div> : null}
+      {current ? <MixFields node={current} idPrefix="grade" label="节点" onCommit={(next) => replace(active, next)} /> : null}
 
       {nodes.length ? <button className="btn tiny" onClick={() => write([])}>清空调色节点</button> : null}
     </fieldset>

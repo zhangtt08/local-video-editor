@@ -103,37 +103,56 @@ def predict(nodes: list[dict], index: int) -> list[float]:
         step = next(i for i in range(len(xs) - 1) if value <= xs[i + 1])
         return ys[step] + (value - xs[step]) * (ys[step + 1] - ys[step]) / (xs[step + 1] - xs[step])
 
+    def operation(node: dict, value: float) -> float | None:
+        """One operation on the value entering it; None when it does not touch this channel."""
+        if node["kind"] == "curve":
+            channel = node.get("channel", "rgb")
+            if channel != "rgb" and {"red": 0, "green": 1, "blue": 2}[channel] != index:
+                return None
+            return curve(node, value)
+        if node["kind"] == "transfer":
+            return clamp(encode(node["output_space"], decode(node["input_space"], value)))
+        if node["kind"] == "white_balance":
+            warm, green, shift = 0.30, 0.20, 0.10
+            factors = (
+                1 + warm * node["temperature"] + shift * node["tint"],
+                1 - green * node["tint"],
+                1 - warm * node["temperature"] + shift * node["tint"],
+            )
+            return clamp(value * factors[index])
+        if node["kind"] == "parallel":
+            # Resolve semantics: each branch re-reads the node's input, the node outputs the mean,
+            # and a bypassed branch contributes that input (so it never renumbers the others).
+            parts = []
+            for branch in node["branches"]:
+                out = node_step(branch, value)
+                parts.append(value if out is None else out)
+            return sum(parts) / len(parts)
+        return clamp(
+            max(value, 0.0) ** (1 / node["gamma"][index]) * node["gain"][index]
+            + node["lift"][index]
+        )
+
+    def node_step(node: dict, value: float) -> float | None:
+        """A node or branch with its own strength and blend, or None when it changes nothing."""
+        if not node.get("enabled", True) or not node.get("mix", 1):
+            return None
+        inner = operation(node, value)
+        if inner is None:
+            return None
+        return clamp(
+            value
+            + node.get("mix", 1)
+            * (blend_reference(node.get("blend", "normal"), value, inner) - value)
+        )
+
     table = []
     for position in range(256):
         value = position / 255
         for node in nodes:
-            if not node.get("enabled", True) or not node.get("mix", 1):
-                continue
-            before = value
-            if node["kind"] == "curve":
-                channel = node.get("channel", "rgb")
-                if channel == "rgb" or {"red": 0, "green": 1, "blue": 2}[channel] == index:
-                    value = curve(node, value)
-            elif node["kind"] == "transfer":
-                value = clamp(encode(node["output_space"], decode(node["input_space"], value)))
-            elif node["kind"] == "white_balance":
-                warm, green, shift = 0.30, 0.20, 0.10
-                factors = (
-                    1 + warm * node["temperature"] + shift * node["tint"],
-                    1 - green * node["tint"],
-                    1 - warm * node["temperature"] + shift * node["tint"],
-                )
-                value = clamp(value * factors[index])
-            else:
-                value = clamp(
-                    max(value, 0.0) ** (1 / node["gamma"][index]) * node["gain"][index]
-                    + node["lift"][index]
-                )
-            value = clamp(
-                before
-                + node.get("mix", 1)
-                * (blend_reference(node.get("blend", "normal"), before, value) - before)
-            )
+            stepped = node_step(node, value)
+            if stepped is not None:
+                value = stepped
         table.append(clamp(value))
     return table
 
@@ -591,6 +610,329 @@ def media_suite(folder: Path) -> None:
     assert preview_manifest(v9)["clips"]["c"]["grade"] is None
 
 
+CHANNELS = ("r", "g", "b")
+
+
+def parallel_math_suite(folder: Path) -> None:
+    """并联节点：每一支都从本节点的输入重新开始算，节点输出是各支的平均值。"""
+    source = banded_source(folder)
+    lift = {
+        "kind": "curve",
+        "channel": "rgb",
+        "points": [{"x": 0.0, "y": 0.25}, {"x": 1.0, "y": 1.0}],
+    }
+    crush = {
+        "kind": "wheels",
+        "lift": [0.0, 0.0, 0.0],
+        "gamma": [0.45, 0.6, 0.8],
+        "gain": [0.9, 1.0, 1.1],
+    }
+    neutral = {"kind": "white_balance", "temperature": 0.0, "tint": 0.0}
+    warm = {"kind": "white_balance", "temperature": 0.3, "tint": 0.0}
+    cool = {"kind": "white_balance", "temperature": -0.3, "tint": 0.0}
+
+    def tables(nodes: list[dict]) -> dict | None:
+        return grade_tables(make_project(source, nodes).clips["c"].color)
+
+    def drift(left: dict, right: dict, name: str) -> float:
+        return max(abs(left[name][key] - right[name][key]) * 255 for key in range(256))
+
+    graph = {"kind": "parallel", "branches": [lift, crush]}
+    measured = tables([graph])
+    assert measured is not None
+    worst = max(
+        abs(measured[name][key] - predict([graph], index)[key]) * 255
+        for index, name in enumerate(CHANNELS)
+        for key in range(256)
+    )
+    assert worst <= 0.5, worst
+    serial = tables([lift, crush])
+    gap = max(drift(measured, serial, name) for name in CHANNELS)
+    assert gap > 8.0, ("a parallel node is not a serial chain wearing a new name", gap)
+    reversed_serial = tables([crush, lift])
+    order = max(drift(serial, reversed_serial, name) for name in CHANNELS)
+    assert order > 2.0, ("serial order must change the picture", order)
+    swapped = tables([{"kind": "parallel", "branches": [crush, lift]}])
+    symmetric = max(drift(measured, swapped, name) for name in CHANNELS)
+    assert symmetric < 1e-9, ("a mean does not care about branch order", symmetric)
+    print(
+        "   parallel: the mean of the branches is the shipped arithmetic "
+        f"(table follows the reference within {worst:.3f} levels, "
+        f"{gap:.1f} levels away from the same two operations in series, "
+        f"{order:.1f} levels of order dependence in series, branch order exactly free)"
+    )
+
+    bypassed = tables([{"kind": "parallel", "branches": [lift, {**neutral, "enabled": False}]}])
+    halved = tables([{**lift, "mix": 0.5}])
+    assert max(drift(bypassed, halved, name) for name in CHANNELS) <= 0.5, (
+        "a bypassed branch contributes its input, so one live branch of two is half strength"
+    )
+
+    opposing = tables([{"kind": "parallel", "branches": [warm, cool]}])
+    assert opposing is not None, (
+        "only the top of the range clamps, so the pair is not exactly empty"
+    )
+    # (1.09 + 0.91) / 2 is 1.0 on red and blue, and (1.0 + 1.0) / 2 on green: the branches cancel up
+    # to the point where the brighter one starts clipping, which is 1/1.09 = 0.9174 → level 233.
+    # A serial chain cannot cancel at all, and the simplified polyline holds the cancellation to
+    # within half a level.
+    opposing_nodes = [{"kind": "parallel", "branches": [warm, cool]}]
+    for index, name in enumerate(CHANNELS):
+        reference = predict(opposing_nodes, index)
+        for key in range(234):
+            assert abs(opposing[name][key] * 255 - key) <= 0.5, (
+                name,
+                key,
+                opposing[name][key] * 255,
+            )
+        assert max(abs(opposing[name][key] - reference[key]) * 255 for key in range(256)) <= 0.5
+    chained = tables([warm, cool])
+    off = max(abs(chained[name][128] - 128 / 255) * 255 for name in CHANNELS)
+    assert off > 1.0, ("the same two branches in series must not cancel", off)
+    print(
+        "   parallel: +0.3 and -0.3 colour temperature cancel within half a level on every level "
+        f"below the clamp (234 of 256), while in series the mid grey is {off:.2f} levels off"
+    )
+
+    red_only = {
+        "kind": "curve",
+        "channel": "red",
+        "points": [{"x": 0.0, "y": 0.0}, {"x": 1.0, "y": 0.5}],
+    }
+    mixed = tables([{"kind": "parallel", "branches": [red_only, neutral]}])
+    assert all(abs(mixed["g"][key] - key / 255) < 1e-9 for key in range(256)), (
+        "a red-only branch must not move green: the other branch is the identity, and their mean is"
+    )
+    assert all(abs(mixed["b"][key] - key / 255) < 1e-9 for key in range(256))
+    assert abs(mixed["r"][128] - 0.375) < 0.002, mixed["r"][128]
+
+    blended = tables(
+        [{"kind": "parallel", "branches": [lift, crush], "blend": "lighten", "mix": 0.75}]
+    )
+    reference = predict(
+        [{"kind": "parallel", "branches": [lift, crush], "blend": "lighten", "mix": 0.75}], 0
+    )
+    assert max(abs(blended["r"][key] - reference[key]) * 255 for key in range(256)) <= 0.5
+
+    stage = grade_filter(make_project(source, [graph]).clips["c"].color)
+    assert stage.startswith("lutrgb=") and set(stage) <= SAFE, stage[:120]
+    expressions = {name: stage.split(f"{name}='")[1].split("'")[0] for name in CHANNELS}
+    assert len(set(expressions.values())) == 3, "the three channels must not share one expression"
+    assert grade_filter(make_project(source, [{**graph, "mix": 0.0}]).clips["c"].color) == "", (
+        "a parallel node at zero strength must add no stage"
+    )
+    print("   parallel: the FFmpeg expression is compiled from the same mean, per channel")
+
+    for bad in (
+        {"kind": "parallel", "branches": []},
+        {"kind": "parallel", "branches": [neutral] * 5},
+        {"kind": "parallel", "branches": [{"kind": "parallel", "branches": [neutral]}]},
+        {"kind": "parallel", "branches": [{"kind": "curves"}]},
+    ):
+        try:
+            ClipColor(grade=[bad])
+        except ValidationError:
+            continue
+        raise AssertionError(f"{str(bad)[:60]} must not validate")
+    print("   parallel: empty, over-full and nested branch lists are refused by the contract")
+
+
+def parallel_media_suite(folder: Path) -> None:
+    """The branch mean has to survive the encoder, not only the compiler."""
+    source = banded_source(folder)
+    lift = {
+        "kind": "curve",
+        "channel": "rgb",
+        "points": [{"x": 0.0, "y": 0.25}, {"x": 1.0, "y": 1.0}],
+    }
+    crush = {
+        "kind": "wheels",
+        "lift": [0.0, 0.0, 0.0],
+        "gamma": [0.45, 0.6, 0.8],
+        "gain": [0.9, 1.0, 1.1],
+    }
+    graph = {"kind": "parallel", "branches": [lift, crush]}
+    levels = band_levels(render(make_project(source, [graph]), folder, "parallel.mp4"))
+    serial_levels = band_levels(render(make_project(source, [lift, crush]), folder, "serial.mp4"))
+    worst = 0.0
+    for channel in range(3):
+        expected = predict([graph], channel)
+        for band, input_level in enumerate(BANDS):
+            worst = max(worst, abs(levels[channel][band] - expected[input_level] * 255))
+    assert worst <= 4.0, (worst, levels)
+    apart = max(abs(levels[c][b] - serial_levels[c][b]) for c in range(3) for b in range(3))
+    assert apart > 6.0, ("the delivered pixels must show the mean, not the chain", apart)
+    print(
+        "   parallel: rendered bands "
+        + str([[int(value) for value in row] for row in zip(*levels)])
+        + f" follow the branch mean within {worst:.2f} levels and sit {apart:.1f} levels from"
+        " the same two operations in series"
+    )
+    assert "lutrgb=" in "\n".join(
+        compile_render_plan(make_project(source, [graph]), "h264-source-quality").filters
+    )
+
+
+def parallel_http_suite(folder: Path) -> None:
+    """A graph write is an ordinary edit: one revision, replayable, browser reads the mean."""
+    token = "par-" + "b" * 48
+    with TestClient(
+        create_app(folder / "db-par.sqlite3", token),
+        base_url="http://127.0.0.1",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as client:
+        features = client.get("/v1/capabilities").json()["features"]
+        assert features["grade_parallel_branches"] is True, features
+
+        project = client.post(
+            "/v1/projects", json={"request_id": "new", "name": "parallel"}
+        ).json()["project"]
+        path = f"/v1/projects/{project['id']}"
+
+        def edit(request_id, revision, commands, dry=False):
+            return client.post(
+                path + "/edits",
+                json={
+                    "request_id": request_id,
+                    "expected_revision": revision,
+                    "commands": commands,
+                    "dry_run": dry,
+                },
+            )
+
+        seed = [
+            {"op": "track.add", "track": {"id": "v", "kind": "video", "name": "v"}},
+            {
+                "op": "asset.register",
+                "asset": {
+                    "id": "pic",
+                    "kind": "video",
+                    "label": "p",
+                    "reference": "r",
+                    "duration_ticks": T,
+                },
+            },
+            {
+                "op": "clip.add",
+                "clip": {
+                    "id": "c",
+                    "asset_id": "pic",
+                    "track_id": "v",
+                    "position_ticks": 0,
+                    "duration_ticks": T,
+                },
+            },
+        ]
+        assert edit("seed", 0, seed).status_code == 200
+
+        warm = {"kind": "white_balance", "temperature": 0.4, "tint": 0.0}
+        cool = {"kind": "white_balance", "temperature": -0.2, "tint": 0.1}
+        curve = {**RGB_CURVE, "mix": 0.6}
+        graph = {
+            "kind": "parallel",
+            "branches": [warm, cool, curve],
+            "blend": "screen",
+            "mix": 0.8,
+        }
+        command = {"op": "clip.grade", "clip_id": "c", "grade": [graph]}
+
+        planned = edit("p1", 1, [command], dry=True)
+        assert planned.status_code == 200 and not planned.json()["committed"], planned.text
+        assert client.get(path).json()["revision"] == 1, "a dry run must not write the graph"
+
+        written = edit("p2", 1, [command])
+        assert written.status_code == 200, written.text
+        stored = written.json()["project"]["clips"]["c"]["color"]["grade"][0]
+        assert stored["kind"] == "parallel" and len(stored["branches"]) == 3, stored
+        assert stored["branches"][2]["mix"] == 0.6 and stored["blend"] == "screen", stored
+        assert written.json()["project"]["revision"] == 2, "one graph write is one revision"
+
+        again = edit("p2", 1, [command])
+        assert again.json()["replayed"] is True and again.json()["project"]["revision"] == 2
+        stale = edit("p3", 1, [{"op": "clip.grade", "clip_id": "c", "grade": []}])
+        assert stale.status_code == 409, stale.text
+
+        manifest = client.post("/v1/preview-manifest", json=written.json()["project"]).json()[
+            "clips"
+        ]["c"]
+        grade = manifest["grade"]
+        assert grade is not None and len(grade["r"]) == 256
+        assert f"url(#{grade['id']})" in manifest["color_filter"]
+        drift = max(
+            abs(grade[name][key] - predict([graph], index)[key]) * 255
+            for index, name in enumerate(CHANNELS)
+            for key in range(256)
+        )
+        assert drift <= 0.5, drift
+
+        muted = edit(
+            "p4",
+            2,
+            [
+                {
+                    "op": "clip.grade",
+                    "clip_id": "c",
+                    "grade": [{**graph, "branches": [warm, cool, {**curve, "enabled": False}]}],
+                }
+            ],
+        )
+        assert muted.status_code == 200, muted.text
+        assert len(muted.json()["project"]["clips"]["c"]["color"]["grade"][0]["branches"]) == 3
+        quieter = client.post("/v1/preview-manifest", json=muted.json()["project"]).json()["clips"][
+            "c"
+        ]["grade"]
+        moved = max(
+            abs(quieter[name][key] - grade[name][key]) * 255
+            for name in CHANNELS
+            for key in (64, 128, 192)
+        )
+        assert moved > 1.0, (
+            "disabling one of three branches must fade the mean, not delete it",
+            moved,
+        )
+        assert len(quieter["r"]) == 256
+
+        rejected = edit(
+            "p5",
+            3,
+            [{"op": "clip.grade", "clip_id": "c", "grade": [{"kind": "parallel", "branches": []}]}],
+        )
+        assert rejected.status_code == 422, rejected.text
+        assert client.get(path).json()["revision"] == 3, (
+            "a refused graph write must not burn a revision"
+        )
+
+        nested = edit(
+            "p6",
+            3,
+            [
+                {
+                    "op": "clip.grade",
+                    "clip_id": "c",
+                    "grade": [
+                        {"kind": "parallel", "branches": [{"kind": "parallel", "branches": [warm]}]}
+                    ],
+                }
+            ],
+        )
+        assert nested.status_code == 422, nested.text
+
+        history = client.get(path + "/history").json()["history"]
+        assert 2 in [entry["revision"] for entry in history]
+        restore = client.post(
+            path + "/restore",
+            json={"request_id": "p7", "expected_revision": 3, "target_revision": 2},
+        )
+        assert restore.status_code == 200, restore.text
+        back = restore.json()["project"]["clips"]["c"]["color"]["grade"][0]
+        assert back["branches"][2]["enabled"] is True, back
+        assert restore.json()["project"]["revision"] == 4, "a restore is a new revision"
+        print(
+            "   parallel: HTTP writes one graph as one revision, replays it, refuses empty and "
+            f"nested branch lists, and the browser LUT follows the mean within {drift:.3f} levels"
+        )
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="agentcut-grade-") as scratch:
         folder = Path(scratch)
@@ -598,9 +940,12 @@ def main():
         media_suite(folder)
         transfer_suite(folder)
         blend_suite(folder)
+        parallel_math_suite(folder)
+        parallel_media_suite(folder)
+        parallel_http_suite(folder)
     print(
-        "PASS: grade node contracts, atomic HTTP edits, replay/lock/restore, "
-        "browser LUT parity and real H.264 pixels"
+        "PASS: grade node contracts, atomic HTTP edits, replay/lock/restore, parallel branch "
+        "means, browser LUT parity and real H.264 pixels"
     )
 
 

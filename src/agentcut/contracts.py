@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 11  # v11 added project markers; older rows still validate (ge=1).
+APP_VERSION = "1.39.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -232,9 +233,31 @@ class GradeTransfer(Contract):
     blend: BlendMode = "normal"
 
 
-GradeNode = GradeCurve | GradeWhiteBalance | GradeWheels | GradeTransfer
+GradeBranch = GradeCurve | GradeWhiteBalance | GradeWheels | GradeTransfer
 
 GRADE_NODE_LIMIT = 8
+GRADE_BRANCH_LIMIT = 4
+
+
+class GradeParallel(Contract):
+    """Parallel node: every branch transforms this node's own input, and the node outputs the
+    average of the branch results.
+
+    This is what makes it different from putting the same operations in series — two branches that
+    each pull in opposite directions average instead of stacking, so the graph stays editable rather
+    than a pile of compounding corrections. Averaging per-channel functions is still a per-channel
+    function, so the whole graph keeps compiling down to one table per channel that both the browser
+    and FFmpeg read; nothing about the render path changes.
+    """
+
+    kind: Literal["parallel"] = "parallel"
+    branches: Annotated[list[GradeBranch], Field(min_length=1, max_length=GRADE_BRANCH_LIMIT)]
+    enabled: bool = True
+    mix: GradeMix = 1.0
+    blend: BlendMode = "normal"
+
+
+GradeNode = GradeCurve | GradeWhiteBalance | GradeWheels | GradeTransfer | GradeParallel
 
 
 class ClipColor(Contract):
@@ -1408,6 +1431,7 @@ def capabilities(media_ready: bool = False) -> dict:
             "grade_nodes": True,
             "grade_node_mix": True,
             "grade_node_blend_modes": True,
+            "grade_parallel_branches": True,
             "color_space_transform": True,
             "proxy_playback": media_ready,
             "text_titles": True,

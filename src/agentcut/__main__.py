@@ -64,6 +64,7 @@ def load_token(token_file: Path, required: bool) -> str:
 
 
 def build_services(args, data_dir: Path, token: str, db_file: Path):
+    from .contracts import APP_VERSION
     from .http_api import signature
     from .jobs import JobRuntime
     from .media import MediaService
@@ -85,7 +86,7 @@ def build_services(args, data_dir: Path, token: str, db_file: Path):
     base_url = f"http://127.0.0.1:{args.port}"
     info = {
         "instance": secrets.token_hex(6),
-        "app_version": "1.38.0",
+        "app_version": APP_VERSION,
         "data_dir": str(data_dir),
         "output_dir": str(output_dir),
         "cache_dir": str(cache_dir),

@@ -123,8 +123,8 @@ def blend_values(mode: str, backdrop: float, picture: float) -> float:
     return BLEND_FUNCTIONS[mode](backdrop, picture)
 
 
-def node_function(node, index: int):
-    """Per-channel mapping of one node, or None when the node leaves this channel untouched."""
+def _op_function(node, index: int):
+    """Per-channel mapping of one operation, or None when it leaves this channel untouched."""
     if node.kind == "curve":
         if node.channel != "rgb" and CURVE_CHANNELS[node.channel] != index:
             return None
@@ -155,6 +155,55 @@ def node_function(node, index: int):
     return wheels
 
 
+def step_function(node, index: int):
+    """One node with its own strength and blend applied to the value entering it.
+
+    Branch objects reach here from `node_function`, and the contract keeps a branch a single
+    operation, so there is no recursion beyond one level.
+    """
+    mapping = node_function(node, index)
+    if mapping is None:
+        return None
+    strength = node.mix
+    mode = getattr(node, "blend", "normal")
+    return lambda value, inner=mapping, strength=strength, mode=mode: (
+        value + strength * (blend_values(mode, value, inner(value)) - value)
+    )
+
+
+def node_function(node, index: int):
+    """Per-channel mapping of one node, or None when the node leaves this channel untouched.
+
+    A parallel node outputs the mean of its branch results. A bypassed branch — or one that does
+    not touch this channel at all — contributes its input, so disabling a branch fades the average
+    toward the remaining branches instead of renumbering them.
+    """
+    if node.kind != "parallel":
+        return _op_function(node, index)
+    steps = [
+        None if not branch.enabled else step_function(branch, index) for branch in node.branches
+    ]
+    if not any(steps):
+        return None
+    count = len(steps)
+
+    def average(value: float) -> float:
+        return sum(step(value) if step is not None else value for step in steps) / count
+
+    return average
+
+
+def _curve_knots(node, index: int):
+    """Input positions where a curve in this node (or one of its branches) actually bends."""
+    operations = node.branches if node.kind == "parallel" else [node]
+    for operation in operations:
+        if operation.kind != "curve":
+            continue
+        if operation.channel != "rgb" and CURVE_CHANNELS[operation.channel] != index:
+            continue
+        yield from (point.x for point in operation.points)
+
+
 def _channel_points(nodes, index: int) -> list[tuple[float, float]] | None:
     """Composed transfer curve sampled on the component axis, in 0..255 units."""
     mappings = []
@@ -162,20 +211,10 @@ def _channel_points(nodes, index: int) -> list[tuple[float, float]] | None:
     for node in nodes:
         if not node.enabled or not node.mix:
             continue
-        mapping = node_function(node, index)
-        if mapping is not None:
-            strength = node.mix
-            mode = getattr(node, "blend", "normal")
-            mappings.append(
-                lambda value, inner=mapping, strength=strength, mode=mode: (
-                    value + strength * (blend_values(mode, value, inner(value)) - value)
-                )
-            )
-        affects_channel = node.kind == "curve" and (
-            node.channel == "rgb" or CURVE_CHANNELS[node.channel] == index
-        )
-        if affects_channel:
-            extra.update(point.x for point in node.points)
+        step = step_function(node, index)
+        if step is not None:
+            mappings.append(step)
+        extra.update(_curve_knots(node, index))
     if not mappings:
         return None
 

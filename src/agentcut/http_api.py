@@ -27,6 +27,7 @@ from . import markers as marker_plan
 from .animation import graph_curve, preview_manifest, sample_values
 from .bundles import MAX_BUNDLE_BYTES, export_bundle, import_bundle
 from .contracts import (
+    APP_VERSION,
     TIMEBASE,
     BundleImport,
     Clip,
@@ -118,7 +119,7 @@ def create_app(
 
     app = FastAPI(
         title="AgentCut API",
-        version="1.38.0",
+        version=APP_VERSION,
         lifespan=lifespan,
         description=(
             "本地剪辑引擎。所有时间使用整数 tick（70,560,000/秒）；写入需要 request_id，"

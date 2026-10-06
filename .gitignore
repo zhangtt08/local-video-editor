@@ -10,3 +10,8 @@ __pycache__/
 *.pyc
 .pytest_cache/
 *.log
+
+# 发布产物（安装版/便携版/win-unpacked）：本机保留，不入库
+/desktop/release/
+# PyInstaller 构建缓存（scripts/build_engine.py 的工作目录）
+/build/
