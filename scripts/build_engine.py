@@ -29,11 +29,19 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+# The repository path carries non-ASCII on this machine, and a cp936 console raises
+# UnicodeEncodeError while printing it — which would kill the documented
+# `uv run python scripts/build_engine.py --verify` gate over a progress line.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"

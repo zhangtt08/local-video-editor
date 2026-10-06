@@ -562,7 +562,8 @@ export async function reframeClip(clipId: string, maxScale = 4) {
       max_scale: maxScale, apply: false, dry_run: false,
     });
     const stats = planned["reframe"] as {
-      followed_points?: number; max_scale?: number; clamped_points?: number; warning?: string;
+      followed_points?: number; keyframes_added?: number; max_scale?: number;
+      worst_offset?: number; clamped_points?: number; warning?: string;
     } | undefined;
     if (!planned.commands.length || !stats) {
       toast("warn", "没有可写入的跟随曲线", "引擎认为这条片段不需要（或还不能）重构图。");
@@ -570,9 +571,11 @@ export async function reframeClip(clipId: string, maxScale = 4) {
     }
     submit(planned.commands as Command[], "主体跟随重构图");
     const detail = [
-      `跟随 ${stats.followed_points} 个跟好的点`,
+      `按跟好的路径采样 ${stats.followed_points} 个关键点` +
+        (stats.keyframes_added ? `（引擎补了 ${stats.keyframes_added} 个）` : ""),
       `最多放大 ${stats.max_scale?.toFixed(2) ?? "?"} 倍`,
-      stats.warning ?? "画面边缘始终被盖住，没有黑边",
+      stats.warning ??
+        `主体偏离画面中心最多 ${((stats.worst_offset ?? 0) * 100).toFixed(1)}% 画面宽`,
     ].join(" · ");
     toast("ok", "主体跟随已写入", `${detail}。撤销一步回到跟随前。`);
   } catch (error) {

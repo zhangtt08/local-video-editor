@@ -422,6 +422,7 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
             assert "source_out_ticks" in json.dumps(tools["clip_four_point"].inputSchema)
             assert tools["clip_reframe"].annotations.readOnlyHint is True
             assert "max_scale" in json.dumps(tools["clip_reframe"].inputSchema)
+            assert "tolerance" in json.dumps(tools["clip_reframe"].inputSchema)
             assert tools["track_duck"].annotations.readOnlyHint is False
             assert tools["render_batch"].annotations.readOnlyHint is False
             assert tools["master_loudness"].annotations.readOnlyHint is False

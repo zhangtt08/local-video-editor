@@ -855,10 +855,15 @@ def create_app(
         The path comes from mask keyframes the tracker already wrote, so this endpoint adds no
         new editorial state — it converts one curve into another and hands back ordinary
         `keyframes.replace` commands. The reducer stays the only place that decides what a legal
-        keyframe write is.
+        keyframe write is. `tolerance` trades keyframe count for how tightly the subject is held.
         """
         project = projects.get(project_id)
-        commands, notes = reframe_plan.plan(project, clip_id=clip_id, max_scale=request.max_scale)
+        commands, notes = reframe_plan.plan(
+            project,
+            clip_id=clip_id,
+            max_scale=request.max_scale,
+            tolerance=request.tolerance,
+        )
         body = {"reframe": notes, "commands": commands}
         if not request.apply:
             return {"committed": False, "project": project.model_dump(), **body}

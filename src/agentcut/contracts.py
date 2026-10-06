@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 12  # v12 added project recipes; older rows still validate (ge=1).
-APP_VERSION = "1.46.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.47.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -477,16 +477,24 @@ def checked_render_name(value):
     return value
 
 
+# How far the subject may drift from the middle of the frame between two auto-reframe keyframes,
+# measured in frame widths. One number so the planner default and the request default cannot drift.
+REFRAME_TOLERANCE = 0.01
+
+
 class ReframeRequest(Contract):
     """Turn the mask path a track produced into the layer motion that keeps the subject centred.
 
     `max_scale` is how far the engine may zoom to hide the edge a pan would expose: a
     full-frame layer shifted half a frame wide needs twice the size to still cover the picture.
+    `tolerance` is how far the subject may sit from the middle between two follow keyframes, in
+    frame widths: smaller holds the subject tighter and costs more keyframes.
     """
 
     request_id: Identifier
     expected_revision: Revision
     max_scale: Annotated[float, Field(ge=1.0, le=4.0)] = 2.0
+    tolerance: Annotated[float, Field(gt=0.0, le=0.25)] = REFRAME_TOLERANCE
     apply: bool = False
     dry_run: bool = False
 
