@@ -1,0 +1,92 @@
+import { newId, type Asset, type Clip, type Command, type Project, type Track, type Sequence } from "./engine";
+import { frameTicks, sampleTicks } from "./time";
+
+export type ClipClipboard = { projectId: string; sequenceId?: string | null; clips: Clip[]; assets: Asset[]; tracks: Track[]; sequences?: Sequence[] };
+
+/** Selection follows the connected groups/links; edits still submit explicit ids. */
+export function relatedClips(project: Project, ids: string[], linksOnly = false): string[] {
+  const members = new Map<string, string[]>();
+  for (const c of Object.values(project.clips)) for (const key of [linksOnly ? null : c.group_id && `g:${c.group_id}`, c.link_id && `l:${c.link_id}`]) {
+    if (key) { const list = members.get(key) ?? []; list.push(c.id); members.set(key, list); }
+  }
+  const result = new Set(ids.filter((id) => project.clips[id])); const pending = [...result]; const visited = new Set<string>();
+  for (let i = 0; i < pending.length; i++) {
+    const c = project.clips[pending[i]];
+    for (const key of [linksOnly ? null : c.group_id && `g:${c.group_id}`, c.link_id && `l:${c.link_id}`]) {
+      if (!key || visited.has(key)) continue; visited.add(key);
+      for (const id of members.get(key) ?? []) if (!result.has(id)) { result.add(id); pending.push(id); }
+    }
+  }
+  return [...result];
+}
+
+export function timelineTracks(project: Project): Track[] {
+  return [...project.tracks.filter((t) => t.kind === "video").reverse(), ...project.tracks.filter((t) => t.kind === "audio")];
+}
+
+export function selectionQuantum(project: Project, ids: string[]): number {
+  const tracks = new Set(ids.map((id) => project.clips[id]?.track_id));
+  return trackQuantum(project, project.tracks.filter((t) => tracks.has(t.id)));
+}
+
+export function trackQuantum(project: Project, tracks: Track[]): number {
+  let q = 1;
+  for (const track of tracks) {
+    const step = track.kind === "audio" ? sampleTicks(project.settings.sample_rate) : frameTicks(project.settings.frame_rate);
+    let a = q, b = step;
+    while (b) { const remainder = a % b; a = b; b = remainder; }
+    q = q / a * step;
+  }
+  return q;
+}
+
+export function copyClips(project: Project, ids: string[], sequenceId: string | null = null): ClipClipboard {
+  const clips = ids.map((id) => project.clips[id]).filter(Boolean);
+  const assets = new Set(clips.map((c) => c.asset_id)); const tracks = new Set(clips.map((c) => c.track_id));
+  const sequences = new Map<string, Sequence>();
+  const visit = (assetId: string) => {
+    const id = project.assets[assetId]?.sequence_id; const sequence = id ? project.sequences?.[id] : null;
+    if (!sequence || sequences.has(sequence.id)) return;
+    sequences.set(sequence.id, sequence);
+    for (const child of Object.values(sequence.clips)) { assets.add(child.asset_id); visit(child.asset_id); }
+  };
+  clips.forEach((clip) => visit(clip.asset_id));
+  const selected = new Set(ids); const incomplete = new Set(Object.values(project.clips).filter((c) => c.link_id && !selected.has(c.id)).map((c) => c.link_id));
+  return structuredClone({ projectId: project.id, sequenceId, sequences: [...sequences.values()], clips: clips.map((c) => c.link_id && incomplete.has(c.link_id) ? { ...c, link_id: null, link_source_offset_ticks: 0 } : c), assets: Object.values(project.assets).filter((a) => assets.has(a.id)), tracks: project.tracks.filter((t) => tracks.has(t.id)) });
+}
+
+/** Build explicit commands; the engine validates media, clocks, locks and overlaps. */
+export function pasteCommands(project: Project, copied: ClipClipboard, at: number, direction = 0, sequenceId: string | null = null): { commands: Command[]; ids: string[] } {
+  const commands: Command[] = []; const assets = new Map<string, string>(); const tracks = new Map<string, string>();
+  const media = new Map(Object.values(project.assets).filter((a) => a.verified).map((a) => [`${a.kind}:${a.verified!.content_sha256}`, a]));
+  const sequences = new Map((copied.sequences ?? []).map((s) => [s.id, copied.projectId === project.id && project.sequences?.[s.id] ? s.id : newId("seq-")]));
+  for (const asset of copied.assets) {
+    const current = copied.projectId === project.id ? project.assets[asset.id] : undefined;
+    const existing = asset.verified ? media.get(`${asset.kind}:${asset.verified.content_sha256}`) : current?.kind === asset.kind && current.reference === asset.reference && current.duration_ticks === asset.duration_ticks ? current : undefined;
+    const id = existing?.id ?? newId("a-"); assets.set(asset.id, id);
+    if (existing) continue;
+    commands.push(asset.verified ? { op: "asset.import", asset_id: id, label: asset.label, probe_id: asset.verified.probe_id, verified: asset.verified } : { op: "asset.register", asset: { ...asset, id, verified: null, ...(asset.sequence_id ? { sequence_id: sequences.get(asset.sequence_id), reference: `sequence://${sequences.get(asset.sequence_id)}` } : {}) } });
+  }
+  for (const sequence of copied.sequences ?? []) {
+    const id = sequences.get(sequence.id)!;
+    if (id === sequence.id) continue;
+    commands.push({ op: "sequence.add", sequence: { ...sequence, id, clips: Object.fromEntries(Object.values(sequence.clips).map((c) => [c.id, { ...c, asset_id: assets.get(c.asset_id)! }])) } });
+  }
+  for (const track of copied.tracks) {
+    const existing = copied.projectId === project.id && (copied.sequenceId ?? null) === sequenceId ? project.tracks.find((t) => t.id === track.id) : undefined;
+    const id = existing?.id ?? newId(track.kind === "video" ? "v-" : "a-"); tracks.set(track.id, id);
+    if (!existing) commands.push({ op: "track.add", track: { ...track, id, locked: false } });
+  }
+  const ids = new Map(copied.clips.map((c) => [c.id, newId("c-")]));
+  const groups = new Map<string, string>(); const links = new Map<string, string>();
+  for (const c of copied.clips) { if (c.group_id && !groups.has(c.group_id)) groups.set(c.group_id, newId("g-")); if (c.link_id && !links.has(c.link_id)) links.set(c.link_id, newId("l-")); }
+  const origin = Math.min(...copied.clips.map((c) => c.position_ticks));
+  const q = trackQuantum(project, copied.tracks);
+  const offset = (at - origin) / q;
+  const delta = Math.max(-Math.floor(origin / q), direction > 0 ? Math.ceil(offset) : Math.round(offset)) * q;
+  const clips = copied.clips.map((clip): Clip => ({ ...clip, id: ids.get(clip.id)!, asset_id: assets.get(clip.asset_id)!, track_id: tracks.get(clip.track_id)!, position_ticks: clip.position_ticks + delta,
+    group_id: clip.group_id ? groups.get(clip.group_id)! : null, link_id: clip.link_id ? links.get(clip.link_id)! : null, link_source_offset_ticks: clip.link_id ? clip.link_source_offset_ticks ?? 0 : 0,
+    transition_in: clip.transition_in && ids.has(clip.transition_in.from_clip_id) ? { ...clip.transition_in, from_clip_id: ids.get(clip.transition_in.from_clip_id)! } : null }));
+  commands.push({ op: "clips.add", clips });
+  return { commands, ids: [...ids.values()] };
+}

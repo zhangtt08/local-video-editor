@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "agentcut": {
+      "command": "C:\\path\\to\\agentcut\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "agentcut", "mcp"],
+      "env": {
+        "AGENTCUT_API_URL": "http://127.0.0.1:8765",
+        "AGENTCUT_TOKEN": "REPLACE_WITH_THE_SAME_RANDOM_TOKEN_USED_BY_API"
+      }
+    },
+    "agentcut-desktop": {
+      "command": "C:\\Users\\<你>\\AppData\\Local\\Programs\\AgentCut\\resources\\bin\\agentcut\\agentcut.exe",
+      "args": ["mcp"],
+      "env": {
+        "AGENTCUT_API_URL": "http://127.0.0.1:<桌面版 Agent 标签页里的端口>",
+        "AGENTCUT_TOKEN": "REPLACE_WITH_THE_SAME_RANDOM_TOKEN_USED_BY_API"
+      }
+    }
+  }
+}

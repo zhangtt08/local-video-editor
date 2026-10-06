@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AgentCut master icon · 1024x1024 artboard · single source of truth
+     A dark rounded-square "timeline field", a white play glyph, and the signal-blue
+     playhead that runs past the field's top and bottom edges so the silhouette is
+     unmistakable at 16px and never reads as a plain black square on a dark taskbar.
+     Colour tokens consumed by scripts/build_icon.py (surface variants):
+     #34343e / #17171d = field gradient, #a0a0ae + stroke-opacity 0.34 = rim,
+     #3b6ce4 / #2b59d8 = playhead gradient. Do not reuse these hexes elsewhere. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"
+     shape-rendering="geometricPrecision" role="img" aria-label="AgentCut">
+  <title>AgentCut</title>
+  <defs>
+    <linearGradient id="fieldGrad" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#34343e"/>
+      <stop offset="1" stop-color="#17171d"/>
+    </linearGradient>
+    <linearGradient id="headGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b6ce4"/>
+      <stop offset="0.42" stop-color="#2b59d8"/>
+      <stop offset="1" stop-color="#2b59d8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- timeline field -->
+  <rect id="field" x="120" y="120" width="784" height="784" rx="160" fill="url(#fieldGrad)"/>
+  <!-- hairline rim: keeps the square's edge on near-black Windows taskbars -->
+  <rect id="fieldRim" x="123" y="123" width="778" height="778" rx="157"
+        fill="none" stroke="#a0a0ae" stroke-opacity="0.34" stroke-width="6"/>
+
+  <!-- track band: one clip, then the cut point under the playhead -->
+  <rect x="176" y="772" width="672" height="68" rx="34" fill="#ffffff" fill-opacity="0.06"/>
+  <rect x="176" y="772" width="300" height="68" rx="34" fill="#ffffff" fill-opacity="0.15"/>
+
+  <!-- play glyph -->
+  <path id="play" d="M312 278L636 490L312 702Z"
+        fill="#ffffff" stroke="#ffffff" stroke-width="28" stroke-linejoin="round"/>
+
+  <!-- playhead: crosses the flat run of the field edge, top and bottom -->
+  <rect id="playhead" x="612" y="64" width="104" height="896" rx="52" fill="url(#headGrad)"/>
+</svg>

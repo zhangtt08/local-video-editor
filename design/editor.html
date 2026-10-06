@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgentCut · 城市印象 · 短片</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- 顶栏 -->
+  <header class="topbar">
+    <a class="brand" href="index.html" style="text-decoration:none;color:inherit">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+        <rect width="20" height="20" rx="5" fill="#1c1c21"/>
+        <path d="M7.2 6.2v7.6l6-3.8-6-3.8z" fill="#fff"/>
+        <line x1="13.8" y1="4.5" x2="13.8" y2="15.5" stroke="#2b59d8" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      AgentCut
+    </a>
+    <div class="divider-v"></div>
+    <div>
+      <div class="topbar-title">城市印象 · 短片</div>
+      <div class="topbar-sub mono" style="font-size:11px">city-impression</div>
+    </div>
+    <div class="spacer"></div>
+    <span class="conn"><span class="dot"></span>已连接</span>
+    <span class="rev-chip" id="revChip" title="当前 revision">r42</span>
+    <div class="divider-v"></div>
+    <a class="btn" href="history.html">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="6.2"/><path d="M8 4.6V8l2.3 1.6"/></svg>
+      历史版本
+    </a>
+  </header>
+
+  <!-- 主区：素材 / 预览 / 检查器 -->
+  <div class="main">
+
+    <!-- 素材库 -->
+    <aside class="panel">
+      <div class="panel-head">
+        <span class="panel-label">素材库</span>
+        <span class="tag" id="assetCount">10</span>
+        <div class="spacer"></div>
+        <button class="icon-btn" title="登记素材元数据（媒体验证未接入）">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 3.2v9.6M3.2 8h9.6"/></svg>
+        </button>
+      </div>
+      <div class="asset-filters" role="tablist">
+        <button class="btn active" data-f="all">全部</button>
+        <button class="btn" data-f="video">视频</button>
+        <button class="btn" data-f="image">图片</button>
+        <button class="btn" data-f="audio">音频</button>
+      </div>
+      <div class="panel-body">
+        <div class="asset-list" id="assetList"></div>
+      </div>
+      <div class="asset-foot">
+        登记仅保存元数据，不读取媒体文件。<br>
+        <span class="mono">media_probe = false</span>
+      </div>
+    </aside>
+
+    <!-- 预览器 -->
+    <section style="display:flex;flex-direction:column;min-width:0;min-height:0">
+      <div class="monitor-wrap">
+        <div class="monitor">
+          <svg class="frame-icon" width="40" height="40" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.3">
+            <rect x="5" y="8" width="30" height="24" rx="2.5" stroke-dasharray="4 3"/>
+            <path d="M17 15.5v9l8-4.5-8-4.5z" fill="currentColor" stroke="none" opacity=".45"/>
+          </svg>
+          <div class="monitor-title">预览引擎未接入</div>
+          <div class="monitor-sub">capabilities.preview = false · 不以演示帧冒充真实画面</div>
+        </div>
+      </div>
+      <div class="transport">
+        <button class="icon-btn" disabled title="上一个编辑点"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4 3h1.6v10H4zM12.5 3.2v9.6L6.6 8z"/></svg></button>
+        <button class="icon-btn" disabled title="播放（预览未接入）"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4.5 3v10l8.5-5-8.5-5z"/></svg></button>
+        <button class="icon-btn" disabled title="下一个编辑点"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M10.4 3H12v10h-1.6zM3.5 3.2v9.6L9.4 8z"/></svg></button>
+        <span class="timecode" id="tcMain">00:00:00:00</span>
+        <span class="timecode-total" id="tcTotal">/ 00:00:20:00</span>
+        <div class="spacer"></div>
+        <span class="seq-info">1920×1080 · 30fps · 48kHz</span>
+      </div>
+    </section>
+
+    <!-- 检查器 -->
+    <aside class="panel right">
+      <div class="panel-head">
+        <span class="panel-label">检查器</span>
+        <span class="tag accent mono" id="selTag" style="display:none"></span>
+      </div>
+      <div class="panel-body">
+
+        <div class="insp-section" id="clipProps" style="display:none">
+          <div class="panel-label" style="margin-bottom:10px">片段属性</div>
+          <div class="field"><label>片段 ID</label><div class="val" id="pId"></div></div>
+          <div class="field"><label>素材</label><div class="val" id="pAsset" style="font-family:var(--sans)"></div></div>
+          <div class="field"><label>轨道</label><div class="val" id="pTrack"></div></div>
+          <div class="field"><label>位置</label><div class="val"><span id="pPos"></span><span class="sec" id="pPosT"></span></div></div>
+          <div class="field"><label>源入点</label><div class="val"><span id="pIn"></span><span class="sec" id="pInT"></span></div></div>
+          <div class="field"><label>时长</label><div class="val"><span id="pDur"></span><span class="sec" id="pDurT"></span></div></div>
+        </div>
+
+        <div class="insp-section" id="noSel">
+          <div class="empty-note">在时间线中选择一个片段<br>属性将显示为 tick 与时间码</div>
+        </div>
+
+        <div class="insp-section" id="quickCmds" style="display:none">
+          <div class="panel-label" style="margin-bottom:10px">调整为命令</div>
+          <div style="display:flex;gap:6px;margin-bottom:6px">
+            <button class="btn" style="flex:1;justify-content:center" onclick="cmdSplit()">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="4" cy="4.2" r="1.8"/><circle cx="4" cy="11.8" r="1.8"/><path d="M5.6 5.4 13 13M5.6 10.6 13 3.5"/></svg>
+              分割
+            </button>
+            <button class="btn" style="flex:1;justify-content:center" onclick="cmdTrim()">修剪</button>
+          </div>
+          <button class="btn danger-text" style="width:100%;justify-content:center" onclick="cmdRemove()">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2.5 4h11M6.5 4V2.8h3V4M4 4l.7 9.2h6.6L12 4M6.7 6.8v4M9.3 6.8v4"/></svg>
+            移除片段
+          </button>
+        </div>
+
+        <!-- 待提交批次 -->
+        <div class="insp-section">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+            <span class="panel-label">待提交批次</span>
+            <span class="tag accent mono" id="cmdCount">0</span>
+          </div>
+          <div class="cmd-list" id="cmdList"></div>
+          <div class="json-box" id="jsonBox"></div>
+          <div class="batch-actions">
+            <button class="btn" onclick="clearBatch()">清空</button>
+            <button class="btn" id="dryBtn" onclick="dryRun()">预演</button>
+            <button class="btn primary" id="commitBtn" onclick="commitBatch()">提交批次</button>
+          </div>
+          <p style="font-size:11px;color:var(--ink-3);margin-top:8px;line-height:1.6">
+            预演不产生持久化变更；提交后 <span class="mono">revision +1</span>，冲突时需刷新后重试。
+          </p>
+        </div>
+
+      </div>
+    </aside>
+  </div>
+
+  <!-- 时间线 -->
+  <section class="timeline">
+    <div class="tl-toolbar">
+      <button class="icon-btn active" id="toolSelect" title="选择工具 (V)">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4 2l8 6.5-3.6.6 2 4-1.7.8-2-4L4 12.4z"/></svg>
+      </button>
+      <button class="icon-btn" id="toolRazor" title="分割工具 (C) · 点击片段切一刀">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="4" cy="4.2" r="1.8"/><circle cx="4" cy="11.8" r="1.8"/><path d="M5.6 5.4 13 13M5.6 10.6 13 3.5"/></svg>
+      </button>
+      <div class="divider-v"></div>
+      <button class="icon-btn active" id="snapBtn" title="磁吸到帧边界">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M3 2.5v6a5 5 0 0 0 10 0v-6M3 2.5h3.4M12.6 2.5H9.2M8 9v4.5"/></svg>
+      </button>
+      <div class="divider-v"></div>
+      <button class="icon-btn" disabled title="撤销通过历史恢复实现 · 见历史版本页">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 3 3 6.5 6.5 10"/><path d="M3 6.5h6.8a3.2 3.2 0 0 1 0 6.4H7"/></svg>
+      </button>
+      <button class="icon-btn" disabled title="见历史版本页">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3 13 6.5 9.5 10"/><path d="M13 6.5H6.2a3.2 3.2 0 0 0 0 6.4H9"/></svg>
+      </button>
+      <div class="divider-v"></div>
+      <button class="btn subtle" onclick="cmdAddTrack()">＋ 添加轨道</button>
+      <div class="spacer"></div>
+      <span class="zoom-ctrl">
+        <span style="font-size:11px">缩放</span>
+        <input type="range" id="zoom" min="30" max="120" value="62" aria-label="时间线缩放">
+        <span class="mono" style="font-size:10.5px" id="zoomVal">62 px/s</span>
+      </span>
+    </div>
+
+    <div class="tl-scroll" id="tlScroll">
+      <div class="tl-inner" id="tlInner">
+        <div class="tl-row ruler-row" id="rulerRow">
+          <div class="tl-head"><span class="tkind mono">TICKS</span></div>
+          <div class="tl-ruler" id="ruler"></div>
+        </div>
+        <div class="tl-row tall"><div class="tl-head"><span class="tname">V2</span><span class="tkind">视频</span></div><div class="tl-lane" data-track="v2"></div></div>
+        <div class="tl-row tall"><div class="tl-head"><span class="tname">V1</span><span class="tkind">视频</span></div><div class="tl-lane" data-track="v1"></div></div>
+        <div class="tl-track-divider"></div>
+        <div class="tl-row tall"><div class="tl-head audio-track"><span class="tname">A1</span><span class="tkind">音频</span></div><div class="tl-lane audio-track" data-track="a1"></div></div>
+        <div class="tl-row"><div class="tl-head audio-track"><span class="tname">A2</span><span class="tkind">音频</span></div><div class="tl-lane audio-track" data-track="a2"></div></div>
+        <div class="playhead" id="playhead"><span class="ph-time" id="phTime"></span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 状态栏 -->
+  <footer class="statusbar">
+    <span class="mono">时间基 70,560,000 tick/s</span>
+    <span class="sep"></span>
+    <span class="mono">1 帧 = 2,352,000 tick</span>
+    <div class="spacer"></div>
+    <span id="statusSel">未选中片段</span>
+    <span class="sep"></span>
+    <span>吸附 <b id="statusSnap">开</b></span>
+    <span class="sep"></span>
+    <span class="mono" id="statusZoom">62 px/s</span>
+  </footer>
+
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+/* ---------- 常量与演示数据 ---------- */
+const TIMEBASE = 70560000, FPS = 30, FRAME = TIMEBASE / FPS; // 2,352,000
+const DUR_S = 20;
+let pxPerSec = 62, HEAD_W = 96;
+let revision = 42, requestSeq = 1, snap = true, tool = 'select';
+let selectedId = null, playheadT = 4 * FRAME + FRAME * 0; // ticks
+
+const assets = {
+  a1:{kind:'video', label:'开场·航拍', ref:'media://city/aerial.mp4', dur:12.4},
+  a2:{kind:'video', label:'访谈·受访者 A', ref:'media://city/interview-a.mp4', dur:18.0},
+  a3:{kind:'video', label:'产品特写', ref:'media://city/product-closeup.mp4', dur:8.6},
+  a4:{kind:'video', label:'访谈·受访者 B', ref:'media://city/interview-b.mp4', dur:22.1},
+  a5:{kind:'video', label:'收尾·夜景', ref:'media://city/night-b-roll.mp4', dur:6.0},
+  a6:{kind:'image', label:'标题字版', ref:'media://city/title-card.png', dur:null},
+  a10:{kind:'image', label:'章节卡·二', ref:'media://city/chapter-2.png', dur:null},
+  a7:{kind:'audio', label:'现场环境声', ref:'media://city/ambience.wav', dur:14.2},
+  a8:{kind:'audio', label:'配乐·城市节拍', ref:'media://city/bgm-beat.mp3', dur:32.0},
+  a9:{kind:'audio', label:'旁白·解说', ref:'media://city/voiceover.wav', dur:21.5},
+};
+
+let clips = [
+  {id:'c1', asset_id:'a1', track_id:'v1', pos:0,    in:0,        dur:4},
+  {id:'c2', asset_id:'a2', track_id:'v1', pos:4,    in:1.2,      dur:5.5},
+  {id:'c3', asset_id:'a3', track_id:'v1', pos:9.5,  in:0,        dur:4.5},
+  {id:'c4', asset_id:'a4', track_id:'v1', pos:14,   in:2.0,      dur:4},
+  {id:'c5', asset_id:'a5', track_id:'v1', pos:18,   in:0,        dur:2},
+  {id:'c8', asset_id:'a6', track_id:'v2', pos:0.5,  in:0,        dur:3, image:true},
+  {id:'c10', asset_id:'a10', track_id:'v2', pos:17, in:0, dur:2.5, image:true},
+  {id:'c6', asset_id:'a7', track_id:'a1', pos:0,    in:0,        dur:14},
+  {id:'c7', asset_id:'a8', track_id:'a1', pos:14,   in:3.0,      dur:6},
+  {id:'c9', asset_id:'a9', track_id:'a2', pos:4,    in:0,        dur:14},
+];
+
+let pending = [
+  {op:'clip.add', clip:{id:'c10', asset_id:'a10', track_id:'v2', position_ticks:17*TIMEBASE, source_in_ticks:0, duration_ticks:2.5*TIMEBASE}},
+];
+
+/* ---------- 工具函数 ---------- */
+const $ = s => document.querySelector(s);
+const T = s => Math.round(s * TIMEBASE);
+const fmtTick = n => n.toLocaleString('en-US');
+function tc(ticks){
+  const f = Math.round(ticks / FRAME);
+  const ss = Math.floor(f / FPS), ff = f % FPS;
+  const hh = Math.floor(ss / 3600), mm = Math.floor(ss % 3600 / 60);
+  const p = n => String(n).padStart(2, '0');
+  return `${p(hh)}:${p(mm)}:${p(ss % 60)}:${p(ff)}`;
+}
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+
+function toast(html){
+  const t = $('#toast');
+  t.innerHTML = html; t.classList.add('show');
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 2400);
+}
+
+/* ---------- 素材面板 ---------- */
+let assetFilter = 'all';
+function renderAssets(){
+  const box = $('#assetList');
+  const rows = Object.entries(assets)
+    .filter(([,a]) => assetFilter === 'all' || a.kind === assetFilter)
+    .map(([id, a]) => `
+      <div class="asset-row" draggable="true">
+        <span class="asset-kind ${a.kind}">
+          ${a.kind==='video' ? '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.8" y="3.5" width="9" height="9" rx="1.5"/><path d="M10.8 7l3.4-2v6l-3.4-2"/></svg>'
+          : a.kind==='audio' ? '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M6 11.5V3.6l6-1.4v8"/><circle cx="4.4" cy="11.5" r="1.7"/><circle cx="10.4" cy="10.2" r="1.7"/></svg>'
+          : '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><rect x="2.2" y="2.8" width="11.6" height="10.4" rx="1.5"/><circle cx="6" cy="6.4" r="1.1"/><path d="M2.8 11.6 6.4 8.4l2.4 2 2.6-2.4 1.8 1.8"/></svg>'}
+        </span>
+        <span class="asset-meta">
+          <span class="asset-name">${esc(a.label)}</span>
+          <span class="asset-sub">${id} · ${a.dur ? a.dur.toFixed(1)+'s' : '静态图'}</span>
+        </span>
+      </div>`).join('');
+  box.innerHTML = rows;
+  $('#assetCount').textContent = rows.length || '0';
+}
+document.querySelector('.asset-filters').addEventListener('click', e => {
+  const b = e.target.closest('button'); if(!b) return;
+  document.querySelectorAll('.asset-filters .btn').forEach(x => x.classList.remove('active'));
+  b.classList.add('active'); assetFilter = b.dataset.f; renderAssets();
+});
+
+/* ---------- 时间线渲染 ---------- */
+function renderRuler(){
+  const r = $('#ruler');
+  const w = (DUR_S + 2) * pxPerSec;
+  r.style.width = w + 'px';
+  let html = '';
+  for (let s = 0; s <= DUR_S; s++){
+    const x = s * pxPerSec;
+    html += `<span class="ruler-tick big" style="left:${x}px"></span>`;
+    if (s % 5 === 0) html += `<span class="ruler-label" style="left:${x}px">${tc(s*TIMEBASE).slice(3)}</span>`;
+    for (let m = 1; m < 2; m++) html += `<span class="ruler-tick" style="left:${x + m*pxPerSec/2}px"></span>`;
+  }
+  r.innerHTML = html;
+}
+
+function clipHtml(c){
+  const a = assets[c.asset_id];
+  const ghost = pending.some(p => p.op === 'clip.add' && p.clip.id === c.id);
+  const kind = ghost ? 'ghost' : (a.kind === 'audio' ? 'audio' : c.image || a.kind === 'image' ? 'image' : 'video');
+  const sel = c.id === selectedId ? ' selected' : '';
+  const x = c.pos * pxPerSec, w = Math.max(c.dur * pxPerSec, 14);
+  let wave = '';
+  if (kind === 'audio'){
+    let bars = '';
+    const n = Math.floor(w / 3);
+    for (let i = 0; i < n; i++){
+      const h = 8 + 40 * Math.abs(Math.sin(i * 7.13 + c.id.charCodeAt(0) + c.id.length * 2.7));
+      bars += `<rect x="${i*3}" y="${50 - h/2}" width="1.7" height="${h}" rx=".8"/>`;
+    }
+    wave = `<svg class="wave" viewBox="0 0 ${n*3} 100" preserveAspectRatio="none"><g fill="${'rgba(63,162,114,.5)'}">${bars}</g></svg>`;
+  }
+  return `<div class="clip ${kind}${sel}" data-id="${c.id}" style="left:${x}px;width:${w}px">
+    <span class="strip"></span>
+    <span class="clip-label">${esc(a.label)}</span>
+    <span class="clip-dur">${c.dur.toFixed(2)}s</span>
+    ${ghost ? '<span class="ghost-tag">提案</span>' : ''}
+    ${wave}
+  </div>`;
+}
+
+function renderClips(){
+  document.querySelectorAll('.tl-lane').forEach(lane => {
+    lane.style.width = (DUR_S + 2) * pxPerSec + 'px';
+    lane.innerHTML = clips.filter(c => c.track_id === lane.dataset.track).map(clipHtml).join('');
+  });
+}
+
+function renderPlayhead(){
+  const x = HEAD_W + (playheadT / TIMEBASE) * pxPerSec;
+  const ph = $('#playhead');
+  ph.style.left = x + 'px';
+  $('#phTime').textContent = tc(playheadT);
+  $('#tcMain').textContent = tc(playheadT);
+}
+
+function renderAll(){ renderRuler(); renderClips(); renderPlayhead(); renderInspector(); renderBatch(); }
+
+/* ---------- 播放头与标尺交互 ---------- */
+const ruler = $('#ruler');
+function seekFromEvent(e){
+  const rect = ruler.getBoundingClientRect();
+  let t = (e.clientX - rect.left) / pxPerSec * TIMEBASE;
+  if (snap) t = Math.round(t / FRAME) * FRAME;
+  playheadT = Math.max(0, Math.min(Math.round(t), T(DUR_S)));
+  renderPlayhead();
+}
+ruler.addEventListener('pointerdown', e => {
+  ruler.setPointerCapture(e.pointerId);
+  seekFromEvent(e);
+  const mv = ev => seekFromEvent(ev);
+  const up = () => {
+    ruler.removeEventListener('pointermove', mv);
+    ruler.removeEventListener('pointerup', up);
+    ruler.removeEventListener('pointercancel', up);
+  };
+  ruler.addEventListener('pointermove', mv);
+  ruler.addEventListener('pointerup', up);
+  ruler.addEventListener('pointercancel', up);
+});
+
+/* ---------- 片段选择 ---------- */
+$('#tlInner').addEventListener('click', e => {
+  const clipEl = e.target.closest('.clip');
+  if (clipEl){
+    const id = clipEl.dataset.id;
+    if (tool === 'razor'){
+      const rect = clipEl.getBoundingClientRect();
+      let at = (e.clientX - rect.left) / rect.width * clips.find(c => c.id === id).dur;
+      at = Math.round(at * TIMEBASE / FRAME) * FRAME / TIMEBASE;
+      addCmd({op:'clip.split', clip_id:id, at_ticks:T(at), right_clip_id:id + '-b'});
+      toast(`已加入分割命令 · <span class="mono">${tc(T(at))}</span>`);
+      return;
+    }
+    selectedId = id;
+  } else {
+    selectedId = null;
+  }
+  renderClips(); renderInspector();
+});
+
+/* ---------- 检查器 ---------- */
+function renderInspector(){
+  const c = clips.find(x => x.id === selectedId);
+  $('#selTag').style.display = c ? '' : 'none';
+  $('#clipProps').style.display = c ? '' : 'none';
+  $('#noSel').style.display = c ? 'none' : '';
+  $('#quickCmds').style.display = c ? '' : 'none';
+  if (!c){ $('#statusSel').textContent = '未选中片段'; return; }
+  const a = assets[c.asset_id];
+  $('#selTag').textContent = c.id;
+  $('#pId').textContent = c.id;
+  $('#pAsset').innerHTML = `${esc(a.label)} <span style="color:var(--ink-3)">${c.asset_id} · ${a.kind}</span>`;
+  $('#pTrack').textContent = c.track_id.toUpperCase();
+  $('#pPos').innerHTML = `${c.pos.toFixed(2)}s`; $('#pPosT').textContent = fmtTick(T(c.pos));
+  $('#pIn').innerHTML = `${c.in.toFixed(2)}s`;  $('#pInT').textContent = fmtTick(T(c.in));
+  $('#pDur').innerHTML = `${c.dur.toFixed(2)}s`; $('#pDurT').textContent = fmtTick(T(c.dur));
+  $('#statusSel').textContent = `选中 ${c.id} · ${a.label}`;
+}
+
+/* ---------- 待提交批次 ---------- */
+function addCmd(cmd){
+  pending.push(cmd);
+  renderClips(); renderBatch();
+}
+function cmdSplit(){
+  const c = clips.find(x => x.id === selectedId); if(!c) return;
+  const at = Math.min(Math.max(playheadT, T(c.pos)), T(c.pos + c.dur));
+  addCmd({op:'clip.split', clip_id:c.id, at_ticks:at, right_clip_id:c.id + '-b'});
+}
+function cmdTrim(){
+  const c = clips.find(x => x.id === selectedId); if(!c) return;
+  const end = playheadT;
+  if (end <= T(c.pos) || end > T(c.pos + c.dur)){ toast('播放头不在片段内，无法修剪到此处'); return; }
+  addCmd({op:'clip.trim', clip_id:c.id, source_in_ticks:T(c.in), duration_ticks:end - T(c.pos)});
+}
+function cmdRemove(){
+  const c = clips.find(x => x.id === selectedId); if(!c) return;
+  addCmd({op:'clip.remove', clip_id:c.id});
+}
+let trackSeq = 3;
+function cmdAddTrack(){
+  addCmd({op:'track.add', track:{id:'a' + trackSeq, kind:'audio', name:'音频 ' + trackSeq}});
+  trackSeq++;
+}
+
+function cmdChipHtml(cmd, i){
+  let arg = '';
+  switch (cmd.op){
+    case 'track.add': arg = `track:${cmd.track.id}`; break;
+    case 'asset.register': arg = `asset:${cmd.asset.id}`; break;
+    case 'clip.add': arg = `clip:${cmd.clip.id} → ${cmd.clip.track_id}`; break;
+    case 'clip.move': arg = `${cmd.clip_id} → ${cmd.track_id} @${(cmd.position_ticks/TIMEBASE).toFixed(2)}s`; break;
+    case 'clip.trim': arg = `${cmd.clip_id} dur:${(cmd.duration_ticks/TIMEBASE).toFixed(2)}s`; break;
+    case 'clip.split': arg = `${cmd.clip_id} @${tc(cmd.at_ticks).slice(3)}`; break;
+    case 'clip.remove': arg = cmd.clip_id; break;
+  }
+  return `<div class="cmd-chip"><span class="op">${cmd.op}</span><span class="arg">${arg}</span>
+    <button class="rm" onclick="removeCmd(${i})" aria-label="移除命令">✕</button></div>`;
+}
+function renderBatch(){
+  $('#cmdList').innerHTML = pending.map(cmdChipHtml).join('');
+  $('#cmdCount').textContent = pending.length;
+  const hasEmpty = pending.length === 0;
+  $('#commitBtn').disabled = hasEmpty;
+  $('#dryBtn').disabled = hasEmpty;
+  const reqId = `ui-draft-${requestSeq}`;
+  const cmdsJson = pending.map(c => '        ' + JSON.stringify(c)).join(',\n') || '        …';
+  $('#jsonBox').innerHTML =
+`<span class="dim">// POST /v1/projects/city-impression/edits</span>
+{
+  <span class="k">"request_id"</span>: <span class="s">"${reqId}"</span>,
+  <span class="k">"expected_revision"</span>: <span class="n">${revision}</span>,
+  <span class="k">"dry_run"</span>: <span class="n">false</span>,
+  <span class="k">"commands"</span>: [
+${cmdsJson}
+  ]
+}`;
+}
+function removeCmd(i){ pending.splice(i, 1); renderClips(); renderBatch(); }
+function clearBatch(){ pending = []; renderClips(); renderBatch(); toast('已清空待提交命令'); }
+function dryRun(){
+  toast(`预演通过 · 候选 <span class="mono">r${revision + 1}</span> · 未提交，数据库无变更`);
+}
+function commitBatch(){
+  if (!pending.length) return;
+  // 应用提案（演示：clip.add 的幽灵片段转正）
+  pending.forEach(cmd => {
+    if (cmd.op === 'clip.add' && !clips.some(c => c.id === cmd.clip.id)){
+      const cc = cmd.clip;
+      clips.push({id:cc.id, asset_id:cc.asset_id, track_id:cc.track_id,
+        pos:cc.position_ticks/TIMEBASE, in:cc.source_in_ticks/TIMEBASE, dur:cc.duration_ticks/TIMEBASE,
+        image: assets[cc.asset_id].kind === 'image'});
+    }
+  });
+  revision++;
+  requestSeq++;
+  pending = [];
+  $('#revChip').textContent = 'r' + revision;
+  renderClips(); renderBatch();
+  toast(`已提交 · 当前 <span class="mono">r${revision}</span> · 历史已留档`);
+}
+
+/* ---------- 工具与缩放 ---------- */
+function setTool(t){
+  tool = t;
+  $('#toolSelect').classList.toggle('active', t === 'select');
+  $('#toolRazor').classList.toggle('active', t === 'razor');
+  $('#tlInner').style.cursor = t === 'razor' ? 'crosshair' : '';
+}
+$('#toolSelect').onclick = () => setTool('select');
+$('#toolRazor').onclick = () => setTool('razor');
+$('#snapBtn').onclick = () => {
+  snap = !snap;
+  $('#snapBtn').classList.toggle('active', snap);
+  $('#statusSnap').textContent = snap ? '开' : '关';
+};
+$('#zoom').addEventListener('input', e => {
+  pxPerSec = +e.target.value;
+  $('#zoomVal').textContent = pxPerSec + ' px/s';
+  $('#statusZoom').textContent = pxPerSec + ' px/s';
+  renderRuler(); renderClips(); renderPlayhead();
+});
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input, textarea')) return;
+  if (e.key === 'v') setTool('select');
+  if (e.key === 'c') setTool('razor');
+  if (e.key === 'Escape'){ selectedId = null; renderClips(); renderInspector(); }
+});
+
+/* ---------- 启动 ---------- */
+renderAssets();
+renderAll();
+playheadT = T(4);
+renderPlayhead();
+</script>
+
+</body>
+</html>

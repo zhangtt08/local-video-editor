@@ -1,0 +1,1425 @@
+"""Versioned JSON contracts; no HTTP, MCP, database, or media engine imports."""
+
+from typing import Annotated, Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+TIMEBASE = 70_560_000
+MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
+SCHEMA_VERSION = 11  # v11 added project markers; older rows still validate (ge=1).
+Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
+Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
+Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
+Revision = Annotated[int, Field(ge=0, le=MAX_TICKS)]
+
+
+class Contract(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class FrameRate(Contract):
+    numerator: Annotated[int, Field(gt=0, le=240_000)] = 30
+    denominator: Annotated[int, Field(gt=0, le=10_000)] = 1
+
+
+class SequenceSettings(Contract):
+    timebase: Literal[70_560_000] = TIMEBASE
+    frame_rate: FrameRate = Field(default_factory=FrameRate)
+    sample_rate: Literal[44_100, 48_000, 96_000] = 48_000
+    width: Annotated[int, Field(gt=0, le=16_384)] = 1920
+    height: Annotated[int, Field(gt=0, le=16_384)] = 1080
+    master_gain: Annotated[float, Field(ge=0, le=4)] = 1.0
+    master_limiter: bool = False
+    master_ceiling_dbtp: Annotated[float, Field(ge=-12.0, le=0.0)] = -1.0
+
+    @model_validator(mode="after")
+    def exact_frame_clock(self):
+        if (self.timebase * self.frame_rate.denominator) % self.frame_rate.numerator:
+            raise ValueError("frame rate cannot be represented exactly by this timebase")
+        if self.timebase % self.sample_rate:
+            raise ValueError("sample rate cannot be represented exactly by this timebase")
+        return self
+
+    @property
+    def frame_ticks(self) -> int:
+        return self.timebase * self.frame_rate.denominator // self.frame_rate.numerator
+
+
+class VerifiedMedia(Contract):
+    """A media file the media service resolved, hashed and probed itself."""
+
+    probe_id: Identifier
+    path: Annotated[str, Field(min_length=1, max_length=2048)]
+    kind: Literal["video", "audio", "image"]
+    label: Annotated[str, Field(min_length=1, max_length=256)]
+    size_bytes: Annotated[int, Field(ge=0)]
+    content_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    duration_ticks: Ticks
+    width: Annotated[int | None, Field(ge=0, le=16_384)] = None
+    height: Annotated[int | None, Field(ge=0, le=16_384)] = None
+    frame_rate: FrameRate | None = None
+    has_audio: bool = False
+    audio_sample_rate: Annotated[int | None, Field(ge=0)] = None
+    audio_channels: Annotated[int | None, Field(ge=0)] = None
+    video_codec: Annotated[str | None, Field(max_length=64)] = None
+    audio_codec: Annotated[str | None, Field(max_length=64)] = None
+    mtime: Annotated[int, Field(ge=0)] = 0
+    cached_at: Annotated[str, Field(max_length=64)] = ""
+
+
+class Asset(Contract):
+    id: Identifier
+    kind: Literal["video", "audio", "image", "text", "sequence"]
+    label: Annotated[str, Field(min_length=1, max_length=256)]
+    reference: Annotated[str, Field(min_length=1, max_length=2048)]
+    duration_ticks: Duration | None = None
+    verified: VerifiedMedia | None = None
+    sequence_id: Identifier | None = None
+
+    @model_validator(mode="after")
+    def timed_media(self):
+        if self.kind in {"video", "audio"} and self.duration_ticks is None:
+            raise ValueError("video/audio metadata requires duration_ticks")
+        if (self.kind == "sequence") != (self.sequence_id is not None):
+            raise ValueError("sequence assets require sequence_id; media assets cannot carry it")
+        if self.kind == "sequence" and self.verified is not None:
+            raise ValueError("sequences are generated, not verified files")
+        return self
+
+
+class MediaProbe(Contract):
+    """Server-issued import handle. Clients reference it by id; they never hand back a path."""
+
+    id: Identifier
+    verified: VerifiedMedia
+    thumbnails: Annotated[list[str], Field(max_length=32)] = Field(default_factory=list)
+    waveform: Annotated[list[float], Field(max_length=4096)] = Field(default_factory=list)
+    cache_dir: Annotated[str, Field(min_length=1, max_length=2048)]
+    latency_ms: int = 0
+
+
+BlendMode = Literal[
+    "normal", "multiply", "screen", "overlay", "darken", "lighten", "difference", "exclusion"
+]
+
+
+class Track(Contract):
+    id: Identifier
+    kind: Literal["video", "audio"]
+    name: Annotated[str, Field(min_length=1, max_length=128)]
+    muted: bool = False
+    hidden: bool = False
+    locked: bool = False
+    volume: Annotated[float, Field(ge=0, le=4)] = 1.0
+    blend_mode: BlendMode = "normal"
+
+
+EffectProperty = Literal["x", "y", "scale", "rotation", "opacity", "gain"]
+# Rectangle and ellipse masks keyframe in the mask's own normalized space, so the exporter and the
+# browser interpolate the same numbers; path masks rasterize one image per clip and stay static.
+MaskProperty = Literal["mask_x", "mask_y", "mask_width", "mask_height"]
+MASK_FIELDS = {
+    "mask_x": "center_x",
+    "mask_y": "center_y",
+    "mask_width": "width",
+    "mask_height": "height",
+}
+Property = EffectProperty | MaskProperty
+PROPERTY_LIMITS = {
+    "x": (-2, 2),
+    "y": (-2, 2),
+    "scale": (0.05, 4),
+    "rotation": (-360, 360),
+    "opacity": (0, 1),
+    "gain": (0, 4),
+    "mask_x": (0, 1),
+    "mask_y": (0, 1),
+    "mask_width": (0.01, 2),
+    "mask_height": (0.01, 2),
+}
+
+
+class ClipEffects(Contract):
+    x: Annotated[float, Field(ge=-2, le=2)] = 0.0
+    y: Annotated[float, Field(ge=-2, le=2)] = 0.0
+    scale: Annotated[float, Field(ge=0.05, le=4)] = 1.0
+    rotation: Annotated[float, Field(ge=-360, le=360)] = 0.0
+    opacity: Annotated[float, Field(ge=0, le=1)] = 1.0
+    gain: Annotated[float, Field(ge=0, le=4)] = 1.0
+
+
+class GradeCurvePoint(Contract):
+    x: Annotated[float, Field(ge=0, le=1)]
+    y: Annotated[float, Field(ge=-0.5, le=1.5)]
+
+
+# Every node blends its own result with its input by this strength, like Resolve's Mix slider.
+GradeMix = Annotated[float, Field(ge=0, le=1)]
+
+
+ColorSpace = Literal["linear", "srgb", "gamma18", "gamma20", "gamma22", "gamma24", "rec709"]
+
+
+class GradeCurve(Contract):
+    """Per-channel transfer curve; the engine samples it into the shared 8-bit table."""
+
+    kind: Literal["curve"] = "curve"
+    channel: Literal["rgb", "red", "green", "blue"] = "rgb"
+    points: Annotated[list[GradeCurvePoint], Field(min_length=2, max_length=16)]
+    enabled: bool = True
+    mix: GradeMix = 1.0
+    blend: BlendMode = "normal"
+
+    @model_validator(mode="after")
+    def increasing_x(self):
+        xs = [point.x for point in self.points]
+        if any(right <= left for left, right in zip(xs, xs[1:])):
+            raise ValueError("curve points must increase in x")
+        return self
+
+
+class GradeWhiteBalance(Contract):
+    kind: Literal["white_balance"] = "white_balance"
+    temperature: Annotated[float, Field(ge=-1, le=1)] = 0.0
+    tint: Annotated[float, Field(ge=-1, le=1)] = 0.0
+    enabled: bool = True
+    mix: GradeMix = 1.0
+    blend: BlendMode = "normal"
+
+
+class GradeWheels(Contract):
+    """Resolve-style lift/gamma/gain, one value per RGB channel."""
+
+    kind: Literal["wheels"] = "wheels"
+    lift: Annotated[list[float], Field(min_length=3, max_length=3)] = Field(
+        default_factory=lambda: [0.0, 0.0, 0.0]
+    )
+    gamma: Annotated[list[float], Field(min_length=3, max_length=3)] = Field(
+        default_factory=lambda: [1.0, 1.0, 1.0]
+    )
+    gain: Annotated[list[float], Field(min_length=3, max_length=3)] = Field(
+        default_factory=lambda: [1.0, 1.0, 1.0]
+    )
+    enabled: bool = True
+    mix: GradeMix = 1.0
+    blend: BlendMode = "normal"
+
+    @model_validator(mode="after")
+    def ranges(self):
+        if any(not -0.5 <= value <= 0.5 for value in self.lift):
+            raise ValueError("lift must be in [-0.5, 0.5]")
+        if any(not 0.1 <= value <= 10 for value in self.gamma):
+            raise ValueError("gamma must be in [0.1, 10]")
+        if any(not 0 <= value <= 4 for value in self.gain):
+            raise ValueError("gain must be in [0, 4]")
+        return self
+
+
+class GradeTransfer(Contract):
+    """Colour-space conversion: one published EOTF in, one OETF out, applied to every channel.
+
+    Only the transfer function is modelled — no primaries and no matrix — so a chain of these nodes
+    normalises gamma (an sRGB screen recording onto a BT.1886 timeline) without pretending to be a
+    full ICC/ACES pipeline. `rec709` is BT.1886 with zero black lift, which is exactly gamma 2.4;
+    both names are offered because editors think in both vocabularies.
+    """
+
+    kind: Literal["transfer"] = "transfer"
+    input_space: ColorSpace
+    output_space: ColorSpace
+    enabled: bool = True
+    mix: GradeMix = 1.0
+    blend: BlendMode = "normal"
+
+
+GradeNode = GradeCurve | GradeWhiteBalance | GradeWheels | GradeTransfer
+
+GRADE_NODE_LIMIT = 8
+
+
+class ClipColor(Contract):
+    exposure: Annotated[float, Field(ge=-2, le=2)] = 0.0
+    contrast: Annotated[float, Field(ge=0, le=2)] = 1.0
+    saturation: Annotated[float, Field(ge=0, le=2)] = 1.0
+    grade: Annotated[list[GradeNode], Field(max_length=GRADE_NODE_LIMIT)] = Field(
+        default_factory=list
+    )
+
+
+class MaskVertex(Contract):
+    """One path node in normalized picture coordinates; handles are offsets from the node."""
+
+    x: Annotated[float, Field(ge=0, le=1)]
+    y: Annotated[float, Field(ge=0, le=1)]
+    handle_out: Annotated[list[float], Field(min_length=2, max_length=2)] = Field(
+        default_factory=lambda: [0.0, 0.0]
+    )
+    handle_in: Annotated[list[float], Field(min_length=2, max_length=2)] = Field(
+        default_factory=lambda: [0.0, 0.0]
+    )
+
+    @model_validator(mode="after")
+    def handle_range(self):
+        for pair in (self.handle_out, self.handle_in):
+            if any(not -1 <= value <= 1 for value in pair):
+                raise ValueError("path handles must be within [-1, 1] of the node")
+        return self
+
+
+MASK_VERTEX_LIMIT = 64
+PathVertices = Annotated[list[MaskVertex], Field(min_length=3, max_length=MASK_VERTEX_LIMIT)]
+
+
+class SpeedPoint(Contract):
+    """One node of a speed profile: timeline offset inside the clip and relative percent."""
+
+    at_ticks: Ticks
+    percent: Annotated[int, Field(ge=0, le=400)]
+
+
+SPEED_POINT_LIMIT = 64
+SpeedCurve = Annotated[list[SpeedPoint], Field(min_length=2, max_length=SPEED_POINT_LIMIT)]
+
+
+class ShapeMask(Contract):
+    shape: Literal["rectangle", "ellipse", "path"] = "ellipse"
+    center_x: Annotated[float, Field(ge=0, le=1)] = 0.5
+    center_y: Annotated[float, Field(ge=0, le=1)] = 0.5
+    width: Annotated[float, Field(ge=0.01, le=2)] = 0.6
+    height: Annotated[float, Field(ge=0.01, le=2)] = 0.6
+    feather: Annotated[float, Field(ge=0, le=1)] = 0.0
+    inverted: bool = False
+    vertices: PathVertices | None = None
+
+    @model_validator(mode="after")
+    def path_requires_vertices(self):
+        if self.shape == "path" and not self.vertices:
+            raise ValueError("a path mask needs at least three vertices")
+        if self.shape != "path" and self.vertices:
+            raise ValueError("only a path mask can carry vertices")
+        if self.vertices is not None:
+            seen = {(round(vertex.x, 9), round(vertex.y, 9)) for vertex in self.vertices}
+            if len(seen) != len(self.vertices):
+                raise ValueError("path vertices must be distinct")
+        return self
+
+
+class Bezier(Contract):
+    x1: Annotated[float, Field(ge=0, le=1)] = 1 / 3
+    y1: Annotated[float, Field(ge=-4, le=4)] = 0.0
+    x2: Annotated[float, Field(ge=0, le=1)] = 2 / 3
+    y2: Annotated[float, Field(ge=-4, le=4)] = 1.0
+
+
+class Keyframe(Contract):
+    property: Property
+    at_ticks: Ticks
+    value: float
+    interpolation: Literal["linear", "hold", "ease", "bezier"] = "linear"
+    bezier: Bezier | None = None
+
+    @model_validator(mode="after")
+    def property_range(self):
+        lo, hi = PROPERTY_LIMITS[self.property]
+        if not lo <= self.value <= hi:
+            raise ValueError(f"{self.property} must be in [{lo}, {hi}]")
+        if self.bezier is not None and self.interpolation != "bezier":
+            raise ValueError("bezier controls require bezier interpolation")
+        return self
+
+
+class TextStyle(Contract):
+    body: Annotated[str, Field(min_length=1, max_length=4000, pattern=r"^[^\x00]*$")]
+    font_size: Annotated[float, Field(ge=0.01, le=0.2)] = 0.06
+    color: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] = "#FFFFFF"
+    align: Literal["top", "center", "bottom"] = "center"
+    box: bool = False
+
+
+class Transition(Contract):
+    from_clip_id: Identifier
+    kind: Literal["dissolve", "dip_black", "dip_white"] = "dissolve"
+    duration_ticks: Duration
+
+
+class Clip(Contract):
+    id: Identifier
+    asset_id: Identifier
+    track_id: Identifier
+    position_ticks: Ticks
+    source_in_ticks: Ticks = 0
+    duration_ticks: Duration
+    speed_percent: Annotated[int, Field(ge=25, le=400)] = 100
+    text: TextStyle | None = None
+    effects: ClipEffects = Field(default_factory=ClipEffects)
+    color: ClipColor = Field(default_factory=ClipColor)
+    mask: ShapeMask | None = None
+    speed_curve: SpeedCurve | None = None
+    keyframes: Annotated[list[Keyframe], Field(max_length=2000)] = Field(default_factory=list)
+    animation_offset_ticks: Ticks = 0
+    transition_in: Transition | None = None
+    group_id: Identifier | None = None
+    link_id: Identifier | None = None
+    link_source_offset_ticks: Annotated[int, Field(ge=-MAX_TICKS, le=MAX_TICKS)] = 0
+    embedded_audio: bool = True
+
+    @model_validator(mode="after")
+    def speed_curve_shape(self):
+        if self.speed_curve is None:
+            return self
+        marks = [point.at_ticks for point in self.speed_curve]
+        if any(right <= left for left, right in zip(marks, marks[1:])):
+            raise ValueError("speed curve offsets must increase")
+        if marks[0] != 0:
+            raise ValueError("speed curve must start at the clip head")
+        if marks[-1] > self.duration_ticks:
+            raise ValueError("speed curve exceeds the clip duration")
+        return self
+
+    def mask_animation_problem(self) -> str | None:
+        """Why this clip's mask keyframes cannot be honoured, or None when they can.
+
+        The reducer edits a clip in place, so this is checked once by the timeline validator after
+        every mutation rather than by a model validator that an in-place write would bypass.
+        """
+        if not any(key.property in MASK_FIELDS for key in self.keyframes):
+            return None
+        if self.mask is None:
+            return "mask keyframes need a rectangle or ellipse mask on the clip"
+        if self.mask.shape == "path":
+            return "path masks cannot be keyframed"
+        if self.mask.inverted:
+            return "an inverted mask keeps the outside, which a keyframed shape cannot follow"
+        return None
+
+    @model_validator(mode="after")
+    def unique_keyframes(self):
+        keys = {(k.property, k.at_ticks) for k in self.keyframes}
+        if len(keys) != len(self.keyframes):
+            raise ValueError("one keyframe per property and time")
+        from .animation import bezier_extrema, bezier_value
+
+        for prop in PROPERTY_LIMITS:
+            ordered = sorted(
+                (k for k in self.keyframes if k.property == prop), key=lambda k: k.at_ticks
+            )
+            lo, hi = PROPERTY_LIMITS[prop]
+            for left, right in zip(ordered, ordered[1:]):
+                if left.interpolation != "bezier":
+                    continue
+                controls = left.bezier or Bezier()
+                for u in bezier_extrema(controls.y1, controls.y2):
+                    value = left.value + (right.value - left.value) * bezier_value(
+                        controls.y1, controls.y2, u
+                    )
+                    if not lo - 1e-10 <= value <= hi + 1e-10:
+                        raise ValueError(f"{prop} bezier curve exceeds [{lo}, {hi}]")
+        return self
+
+
+class Sequence(Contract):
+    id: Identifier
+    name: Annotated[str, Field(min_length=1, max_length=256)]
+    duration_ticks: Duration
+    tracks: Annotated[list[Track], Field(max_length=128)] = Field(default_factory=list)
+    clips: Annotated[dict[str, Clip], Field(max_length=20_000)] = Field(default_factory=dict)
+
+
+class Marker(Contract):
+    """A named point on the timeline. Markers belong to the project, not to a clip, and they stay
+    where they were placed when clips ripple past them — the same contract every editor's ruler
+    offers, so a human's beat marks and an Agent's scene notes refer to the same integer tick."""
+
+    id: Identifier
+    at_ticks: Ticks
+    name: Annotated[str, Field(min_length=1, max_length=64)]
+    color: Literal["amber", "cyan", "green", "red", "violet"] = "amber"
+
+
+class Project(Contract):
+    schema_version: Annotated[int, Field(ge=1, le=SCHEMA_VERSION)] = SCHEMA_VERSION
+    id: Identifier
+    name: Annotated[str, Field(min_length=1, max_length=256)]
+    revision: Revision = 0
+    settings: SequenceSettings = Field(default_factory=SequenceSettings)
+    assets: Annotated[dict[str, Asset], Field(max_length=10_000)] = Field(default_factory=dict)
+    tracks: Annotated[list[Track], Field(max_length=128)] = Field(default_factory=list)
+    clips: Annotated[dict[str, Clip], Field(max_length=20_000)] = Field(default_factory=dict)
+    sequences: Annotated[dict[str, Sequence], Field(max_length=1000)] = Field(default_factory=dict)
+    markers: Annotated[list[Marker], Field(max_length=2000)] = Field(default_factory=list)
+    notes: Annotated[str, Field(max_length=4000)] = ""
+
+
+class SequenceNest(Contract):
+    op: Literal["sequence.nest"]
+    clip_ids: Annotated[list[Identifier], Field(min_length=1, max_length=20_000)]
+    sequence_id: Identifier
+    asset_id: Identifier
+    clip_id: Identifier
+    name: Annotated[str, Field(min_length=1, max_length=256)]
+
+
+class SequenceAdd(Contract):
+    op: Literal["sequence.add"]
+    sequence: Sequence
+
+
+class SequenceUpdate(Contract):
+    op: Literal["sequence.update"]
+    sequence_id: Identifier
+    name: Annotated[str | None, Field(min_length=1, max_length=256)] = None
+    duration_ticks: Duration | None = None
+
+    @model_validator(mode="after")
+    def something_to_do(self):
+        if self.name is None and self.duration_ticks is None:
+            raise ValueError("provide name or duration_ticks")
+        return self
+
+
+class SequenceRemove(Contract):
+    op: Literal["sequence.remove"]
+    sequence_id: Identifier
+
+
+class TrackAdd(Contract):
+    op: Literal["track.add"]
+    track: Track
+    index: Annotated[int | None, Field(ge=0, le=128)] = None
+
+
+class AssetRegister(Contract):
+    op: Literal["asset.register"]
+    asset: Asset
+
+
+class AssetImport(Contract):
+    """Attach a media record the server probed. The path is never caller-supplied here."""
+
+    op: Literal["asset.import"]
+    asset_id: Identifier
+    label: Annotated[str, Field(min_length=1, max_length=256)]
+    probe_id: Identifier
+    verified: VerifiedMedia
+
+    @model_validator(mode="after")
+    def matching_probe(self):
+        if self.verified.probe_id != self.probe_id:
+            raise ValueError("verified record must carry the same probe_id")
+        return self
+
+
+class AssetRemove(Contract):
+    op: Literal["asset.remove"]
+    asset_id: Identifier
+
+
+class TrackRemove(Contract):
+    op: Literal["track.remove"]
+    track_id: Identifier
+
+
+class TrackUpdate(Contract):
+    op: Literal["track.update"]
+    track_id: Identifier
+    name: Annotated[str | None, Field(min_length=1, max_length=128)] = None
+    muted: bool | None = None
+    hidden: bool | None = None
+    locked: bool | None = None
+    volume: Annotated[float | None, Field(ge=0, le=4)] = None
+    blend_mode: BlendMode | None = None
+
+
+class ClipAdd(Contract):
+    op: Literal["clip.add"]
+    clip: Clip
+
+
+class ClipInsert(Contract):
+    op: Literal["clip.insert"]
+    clip: Clip
+    # None moves only the destination track; explicit tracks must include it.
+    ripple_track_ids: Annotated[list[Identifier] | None, Field(max_length=128)] = None
+
+
+class ClipOverwrite(Contract):
+    op: Literal["clip.overwrite"]
+    clip: Clip
+
+
+class ClipMove(Contract):
+    op: Literal["clip.move"]
+    clip_id: Identifier
+    track_id: Identifier
+    position_ticks: Ticks
+
+
+class ClipsAdd(Contract):
+    op: Literal["clips.add"]
+    clips: Annotated[list[Clip], Field(min_length=1, max_length=20_000)]
+
+
+class ClipsMove(Contract):
+    op: Literal["clips.move"]
+    clip_ids: Annotated[list[Identifier], Field(min_length=1, max_length=20_000)]
+    delta_ticks: Annotated[int, Field(ge=-MAX_TICKS, le=MAX_TICKS)]
+    track_map: dict[Identifier, Identifier] = Field(default_factory=dict)
+
+
+class ClipsRemove(Contract):
+    op: Literal["clips.remove"]
+    clip_ids: Annotated[list[Identifier], Field(min_length=1, max_length=20_000)]
+    ripple: bool = False
+
+
+class ClipsSplit(Contract):
+    op: Literal["clips.split"]
+    clip_ids: Annotated[list[Identifier], Field(min_length=1, max_length=20_000)]
+    at_ticks: Ticks
+    right_clip_ids: dict[Identifier, Identifier]
+
+
+class ClipTrim(Contract):
+    op: Literal["clip.trim"]
+    clip_id: Identifier
+    source_in_ticks: Ticks
+    duration_ticks: Duration
+    position_ticks: Ticks | None = None
+    ripple: bool = False
+
+
+class ClipSlip(Contract):
+    """Change which part of the source a clip shows, without moving it or changing its length.
+
+    The clip keeps its position and duration, so nothing around it moves and the track stays the
+    same length; only the source window slides. A clip whose volume/picture is animated keeps its
+    keyframes attached to the timeline window, which is exactly what a slip means.
+    """
+
+    op: Literal["clip.slip"]
+    clip_id: Identifier
+    source_offset_ticks: int
+
+
+class ClipSlide(Contract):
+    """Move a clip along its track, taking frames from one neighbour and giving the same number to
+    the other, so the track's content length does not change at all.
+
+    Both neighbours keep their own source clock: the one being eaten into starts or ends later in
+    its own media. That is what makes a slide different from a move plus two trims done by hand.
+    """
+
+    op: Literal["clip.slide"]
+    clip_id: Identifier
+    delta_ticks: int
+
+
+class ClipRoll(Contract):
+    op: Literal["clip.roll"]
+    clip_id: Identifier  # the clip left of the seam, which grows/shrinks at its tail
+    other_clip_id: Identifier  # the clip right of the seam, which mirrors
+    delta_ticks: Annotated[int, Field(ge=-MAX_TICKS, le=MAX_TICKS)]
+
+
+class ClipTrimLinked(ClipTrim):
+    op: Literal["clip.trim_linked"]
+
+
+class ClipsGroup(Contract):
+    op: Literal["clips.group"]
+    clip_ids: Annotated[list[Identifier], Field(min_length=1, max_length=20_000)]
+    group_id: Identifier | None
+
+
+class ClipsLink(Contract):
+    op: Literal["clips.link"]
+    clip_ids: Annotated[list[Identifier], Field(min_length=1, max_length=20_000)]
+    link_id: Identifier | None
+
+
+class ClipEffectsSet(Contract):
+    op: Literal["clip.effects"]
+    clip_id: Identifier
+    effects: ClipEffects
+
+
+class ClipMaskSet(Contract):
+    op: Literal["clip.mask"]
+    clip_id: Identifier
+    mask: ShapeMask | None
+
+
+class ClipSpeedCurveSet(Contract):
+    op: Literal["clip.speed_curve"]
+    clip_id: Identifier
+    points: SpeedCurve | None = None
+
+
+class ClipSpeedSet(Contract):
+    op: Literal["clip.speed"]
+    clip_id: Identifier
+    speed_percent: Annotated[int, Field(ge=25, le=400)]
+    ripple: bool = True
+
+
+class ClipColorSet(Contract):
+    op: Literal["clip.color"]
+    clip_id: Identifier
+    color: ClipColor
+
+
+class ClipGradeSet(Contract):
+    op: Literal["clip.grade"]
+    clip_id: Identifier
+    grade: Annotated[list[GradeNode], Field(max_length=GRADE_NODE_LIMIT)]
+
+
+class ClipTextSet(Contract):
+    op: Literal["clip.text"]
+    clip_id: Identifier
+    text: TextStyle
+
+
+class ClipPatch(Contract):
+    op: Literal["clip.patch"]
+    clip_id: Identifier
+    effects: dict[EffectProperty, float] | None = None
+    color: dict[Literal["exposure", "contrast", "saturation", "grade"], Any] | None = None
+    text: dict[Literal["body", "font_size", "color", "align", "box"], str | float | bool] | None = (
+        None
+    )
+
+    @model_validator(mode="after")
+    def valid_fields(self):
+        if not (self.effects or self.color or self.text):
+            raise ValueError("provide at least one changed property")
+        if self.effects is not None:
+            ClipEffects.model_validate(self.effects)
+        if self.color is not None:
+            ClipColor.model_validate({"grade": [], **self.color})
+        if self.text is not None:
+            TextStyle.model_validate({"body": "validation", **self.text})
+        return self
+
+
+class ClipFade(Contract):
+    op: Literal["clip.fade"]
+    clip_id: Identifier
+    property: Literal["opacity", "gain"]
+    duration_ticks: Duration
+    mode: Literal["in", "out", "both"] = "both"
+
+
+class MarkerSet(Contract):
+    """Create a marker, or move and rename the one that already carries this id."""
+
+    op: Literal["marker.set"]
+    marker: Marker
+
+
+class MarkerRemove(Contract):
+    op: Literal["marker.remove"]
+    marker_id: Identifier
+
+
+class TransitionSet(Contract):
+    op: Literal["transition.set"]
+    clip_id: Identifier
+    from_clip_id: Identifier
+    kind: Literal["dissolve", "dip_black", "dip_white"] = "dissolve"
+    duration_ticks: Duration
+
+
+class TransitionRemove(Contract):
+    op: Literal["transition.remove"]
+    clip_id: Identifier
+
+
+class CaptionsImport(Contract):
+    op: Literal["captions.import"]
+    track_id: Identifier
+    asset_id: Identifier
+    srt: Annotated[str, Field(min_length=1, max_length=500_000)]
+    offset_ticks: Ticks = 0
+
+
+class KeyframeSet(Contract):
+    op: Literal["keyframe.set"]
+    clip_id: Identifier
+    keyframe: Keyframe
+
+
+class KeyframeRemove(Contract):
+    op: Literal["keyframe.remove"]
+    clip_id: Identifier
+    property: Property
+    at_ticks: Ticks
+
+
+class KeyframeMove(Contract):
+    op: Literal["keyframe.move"]
+    clip_id: Identifier
+    from_ticks: Ticks
+    keyframe: Keyframe
+
+
+class KeyframeMoveItem(Contract):
+    from_ticks: Ticks
+    keyframe: Keyframe
+
+
+class KeyframesMove(Contract):
+    op: Literal["keyframes.move"]
+    clip_id: Identifier
+    moves: Annotated[list[KeyframeMoveItem], Field(min_length=1, max_length=2000)]
+
+
+class KeyframePosition(Contract):
+    property: Property
+    at_ticks: Ticks
+
+
+class KeyframesRemove(Contract):
+    op: Literal["keyframes.remove"]
+    clip_id: Identifier
+    keyframes: Annotated[list[KeyframePosition], Field(min_length=1, max_length=2000)]
+
+
+class KeyframesReplace(Contract):
+    """Write a whole curve for one property in a single command.
+
+    Bulk automation — a duck envelope over a music bed, a tracked mask over a shot — needs
+    hundreds of points, and one command per point would run past the batch limit and split a
+    single editorial decision across several revisions. Times are clip-local, like `keyframe.set`.
+    """
+
+    op: Literal["keyframes.replace"]
+    clip_id: Identifier
+    property: Property
+    keyframes: Annotated[list[Keyframe], Field(min_length=1, max_length=2000)]
+
+    @model_validator(mode="after")
+    def one_property(self):
+        if any(key.property != self.property for key in self.keyframes):
+            raise ValueError("a replacement writes one property only")
+        times = [key.at_ticks for key in self.keyframes]
+        if any(right <= left for left, right in zip(times, times[1:])):
+            raise ValueError("replacement times must increase")
+        return self
+
+
+class MaskTrackPoint(Contract):
+    at_ticks: Ticks
+    center_x: Annotated[float, Field(ge=0.001, le=0.999)]
+    center_y: Annotated[float, Field(ge=0.001, le=0.999)]
+    width: Annotated[float | None, Field(ge=0.01, le=2)] = None
+    height: Annotated[float | None, Field(ge=0.01, le=2)] = None
+
+
+class ClipMaskTrack(Contract):
+    """One atomic rewrite of a box mask's motion from a tracked path.
+
+    The points are clip-local ticks; the reducer keeps the animation clock correct. Either the
+    engine's own tracker or an Agent that analysed the media can supply them. A point may carry the
+    box size, in which case the mask's width and height animate along with its centre, but a single
+    path is either fully sized or centre-only: a half-sized path would silently drop the scale.
+    """
+
+    op: Literal["clip.mask_track"]
+    clip_id: Identifier
+    points: Annotated[list[MaskTrackPoint], Field(min_length=2, max_length=2000)]
+
+    @model_validator(mode="after")
+    def advancing(self):
+        marks = [point.at_ticks for point in self.points]
+        if any(right <= left for left, right in zip(marks, marks[1:])):
+            raise ValueError("tracked points must advance in time")
+        shapes = {(point.width is not None, point.height is not None) for point in self.points}
+        if len(shapes) > 1 or not shapes <= {(True, True), (False, False)}:
+            raise ValueError("every tracked point must carry both width and height, or neither")
+        return self
+
+
+class ClipRippleRemove(Contract):
+    op: Literal["clip.ripple_remove"]
+    clip_id: Identifier
+
+
+class ClipSplit(Contract):
+    op: Literal["clip.split"]
+    clip_id: Identifier
+    at_ticks: Ticks
+    right_clip_id: Identifier
+
+
+class ClipRemove(Contract):
+    op: Literal["clip.remove"]
+    clip_id: Identifier
+
+
+class ClipDetachAudio(Contract):
+    op: Literal["clip.detach_audio"]
+    clip_id: Identifier
+    audio_clip_id: Identifier
+    track_id: Identifier
+
+
+Command = Annotated[
+    SequenceNest
+    | SequenceAdd
+    | SequenceUpdate
+    | SequenceRemove
+    | TrackAdd
+    | TrackRemove
+    | TrackUpdate
+    | AssetRegister
+    | AssetImport
+    | AssetRemove
+    | ClipAdd
+    | ClipInsert
+    | ClipOverwrite
+    | ClipMove
+    | ClipsAdd
+    | ClipsMove
+    | ClipsRemove
+    | ClipsSplit
+    | ClipsGroup
+    | ClipsLink
+    | ClipTrim
+    | ClipTrimLinked
+    | ClipRoll
+    | ClipSplit
+    | ClipSlip
+    | ClipSlide
+    | ClipRemove
+    | ClipRippleRemove
+    | ClipDetachAudio
+    | ClipEffectsSet
+    | ClipMaskSet
+    | ClipMaskTrack
+    | ClipSpeedSet
+    | ClipSpeedCurveSet
+    | ClipColorSet
+    | ClipGradeSet
+    | ClipTextSet
+    | ClipPatch
+    | ClipFade
+    | MarkerSet
+    | MarkerRemove
+    | TransitionSet
+    | TransitionRemove
+    | CaptionsImport
+    | KeyframeSet
+    | KeyframeRemove
+    | KeyframeMove
+    | KeyframesMove
+    | KeyframesRemove
+    | KeyframesReplace,
+    Field(discriminator="op"),
+]
+
+
+class CreateProject(Contract):
+    request_id: Identifier
+    name: Annotated[str, Field(min_length=1, max_length=256)]
+    settings: SequenceSettings = Field(default_factory=SequenceSettings)
+
+
+class EditBatch(Contract):
+    request_id: Identifier
+    expected_revision: Revision
+    commands: Annotated[list[Command], Field(min_length=1, max_length=100)]
+    dry_run: bool = False
+    sequence_id: Identifier | None = None
+
+
+class BundleImport(Contract):
+    request_id: Identifier
+    content_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+
+
+class RestoreProject(Contract):
+    request_id: Identifier
+    expected_revision: Revision
+    target_revision: Revision
+
+
+class ProjectUpdate(Contract):
+    request_id: Identifier
+    expected_revision: Revision
+    name: Annotated[str | None, Field(min_length=1, max_length=256)] = None
+    notes: Annotated[str | None, Field(max_length=4000)] = None
+    settings: SequenceSettings | None = None
+
+    @model_validator(mode="after")
+    def something_to_do(self):
+        if self.name is None and self.notes is None and self.settings is None:
+            raise ValueError("provide name, notes or settings")
+        return self
+
+
+class MutationResult(Contract):
+    project: Project
+    committed: bool
+    replayed: bool = False
+    base_revision: Revision | None = None
+
+
+class ImportRequest(Contract):
+    path: Annotated[str, Field(min_length=1, max_length=2048)]
+
+
+class ProxyRequest(Contract):
+    """Build a smaller playback copy of one verified asset. Preview only — the export always uses
+    the original, and nothing about the project changes."""
+
+    width: Literal[480, 640, 960, 1280]
+
+
+class MaskTrackRequest(Contract):
+    """Analyse the clip's media and move its box mask along with the picture."""
+
+    request_id: Identifier
+    expected_revision: Revision
+    from_ticks: Ticks = 0
+    frames: Annotated[int, Field(ge=2, le=900)] = 120
+    search_radius: Annotated[int, Field(ge=2, le=16)] = 10
+    estimate_scale: bool = True
+    max_gap_frames: Annotated[int, Field(ge=0, le=120)] = 30
+    dry_run: bool = False
+
+
+def project_content_ticks(project) -> int:
+    """Where the ruler ends: the furthest clip edge on the timeline being edited.
+
+    Markers are bounded by this, so the reducer that validates a marker and the plan that reports
+    which markers fell on empty ruler cannot drift apart on how long the content is.
+    """
+    return max(
+        (clip.position_ticks + clip.duration_ticks for clip in project.clips.values()), default=0
+    )
+
+
+def audio_scan_problem(project, clip) -> str | None:
+    """Why this clip's audio cannot be analysed, or None when it can.
+
+    Silence scanning and loudness metering share one answer, so a clip that is refused in one place
+    cannot be silently skipped in the other.
+    """
+    asset = project.assets.get(clip.asset_id)
+    if asset is None or asset.kind not in {"video", "audio"}:
+        return "only video or audio clips carry audio to analyse"
+    verified = asset.verified
+    if verified is None:
+        return "register the server-verified asset before analysing its audio"
+    if verified.has_audio is not True:
+        return "this clip's media has no audio track"
+    if asset.kind == "video" and not clip.embedded_audio:
+        return "this clip's sound lives on another clip; analyse the clip that holds the audio"
+    if clip.speed_curve:
+        return "a clip with a speed curve cannot be analysed yet: time is not linear there"
+    if clip.link_id is not None:
+        return "this clip is linked to another one; handle each clip separately"
+    return None
+
+
+class LoudnessRequest(Contract):
+    """Measure one clip's audio against a loudness target, and optionally apply the matching gain.
+
+    The gain is the only thing written: `clip.effects` carries one linear `gain`, so the browser
+    preview and the export apply the same number and no dynamics processing is invented here.
+    """
+
+    request_id: Identifier
+    expected_revision: Revision
+    target_lufs: Annotated[float, Field(ge=-30.0, le=-6.0)] = -16.0
+    ceiling_dbtp: Annotated[float, Field(ge=-9.0, le=0.0)] = -1.0
+    apply: bool = False
+    dry_run: bool = False
+
+
+class MarkerSplitRequest(Contract):
+    """Split every clip a marker falls inside, so a marked beat becomes a cut point.
+
+    The plan is made of the ordinary `clip.split` commands, so the reducer stays the only place that
+    decides what a split does. A marker over empty ruler, or within one frame of a clip edge, is not
+    planned rather than producing a zero-length clip.
+    """
+
+    request_id: Identifier
+    expected_revision: Revision
+    track_ids: Annotated[list[Identifier] | None, Field(max_length=128)] = None
+    apply: bool = False
+    dry_run: bool = False
+
+
+class SilenceRequest(Contract):
+    """Scan one clip's audio for quiet stretches and hand back the commands that remove them.
+
+    The plan is made of the ordinary `clip.split` / `clip.ripple_remove` commands, so the reducer
+    stays the only place that decides what a cut does; `apply` lets the engine submit it as one
+    batch, while a client that wants different boundaries can edit the commands before sending them.
+    """
+
+    request_id: Identifier
+    expected_revision: Revision
+    threshold_db: Annotated[float, Field(ge=-80.0, le=-6.0)] = -35.0
+    min_silence_ms: Annotated[int, Field(ge=80, le=5000)] = 250
+    from_ticks: Ticks = 0
+    to_ticks: Ticks | None = None
+    trim_edges: bool = False
+    apply: bool = False
+    dry_run: bool = False
+
+
+class DuckRequest(Contract):
+    """Plan the gain keyframes that pull one track back while another one is talking.
+
+    Like the silence scan, this hands back ordinary commands, so the reducer stays the only place
+    that decides what a keyframe does to a clip; `apply` lets the engine submit them as one batch,
+    and a client that wants a shallower duck can edit the envelope before sending it back.
+    """
+
+    request_id: Identifier
+    expected_revision: Revision
+    driver_track_ids: Annotated[list[Identifier] | None, Field(max_length=32)] = None
+    depth_db: Annotated[float, Field(ge=1.0, le=36.0)] = 9.0
+    attack_ms: Annotated[int, Field(ge=0, le=3000)] = 150
+    hold_ms: Annotated[int, Field(ge=0, le=3000)] = 120
+    release_ms: Annotated[int, Field(ge=0, le=5000)] = 600
+    threshold_db: Annotated[float, Field(ge=-80.0, le=-6.0)] = -35.0
+    min_silence_ms: Annotated[int, Field(ge=80, le=5000)] = 250
+    apply: bool = False
+    dry_run: bool = False
+
+
+class ProxyPrune(Contract):
+    """Free derived playback copies down to `max_bytes` (default: the engine's own limit)."""
+
+    max_bytes: Annotated[int | None, Field(ge=0)] = None
+
+
+RenderFit = Literal["contain", "cover", "stretch"]
+
+
+class RenderRequest(Contract):
+    request_id: Identifier
+    expected_revision: Revision
+    preset_id: Identifier
+    filename: Annotated[str, Field(min_length=1, max_length=128)]
+    folder: Annotated[str | None, Field(max_length=2048)] = None
+    sequence_id: Identifier | None = None
+    fit: RenderFit = "contain"
+
+    @model_validator(mode="after")
+    def safe_filename(self):
+        return checked_render_name(self)
+
+
+def checked_render_name(value):
+    """One rule for one field: a bare `*.mp4` name, shared by the single and the batch request."""
+    name = value.filename
+    if "/" in name or "\\" in name or "\x00" in name or name in {".", ".."}:
+        raise ValueError("filename must be a bare file name")
+    if not name.lower().endswith(".mp4"):
+        raise ValueError("filename must end with .mp4")
+    return value
+
+
+DEFAULT_MASTER_LUFS = -14.0
+
+
+class MasterLoudnessRequest(Contract):
+    """Measure the whole mix through a throwaway render and land it on a platform loudness target.
+
+    The measurement is not a sum of guesses: the probe renders the same audio graph the export uses,
+    at a tiny canvas, and FFmpeg's own EBU R128 meter reads that file. Only then is one linear
+    master gain suggested, still capped by the true-peak ceiling and the 0-4 range.
+    """
+
+    request_id: Identifier
+    expected_revision: Revision
+    target_lufs: Annotated[float, Field(ge=-30.0, le=-6.0)] = DEFAULT_MASTER_LUFS
+    ceiling_dbtp: Annotated[float, Field(ge=-9.0, le=0.0)] = -1.0
+    limiter: bool = False
+    apply: bool = False
+    dry_run: bool = False
+
+
+class RenderBatchItem(Contract):
+    """One deliverable inside a batch: a preset, a framing and a file name."""
+
+    preset_id: Identifier
+    filename: Annotated[str, Field(min_length=1, max_length=128)]
+    folder: Annotated[str | None, Field(max_length=2048)] = None
+    sequence_id: Identifier | None = None
+    fit: RenderFit = "contain"
+
+    @model_validator(mode="after")
+    def safe_filename(self):
+        return checked_render_name(self)
+
+
+class RenderBatch(Contract):
+    """Several deliverables from one read of the timeline.
+
+    A short-video editor ships the same cut to a horizontal and a vertical platform in one go, so
+    the engine has to be the place that promises all-or-nothing: a client that loops over `renders`
+    can leave half a delivery queued when the second item turns out to be invalid.
+    """
+
+    request_id: Identifier
+    expected_revision: Revision
+    items: Annotated[list[RenderBatchItem], Field(min_length=1, max_length=4)]
+    dry_run: bool = False
+
+    @model_validator(mode="after")
+    def distinct_names(self):
+        names = [item.filename for item in self.items]
+        if len(set(names)) != len(names):
+            raise ValueError("each deliverable in a batch needs its own file name")
+        return self
+
+
+class RenderJob(Contract):
+    id: Identifier
+    project_id: Identifier
+    revision: Revision
+    sequence_id: Identifier | None = None
+    preset_id: Identifier
+    fit: RenderFit = "contain"
+    filename: Annotated[str, Field(max_length=2048)]
+    status: Literal["queued", "running", "succeeded", "failed", "cancelled"]
+    total_ticks: Ticks = 0
+    rendered_ticks: Ticks = 0
+    message: Annotated[str, Field(max_length=4000)] = ""
+    error_code: Annotated[str | None, Field(max_length=64)] = None
+    output_path: Annotated[str | None, Field(max_length=2048)] = None
+    output_size_bytes: Annotated[int | None, Field(ge=0)] = None
+    created_at: Annotated[str, Field(max_length=64)] = ""
+    updated_at: Annotated[str, Field(max_length=64)] = ""
+    elapsed_seconds: Annotated[float | None, Field(ge=0)] = None
+
+    @property
+    def progress(self) -> float:
+        if not self.total_ticks:
+            return 0.0
+        return min(1.0, self.rendered_ticks / self.total_ticks)
+
+
+class JobView(Contract):
+    job: RenderJob
+    plan: Annotated[dict, Field(max_length=200_000)] = Field(default_factory=dict)
+
+
+class EditorError(Exception):
+    def __init__(self, code: str, message: str, status: int = 422, **details):
+        super().__init__(message)
+        self.code, self.message, self.status, self.details = code, message, status, details
+
+    def payload(self) -> dict:
+        return {"code": self.code, "message": self.message, "details": self.details}
+
+
+def render_presets() -> list[dict]:
+    """Controlled output presets. Callers choose one; they never pass encoder flags."""
+
+    return [
+        {
+            "id": "h264-source-quality",
+            "label": "原始画质 H.264（推荐交付）",
+            "container": "mp4",
+            "codec": "libx264",
+            "crf": 18,
+            "encoder_preset": "medium",
+            "audio_bitrate": "256k",
+            "scale": None,
+        },
+        {
+            "id": "h264-1080p",
+            "label": "1080p 标准（体积均衡）",
+            "container": "mp4",
+            "codec": "libx264",
+            "crf": 23,
+            "encoder_preset": "veryfast",
+            "audio_bitrate": "192k",
+            "scale": [1920, 1080],
+        },
+        {
+            "id": "h264-720p-web",
+            "label": "720p 网络分享（最小体积）",
+            "container": "mp4",
+            "codec": "libx264",
+            "crf": 26,
+            "encoder_preset": "veryfast",
+            "audio_bitrate": "128k",
+            "scale": [1280, 720],
+        },
+        {
+            "id": "h264-2160p",
+            "label": "4K 高画质存档",
+            "container": "mp4",
+            "codec": "libx264",
+            "crf": 20,
+            "encoder_preset": "slow",
+            "audio_bitrate": "320k",
+            "scale": [3840, 2160],
+        },
+        {
+            "id": "h264-1080x1920-vertical",
+            "label": "9:16 竖屏（抖音/Shorts 交付）",
+            "container": "mp4",
+            "codec": "libx264",
+            "crf": 20,
+            "encoder_preset": "veryfast",
+            "audio_bitrate": "192k",
+            "scale": [1080, 1920],
+        },
+        {
+            "id": "h264-1080-square",
+            "label": "1:1 方形（信息流卡片）",
+            "container": "mp4",
+            "codec": "libx264",
+            "crf": 21,
+            "encoder_preset": "veryfast",
+            "audio_bitrate": "160k",
+            "scale": [1080, 1080],
+        },
+        {
+            "id": "proxy-540p-fast",
+            "label": "540p 代理（快速查看/审片）",
+            "container": "mp4",
+            "codec": "libx264",
+            "crf": 30,
+            "encoder_preset": "superfast",
+            "audio_bitrate": "96k",
+            "scale": [960, 540],
+        },
+    ]
+
+
+def capabilities(media_ready: bool = False) -> dict:
+    return {
+        "api_version": "v1",
+        "project_schema_version": SCHEMA_VERSION,
+        "timebase": TIMEBASE,
+        "max_commands_per_batch": 100,
+        "commands": [
+            "sequence.nest",
+            "sequence.add",
+            "sequence.update",
+            "sequence.remove",
+            "track.add",
+            "track.remove",
+            "track.update",
+            "asset.register",
+            "asset.import",
+            "asset.remove",
+            "clip.add",
+            "clip.insert",
+            "clip.overwrite",
+            "clip.move",
+            "clips.add",
+            "clips.move",
+            "clips.remove",
+            "clips.split",
+            "clips.group",
+            "clips.link",
+            "clip.trim",
+            "clip.trim_linked",
+            "clip.roll",
+            "clip.split",
+            "clip.slip",
+            "clip.slide",
+            "clip.remove",
+            "clip.ripple_remove",
+            "clip.detach_audio",
+            "clip.effects",
+            "clip.mask",
+            "clip.mask_track",
+            "clip.speed",
+            "clip.speed_curve",
+            "clip.color",
+            "clip.grade",
+            "clip.text",
+            "clip.patch",
+            "clip.fade",
+            "marker.set",
+            "marker.remove",
+            "transition.set",
+            "transition.remove",
+            "captions.import",
+            "keyframe.set",
+            "keyframe.remove",
+            "keyframe.move",
+            "keyframes.move",
+            "keyframes.remove",
+            "keyframes.replace",
+        ],
+        "features": {
+            "atomic_batch": True,
+            "multi_clip_editing": True,
+            "persistent_groups": True,
+            "linked_av_editing": True,
+            "dry_run": True,
+            "revision_conflicts": True,
+            "durable_idempotency": True,
+            "history_restore": True,
+            "asset_metadata_registration": True,
+            "media_probe": media_ready,
+            "thumbnails": media_ready,
+            "waveform": media_ready,
+            "preview_stream": media_ready,
+            "composite_frames": media_ready,
+            "project_bundles": media_ready,
+            "render": media_ready,
+            "render_jobs": media_ready,
+            "straight_cut_compositing": media_ready,
+            "layered_overlay": media_ready,
+            "keyframes": True,
+            "bezier_keyframes": True,
+            "multi_keyframe_editing": True,
+            "animation_curves": True,
+            "clip_effects": True,
+            "clip_property_patches": True,
+            "nested_sequences": True,
+            "shape_masks": True,
+            "path_masks": True,
+            "mask_animation": True,
+            "mask_tracking": media_ready,
+            "silence_detection": media_ready,
+            "loudness_metering": media_ready,
+            "output_fit_modes": media_ready,
+            "batch_delivery": media_ready,
+            "master_loudness": media_ready,
+            "master_limiter": media_ready,
+            "audio_ducking": media_ready,
+            "timeline_markers": True,
+            "slip_slide_editing": True,
+            "track_blend_modes": True,
+            "track_lock": True,
+            "ripple_delete": True,
+            "insert_edit": True,
+            "overwrite_edit": True,
+            "transitions": True,
+            "speed_change": True,
+            "speed_curve": True,
+            "color_correction": True,
+            "grade_nodes": True,
+            "grade_node_mix": True,
+            "grade_node_blend_modes": True,
+            "color_space_transform": True,
+            "proxy_playback": media_ready,
+            "text_titles": True,
+            "srt_captions": True,
+            "clip_fades": True,
+        },
+        "limits": {
+            "max_tracks": 128,
+            "max_assets": 10_000,
+            "max_clips": 20_000,
+            "max_sequence_depth": 8,
+            "sample_rates": [44_100, 48_000, 96_000],
+        },
+        "render_presets": render_presets(),
+    }

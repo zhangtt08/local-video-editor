@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgentCut · 历史版本 · 城市印象</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="index.html" style="text-decoration:none;color:inherit">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <rect width="20" height="20" rx="5" fill="#1c1c21"/>
+      <path d="M7.2 6.2v7.6l6-3.8-6-3.8z" fill="#fff"/>
+      <line x1="13.8" y1="4.5" x2="13.8" y2="15.5" stroke="#2b59d8" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
+    AgentCut
+  </a>
+  <div class="divider-v"></div>
+  <div>
+    <div class="topbar-title">城市印象 · 短片 <span style="font-weight:400;color:var(--ink-3)">/ 历史版本</span></div>
+    <div class="topbar-sub mono" style="font-size:11px">city-impression</div>
+  </div>
+  <div class="spacer"></div>
+  <span class="conn"><span class="dot"></span>已连接</span>
+  <span class="rev-chip" id="revChip">r43</span>
+  <div class="divider-v"></div>
+  <a class="btn" href="editor.html">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2.5 8l5.5-5.5L13.5 8 8 13.5z"/><path d="M6 11l4-4"/></svg>
+    返回时间线
+  </a>
+</header>
+
+<main class="page narrow">
+
+  <div class="page-head">
+    <h1 class="page-title">历史版本</h1>
+    <span class="rev-chip" id="revChip2">共 43 版</span>
+  </div>
+  <p class="page-desc">每次提交都是一份不可变快照。恢复不回滚版本号，而是把旧内容变成一个新版本。</p>
+
+  <div class="hist-current">
+    <span class="rev-chip" style="font-size:13px">r43</span>
+    <div style="flex:1">
+      <div style="font-weight:600;font-size:13.5px">当前版本</div>
+      <div style="font-size:12px;color:var(--ink-2);margin-top:2px" class="mono">agent-edit-0193 · 今天 14:32</div>
+    </div>
+    <span class="tag ok">● 最新</span>
+  </div>
+
+  <div class="hist-list" id="histList"></div>
+
+  <p class="footer-note">
+    恢复调用 <span class="mono">POST /v1/projects/city-impression/restore</span>，需要 <span class="mono">expected_revision</span>；恢复成功生成新版本并保留完整历史。<br>
+    <span class="mono">created_at</span> 为 UTC 数据库时间，展示时已转换为本地时间。
+  </p>
+
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let currentRev = 43;
+let seq = 1;
+
+const history = [
+  { rev:43, req:'agent-edit-0193', time:'今天 14:32', by:'剪辑 Agent',
+    summary:['+1 片段', 'V2 轨道'], detail:
+`{ "op": "clip.add", "clip": { "id": "c10", "asset_id": "a10",
+    "track_id": "v2", "position_ticks": 1199520000,
+    "source_in_ticks": 0, "duration_ticks": 176400000 } }` },
+  { rev:42, req:'agent-edit-0190', time:'今天 14:18', by:'剪辑 Agent',
+    summary:['分割 ×1', '修剪 ×2'], detail:
+`{ "op": "clip.split", "clip_id": "c3", "at_ticks": 846720000,
+  "right_clip_id": "c3b" }
+{ "op": "clip.trim", "clip_id": "c2", "source_in_ticks": 84672000,
+  "duration_ticks": 388080000 }` },
+  { rev:41, req:'agent-edit-0184', time:'今天 13:54', by:'剪辑 Agent',
+    summary:['移动 ×3', '同批原子提交'], detail:
+`{ "op": "clip.move", "clip_id": "c4", "track_id": "v1",
+  "position_ticks": 988032000 }
+{ "op": "clip.move", "clip_id": "c7", "track_id": "a1",
+  "position_ticks": 988032000 }` },
+  { rev:40, req:'restore-0771', time:'今天 11:20', by:'人工',
+    summary:['恢复自 r37'], note:'恢复生成新版本，r37 的快照保持不变', detail:null },
+  { rev:39, req:'agent-edit-0178', time:'今天 11:02', by:'剪辑 Agent',
+    summary:['+2 轨道', '+4 素材登记'], detail:
+`{ "op": "track.add", "track": { "id": "a2", "kind": "audio", "name": "旁白" } }
+{ "op": "asset.register", "asset": { "id": "a9", "kind": "audio",
+    "label": "旁白·解说", "reference": "media://city/voiceover.wav",
+    "duration_ticks": 1517040000 } }` },
+  { rev:38, req:'agent-edit-0170', time:'昨天 22:47', by:'剪辑 Agent',
+    summary:['+3 片段', 'A1 轨道'], detail:
+`{ "op": "clip.add", "clip": { "id": "c6", "asset_id": "a7",
+    "track_id": "a1", "position_ticks": 0,
+    "source_in_ticks": 0, "duration_ticks": 987840000 } }` },
+  { rev:37, req:'agent-edit-0155', time:'昨天 21:30', by:'剪辑 Agent',
+    summary:['修剪 ×4', '对齐帧边界'], detail:null },
+  { rev:36, req:'agent-edit-0148', time:'昨天 20:15', by:'剪辑 Agent',
+    summary:['移动 ×2', 'A2 轨道'], detail:null },
+  { rev:35, req:'agent-edit-0140', time:'昨天 19:40', by:'人工',
+    summary:['+2 片段', 'V1 轨道'], detail:null },
+  { rev:34, req:'project-create', time:'昨天 19:38', by:'人工',
+    summary:['创建项目 · 1920×1080 · 30fps'], detail:null },
+];
+
+function toast(html){
+  const t = $('#toast');
+  t.innerHTML = html; t.classList.add('show');
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+function render(){
+  $('#histList').innerHTML = history.map((h, i) => `
+    <div class="hist-item ${h.rev === currentRev ? 'current' : ''}">
+      <div class="hist-rail">
+        <span class="hist-node" title="${h.rev === currentRev ? '当前版本' : ''}"></span>
+        <span class="hist-line"></span>
+      </div>
+      <div class="hist-body">
+        <div class="hist-row1">
+          <span class="hist-rev">r${h.rev}</span>
+          ${h.rev === currentRev ? '<span class="tag accent">当前</span>' : ''}
+          <span class="hist-time">${h.time}</span>
+          <span class="hist-req">${h.req}</span>
+        </div>
+        <div class="hist-summary">
+          <span class="tag">${h.by}</span>
+          ${h.summary.map(s => `<span class="tag">${s}</span>`).join('')}
+        </div>
+        ${h.note ? `<div class="hist-restore-note">${h.note}</div>` : ''}
+        ${h.detail ? `<div class="hist-detail">${h.detail.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</div>` : ''}
+        ${h.rev !== currentRev ? `
+          <div style="margin-top:6px">
+            <button class="btn" onclick="restore(${h.rev}, this)">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2.8 8a5.2 5.2 0 1 1 1.5 3.7M2.8 8V4.8M2.8 8H6"/></svg>
+              恢复到此版本
+            </button>
+          </div>` : ''}
+      </div>
+    </div>`).join('');
+  $('#revChip').textContent = 'r' + currentRev;
+  $('#revChip2').textContent = `共 ${currentRev} 版`;
+}
+
+function restore(rev, btn){
+  const row = btn.closest('.hist-body');
+  if (row.dataset.confirm !== '1'){
+    row.dataset.confirm = '1';
+    btn.innerHTML = `确认恢复到 r${rev}？将生成 r${currentRev + 1}`;
+    btn.classList.add('primary');
+    return;
+  }
+  const target = history.find(h => h.rev === rev);
+  currentRev++;
+  history.unshift({ rev: currentRev, req:'restore-0' + (seq++ + 800), time:'刚刚', by:'人工',
+    summary:[`恢复自 r${rev}`], note:'内容来自 r' + rev + ' 的不可变快照，版本号继续向前', detail:null });
+  render();
+  toast(`已恢复到 <span class="mono">r${rev}</span> 的内容 · 生成 <span class="mono">r${currentRev}</span>`);
+}
+
+render();
+</script>
+
+</body>
+</html>

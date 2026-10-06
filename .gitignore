@@ -1,0 +1,12 @@
+# 运行时数据与构建产物
+data/
+AgentCut.exe
+desktop/resources/
+desktop/dist/
+desktop/dist-electron/
+desktop/node_modules/
+node_modules/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.log
