@@ -75,7 +75,7 @@ def main():
     assert original.clips["right"].position_ticks == 2 * TIMEBASE
     assert dissolved.clips["right"].position_ticks == TIMEBASE
     assert dissolved.clips["right"].source_in_ticks == 0
-    assert dissolved.schema_version == 11
+    assert dissolved.schema_version == 12
     updated = apply_commands(dissolved, edit([transition(TIMEBASE // 2, "dip_black")]).commands)
     assert updated.clips["right"].position_ticks == 3 * TIMEBASE // 2
     removed = apply_commands(

@@ -36,6 +36,7 @@ import type {
   Marker,
   RenderFit,
   RenderRange,
+  RenderBatchItem,
 } from "./engine";
 import { FIT_MODES } from "./engine";
 import { align, frameTicks, sampleTicks, ticks, TIMEBASE } from "./time";
@@ -1945,6 +1946,34 @@ export async function startRenderBatch(
   } finally {
     set({ busy: "" });
   }
+}
+
+/** 交付方案：把一组导出设置存成工程状态，下次一键出货，Agent 也能按同一个 id 复用这份列表。 */
+export function saveRecipe(name: string, items: RenderBatchItem[], replaceId?: string) {
+  if (!state.project) return;
+  if (!items.length) {
+    toast("warn", "方案里至少要有一条交付", "先选好画幅与文件名，再存方案。");
+    return;
+  }
+  if (!name.trim()) {
+    toast("warn", "方案需要一个名字", "例如「竖屏 9:16 + 横屏 16:9」。");
+    return;
+  }
+  const recipe = { id: replaceId ?? newId("r"), name: name.trim(), items };
+  submit([{ op: "recipe.set", recipe }], replaceId ? "改交付方案" : "存交付方案");
+}
+
+export function removeRecipe(recipeId: string) {
+  submit([{ op: "recipe.remove", recipe_id: recipeId }], "删除交付方案");
+}
+
+export async function exportRecipe(recipeId: string, folder?: string) {
+  const recipe = (state.project?.recipes ?? []).find((item) => item.id === recipeId);
+  if (!recipe) {
+    toast("warn", "这个交付方案已经不在了", "它可能被另一次编辑删除或撤销掉了。");
+    return null;
+  }
+  return startRenderBatch(recipe.items, folder);
 }
 
 export function renderPlanPreview(presetId: string, fit: RenderFit = "contain", range: RenderRange = "full") {

@@ -3,8 +3,19 @@ import { useEffect, useState } from "react";
 import { bridge } from "../bridge";
 import { Btn, Empty, Field, Icon, Tag } from "../ui";
 import { humanDuration, prettyBytes, rateLabel, TIMEBASE, timecode } from "../time";
-import type { RenderJob } from "../engine";
-import { cancelJob, loadJobs, renderPlanPreview, startRender, startRenderBatch, timelineEnd, useApp } from "../store";
+import type { RenderBatchItem, RenderJob } from "../engine";
+import {
+  cancelJob,
+  exportRecipe,
+  loadJobs,
+  removeRecipe,
+  renderPlanPreview,
+  saveRecipe,
+  startRender,
+  startRenderBatch,
+  timelineEnd,
+  useApp,
+} from "../store";
 import { FIT_MODES, type RenderFit, type RenderRange } from "../engine";
 
 const POLL_MS = 1500;
@@ -39,6 +50,7 @@ export function ExportPanel(): JSX.Element {
   const [alsoVertical, setAlsoVertical] = useState(false);
   const [filename, setFilename] = useState("");
   const [folder, setFolder] = useState("");
+  const [recipeName, setRecipeName] = useState("");
 
   useEffect(() => {
     void loadJobs();
@@ -101,6 +113,16 @@ export function ExportPanel(): JSX.Element {
     ? `整条 ${timelineSeconds.toFixed(2)} 秒，或只导出入出点之间的 ${rangeSeconds} 秒（当前：${range === "marks" ? "区间" : "整条"}）`
     : "整条时间线。想只导出一段：把播放头放到起点按 I、放到终点按 O。";
   const finalName = `${(filename.trim() || sanitizeName(timelineName)).replace(/\.[A-Za-z0-9]+$/, "")}.${preset?.container ?? "mp4"}`;
+  // 方案存的就是「点开始导出会发出去的那组交付」，所以这里只算一次，界面和方案不会各说一套。
+  const pendingItems: RenderBatchItem[] = [
+    { preset_id: preset?.id ?? "", filename: finalName, fit, range },
+    ...(alsoVertical
+      ? [{ preset_id: "h264-1080x1920-vertical", filename: verticalName, fit: "cover" as RenderFit, range }]
+      : []),
+  ];
+  const recipeHint = (project.recipes ?? []).length
+    ? "点方案名就按它出货（仍锁定当前 revision，整批先编译通过才入队）；「覆盖」把现在这组设置写回去。"
+    : "还没有方案。把画幅、适配和范围选好，存成一个名字，之后就一键复用。";
 
   async function chooseFolder() {
     const picked = await bridge.pickOutputFolder();
@@ -267,6 +289,67 @@ export function ExportPanel(): JSX.Element {
               这一刻的快照：之后你或 Agent 再改时间线，也不会改变正在渲染的这个文件。
             </p>
           </div>
+
+          <Field label="交付方案" hint={recipeHint}>
+            <div className="recipe-row">
+              {(project.recipes ?? []).map((recipe) => (
+                <span className="recipe-chip" key={recipe.id}>
+                  <button
+                    type="button"
+                    onClick={() => void exportRecipe(recipe.id, folder || undefined)}
+                    disabled={Boolean(blocked) || Boolean(app.busy)}
+                    title={`按 r${project.revision} 出货：${recipe.items
+                      .map((entry) => `${entry.filename} · ${entry.fit}/${entry.range ?? "full"}`)
+                      .join("，")}`}
+                  >
+                    {recipe.name}
+                    <em className="mono dim">{recipe.items.length} 条</em>
+                  </button>
+                  <button
+                    type="button"
+                    className="recipe-tiny"
+                    onClick={() => saveRecipe(recipe.name, pendingItems, recipe.id)}
+                    disabled={Boolean(blocked)}
+                    title={`用现在这组设置覆盖「${recipe.name}」：${pendingItems
+                      .map((entry) => entry.filename)
+                      .join("，")}`}
+                  >
+                    覆盖
+                  </button>
+                  <button
+                    type="button"
+                    className="recipe-tiny"
+                    onClick={() => removeRecipe(recipe.id)}
+                    title={`删除方案「${recipe.name}」：只删方案，不动时间线，可撤销`}
+                  >
+                    删
+                  </button>
+                </span>
+              ))}
+              <span className="recipe-new">
+                <input
+                  value={recipeName}
+                  onChange={(event) => setRecipeName(event.target.value)}
+                  placeholder={timelineName}
+                  aria-label="方案名"
+                  maxLength={64}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    saveRecipe(recipeName.trim() || timelineName, pendingItems);
+                    setRecipeName("");
+                  }}
+                  disabled={Boolean(blocked)}
+                  title={`存下当前这组：${pendingItems
+                    .map((entry) => `${entry.filename}(${entry.fit}/${entry.range})`)
+                    .join("，")}`}
+                >
+                  存为方案
+                </button>
+              </span>
+            </div>
+          </Field>
 
           <div className="export-actions">
             <Btn

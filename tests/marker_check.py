@@ -230,7 +230,7 @@ def http_suite(folder: Path) -> None:
     with TestClient(app, base_url="http://127.0.0.1", headers=headers) as client:
         caps = client.get("/v1/capabilities").json()
         assert caps["features"]["timeline_markers"] is True, caps["features"]
-        assert caps["project_schema_version"] == 11, caps
+        assert caps["project_schema_version"] == 12, caps
         assert {"marker.set", "marker.remove"} <= set(caps["commands"]), caps["commands"]
         created = client.post(
             "/v1/projects",
@@ -279,7 +279,7 @@ def http_suite(folder: Path) -> None:
             ("a", frames(20)),
             ("b", frames(40)),
         ]
-        assert body["schema_version"] == 11
+        assert body["schema_version"] == 12
 
         scan = path + "/markers/split"
         read = client.post(scan, json={"request_id": "plan", "expected_revision": 1})
@@ -393,7 +393,7 @@ def restart_suite(folder: Path) -> None:
         ),
     ).project
     assert ProjectStore(path).get(created.id).markers == withmarks.markers
-    assert ProjectStore(path).get(created.id).schema_version == 11
+    assert ProjectStore(path).get(created.id).schema_version == 12
 
     cut = store.mutate(
         created.id,

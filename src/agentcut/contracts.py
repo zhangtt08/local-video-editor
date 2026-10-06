@@ -6,8 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
-SCHEMA_VERSION = 11  # v11 added project markers; older rows still validate (ge=1).
-APP_VERSION = "1.41.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+SCHEMA_VERSION = 12  # v12 added project recipes; older rows still validate (ge=1).
+APP_VERSION = "1.42.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -460,6 +460,66 @@ class Sequence(Contract):
     clips: Annotated[dict[str, Clip], Field(max_length=20_000)] = Field(default_factory=dict)
 
 
+RenderFit = Literal["contain", "cover", "stretch"]
+RenderRange = Literal["full", "marks"]
+
+
+def checked_render_name(value):
+    """One rule for one field: a bare `*.mp4` name, shared by the single and the batch request."""
+    name = value.filename
+    if "/" in name or "\\" in name or "\x00" in name or name in {".", ".."}:
+        raise ValueError("filename must be a bare file name")
+    if not name.lower().endswith(".mp4"):
+        raise ValueError("filename must end with .mp4")
+    return value
+
+
+class RenderBatchItem(Contract):
+    """One deliverable inside a batch: a preset, a framing and a file name."""
+
+    preset_id: Identifier
+    filename: Annotated[str, Field(min_length=1, max_length=128)]
+    folder: Annotated[str | None, Field(max_length=2048)] = None
+    sequence_id: Identifier | None = None
+    fit: RenderFit = "contain"
+    range: RenderRange = "full"
+
+    @model_validator(mode="after")
+    def safe_filename(self):
+        return checked_render_name(self)
+
+
+class DeliveryRecipe(Contract):
+    """A named delivery plan stored on the project: the presets, framing and marks a team ships
+    every time, so a click and an Agent command reuse one list instead of retyping it. It holds
+    choices only — never encoder flags, and the render still re-checks them at job time."""
+
+    id: Identifier
+    name: Annotated[str, Field(min_length=1, max_length=64)]
+    # The batch this feeds takes at most four deliverables, so a recipe never stores items that
+    # could not be shipped in one go.
+    items: Annotated[list[RenderBatchItem], Field(min_length=1, max_length=4)]
+
+    @model_validator(mode="after")
+    def distinct_names(self):
+        names = [item.filename for item in self.items]
+        if len(set(names)) != len(names):
+            raise ValueError("two deliverables in a recipe cannot write the same file")
+        return self
+
+
+class RecipeSet(Contract):
+    """Create a delivery recipe, or replace the one that already carries this id."""
+
+    op: Literal["recipe.set"]
+    recipe: DeliveryRecipe
+
+
+class RecipeRemove(Contract):
+    op: Literal["recipe.remove"]
+    recipe_id: Identifier
+
+
 class Marker(Contract):
     """A named point on the timeline. Markers belong to the project, not to a clip, and they stay
     where they were placed when clips ripple past them — the same contract every editor's ruler
@@ -482,6 +542,7 @@ class Project(Contract):
     clips: Annotated[dict[str, Clip], Field(max_length=20_000)] = Field(default_factory=dict)
     sequences: Annotated[dict[str, Sequence], Field(max_length=1000)] = Field(default_factory=dict)
     markers: Annotated[list[Marker], Field(max_length=2000)] = Field(default_factory=list)
+    recipes: Annotated[list[DeliveryRecipe], Field(max_length=64)] = Field(default_factory=list)
     notes: Annotated[str, Field(max_length=4000)] = ""
 
 
@@ -941,6 +1002,8 @@ Command = Annotated[
     | ClipFade
     | MarkerSet
     | MarkerRemove
+    | RecipeSet
+    | RecipeRemove
     | TransitionSet
     | TransitionRemove
     | CaptionsImport
@@ -1160,10 +1223,6 @@ class ProxyPrune(Contract):
     max_bytes: Annotated[int | None, Field(ge=0)] = None
 
 
-RenderFit = Literal["contain", "cover", "stretch"]
-RenderRange = Literal["full", "marks"]
-
-
 class RenderRequest(Contract):
     request_id: Identifier
     expected_revision: Revision
@@ -1179,16 +1238,6 @@ class RenderRequest(Contract):
     @model_validator(mode="after")
     def safe_filename(self):
         return checked_render_name(self)
-
-
-def checked_render_name(value):
-    """One rule for one field: a bare `*.mp4` name, shared by the single and the batch request."""
-    name = value.filename
-    if "/" in name or "\\" in name or "\x00" in name or name in {".", ".."}:
-        raise ValueError("filename must be a bare file name")
-    if not name.lower().endswith(".mp4"):
-        raise ValueError("filename must end with .mp4")
-    return value
 
 
 DEFAULT_MASTER_LUFS = -14.0
@@ -1209,21 +1258,6 @@ class MasterLoudnessRequest(Contract):
     limiter: bool = False
     apply: bool = False
     dry_run: bool = False
-
-
-class RenderBatchItem(Contract):
-    """One deliverable inside a batch: a preset, a framing and a file name."""
-
-    preset_id: Identifier
-    filename: Annotated[str, Field(min_length=1, max_length=128)]
-    folder: Annotated[str | None, Field(max_length=2048)] = None
-    sequence_id: Identifier | None = None
-    fit: RenderFit = "contain"
-    range: RenderRange = "full"
-
-    @model_validator(mode="after")
-    def safe_filename(self):
-        return checked_render_name(self)
 
 
 class RenderBatch(Contract):
@@ -1413,6 +1447,8 @@ def capabilities(media_ready: bool = False) -> dict:
             "clip.fade",
             "marker.set",
             "marker.remove",
+            "recipe.set",
+            "recipe.remove",
             "transition.set",
             "transition.remove",
             "captions.import",
@@ -1462,6 +1498,7 @@ def capabilities(media_ready: bool = False) -> dict:
             "master_limiter": media_ready,
             "audio_ducking": media_ready,
             "timeline_markers": True,
+            "delivery_recipes": media_ready,
             "slip_slide_editing": True,
             "track_blend_modes": True,
             "track_lock": True,

@@ -142,6 +142,19 @@ export type Marker = {
   color?: "amber" | "cyan" | "green" | "red" | "violet";
 };
 
+/** 一条交付项：预设、画幅适配与导出范围，与引擎的 RenderBatchItem 同一组词。 */
+export type RenderBatchItem = {
+  preset_id: string;
+  filename: string;
+  folder?: string | null;
+  sequence_id?: string | null;
+  fit: RenderFit;
+  range?: RenderRange;
+};
+
+/** 存在工程里的交付方案：一组交付项加一个名字，人和 Agent 都按同一个列表出货。 */
+export type DeliveryRecipe = { id: string; name: string; items: RenderBatchItem[] };
+
 export type Project = {
   schema_version: number;
   id: string;
@@ -166,6 +179,8 @@ export type Project = {
   clips: Record<string, Clip>;
   sequences?: Record<string, Sequence>;
   markers?: Marker[];
+  /** v12 新增：交付方案。旧工程读出来就是没有这个字段，按空列表处理。 */
+  recipes?: DeliveryRecipe[];
 };
 
 export type MutationResult = {

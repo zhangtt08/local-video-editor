@@ -25,6 +25,7 @@ from .contracts import (
     Track,
     Transition,
     project_content_ticks,
+    render_presets,
 )
 from .speed import base_source_ticks, consumed_source_ticks, scale_curve, slice_curve
 from .subtitles import parse_srt
@@ -360,6 +361,29 @@ def apply_commands(
                 if len(kept) == len(candidate.markers):
                     raise EditorError("NOT_FOUND", "marker does not exist", 404)
                 candidate.markers = kept
+            elif command.op == "recipe.set":
+                recipe = command.recipe
+                known = {preset["id"] for preset in render_presets()}
+                for item in recipe.items:
+                    if item.preset_id not in known:
+                        raise EditorError(
+                            "INVALID_RECIPE",
+                            f"unknown render preset {item.preset_id!r} in deliverable "
+                            f"{item.filename!r}",
+                            422,
+                            recipe_id=recipe.id,
+                        )
+                for number, existing in enumerate(candidate.recipes):
+                    if existing.id == recipe.id:
+                        candidate.recipes[number] = recipe.model_copy(deep=True)
+                        break
+                else:
+                    candidate.recipes.append(recipe.model_copy(deep=True))
+            elif command.op == "recipe.remove":
+                kept = [item for item in candidate.recipes if item.id != command.recipe_id]
+                if len(kept) == len(candidate.recipes):
+                    raise EditorError("NOT_FOUND", "delivery recipe does not exist", 404)
+                candidate.recipes = kept
             elif command.op == "asset.register":
                 if command.asset.id in candidate.assets:
                     raise EditorError("DUPLICATE_ID", "asset already exists")

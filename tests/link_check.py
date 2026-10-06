@@ -213,7 +213,7 @@ def main():
         restored = store.mutate(
             p.id, RestoreProject(request_id="undo", expected_revision=p.revision, target_revision=1)
         ).project
-        assert restored.schema_version == 11 and restored.revision == p.revision + 1
+        assert restored.schema_version == 12 and restored.revision == p.revision + 1
         assert restored.clips["picture"].group_id is None
         with TestClient(
             create_app(db_path=path, token="x" * 32), base_url="http://127.0.0.1"

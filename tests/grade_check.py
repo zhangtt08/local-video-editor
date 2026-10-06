@@ -280,7 +280,7 @@ def http_suite(folder: Path) -> None:
         headers={"Authorization": f"Bearer {token}"},
     ) as client:
         capabilities = client.get("/v1/capabilities").json()
-        assert capabilities["project_schema_version"] == 11
+        assert capabilities["project_schema_version"] == 12
         assert capabilities["features"]["grade_nodes"] is True
         assert "clip.grade" in capabilities["commands"]
 

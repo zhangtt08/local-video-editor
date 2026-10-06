@@ -902,6 +902,17 @@ table.table tr.current td { background: var(--accent-soft); }
 .marker-edit .input { width: 128px; height: 22px; font-size: 12px; }
 .marker-swatch { width: 14px; height: 14px; padding: 0; border: 1px solid #4a443c; border-radius: 50%; background: currentColor; cursor: pointer; }
 .marker-swatch.active { outline: 2px solid #f2c66d; outline-offset: 1px; }
+.recipe-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.recipe-chip { display: inline-flex; align-items: stretch; background: #211e1b; border: 1px solid #3a352f; border-radius: 999px; overflow: hidden; }
+.recipe-chip > button:first-child { display: inline-flex; gap: 6px; align-items: baseline; padding: 3px 10px; font-size: 12px; color: var(--text, #e8e2d6); background: transparent; border: 0; cursor: pointer; }
+.recipe-chip > button:first-child:disabled { color: #7d766b; cursor: not-allowed; }
+.recipe-chip em { font-style: normal; font-size: 11px; opacity: .7; }
+.recipe-tiny { padding: 3px 7px; font-size: 11px; color: #b9b1a4; background: #1b1917; border: 0; border-left: 1px solid #3a352f; cursor: pointer; }
+.recipe-tiny:hover { color: #f2c66d; }
+.recipe-new { display: inline-flex; gap: 4px; align-items: center; }
+.recipe-new input { width: 118px; height: 22px; padding: 0 6px; font-size: 12px; color: var(--text, #e8e2d6); background: #1b1917; border: 1px solid #3a352f; border-radius: 4px; }
+.recipe-new button { padding: 3px 10px; font-size: 12px; color: #f2c66d; background: #2b2418; border: 1px solid #d9a441; border-radius: 999px; cursor: pointer; }
+.recipe-new button:disabled { opacity: .5; cursor: not-allowed; }
 .marker-swatch.amber { color: #d9a441; }
 .marker-swatch.cyan { color: #4fd6d2; }
 .marker-swatch.green { color: #7fc96a; }
