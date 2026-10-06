@@ -636,6 +636,12 @@ export class Engine {
     );
   }
 
+  fourPoint(projectId: string, body: Record<string, unknown>) {
+    return this.request<{ committed: boolean; project: Project; four_point: Record<string, unknown>; commands: Record<string, unknown>[] }>(
+      "POST", `/v1/projects/${projectId}/four-point`, body, 120000
+    );
+  }
+
   previewManifest(projectId: string, revision: number, sequenceId: string | null = null) {
     return this.request<PreviewManifest>("GET", `/v1/projects/${projectId}/preview-manifest?revision=${revision}${sequenceId ? `&sequence_id=${sequenceId}` : ""}`);
   }

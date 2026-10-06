@@ -403,6 +403,7 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
                 "clip_silence",
                 "clip_track",
                 "marker_split",
+                "clip_four_point",
                 "track_duck",
                 "render_batch",
                 "master_loudness",
@@ -412,6 +413,8 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
             assert tools["clip_silence"].annotations.readOnlyHint is True
             assert tools["clip_track"].annotations.readOnlyHint is False
             assert tools["marker_split"].annotations.readOnlyHint is True
+            assert tools["clip_four_point"].annotations.readOnlyHint is True
+            assert "source_out_ticks" in json.dumps(tools["clip_four_point"].inputSchema)
             assert tools["track_duck"].annotations.readOnlyHint is False
             assert tools["render_batch"].annotations.readOnlyHint is False
             assert tools["master_loudness"].annotations.readOnlyHint is False

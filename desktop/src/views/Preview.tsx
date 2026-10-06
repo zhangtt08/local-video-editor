@@ -3,7 +3,7 @@ import { Icon, IconBtn } from "../ui";
 import { MaskPicture } from "./MaskPicture";
 import { TIMEBASE, frameTicks, humanDuration, pacing, rateLabel, timecode } from "../time";
 import type { Clip, Effects, GradeTables, PreviewManifest, Project, Track } from "../engine";
-import { appInfo, clearProxyCache, editSource, jumpEditPoint, markSource, playhead, PROXY_WIDTHS, selectClip, selectedSource, setMonitorMode, setProxyWidth, setSourceCursor, setSourcePlaying, setSourceRipple, setSourceTarget, timelineEnd, useApp, usePlay } from "../store";
+import { appInfo, clearProxyCache, editSource, fourPoint, jumpEditPoint, markSource, playhead, PROXY_WIDTHS, selectClip, selectedSource, setMonitorMode, setProxyWidth, setSourceCursor, setSourcePlaying, setSourceRipple, setSourceTarget, timelineEnd, useApp, usePlay } from "../store";
 
 let audioContext: AudioContext | undefined;
 const audioNodes = new WeakMap<HTMLMediaElement, GainNode>();
@@ -144,6 +144,8 @@ export function Preview() {
         <label className="source-sync"><input type="checkbox" checked={app.sourceRippleAll} onChange={(e) => setSourceRipple(e.target.checked)} />同步未锁轨道</label>
         <button className="btn primary" disabled={!sourceEdit.target || sourceEdit.target.locked || sourceEdit.stop <= sourceEdit.start} onClick={() => editSource("insert")} title="在时间线播放头插入，后续内容顺延（F9）">插入 F9</button>
         <button className="btn" disabled={!sourceEdit.target || sourceEdit.target.locked || sourceEdit.stop <= sourceEdit.start} onClick={() => editSource("overwrite")} title="覆盖目标轨道区间，其余片段保持位置（F10）">覆盖 F10</button>
+        <button className="btn" onClick={() => void fourPoint("insert")} title="把上面这段素材区间放进时间线的入出点区间；素材长了裁尾、短了变速，怎么处理的会写在提示里">四点→时间线区间（插入）</button>
+        <button className="btn subtle" onClick={() => void fourPoint("overwrite")} title="同上，但覆盖区间内已有的内容，其余片段不动">四点→覆盖</button>
       </div>
     </div> : null}
     <div className="transport">

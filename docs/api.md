@@ -741,3 +741,24 @@ LUT 导入、色域矩阵与色彩管理（这三者都需要跨通道的 3D 查
 - 门禁同步：`ruff check`、`ruff format --check`（66 文件）、`npm run typecheck`、39 项 Python 检查与 5 项 esbuild 桌面检查。本轮无新命令、无新 MCP 工具、无新依赖、无 schema 变更。
 
 仍未完成：四点剪辑（源入出点 + 时间线入出点一次算成插入/覆盖命令，含按区间长度写变速曲线或裁尾）、图层节点与连线视图、亮度曲线与 LUT、色域矩阵与色彩管理、路径遮罩顶点动画、多目标与长时遮挡跟踪、自动语音字幕、缩略图与波形磁盘配额、代码签名。
+
+
+## 1.41 四点剪辑（`POST /v1/projects/{id}/four-point`，不新增时间线状态）
+
+达芬奇与 Premiere 的四点剪辑是同一句话：「把素材的这一格到那一格，放进时间线的这一格到那一格」。人用 `I`/`O` 在素材监视器和标尺上各点两下（1.40 已经给了时间线那一对），Agent 直接给四个整数。
+
+- 请求 `FourPointRequest {request_id, expected_revision, asset_id, track_id, source_in_ticks, source_out_ticks, dest_in_ticks, dest_out_ticks, fit: "trim"|"speed" = "trim", mode: "insert"|"overwrite" = "insert", ripple_track_ids?, apply, dry_run}`。`fourpoint.plan()` 只判定该裁还是该改速，然后产出**一条**普通 `clip.insert` / `clip.overwrite`；放置是否合法（素材窗口、锁轨、重叠、时钟）仍然只由 reducer 判，适配层没有第二条规则。
+- 三种解算：源长 = 目标长 → `resolution: "exact"`；源长 > 目标长 → 裁尾（`"trimmed"`，`consumed_source_ticks` 等于目标长），此时请求 `fit=speed` 会被拒（改速只能把短素材拉长，不能凭空变短）；源长 < 目标长 → `speed_percent = round(100*源/目标)`（`"re-timed"`），若该百分比落在 25–400% 之外、或取整后实际读到的素材与请求相差超过一帧，一律拒绝并说明差多少，不做「悄悄少读一点」的近似。
+- 四个点都必须落在整帧上（`% frame_ticks == 0`），否则 `INVALID_FOUR_POINT` 并带上要求的模数；素材必须是引擎自己验证过的记录（否则 `UNVERIFIED_ASSET`）；轨别必须与素材 kind 匹配；源出点越过素材末尾是 `SOURCE_OUT_OF_BOUNDS`。
+- **幂等**：生成的 clip id 是 `sha1(request_id)[:12]`，不是随机数——重试必须重建出逐字节相同的批命令，否则它会跟自己的回执相冲。这一条是本轮被验收当场抓出来的：第一版用 `uuid4()`，同一 `request_id` 重放直接 409。
+- MCP 新增只读工具 `clip_four_point`（工具侧强制 `apply=false`、`dry_run=false`），Agent 看过 `commands` 与 `four_point` 里的实测数字后再用 `timeline_edit` 一次写入；capabilities 增 `four_point_editing`；工程 schema 仍 v11，不新增任何时间线字段。
+
+验收（`tests/fourpoint_check.py`，素材为红/绿/蓝各 2 秒 + 440/880/1320 Hz 各一段）：
+
+- 解算：exact / trimmed / re-timed 各产一条命令，字段逐一断言（`duration_ticks`、`source_in_ticks`、`speed_percent`、`consumed_source_ticks`）；12 组不可能的点位组合各自返回预期的错误码；未验证素材在另一份工程里测 `UNVERIFIED_ASSET`；`mode=overwrite` 不携带 `ripple_track_ids`。
+- 契约：负点位、非整数、`fit="stretch"`、`mode="paste"` 全部 `ValidationError`。
+- 事务：`apply=false` 与 `apply=true, dry_run=true` 都不写库；一次 apply 恰好一个 revision；同 `request_id` 重放 `replayed=true` 且版本不动；旧 revision 409；`restore` 回到放置前是新 revision 且时间线清空。
+- 成片：源 1–3 秒以 50% 铺进 0–4 秒 → 导出 4.000 秒，第 0.5 秒红（素材 1.25 秒）、第 3.5 秒绿（素材 2.75 秒），音高 439 Hz → 825 Hz（时间被拉长而音高保持，沿用 atempo 的既有语义）；源 2–6 秒裁尾进 4–6 秒 → 覆盖段最后一帧仍是绿，被裁掉的蓝色尾段从未出现在画面里。
+- 门禁同步：`ruff check`、`ruff format --check`（68 文件）、40 项 Python 检查（含新增 `tests/fourpoint_check.py`）与 5 项 esbuild 桌面检查；`tests/self_check.py` 的 MCP 工具集合断言加上 `clip_four_point`（这条断言存在的意义就是新工具不会悄悄漏出文档）。
+
+仍未完成：四点剪辑的界面入口（素材监视器与标尺两侧都已有入出点，缺一个「填入时间线区间」的按钮与改速/裁尾的提示）、图层节点与连线视图、亮度曲线与 LUT、色域矩阵与色彩管理、路径遮罩顶点动画、多目标与长时遮挡跟踪、自动语音字幕、缩略图与波形磁盘配额、代码签名。

@@ -18,6 +18,7 @@ from .contracts import (
     CreateProject,
     DuckRequest,
     EditBatch,
+    FourPointRequest,
     Identifier,
     ImportRequest,
     MarkerSplitRequest,
@@ -235,6 +236,21 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         return await call(
             "POST",
             f"/v1/projects/{project_id}/markers/split",
+            request.model_dump(mode="json") | {"apply": False, "dry_run": False},
+            timeout=120,
+        )
+
+    @server.tool(annotations=read)
+    async def clip_four_point(project_id: Identifier, request: FourPointRequest) -> dict[str, Any]:
+        """Resolve two source points and two destination points into one placement command.
+
+        Read-only here: `apply` and `dry_run` are forced off. The answer says whether the source was
+        trimmed or re-timed and how many source ticks the placement will actually read; submit the
+        returned `commands` with `timeline_edit` for one atomic revision.
+        """
+        return await call(
+            "POST",
+            f"/v1/projects/{project_id}/four-point",
             request.model_dump(mode="json") | {"apply": False, "dry_run": False},
             timeout=120,
         )

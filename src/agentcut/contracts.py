@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 11  # v11 added project markers; older rows still validate (ge=1).
-APP_VERSION = "1.40.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.41.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -1073,6 +1073,32 @@ class LoudnessRequest(Contract):
     dry_run: bool = False
 
 
+class FourPointRequest(Contract):
+    """Two source points plus two destination points, resolved into one placement command.
+
+    The four integers are what a human sets with `I`/`O` on the source monitor and on the
+    timeline ruler; an Agent has no eyes and passes them directly. The engine decides whether the
+    source has
+    to be trimmed or re-timed to fill the destination and returns ordinary `clip.insert` /
+    `clip.overwrite` commands, so the reducer stays the only place that decides what a legal edit
+    is.
+    """
+
+    request_id: Identifier
+    expected_revision: Revision
+    asset_id: Identifier
+    track_id: Identifier
+    source_in_ticks: Ticks
+    source_out_ticks: Ticks
+    dest_in_ticks: Ticks
+    dest_out_ticks: Ticks
+    fit: Literal["trim", "speed", "auto"] = "trim"
+    mode: Literal["insert", "overwrite"] = "insert"
+    ripple_track_ids: Annotated[list[Identifier] | None, Field(max_length=128)] = None
+    apply: bool = False
+    dry_run: bool = False
+
+
 class MarkerSplitRequest(Contract):
     """Split every clip a marker falls inside, so a marked beat becomes a cut point.
 
@@ -1452,6 +1478,7 @@ def capabilities(media_ready: bool = False) -> dict:
             "grade_parallel_branches": True,
             "timeline_marks": True,
             "range_export": True,
+            "four_point_editing": True,
             "color_space_transform": True,
             "proxy_playback": media_ready,
             "text_titles": True,

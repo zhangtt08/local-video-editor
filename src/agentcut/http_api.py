@@ -23,6 +23,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import duck, silence
+from . import fourpoint as fourpoint_module
 from . import markers as marker_plan
 from .animation import graph_curve, preview_manifest, sample_values
 from .bundles import MAX_BUNDLE_BYTES, export_bundle, import_bundle
@@ -35,6 +36,7 @@ from .contracts import (
     DuckRequest,
     EditBatch,
     EditorError,
+    FourPointRequest,
     Identifier,
     ImportRequest,
     LoudnessRequest,
@@ -819,6 +821,45 @@ def create_app(
         )
         mutation = projects.mutate(project_id, batch).model_dump()
         return {**mutation, "markers": plan}
+
+    @app.post("/v1/projects/{project_id}/four-point", dependencies=auth)
+    def four_point(project_id: Identifier, request: FourPointRequest, projects: Store):
+        """Resolve two source points and two destination points into one placement.
+
+        A shorter source than destination has to be re-timed, a longer one trimmed; both answers are
+        reported back with the ticks that will actually be read, so nobody has to guess whether the
+        engine silently dropped frames. What comes back is an ordinary `clip.insert` /
+        `clip.overwrite`, so the reducer stays the only place that decides what a legal edit is and
+        one apply is one revision.
+        """
+        project = projects.get(project_id)
+        # The clip id must be a function of the request, not of the clock: a retry has to rebuild
+        # the byte-identical batch, or its own receipt would come back as a conflict.
+        digest = hashlib.sha1(request.request_id.encode()).hexdigest()[:12]
+        commands, notes = fourpoint_module.plan(
+            project,
+            asset_id=request.asset_id,
+            track_id=request.track_id,
+            clip_id=f"c-{digest}",
+            source_in_ticks=request.source_in_ticks,
+            source_out_ticks=request.source_out_ticks,
+            dest_in_ticks=request.dest_in_ticks,
+            dest_out_ticks=request.dest_out_ticks,
+            fit=request.fit,
+            mode=request.mode,
+            ripple_track_ids=request.ripple_track_ids,
+        )
+        body = {"four_point": notes, "commands": commands}
+        if not request.apply:
+            return {"committed": False, "project": project.model_dump(), **body}
+        batch = EditBatch(
+            request_id=request.request_id,
+            expected_revision=request.expected_revision,
+            commands=commands,  # type: ignore[arg-type]
+            dry_run=request.dry_run,
+        )
+        mutation = projects.mutate(project_id, batch).model_dump()
+        return {**mutation, **body}
 
     @app.post("/v1/projects/{project_id}/tracks/{track_id}/silence", dependencies=auth)
     def silence_track(

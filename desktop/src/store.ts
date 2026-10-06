@@ -1068,6 +1068,47 @@ export async function setSequenceMark(side: "in" | "out", atTicks: number) {
   return true;
 }
 
+/** 四点剪辑：素材入出点 + 时间线入出点，一次放置。裁尾还是改速由引擎判定并如实回传，界面不猜。 */
+export async function fourPoint(mode: "insert" | "overwrite") {
+  const project = state.project;
+  const source = selectedSource();
+  if (!engine || !project || !source?.target) { toast("warn", "请选择素材和目标轨道", "先在素材库选中一段，再在右侧选一条目标轨。"); return; }
+  if (source.target.locked) { toast("warn", "目标轨道已锁定", "解锁后再放，或换一条轨道。"); return; }
+  if (source.kind === "image" || source.stop <= source.start) { toast("warn", "素材区间不足一帧"); return; }
+  const existing = source.asset
+    ?? Object.values(project.assets).find((asset) => asset.verified?.path === source.item?.probe.verified.path);
+  if (!existing) { toast("warn", "这份素材还没有登记进工程", "先点「上轨」或把它拖进时间线，引擎需要一条已验证的素材记录。"); return; }
+  const marks = project.settings;
+  if (marks.in_ticks == null || marks.out_ticks == null) {
+    toast("warn", "时间线还没有入出点", "切到「时间线预览」，把播放头放到起点按 I、终点按 O，再回来点这一颗。");
+    return;
+  }
+  set({ busy: "四点剪辑…" });
+  try {
+    const planned = await engine.fourPoint(project.id, {
+      request_id: newId("fourpoint-"), expected_revision: project.revision,
+      asset_id: existing.id, track_id: source.target.id,
+      source_in_ticks: source.start, source_out_ticks: source.stop,
+      dest_in_ticks: marks.in_ticks, dest_out_ticks: marks.out_ticks,
+      fit: "auto", mode, apply: false, dry_run: false,
+    });
+    const notes = planned.four_point;
+    const read = (Number(notes.consumed_source_ticks) / TIMEBASE).toFixed(2);
+    const window = (Number(notes.destination_ticks) / TIMEBASE).toFixed(2);
+    submit(planned.commands as Command[], `四点${mode === "insert" ? "插入" : "覆盖"}`);
+    const how = notes.resolution === "trimmed" ? `素材更长，裁掉尾部只读前 ${read} 秒`
+      : notes.resolution === "re-timed" ? `素材更短，按 ${notes.speed_percent}% 变速铺满 ${window} 秒`
+      : `刚好铺满 ${window} 秒`;
+    toast("info", `四点${mode === "insert" ? "插入" : "覆盖"} · ${how}`,
+      `写入时间线 ${(Number(notes.destination_ticks) / TIMEBASE).toFixed(2)} 秒，读素材 ${read} 秒；四个点都落在整帧上，撤销一步回到放置前。`);
+  } catch (error) {
+    const { title, detail } = describe(error);
+    toast("error", title, detail);
+  } finally {
+    set({ busy: "" });
+  }
+}
+
 export function markSequence(point: "in" | "out" | "clear") {
   const project = editableProject(state);
   if (!project) return;

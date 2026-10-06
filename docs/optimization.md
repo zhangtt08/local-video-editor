@@ -928,4 +928,31 @@ ffprobe 2.000 秒，区间首帧为绿段而整片首帧仍为红，区间第 0.
 `CloseMainWindow()` 后 `Get-Process` 查无残留），但得到的 PNG 与 1.39 那张**逐字节相同**——首页在两个
 版本之间确实没有可见差异（新区间 UI 在时间线标尺与导出面板里），所以这张图不能单独作为「1.40 渲染
 成功」的证据；包内内容的证据是上面那条 ASAR/引擎逐字节比对。未签名，NSIS 向导未点击验收。完整记录见
-`C:/Users/Administrator/Documents/Codex/2026-10-04/du/outputs/AgentCut-1.40-交付记录.md`。。
+`C:/Users/Administrator/Documents/Codex/2026-10-04/du/outputs/AgentCut-1.40-交付记录.md`。
+
+## 1.41 四点剪辑（2026-10-07，引擎与 Agent 入口）
+
+路线图「精确剪辑」一栏最后一件没做的：J/L cut 早已被 1.21 的拆分内嵌音轨 + 独立修剪覆盖（音视频本来
+就在不同轨上，各自 `clip.trim` 即可），缺的是四点剪辑——「素材这一格到那一格，放进时间线这一格到那一
+格」。1.40 把时间线那一对点做成工程状态，这一版把四个整数解算成一次放置。
+
+- `fourpoint.plan()` 只判定该裁还是该改速，然后产**一条**普通 `clip.insert` / `clip.overwrite`；放置
+  是否合法（窗口、锁轨、重叠、时钟）仍然只由 reducer 判，适配层没有第二条规则。
+- 三种解算都回传实测数字：`resolution` 为 `exact` / `trimmed` / `re-timed`，`consumed_source_ticks`
+  是「实际会读到多少素材」。源长 > 目标长只能裁；源长 < 目标长只能改速，且 `speed_percent` 取整后若与
+  请求相差超过一帧就拒绝——不做「悄悄少读一点」的近似，也不假装整数百分比能命中任意比例。
+- 端点 `POST /v1/projects/{id}/four-point`（`apply=false` 只给命令），MCP 只读工具 `clip_four_point`，
+  capabilities 增 `four_point_editing`；不新增时间线状态、不改 schema。
+- **本轮被自己的验收抓出来的缺陷**：clip id 原本用 `uuid4()` 生成，于是同一 `request_id` 重放会构造出
+  不同的批命令，指纹对不上自己的回执 → 直接 409。改成 `sha1(request_id)[:12]` 后重放才真正幂等。这条
+  正是「回执必须等于它声称做过的事」在新端点上的复发，也说明为什么每个新写入口都要有一条重放断言。
+
+验收（`tests/fourpoint_check.py`）：解算层 exact/trimmed/re-timed 各一条命令并逐字段断言；12 组不可能
+点位各自返回说清原因的错误码（非整帧、零长、倒序、轨别不匹配、越界、未验证、百分比出界）；HTTP 层
+plan 与 dry-run 不写库、一次 apply 一个 revision、重放不涨、旧 revision 409、`restore` 是新 revision；
+成片层 2 秒素材以 50% 铺满 4 秒（4.000 秒、第 0.5 秒红第 3.5 秒绿、音高 439→825 Hz，即时间拉长而音高
+保持），裁尾那条覆盖 4–6 秒且被裁掉的蓝色尾段在逐帧采样里从未出现。
+门禁：`ruff check`、`ruff format --check`（68 文件）、40 项 Python 检查、5 项 esbuild 桌面检查全绿。
+
+仍未完成：四点剪辑的界面入口、图层节点与连线视图、亮度曲线与 LUT、色域矩阵与色彩管理、路径遮罩顶点
+动画、多目标与长时遮挡跟踪、自动语音字幕、缩略图与波形磁盘配额、代码签名。。
