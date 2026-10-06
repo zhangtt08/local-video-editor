@@ -1402,6 +1402,9 @@ def render_presets() -> list[dict]:
 def capabilities(media_ready: bool = False) -> dict:
     return {
         "api_version": "v1",
+        # The build identity, next to the schema it speaks: an Agent reading this document can tell
+        # which engine answered, and the desktop shows it in the title bar.
+        "app_version": APP_VERSION,
         "project_schema_version": SCHEMA_VERSION,
         "timebase": TIMEBASE,
         "max_commands_per_batch": 100,

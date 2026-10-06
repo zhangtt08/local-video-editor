@@ -779,6 +779,11 @@ Agent 也没法说「按上次那份竖屏方案出」。现在它是工程状�
 - `range: "marks"` 的方案条目在没有入出点时仍然整批拒绝（沿用 1.40 的 `INVALID_MARKS`），有入出点时出区间——
   方案不改变出货语义，只是把那组选择记住。
 - capabilities：`features.delivery_recipes`（依赖媒体，因为没有 FFmpeg 就没有货可出）、`commands` 增两条。
+  同时 capabilities 文档新增 `app_version`（就是 `contracts.APP_VERSION`，与 `/v1/info`、OpenAPI 文档同一个来源）：
+  Agent 读这一份文档就能知道**是哪个构建在回答**，配合 `project_schema_version` 一起看即可。桌面标题栏的「引擎在线」
+  徽章现在显示 `引擎在线 v1.42.0`，悬停说明里补上「版本 · 工程 schema vN」——过去只有 revision，用户与验收都无法
+  从界面上分辨跑的是哪个构建。`tests/self_check.py` 断言 `capabilities["app_version"] == APP_VERSION`（字段缺失
+  直接 KeyError，不会静默通过）。
   MCP 不新增工具——这两条命令走既有的 `timeline_edit`，schema 由契约生成，因此新 op 自动出现在工具入参里。
 - 界面：导出面板「交付方案」一行——芯片上主按钮按方案一次排队多条交付（仍锁定当前 revision），「覆盖」把面板
   当前的设置写回该方案，「删」只删方案不动时间线且可撤销。芯片上的 `title` 逐条写出 `文件名 · 适配/范围`，

@@ -78,13 +78,13 @@ export function TitleBar() {
           className={`conn ${live ? "on" : "off"}`}
           title={
             live
-              ? `引擎在线：${base}\nFFmpeg：${app.info?.ffmpeg || "未找到"}\n素材目录：${(app.info?.media_roots ?? []).length} 个\n1 秒 = ${TIMEBASE.toLocaleString("en-US")} tick`
+              ? `引擎在线：${base}\n版本：${app.caps?.app_version ?? "（尚未读到 capabilities）"} · 工程 schema v${app.caps?.project_schema_version ?? "?"}\nFFmpeg：${app.info?.ffmpeg || "未找到"}\n素材目录：${(app.info?.media_roots ?? []).length} 个\n1 秒 = ${TIMEBASE.toLocaleString("en-US")} tick`
               : "剪辑引擎未连接，点击重试"
           }
           onClick={() => (live ? toast("info", "引擎在线", base) : void boot())}
         >
           <span className="dot" />
-          {live ? "引擎在线" : "未连接"}
+          {live ? `引擎在线${app.caps?.app_version ? ` v${app.caps.app_version}` : ""}` : "未连接"}
         </button>
         <button type="button" className="win-btn" title="帮助与快捷键（F1）" onClick={() => toggleHelp(true)}>
           <Icon name="keyboard" size={13} />

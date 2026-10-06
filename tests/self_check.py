@@ -18,7 +18,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from pydantic import ValidationError
 
-from agentcut.contracts import TIMEBASE, EditBatch, FrameRate, SequenceSettings
+from agentcut.contracts import APP_VERSION, TIMEBASE, EditBatch, FrameRate, SequenceSettings
 from agentcut.projects import ProjectStore
 
 TOKEN = "acceptance-test-token-" + "x" * 32
@@ -45,7 +45,11 @@ def check_http(base_url, db_path, media_ready):
             401,
             "UNAUTHORIZED",
         )
-        features = client.get("/v1/capabilities").json()["features"]
+        document = client.get("/v1/capabilities").json()
+        # The build identity an Agent reads must be the one this file is running, or the version in
+        # the title bar and in every delivery note is fiction.
+        assert document["app_version"] == APP_VERSION, (document["app_version"], APP_VERSION)
+        features = document["features"]
         assert features["render"] is media_ready, "capabilities 必须如实反映渲染是否可用"
         assert features["keyframes"] is True and features["transitions"] is True
         assert features["multi_clip_editing"] is True

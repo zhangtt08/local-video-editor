@@ -268,6 +268,8 @@ export type Preset = {
 
 export type Capabilities = {
   api_version: string;
+  /** 引擎自身的构建号；旧引擎不回这个字段，界面按空字符串处理。 */
+  app_version?: string;
   project_schema_version: number;
   timebase: number;
   max_commands_per_batch: number;
