@@ -1046,6 +1046,19 @@ schema 从 v11 升到 v12 时 `grade / link / marker / transition` 四处硬编�
 如实记一条未覆盖：合成 `keydown` 没触发 Ctrl+Z（快捷键监听器不接受 `isTrusted=false` 的事件），
 撤销这条路径由检查里的 `restore` 断言覆盖，不是由浏览器点击覆盖。
 
+1.43.0 发布验收：冻结引擎 `--verify` 通过，重新打包后包内 `/v1/info` 报 `app_version=1.43.0`、`frozen=true`、
+`render_ready=true`，`/v1/capabilities` 报 `safe_area_guides=true` 且 `safe_area_insets={action:0.035,title:0.05}`
+（与契约里的 `SAFE_AREA_INSETS` 逐位相同）、`app_version` 与 `/v1/info` 一致、`delivery_recipes` 仍在。包内事务实测：
+写 `title` 恰到一个 revision（r1→r2）、同 `request_id` 重放返回自己的回执、坏名字 `titles` 422 且既不改动参考线
+也不烧版本。成片实测：`title` 与 `off` 两种状态各导一次，0.2/1.0/1.8 秒三处取样都是 (254,0,1) 且完全相同、
+时长都是 2.000 秒——参考线在发布物里同样只是界面。ASAR 版本 1.43.0，渲染层与本地构建逐字节一致，
+`safe_area_insets` / `safe-guide` / `safe-caption` / `动作区` / `字幕区` / `安全框 · ` 字节级存在。
+便携版 132,499,882 字节 SHA256 `1a425908…8177`，安装版 132,660,606 字节 `3215f6b9…0668`，根目录
+`AgentCut.exe` 与便携版逐字节相同。`win-unpacked/AgentCut.exe` 原生截图 1480×900 里标题栏右上角清楚写着
+「引擎在线 v1.43.0」、监视器工具条写着「安全框 · 关」，PNG MD5 `9ae34bd9…`（与 1.42 的 `c980d6b8…`、
+1.39–1.41 三张相同的 `31270d1b…` 都不同）；`CloseMainWindow` 后 `Get-Process` 查不到残留。未签名。
+
+
 1.42.0 发布验收：冻结引擎 `--verify --measure 2` 通过（裸启动 4 次 min 582 ms / median 594 ms / max 676 ms，staged
 97 个文件）。包内 `/v1/capabilities` 报 `app_version=1.42.0` 且与 `/v1/info` 同一个值、`project_schema_version=12`、
 `delivery_recipes` 与两条 recipe 命令都在；`dry_run` 返回候选工程而库里 revision 不动，一次保存 r1→r2，同
