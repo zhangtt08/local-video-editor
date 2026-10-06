@@ -214,6 +214,29 @@ export type ProxyUsage = {
   proxies: { source_sha256: string; width: number; size_bytes: number; used_at: number }[];
 };
 
+/** 整个派生缓存（缩略图 + 波形 + 代理）的占用，按内容哈希成项。 */
+export type CacheUsage = {
+  limit_bytes: number;
+  used_bytes: number;
+  entries: {
+    digest: string;
+    size_bytes: number;
+    files: number;
+    used_at: number;
+    has_proxy: boolean;
+  }[];
+};
+
+export type CachePruneResult = {
+  limit_bytes: number;
+  dry_run: boolean;
+  used_bytes_before: number;
+  used_bytes_after: number;
+  freed_bytes: number;
+  removed: { digest: string; size_bytes: number; files: number; has_proxy: boolean }[];
+  kept: number;
+};
+
 export type Probe = {
   id: string;
   verified: VerifiedMedia;
@@ -545,6 +568,10 @@ export class Engine {
     return this.request<ProxyUsage>("GET", "/v1/media/proxies");
   }
 
+  cacheInventory() {
+    return this.request<CacheUsage>("GET", "/v1/media/cache");
+  }
+
   maskTrack(projectId: string, clipId: string, body: Record<string, unknown>) {
     return this.request<{
       tracking: {
@@ -643,6 +670,10 @@ export class Engine {
     return this.request<{ used_bytes: number; freed_bytes: number; removed: unknown[] }>(
       "POST", "/v1/media/proxies/prune", { max_bytes: maxBytes }, 120000
     );
+  }
+
+  cachePrune(body: { max_bytes?: number | null; keep?: string[]; dry_run?: boolean }) {
+    return this.request<CachePruneResult>("POST", "/v1/media/cache/prune", body, 120000);
   }
 
   renderPlan(projectId: string, presetId: string, revision?: number, sequenceId: string | null = null, fit: RenderFit = "contain", range: RenderRange = "full") {

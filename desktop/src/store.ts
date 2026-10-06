@@ -92,6 +92,7 @@ export type AppState = {
   proxyActive: Record<string, string>;
   proxyStatus: { label: string; done: number; total: number };
   proxyUsage: { used_bytes: number; limit_bytes: number; count: number };
+  cacheUsage: { used_bytes: number; limit_bytes: number; count: number };
   library: LibraryItem[];
   view: View;
   selectedClip: string | null;
@@ -144,6 +145,7 @@ let state: AppState = {
   proxyActive: {},
   proxyStatus: { label: "", done: 0, total: 0 },
   proxyUsage: { used_bytes: 0, limit_bytes: 0, count: 0 },
+  cacheUsage: { used_bytes: 0, limit_bytes: 0, count: 0 },
   library: [],
   view: "home",
   selectedClip: null,
@@ -842,6 +844,36 @@ export async function refreshProxyUsage() {
     set({ proxyUsage: { used_bytes: usage.used_bytes, limit_bytes: usage.limit_bytes, count: usage.proxies.length } });
   } catch {
     /* 媒体服务未就绪时不显示占用，界面其余部分照常 */
+  }
+  try {
+    const cache = await engine.cacheInventory();
+    set({ cacheUsage: { used_bytes: cache.used_bytes, limit_bytes: cache.limit_bytes, count: cache.entries.length } });
+  } catch {
+    /* 同上：占用是附加信息，拿不到就不显示 */
+  }
+}
+
+/** 清空整个派生缓存（缩略图、波形、代理）。原片与工程不动，被删的派生文件下次用到时会自动重建。 */
+export async function clearDerivedCache() {
+  if (!engine) return;
+  set({ busy: "清理派生缓存…" });
+  try {
+    const result = await engine.cachePrune({ max_bytes: 0 });
+    set({ proxyActive: {}, proxyWidth: 0, proxyStatus: { label: "", done: 0, total: 0 } });
+    applyPlaybackUrls();
+    try { localStorage.setItem("agentcut.proxyWidth", "0"); } catch { /* 偏好仍可当场生效 */ }
+    toast(
+      "ok",
+      "派生缓存已清空",
+      `释放 ${(result.freed_bytes / 1048576).toFixed(1)} MB（${result.removed.length} 项缩略图 / 波形 / 代理）。` +
+        "原片与工程未改动，下次用到时会重新生成。"
+    );
+  } catch (error) {
+    const { title, detail } = describe(error);
+    toast("error", title, detail);
+  } finally {
+    set({ busy: "" });
+    void refreshProxyUsage();
   }
 }
 

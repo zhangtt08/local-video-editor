@@ -31,6 +31,7 @@ from .contracts import (
     APP_VERSION,
     TIMEBASE,
     BundleImport,
+    CachePrune,
     Clip,
     CreateProject,
     DuckRequest,
@@ -360,6 +361,27 @@ def create_app(
     def proxy_prune(request: ProxyPrune):
         engine = require_media()
         return engine.prune_proxies(request.max_bytes)
+
+    @app.get("/v1/media/cache", dependencies=auth)
+    def cache_inventory_route():
+        engine = require_media()
+        inventory = engine.cache_inventory()
+        return {
+            "limit_bytes": inventory["limit_bytes"],
+            "used_bytes": inventory["used_bytes"],
+            "entries": [
+                {
+                    key: entry[key]
+                    for key in ("digest", "size_bytes", "files", "used_at", "has_proxy")
+                }
+                for entry in inventory["entries"]
+            ],
+        }
+
+    @app.post("/v1/media/cache/prune", dependencies=auth)
+    def cache_prune(request: CachePrune):
+        engine = require_media()
+        return engine.prune_cache(request.max_bytes, tuple(request.keep), request.dry_run)
 
     @app.get("/v1/media/{probe_id}", dependencies=auth)
     def media_probe(probe_id: Identifier):

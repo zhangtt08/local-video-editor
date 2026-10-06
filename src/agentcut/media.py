@@ -9,6 +9,7 @@ import json
 import math
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -32,6 +33,7 @@ WAVEFORM_TIMEOUT = 120
 PROXY_TIMEOUT = 900
 PROXY_WIDTHS = (480, 640, 960, 1280)
 DEFAULT_PROXY_CACHE_BYTES = 4 << 30
+DEFAULT_CACHE_BYTES = 6 << 30
 
 
 def proxy_cache_limit() -> int:
@@ -42,6 +44,20 @@ def proxy_cache_limit() -> int:
     except ValueError:
         return DEFAULT_PROXY_CACHE_BYTES
     return value if value >= 0 else DEFAULT_PROXY_CACHE_BYTES
+
+
+def cache_limit_bytes() -> int:
+    """The whole derived cache — filmstrip tiles, waveform peaks and playback proxies together.
+
+    The proxy limit alone leaves the rest unbounded: tiles and peaks accumulate per content hash
+    forever, so a long-running editor slowly fills the disk with data that is rebuildable anyway.
+    """
+    raw = os.environ.get("AGENTCUT_CACHE_BYTES", "")
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_CACHE_BYTES
+    return value if value >= 0 else DEFAULT_CACHE_BYTES
 
 
 _NO_WINDOW = 0x08000000 if os.name == "nt" else 0
@@ -635,6 +651,97 @@ class MediaService:
                 proxy_cache_limit() if keep_bytes is None else keep_bytes
             )
 
+    # ---------- derived cache quota: tiles + peaks + proxies together ----------
+
+    def scan_cache(self) -> list[dict]:
+        """One entry per content hash. The digest directory is the unit because it is the unit that
+        can be rebuilt: `build_cache` regenerates tiles, peaks and the manifest in one go, so a
+        half-deleted directory would leave a manifest listing files that are gone."""
+        entries: list[dict] = []
+        for parent in sorted(self.cache_dir.glob("*")):
+            if not parent.is_dir():
+                continue
+            for folder in sorted(parent.glob("*")):
+                if not folder.is_dir():
+                    continue
+                files = [item for item in folder.rglob("*") if item.is_file()]
+                if not files:
+                    shutil.rmtree(folder, ignore_errors=True)
+                    continue
+                stats = [item.stat() for item in files]
+                entries.append(
+                    {
+                        "digest": folder.name,
+                        "path": str(folder),
+                        "size_bytes": sum(item.st_size for item in stats),
+                        "files": len(files),
+                        "used_at": max(item.st_mtime for item in stats),
+                        "has_proxy": any(
+                            item.name.startswith("proxy-") and item.suffix == ".mp4"
+                            for item in files
+                        ),
+                    }
+                )
+        entries.sort(key=lambda item: item["used_at"], reverse=True)
+        return entries
+
+    def cache_inventory(self) -> dict:
+        entries = self.scan_cache()
+        return {
+            "limit_bytes": cache_limit_bytes(),
+            "used_bytes": sum(item["size_bytes"] for item in entries),
+            "entries": entries,
+        }
+
+    def _is_media_root(self, folder: Path) -> bool:
+        """A registered media root is never cache, however the directories happen to be nested."""
+        resolved = folder.resolve()
+        return any(resolved == root or root in resolved.parents for root in self.roots)
+
+    def prune_cache(
+        self,
+        max_bytes: int | None = None,
+        keep: tuple[str, ...] = (),
+        dry_run: bool = False,
+    ) -> dict:
+        """Delete the least recently used derived entries until the cache fits the budget.
+
+        Sources and project files live outside this directory and are never candidates; neither is
+        anything inside a registered media root. A deleted entry comes back on the next request
+        that needs it, because `cache_path` rebuilds what the manifest lost.
+        """
+        budget = cache_limit_bytes() if max_bytes is None else max_bytes
+        with self._cache_lock:
+            entries = self.scan_cache()
+            before = sum(item["size_bytes"] for item in entries)
+            used = before
+            removed: list[dict] = []
+            for item in reversed(entries):
+                if used <= budget:
+                    break
+                if item["digest"] in keep or self._is_media_root(Path(item["path"])):
+                    continue
+                removed.append(
+                    {
+                        "digest": item["digest"],
+                        "size_bytes": item["size_bytes"],
+                        "files": item["files"],
+                        "has_proxy": item["has_proxy"],
+                    }
+                )
+                used -= item["size_bytes"]
+                if not dry_run:
+                    shutil.rmtree(Path(item["path"]), ignore_errors=True)
+            return {
+                "limit_bytes": budget,
+                "dry_run": dry_run,
+                "used_bytes_before": before,
+                "used_bytes_after": used,
+                "freed_bytes": sum(item["size_bytes"] for item in removed),
+                "removed": removed,
+                "kept": len(entries) - len(removed),
+            }
+
     # ---------- probe registry (server-issued handles) ----------
 
     def import_file(self, raw_path: str, *, persist: bool = True) -> MediaProbe:
@@ -746,6 +853,10 @@ class MediaService:
         if safe not in set(probe.thumbnails) | {"wave.json", "cache.json"} or "/" in name:
             raise EditorError("MEDIA_CACHE_ENTRY_MISSING", "unknown cache entry", 404)
         path = Path(probe.cache_dir) / safe
+        if not path.is_file():
+            # The derived cache is allowed to be gone — pruned to fit the disk budget, or cleared by
+            # the user. Rebuilding it here is what makes "rebuildable" a promise instead of a claim.
+            self.build_cache(probe.verified)
         if not path.is_file():
             raise EditorError("MEDIA_CACHE_ENTRY_MISSING", "cache entry is missing", 404)
         return path

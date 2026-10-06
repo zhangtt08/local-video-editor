@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 12  # v12 added project recipes; older rows still validate (ge=1).
-APP_VERSION = "1.43.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.44.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -1226,6 +1226,18 @@ class ProxyPrune(Contract):
     max_bytes: Annotated[int | None, Field(ge=0)] = None
 
 
+class CachePrune(Contract):
+    """Bound the whole derived cache — filmstrip tiles, waveform peaks and proxies together.
+
+    `keep` protects content hashes the caller is still looking at, and `dry_run` returns the same
+    plan without deleting anything: a destructive disk operation should be previewable.
+    """
+
+    max_bytes: Annotated[int | None, Field(ge=0)] = None
+    keep: Annotated[list[Identifier], Field(max_length=64)] = Field(default_factory=list)
+    dry_run: bool = False
+
+
 class RenderRequest(Contract):
     request_id: Identifier
     expected_revision: Revision
@@ -1513,6 +1525,7 @@ def capabilities(media_ready: bool = False) -> dict:
             "timeline_markers": True,
             "delivery_recipes": media_ready,
             "safe_area_guides": True,
+            "cache_pruning": media_ready,
             "slip_slide_editing": True,
             "track_blend_modes": True,
             "track_lock": True,

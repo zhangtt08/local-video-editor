@@ -3,7 +3,7 @@ import { Icon, IconBtn } from "../ui";
 import { MaskPicture } from "./MaskPicture";
 import { TIMEBASE, frameTicks, humanDuration, pacing, rateLabel, timecode } from "../time";
 import type { Clip, Effects, GradeTables, PreviewManifest, Project, Track } from "../engine";
-import { appInfo, clearProxyCache, cycleSafeArea, editSource, fourPoint, jumpEditPoint, markSource, playhead, PROXY_WIDTHS, selectClip, selectedSource, setMonitorMode, setProxyWidth, setSourceCursor, setSourcePlaying, setSourceRipple, setSourceTarget, timelineEnd, useApp, usePlay } from "../store";
+import { appInfo, clearProxyCache, clearDerivedCache, cycleSafeArea, editSource, fourPoint, jumpEditPoint, markSource, playhead, PROXY_WIDTHS, selectClip, selectedSource, setMonitorMode, setProxyWidth, setSourceCursor, setSourcePlaying, setSourceRipple, setSourceTarget, timelineEnd, useApp, usePlay } from "../store";
 
 let audioContext: AudioContext | undefined;
 const audioNodes = new WeakMap<HTMLMediaElement, GainNode>();
@@ -126,6 +126,8 @@ export function Preview() {
       </label> : null}
       {app.proxyUsage.count ? <span className="tag" title="代理是可重建的派生副本，不计入工程">{`代理占用 ${(app.proxyUsage.used_bytes / 1048576).toFixed(1)} MB / ${app.proxyUsage.count} 份`}</span> : null}
       {app.proxyUsage.count ? <button className="btn tiny subtle" onClick={() => void clearProxyCache()} title="删除全部代理副本以释放磁盘；原片与工程不受影响">清理代理</button> : null}
+      {app.cacheUsage.count ? <span className="tag" title={`派生缓存上限 ${(app.cacheUsage.limit_bytes / 1073741824).toFixed(1)} GB：缩略图、波形与代理都算在内，超出时引擎按最久未用淘汰`}>{`缓存 ${(app.cacheUsage.used_bytes / 1048576).toFixed(1)} MB / ${app.cacheUsage.count} 项`}</span> : null}
+      {app.cacheUsage.count ? <button className="btn tiny subtle" onClick={() => void clearDerivedCache()} title="删除全部派生缓存（缩略图 / 波形 / 代理）以释放磁盘；原片与工程不受影响，下次用到时自动重建">清理缓存</button> : null}
       {app.proxyWidth ? <span className="tag">{app.proxyStatus.done < app.proxyStatus.total ? `生成代理 ${app.proxyStatus.done}/${app.proxyStatus.total}：${app.proxyStatus.label}` : Object.keys(app.proxyActive).length ? `代理 ${app.proxyWidth}p` : "素材已足够小"}</span> : null}
       <button className={`btn tiny subtle${safe === "off" ? "" : " active"}`} onClick={() => cycleSafeArea()} title={safeTitle}>安全框 · {SAFE_LABELS[safe]}</button>
       <IconBtn icon="fullscreen" label="全屏预览" onClick={() => void monitorRef.current?.requestFullscreen()} />
