@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 12  # v12 added project recipes; older rows still validate (ge=1).
-APP_VERSION = "1.42.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.43.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -37,6 +37,9 @@ class SequenceSettings(Contract):
     # the interface's ruler disagree.
     in_ticks: Annotated[int, Field(ge=0)] | None = None
     out_ticks: Annotated[int, Field(ge=0)] | None = None
+    # Which broadcast guide to draw over the monitor. Display state, not render state: nothing about
+    # the export changes, so the inset numbers below are the single authority for the overlay.
+    safe_area: Literal["off", "action", "title"] = "off"
 
     @model_validator(mode="after")
     def exact_frame_clock(self):
@@ -1242,6 +1245,10 @@ class RenderRequest(Contract):
 
 DEFAULT_MASTER_LUFS = -14.0
 
+# ITU-R BT.601/709 guide insets, as a fraction of the frame: action-safe 3.5%, title-safe 5%.
+# One pair of numbers so the monitor overlay and anything that later burns in a guide cannot drift.
+SAFE_AREA_INSETS = {"action": 0.035, "title": 0.05}
+
 
 class MasterLoudnessRequest(Contract):
     """Measure the whole mix through a throwaway render and land it on a platform loudness target.
@@ -1402,6 +1409,9 @@ def render_presets() -> list[dict]:
 def capabilities(media_ready: bool = False) -> dict:
     return {
         "api_version": "v1",
+        # The guide geometry the monitor draws: the engine owns the numbers so the overlay cannot
+        # drift from any future burn-in or export check.
+        "safe_area_insets": SAFE_AREA_INSETS,
         # The build identity, next to the schema it speaks: an Agent reading this document can tell
         # which engine answered, and the desktop shows it in the title bar.
         "app_version": APP_VERSION,
@@ -1502,6 +1512,7 @@ def capabilities(media_ready: bool = False) -> dict:
             "audio_ducking": media_ready,
             "timeline_markers": True,
             "delivery_recipes": media_ready,
+            "safe_area_guides": True,
             "slip_slide_editing": True,
             "track_blend_modes": True,
             "track_lock": True,

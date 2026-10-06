@@ -1031,6 +1031,21 @@ schema 从 v11 升到 v12 时 `grade / link / marker / transition` 四处硬编�
 仍未完成（截至 1.42）：图层节点与连线视图、亮度曲线与 LUT、色域矩阵与色彩管理、路径遮罩顶点动画、
 多目标与长时遮挡跟踪、旋转估计、自动语音字幕、缩略图与波形磁盘配额、cover 主体跟随重构图、代码签名。
 
+## 1.43.0 安全区参考线（2026-10-07）
+
+「安全框」原来是一个本地 `useState`：刷新即丢、百分比写死在 CSS、Agent 看不见。现在它是
+`settings.safe_area`（`off`/`action`/`title`），写入走既有的 `project.update` 路径，因此幂等回执、
+乐观版本、历史撤销全都白拿；内缩数字改由 `capabilities.safe_area_insets` 下发，契约里的
+`SAFE_AREA_INSETS`（BT.601/709 的 3.5% / 5%）是唯一来源，界面不再自带一套百分比。
+新增 `features.safe_area_guides`；不新增命令、端点或 MCP 工具，schema 仍是 v12。
+
+验收 `tests/safearea_check.py`：非法值四组各自拒绝、缺键读作 `off`、一次写一个 revision、重放不涨、
+坏名字 422 且不烧版本、旧 revision 409、重开同一个库读回、`restore` 还原；**参考线不得漏进成片**——
+`title` 与 `off` 两种状态各导一次，0.2/1.0/1.8 秒逐通道取样完全相同、都是 2.000 秒。界面在真实引擎
+（1.43.0）上三态循环 r1→r2→r3，角标显示引擎数字换算出的「动作区 67×38 px」「字幕区 96×54 px」。
+如实记一条未覆盖：合成 `keydown` 没触发 Ctrl+Z（快捷键监听器不接受 `isTrusted=false` 的事件），
+撤销这条路径由检查里的 `restore` 断言覆盖，不是由浏览器点击覆盖。
+
 1.42.0 发布验收：冻结引擎 `--verify --measure 2` 通过（裸启动 4 次 min 582 ms / median 594 ms / max 676 ms，staged
 97 个文件）。包内 `/v1/capabilities` 报 `app_version=1.42.0` 且与 `/v1/info` 同一个值、`project_schema_version=12`、
 `delivery_recipes` 与两条 recipe 命令都在；`dry_run` 返回候选工程而库里 revision 不动，一次保存 r1→r2，同

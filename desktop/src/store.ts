@@ -1742,6 +1742,15 @@ export function removeAsset(assetId: string) {
 
 /* ---------------------------------------------------------------- 项目设置 */
 
+/** 安全框：显示哪条参考线是工程状态（和入出点一样可撤销），数值取自引擎的 capabilities。 */
+export function cycleSafeArea() {
+  const project = state.project;
+  if (!project) return;
+  const order = ["off", "action", "title"] as const;
+  const next = order[(order.indexOf(project.settings.safe_area ?? "off") + 1) % order.length];
+  void updateProjectMeta({ settings: { ...project.settings, safe_area: next } });
+}
+
 export async function updateProjectMeta(patch: { name?: string; notes?: string; settings?: object }) {
   if (!engine || !state.project) return;
   set({ busy: "保存项目设置…" });

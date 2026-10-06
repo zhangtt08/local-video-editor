@@ -173,6 +173,8 @@ export type Project = {
     master_ceiling_dbtp?: number;
     in_ticks?: number | null;
     out_ticks?: number | null;
+    /** 监视器上显示哪一条安全参考线：关 / 动作区 / 字幕区。纯显示状态，不影响导出。 */
+    safe_area?: "off" | "action" | "title";
   };
   assets: Record<string, Asset>;
   tracks: Track[];
@@ -268,6 +270,8 @@ export type Preset = {
 
 export type Capabilities = {
   api_version: string;
+  /** 安全区的内缩量（占画面边长的比例），由引擎给出，界面不自己另写一套数字。 */
+  safe_area_insets?: { action: number; title: number };
   /** 引擎自身的构建号；旧引擎不回这个字段，界面按空字符串处理。 */
   app_version?: string;
   project_schema_version: number;

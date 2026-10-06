@@ -292,9 +292,11 @@ textarea.input { resize: vertical; line-height: 1.5; }
 .audio-layer { visibility: hidden; }
 .gain-sample { position: absolute; width: 1px; height: 1px; visibility: hidden; }
 .layer-error { position: absolute; inset: 0; display: grid; place-items: center; color: #ef9ea4; background: #22282a; font-size: 12px; }
-.safe-frame { position: absolute; inset: 5%; border: 1px dashed #ffffff80; pointer-events: none; }
-.safe-frame div { position: absolute; inset: 5.56%; border: 1px dashed #ffffff60; }
-.safe-frame::after { content: "+"; position: absolute; inset: 0; display: grid; place-items: center; color: #ffffff90; font-size: 22px; }
+.safe-frame { position: absolute; inset: 0; pointer-events: none; }
+.safe-guide { position: absolute; border: 1px dashed #ffffff55; }
+.safe-guide.active { border-color: #f2c66d; border-style: solid; box-shadow: 0 0 0 1px #00000055 inset; }
+.safe-cross { position: absolute; inset: 0; display: grid; place-items: center; color: #ffffff90; font-size: 22px; }
+.safe-caption { position: absolute; left: 6px; top: 6px; padding: 1px 5px; font-size: 10px; color: #f2c66d; background: #000000a0; border-radius: 3px; }
 .monitor-wrap:fullscreen { width: 100vw; height: 100vh; padding: 0; }
 .fullscreen-exit { display: none; position: absolute; top: 12px; right: 12px; z-index: 5; background: var(--panel); }
 .monitor-wrap:fullscreen .fullscreen-exit { display: inline-flex; }

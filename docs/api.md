@@ -808,3 +808,25 @@ Agent 也没法说「按上次那份竖屏方案出」。现在它是工程状�
   引擎侧读回 2 项，芯片同步显示「2 条」。
 - 门禁同步：`ruff check`、`ruff format --check`、`tests/suite_check.py` 全绿；工程 schema 从 v11 升到 v12 时，
   `grade / link / marker / transition` 四处硬写的 `== 11` 断言当场变红——这正是它们存在的意义，逐条改到 12 而不是放宽。
+
+## 1.43 安全区参考线（工程 schema 仍 v12，不新增命令）
+
+达芬奇与剪映都会在监视图上画动作区/字幕区，用来判断「竖屏出货时字幕会不会被平台 UI 盖住」。AgentCut 过去有一个
+本地 `useState` 的「安全框」开关：刷新就丢、数字写死在 CSS 里、Agent 完全看不见。本版把它变成工程状态：
+
+- `SequenceSettings.safe_area: "off" | "action" | "title" = "off"`。写入仍走 `POST /v1/projects/{id}` 的
+  `settings`（与母带音量、入出点同一条路径），因此天然带上 `expected_revision`、幂等回执、历史与撤销，
+  **不新增命令、不新增端点、不新增 MCP 工具**。
+- 内缩数字只有一处来源：`contracts.SAFE_AREA_INSETS = {action: 0.035, title: 0.05}`（ITU-R BT.601/709 的
+  3.5% / 5%），通过 `capabilities.safe_area_insets` 发给界面。CSS 里那两个写死的百分比被删掉了。
+- capabilities 增 `features.safe_area_guides`（不依赖媒体：它只是监视器上的参考线）。
+- 语义边界：**它只影响界面**。同一时刻的两种状态各导一次文件，逐通道取样完全相同——这条是断言出来的，
+  不是声明出来的（`tests/safearea_check.py`）。
+
+验收：契约层四组非法值各自 `ValidationError`、缺键读作 `off`；事务层一次写一个 revision、重放不涨、坏名字 422
+且不烧版本、旧 revision 409、重新打开同一个库读回该值、`restore` 还原参考线；成片层 `title` 与 `off` 两次导出
+在 0.2/1.0/1.8 秒的像素完全相同且都是 2.000 秒；界面层三态循环 r1→r2→r3、角标显示 67×38 px 与 96×54 px、
+选中那条实线高亮。工程 schema 仍是 v12（新增的是一个带默认值的显示字段，旧工程读出来就是 `off`）。
+
+仍未完成：图层节点与连线视图、亮度曲线与 LUT、色域矩阵与色彩管理、路径遮罩顶点动画、多目标与长时遮挡跟踪、
+自动语音字幕、cover 主体跟随重构图、4K 长工程性能、代码签名。

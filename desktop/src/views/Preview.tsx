@@ -3,7 +3,7 @@ import { Icon, IconBtn } from "../ui";
 import { MaskPicture } from "./MaskPicture";
 import { TIMEBASE, frameTicks, humanDuration, pacing, rateLabel, timecode } from "../time";
 import type { Clip, Effects, GradeTables, PreviewManifest, Project, Track } from "../engine";
-import { appInfo, clearProxyCache, editSource, fourPoint, jumpEditPoint, markSource, playhead, PROXY_WIDTHS, selectClip, selectedSource, setMonitorMode, setProxyWidth, setSourceCursor, setSourcePlaying, setSourceRipple, setSourceTarget, timelineEnd, useApp, usePlay } from "../store";
+import { appInfo, clearProxyCache, cycleSafeArea, editSource, fourPoint, jumpEditPoint, markSource, playhead, PROXY_WIDTHS, selectClip, selectedSource, setMonitorMode, setProxyWidth, setSourceCursor, setSourcePlaying, setSourceRipple, setSourceTarget, timelineEnd, useApp, usePlay } from "../store";
 
 let audioContext: AudioContext | undefined;
 const audioNodes = new WeakMap<HTMLMediaElement, GainNode>();
@@ -45,14 +45,21 @@ function GradeDefs({ plan }: { plan: PreviewManifest | null }) {
   </svg>;
 }
 
+/** 三态循环的显示名；引擎的 `safe_area` 用同一组词。 */
+const SAFE_LABELS: Record<"off" | "action" | "title", string> = { off: "关", action: "动作区", title: "字幕区" };
+
 export function Preview() {
   const app = useApp(); const play = usePlay();
   const proposed = app.mode === "batch" && app.batch.length > 0;
   const candidate = proposed && !app.dryRunError && app.candidate?.id === app.project?.id && app.candidate?.revision === (app.project?.revision ?? 0) + 1 ? app.candidate : null;
   const project = candidate ?? app.project;
+  const safe = project?.settings.safe_area ?? "off";
+  const insets = app.caps?.safe_area_insets;
+  const safeTitle = insets
+    ? `安全参考线（当前：${SAFE_LABELS[safe]}）。动作区每边内缩 ${(insets.action * 100).toFixed(1)}%、字幕区 ${(insets.title * 100).toFixed(1)}%，数字由引擎给出；这条选择是工程状态，跟着撤销走，也只影响监视器显示，不改变导出。`
+    : "安全参考线：等引擎的 capabilities 返回内缩数字后才能画。";
   const [manifest, setManifest] = useState<{ project: Project; plan: PreviewManifest } | null>(null);
   const [previewError, setPreviewError] = useState("");
-  const [safe, setSafe] = useState(false);
   const [monitorMuted, setMonitorMuted] = useState(false);
   const sourceMode = app.monitorMode === "source";
   const sourceEdit = selectedSource();
@@ -120,7 +127,7 @@ export function Preview() {
       {app.proxyUsage.count ? <span className="tag" title="代理是可重建的派生副本，不计入工程">{`代理占用 ${(app.proxyUsage.used_bytes / 1048576).toFixed(1)} MB / ${app.proxyUsage.count} 份`}</span> : null}
       {app.proxyUsage.count ? <button className="btn tiny subtle" onClick={() => void clearProxyCache()} title="删除全部代理副本以释放磁盘；原片与工程不受影响">清理代理</button> : null}
       {app.proxyWidth ? <span className="tag">{app.proxyStatus.done < app.proxyStatus.total ? `生成代理 ${app.proxyStatus.done}/${app.proxyStatus.total}：${app.proxyStatus.label}` : Object.keys(app.proxyActive).length ? `代理 ${app.proxyWidth}p` : "素材已足够小"}</span> : null}
-      <button className={`btn tiny subtle${safe ? " active" : ""}`} onClick={() => setSafe(!safe)} title="显示标题安全框与中心参考线">安全框</button>
+      <button className={`btn tiny subtle${safe === "off" ? "" : " active"}`} onClick={() => cycleSafeArea()} title={safeTitle}>安全框 · {SAFE_LABELS[safe]}</button>
       <IconBtn icon="fullscreen" label="全屏预览" onClick={() => void monitorRef.current?.requestFullscreen()} />
     </div>
     <div ref={monitorRef} className="monitor-wrap"><div className="monitor" style={{ aspectRatio: `${project.settings.width} / ${project.settings.height}`, width: `min(100cqw, calc(100cqh * ${project.settings.width / project.settings.height}))` }}>
@@ -131,7 +138,12 @@ export function Preview() {
         </div>) : null}
         {displayPlan ? sounds.map(({ clip, track }) => <PreviewLayer key={clip.id} clip={clip} track={track} project={project} plan={displayPlan.clips[clip.id]} url={app.streams[clip.asset_id]} ticks={play.ticks} playing={ready && play.playing} monitorMuted={monitorMuted} />) : null}
         {!visuals.length || !ready ? <div className="monitor-empty"><Icon name={previewError ? "warning" : "film"} size={32} /><div className="monitor-title">{previewError || (!ready ? "读取合成预览…" : end ? "此处没有画面" : "从素材库添加第一个镜头")}</div><div className="monitor-sub">{end ? "点击时间线定位，空格播放" : "导入视频、音频或图片，拖到下方时间线"}</div></div> : null}
-        {safe ? <div className="safe-frame" aria-hidden="true"><div /></div> : null}
+        {safe !== "off" && insets ? <div className="safe-frame" aria-hidden="true">
+          <span className={`safe-guide action${safe === "action" ? " active" : ""}`} style={{ inset: `${insets.action * 100}%` }} />
+          <span className={`safe-guide title${safe === "title" ? " active" : ""}`} style={{ inset: `${insets.title * 100}%` }} />
+          <span className="safe-cross">+</span>
+          <em className="safe-caption mono">{SAFE_LABELS[safe]} {Math.round((safe === "action" ? insets.action : insets.title) * project.settings.width)}×{Math.round((safe === "action" ? insets.action : insets.title) * project.settings.height)} px</em>
+        </div> : null}
       </>}
       {sourceMode && previewError ? <div className="layer-error">{previewError}</div> : null}
     </div><button className="btn fullscreen-exit" onClick={() => void document.exitFullscreen()}>退出全屏（Esc）</button></div>
