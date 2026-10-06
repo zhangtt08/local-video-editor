@@ -952,7 +952,38 @@ ffprobe 2.000 秒，区间首帧为绿段而整片首帧仍为红，区间第 0.
 plan 与 dry-run 不写库、一次 apply 一个 revision、重放不涨、旧 revision 409、`restore` 是新 revision；
 成片层 2 秒素材以 50% 铺满 4 秒（4.000 秒、第 0.5 秒红第 3.5 秒绿、音高 439→825 Hz，即时间拉长而音高
 保持），裁尾那条覆盖 4–6 秒且被裁掉的蓝色尾段在逐帧采样里从未出现。
-门禁：`ruff check`、`ruff format --check`（68 文件）、40 项 Python 检查、5 项 esbuild 桌面检查全绿。
+门禁：`ruff check`、`ruff format --check`（69 文件）、`tests/suite_check.py` 一次跑完 40 项 Python 检查全绿
+（fourpoint 3.2s、grade 5.2s、marks 4.4s、self 76.9s）、5 项 esbuild 桌面检查与 `npm run typecheck` 全绿。
+新增的 `tests/suite_check.py` 本身也被变异验证过：放一条故意失败的 `*_check.py` 进去，它打印 FAIL、贴出子进程
+末尾输出并以非零码退出；删掉探针后同一入口对真实检查打印 PASS 并返回 0。它存在的意义就是过去「门禁全绿」
+只跑了 `self_check.py`，39 个逐功能检查是否真的执行过无从证明。
 
-仍未完成：四点剪辑的界面入口、图层节点与连线视图、亮度曲线与 LUT、色域矩阵与色彩管理、路径遮罩顶点
-动画、多目标与长时遮挡跟踪、自动语音字幕、缩略图与波形磁盘配额、代码签名。。
+界面入口已随本版交付（不是待办）：素材监视器 `入点 I` / `出点 O` 取源的两个点，时间线标尺上的区间带取目标的两
+个点，「四点→时间线区间（插入）」与「四点→覆盖」两个按钮把四个整数交给 `/four-point`，`fit=auto`，回来的一条
+命令走和普通放置同一个 `submit`。1280×800 同源 iframe 真实点击：r4→r5 恰好一个 revision，提示条按引擎回包如实
+写「素材更短，按 98% 变速铺满 2.03 秒 · 读素材 1.99 秒」，库里落库的正是 `position=1.0s, duration=2.0333s,
+source_in=1.0s, speed_percent=98`，被插入点切开的原片段仍首尾相接，撤销一步回到放置前。这一轮也被自己的验收抓到
+一条界面缺陷：按钮先只按 `source.asset` 找素材，从时间线片段进来的路径拿不到，于是对着已登记的素材报「这份素材
+还没有登记进工程」；改成与 `editSource` 同一条按 `verified.path` 回查的规则后才通。
+
+1.41.0 发布验收：冻结引擎 `--verify --measure 2` 通过（裸启动 4 次 min 588 ms / median 595 ms / max 680 ms），
+重新打包后包内引擎 `/v1/info` 报 `app_version=1.41.0`、`frozen=true`、`media_ready` / `render_ready` 均为真，
+`/v1/capabilities` 声明 `four_point_editing`、`project_schema_version=11`。四点在包内实测：源 0–2 秒 → 目标 0–4
+秒解为 `re-timed` / 50%，`plan`（`apply=false`）与 `dry_run` 都不写库、读回 revision 不变，一次 apply 恰到一个
+revision，**同 `request_id` 重放返回自己的回执**（不新增片段、不涨 revision——这条就是开发期被 `uuid4()` 抓到的
+那个缺陷在发布物上的复验），旧 revision 409，源越过素材末尾 422 `SOURCE_OUT_OF_BOUNDS`。包内 MCP 的
+`clip_four_point` 在 `tools/list` 里带 `readOnlyHint=true` 且四个点都在 inputSchema 中，调用它解出 `trimmed`
+（实际消费 2.00 秒源）而库里 revision 不动。成片：改速那条 4.000 秒、首帧 (254,0,1) 与第 3.8 秒 (254,0,1) 都是红，
+440 Hz 音在前段与后段都量得 440 Hz——时间被拉长而音高保持；裁尾那条 2.000 秒、0.1 与 1.9 秒都是 (1,128,3) 绿、
+音 879 Hz，被裁掉的蓝色尾段从未进文件。撤销放置本身是新 revision 且不留片段。ASAR 版本号 1.41.0，渲染层 3 个文件
+与 `dist/` 逐字节一致、包内引擎与验证过的构建一致（`asar_compare.py`），便携版与根目录 `AgentCut.exe` 逐字节相同
+（SHA256 `9c1377c8…3a0e`，132,496,654 字节；安装版 `a8c7431d…5ec7`，132,657,371 字节）。`win-unpacked/AgentCut.exe`
+启动到 1480×900「AgentCut 剪辑台」，`CloseMainWindow` 后 `Get-Process` 查不到残留。
+**如实记录一条证据边界**：这次的原生截图 PNG 与 1.40 的那张逐字节相同（125,651 字节，MD5 `31270d1b…`）——空工程
+启动画面本就与本版无关，所以这张图只证明「发布物能启动并把工作台画出来」，不证明四点按钮的像素；四点界面代码
+进入发布物的证据是 ASAR 内的 `四点→时间线区间（插入）` / `四点→覆盖` / `/four-point` 字节级存在，加上那份 ASAR
+与本地被真实点击验证过的前端逐字节一致。未签名，NSIS 向导未点击验收。完整记录见
+`C:/Users/Administrator/Documents/Codex/2026-10-04/du/outputs/AgentCut-1.41-交付记录.md`。
+
+仍未完成：图层节点与连线视图、亮度曲线与 LUT、色域矩阵与色彩管理、路径遮罩顶点动画、多目标与长时遮挡跟踪、
+自动语音字幕、缩略图与波形磁盘配额、交付方案持久化、cover 主体跟随重构图、代码签名。
