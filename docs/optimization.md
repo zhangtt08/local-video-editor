@@ -1477,3 +1477,108 @@ Inspector 填数字；而 Inspector 早就按「该属性有曲线就写关键�
 这份改动连同本节测量存在 git stash（消息即本节标题）。
 
 结论：色域矩阵不进 1.52。能力接口与文档都不声明支持它，`README.md` 的待办那一行照旧。
+
+## 1.57.0 交付格式：容器、编码与采样格式由预设一处决定（2026-10-07）
+
+交付是这一版唯一的主角。以前「导出」只有一个答案（H.264/AAC 装进 MP4，文件名必须 `.mp4`），
+`docs/architecture.md` 与 README 的边界都写着「未覆盖其它容器与编解码器」。这一版把它做成预设的事，
+不是调用方的事：
+
+- 预设表新增 `audio_codec` / `pixel_format` / `profile` 三个键，`crf`/`encoder_preset`/`audio_bitrate`
+  允许为 `null`（ProRes 由 profile 决定、VP9 的 crf 必须配 `-b:v 0`、PCM 没有码率这件事）。
+- 新四条：`h265-1080p`、`h265-2160p`（MP4 + `hvc1`）、`vp9-1080p-web`（WebM + Opus）、
+  `prores-422hq`（MOV + 24 位 PCM + `yuv444p10le`）。
+- `render.output_args(preset, sample_rate, frame_rate)` 是预设→FFmpeg 参数的唯一去处，按 codec 名分派，
+  只认 `OUTPUT_CODECS`。调用方交不出任何原始参数位。
+- `pixel_format` 走完整条画面链（解码段、`fit_stage`、`[vout]`），不是只写 `-pix_fmt` 的装饰。
+- 文件名后缀查 `preset_container()`：`.mp4` / `.mov` / `.webm`；jobs 写文件前的同一处与
+  `.part.<容器>` 临时名跟着走。
+- capabilities 下发 `output_containers` 与 `features.multi_codec_delivery`；工程 schema 仍 v13，
+  预设表纯增量，1.56 之前存的交付方案照读。
+
+### 一个被抓出来的真实交付缺陷
+
+WebM 第一次真跑就崩：FFmpeg 的进度行对 WebM/Opus 的第一拍报 `out_time_us=-6500`
+（Opus 编码器前置延迟把音频轨放在零之前；`-progress pipe:1` 实测同一行还给出
+`out_time=-00:00:00.006500`）。TIMEBASE 是 70,560,000，于是 `int(-0.0065 * 70560000) = -458640`，
+原样存进 `RenderJob` 被 `rendered_ticks >= 0` 拒绝，worker 的兜底把任务判成 `RENDER_CRASHED`，
+`finally` 之后临时文件还挂在原地。任何一次 WebM 交付都会撞上。修法：进度是遥测不是时间线的事实，
+在**读它**这一处夹住（`max(0, min(duration_ticks, …))`），而不是放宽模型的约束。
+
+撤掉夹住后 `tests/format_check.py` 复现原样报 `input_value=-458640`——这条不是设计出来的题。
+
+### 验证：源码层
+
+`tests/format_check.py`（新增，由 `tests/suite_check.py` 发现）：
+
+- 契约自洽：每条预设的容器/编码/音频编码都必须在 `OUTPUT_CONTAINERS` / `OUTPUT_CODECS` /
+  `OUTPUT_AUDIO_CODECS` 里，键集合固定；未知 codec 进 `output_args` 得 422 而不是拼出一条没验证过的命令。
+- 参数分派被逐条断言：x264 保留 `-preset/-crf` 且无 `-tag:v`；x265 有 `-tag:v hvc1`；VP9 有
+  `-b:v 0` 且没有 `-preset`；ProRes 有 `-profile:v 3` 且没有 `-crf`/`-b:a`；`-movflags` 只在 mp4/mov。
+- 同一条 2 秒时间线走真实 HTTP + 任务 worker 各导一份，ffprobe 逐条核对：
+  `h264/yuv420p + aac 48000Hz, 2.000s, 440 Hz 探针 0.088`、
+  `hevc/yuv420p + aac, 2.000s, 0.088`、`vp9/yuv420p + opus, 2.008s, 0.089`、
+  `prores/yuv444p10le + pcm_s24le, 2.000s, 0.088`；容器用 `major_brand`（isom / qt）与
+  EBML DocType（WebM 与 MKV 在 ffprobe 里同名，必须读头 64 字节里的 `webm`）区分。
+- **采样格式的可证伪证明**：画幅等于源（320×180，不重采样）的红\|蓝色块，在 Cb 平面上量过渡像素——
+  ProRes 4:4:4 **0 个**、H.264 4:2:0 **2 个**（平台值 90/240）。把 `fit_stage` 的 `format=` 改回写死
+  `yuv420p` 再跑，两边都变成 2（`{'h264': (2,[90,240]), 'prores': (2,[90,240])}`），检查当场红；
+  把 `-movflags` 改成不分容器也红。这两条是突变验证过的，不是自我确认。
+- 拒绝面：`.mp4` 名字配 WebM 预设 → 422 且消息点名 `.webm`；未知预设仍是 `UNKNOWN_PRESET`，
+  不被后缀规则抢走（`tests/batch_check.py` 同步改成按预设查容器，并用一个 WebM 用例覆盖新分支）。
+- 界面层：`tests/desktop_format_check.ts`（新增，`desktop_ts_check.py` 跑）断言编码行完全由预设算出、
+  未知编码名原样透出、只有非默认采样才写「4:4:4 10-bit」。
+
+### 验证：发布包与界面实点
+
+包内冻结引擎（`desktop/release/win-unpacked`）与源码同版本，见下面的 1.57.0 发布验收。
+
+界面用**构建产物**（`desktop/dist/renderer`）在浏览器里对着包内引擎点击（引擎的 `--token-file`
+在少于 32 个字符时会自己重新生成，所以验收脚本从文件里读回真 token，而不是自以为写死了 token）：
+
+- 导出面板给出 11 条预设；四条新行的文字逐字是
+  「1080p HEVC/H.265（需播放器支持）mp4 · 1920×1080 · HEVC / AAC」、
+  「4K HEVC/H.265 存档mp4 · 3840×2160 · HEVC / AAC」、
+  「1080p WebM/VP9（网页与开放分发）webm · 1920×1080 · VP9 / Opus」、
+  「ProRes 422 HQ 中间码（后期交接，体积大）mov · 跟随工程 320×180 · ProRes 422 HQ / PCM 24-bit · 4:4:4 10-bit」。
+  旧的那行写死的「· H.264 / AAC」已经不在 `app.asar` 里（5,521,552 B，按 UI 文字与类名取针，不按会被改名
+  的标识符取）。
+- 点 WebM 那条 → 文件名后缀提示立刻变成 `.webm`，点「开始导出」→ 任务行显示
+  「已完成 · 交付格式界面验收.webm · C:\…\out\run171148\交付格式界面验收.webm」，磁盘上 39,980 B；
+  再点 ProRes 那条 → 后缀 `.mov`、主按钮 title 写「按 r1 导出 交付格式界面验收.mov」，落盘 651,881 B，
+  包内 ffprobe 读回 `prores + pcm_s24le, yuv444p10le, 2.000000 秒`。同一份 2 秒片子，ProRes 是 H.264
+  那条（56,314 B）的 11.6 倍——标签里的「体积大」是量出来的。
+- 包内引擎的 HTTP + MCP stdio 走同一张表：`tools/call render_presets_read` 返回 11 条，四条新预设的
+  容器与界面一致（人和 Agent 共用一处定义，不是界面上多一层翻译）。
+
+### 1.57.0 发布验收
+
+- `uv run ruff check src tests examples scripts`、`ruff format --check` 全绿；`npm run typecheck` 通过；
+  `tests/suite_check.py` **49/49**（新增 `format_check.py` 一项，单独串行跑完，与打包不争 CPU）；
+  `desktop_ts_check.py` 8 项壳层检查（新增 `desktop_format_check.ts`）。
+- `scripts/build_engine.py --verify`：冻结引擎 `/v1/info` 报 `app_version=1.57.0`、`frozen=true`、
+  media/render 就绪，裸启动冷启动 671 ms；包内引擎 97 个文件。
+- `package_check_157.py`（包内引擎，实例 `1c41ef312b2e`）：capabilities 报 schema 13、
+  `output_containers=['mp4','mov','webm']`、`features.multi_codec_delivery=true`、11 条预设的
+  容器/编码/音频编码/采样格式与表一致；`.mp4` 名字配 WebM 预设在包内得到
+  `INVALID_REQUEST` 且 details 里点名「filename must end with .webm for the vp9-1080p-web preset」；
+  四份导出实测 `h264/yuv420p+aac 2.000s brand isom 56,314 B`、`hevc/yuv420p+aac 2.000s isom 60,976 B`、
+  `vp9/yuv420p+opus 2.008s ebml-webm 39,980 B`、`prores/yuv444p10le+pcm_s24le 2.000s qt 651,881 B`，
+  440 Hz 探针 0.088~0.089；红\|蓝 Cb 过渡像素包内也是 ProRes 0 对 H.264 2；MCP stdio 的
+  `render_presets_read` 返回同一张 11 条表；`app.asar` 5,521,552 B 里有
+  「ProRes 422 HQ / PCM 24-bit / 4:4:4 10-bit / libvpx-vp9 / h264-1080x1920-vertical」这些针，
+  写死的「H.264 / AAC」已不在。
+- `asar_compare.py`：包内 5 个 renderer/shell 文件与本地构建逐字节一致，包内引擎与验收引擎一致，
+  ASAR 版本 1.57.0。
+- 便携版 132,521,636 B SHA256 F19D168D1376629513226F4C875F4425195EDFBEB73DB9775CE0C796F1E2BC35；
+  安装版 132,682,353 B SHA256 70AA50EE773E972293B5E5E0F99EF8167562C1F0210B76DB555149656E28073F；
+  根目录 `AgentCut.exe` 与便携版逐字节一致。未签名，NSIS 向导未点击验收。
+
+### 1.57 没做的事（边界照旧要说清）
+
+- 纯音频交付（MP3/WAV）没有：`compile_render_plan` 现在遇到没有可见画面层的时间线直接
+  `EMPTY_TIMELINE`，要出声音就得让画面链整段不编译，另开一轮。
+- HEVC 的标签不承诺体积（见上文的 SSIM/尺寸实测）。
+- ProRes 那条保住的是 4:4:4 采样与 10 位量化；时间线与调色链本身仍是 8 位精度，不是 10 位动态范围。
+- 路径遮罩的顶点/形状动画、多目标与长时遮挡跟踪、旋转估计、色彩节点图的分层与连线
+  （亮度曲线、LUT、色彩管理）、自动语音字幕——仍待实现。
