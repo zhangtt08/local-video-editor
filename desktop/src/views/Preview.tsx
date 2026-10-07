@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Icon, IconBtn } from "../ui";
 import { MaskPicture } from "./MaskPicture";
 import { TIMEBASE, frameTicks, humanDuration, pacing, rateLabel, timecode } from "../time";
-import type { Clip, Effects, GradeTables, PreviewManifest, Project, Track } from "../engine";
+import type { AnimatedEffect, Clip, GradeTables, PreviewManifest, Project, Track } from "../engine";
 import { appInfo, clearProxyCache, clearDerivedCache, cycleSafeArea, editSource, fourPoint, jumpEditPoint, markSource, playhead, PROXY_WIDTHS, selectClip, selectedSource, setMonitorMode, setProxyWidth, setSourceCursor, setSourcePlaying, setSourceRipple, setSourceTarget, timelineEnd, useApp, usePlay } from "../store";
 
 let audioContext: AudioContext | undefined;
@@ -195,7 +195,7 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
   clip: Clip; track: Track; project: Project; plan: PreviewManifest["clips"][string] | undefined; url?: string; ticks: number; playing: boolean; monitorMuted: boolean; mixed?: boolean; manifest?: PreviewManifest; streams?: Record<string, string>; interactive?: boolean; parentGain?: () => number; clockRate?: number;
 }) {
   const elementRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
-  const wrappers = useRef<Partial<Record<keyof Effects, HTMLElement | null>>>({});
+  const wrappers = useRef<Partial<Record<AnimatedEffect, HTMLElement | null>>>({});
   const blends = useRef<Partial<Record<"picture" | "sound" | "black" | "white", HTMLElement | null>>>({});
   const animations = useRef<Animation[]>([]); const [error, setError] = useState("");
   const asset = project.assets[clip.asset_id]; const isAudio = track.kind === "audio"; const isImage = asset?.kind === "image";
@@ -205,7 +205,7 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
   useLayoutEffect(() => {
     if (!plan) return;
     const created: Animation[] = [];
-    for (const property of Object.keys(plan.curves) as (keyof Effects)[]) {
+    for (const property of Object.keys(plan.curves) as AnimatedEffect[]) {
       const wrapper = wrappers.current[property]; if (!wrapper) continue;
       const frames = plan.curves[property].map(({ value, offset, easing }) => ({ offset, easing,
         ...(property === "opacity" || property === "gain" ? { opacity: property === "gain" ? value / 4 : value } : {

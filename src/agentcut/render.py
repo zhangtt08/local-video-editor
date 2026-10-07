@@ -16,7 +16,17 @@ from dataclasses import dataclass, field
 
 from .animation import expression, sound_enabled
 from .compositing import blend_track
-from .contracts import MASK_FIELDS, TEXT_FONTS, TIMEBASE, EditorError, Project, render_presets
+from .contracts import (
+    BLUR_RADIUS_LIMIT_PX,
+    GBLUR_STEPS,
+    MASK_FIELDS,
+    TEXT_FONTS,
+    TIMEBASE,
+    EditorError,
+    Project,
+    blur_sigma,
+    render_presets,
+)
 from .grade import grade_filter
 from .masks import (
     alpha_expression,
@@ -96,6 +106,31 @@ def text_font_path(face_id: str) -> str:
 def _rgb(color: str) -> tuple[int, int, int]:
     values = tuple(int(color[index : index + 2], 16) for index in (1, 3, 5))
     return values  # type: ignore[return-value]
+
+
+def blur_clause(clip, out_h: int) -> str:
+    """The soft-focus stage, appended to a layer once it already sits at output size.
+
+    It runs before the mask's alpha, which is also how the preview stacks them (CSS `filter` first,
+    then `mask-image`), so a blurred picture clipped by a shape hides what is behind the shape the
+    same way on both ends. Zero blur adds nothing to the graph at all. `steps=6` is what makes
+    FFmpeg's radius match the browser's for the same number — see the measurement in contracts.
+    """
+    if clip.effects.blur <= 0:
+        return ""
+    radius = blur_sigma(clip.effects.blur, out_h)
+    if radius > BLUR_RADIUS_LIMIT_PX:
+        raise EditorError(
+            "BLUR_OUT_OF_RANGE",
+            f"blur {clip.effects.blur} is a {radius:.0f} px radius at {out_h} px tall, and the "
+            f"export/preview radius match is only verified to {BLUR_RADIUS_LIMIT_PX:.0f} px; "
+            f"the most this frame carries is {BLUR_RADIUS_LIMIT_PX / out_h:.4f}",
+            422,
+            blur=clip.effects.blur,
+            radius=radius,
+            max_blur=BLUR_RADIUS_LIMIT_PX / out_h,
+        )
+    return f",gblur=sigma={radius:.4f}:steps={GBLUR_STEPS}"
 
 
 def color_filter(clip) -> str:
@@ -549,7 +584,9 @@ def compile_render_plan(
             f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease:flags=bicubic,"
             f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color=black,"
         )
-    fit_stage = f"{sizing}setsar=1,fps={fps},format={pixel_format},settb=AVTB"
+    fit_pre = f"{sizing}setsar=1,fps={fps}"
+    fit_post = f"format={pixel_format},settb=AVTB"
+    fit_stage = f"{fit_pre},{fit_post}"
 
     nested_sources = set()
 
@@ -658,9 +695,14 @@ def compile_render_plan(
             label = plan.tag("v")
             source = f"[{index}:v]"
             color = color_filter(clip)
+            # The `cut` chain is a second builder for the picture chain, and it is where a per-clip
+            # filter gets forgotten: the preview blurs every layer, so this path has to blur too, in
+            # RGBA at output size — the same place the layered chain puts it.
+            blur = blur_clause(clip, out_h)
+            stage = f"{fit_pre},format=rgba{blur},{fit_post}" if blur else fit_stage
             ramp = clip_ramp(clip, settings)
             if entry["verified"].kind == "image":
-                plan.filters.append(f"{source}{color}{fit_stage}{label}")
+                plan.filters.append(f"{source}{color}{stage}{label}")
             else:
                 if ramp:
                     source = ramp_video(plan, source, ramp, fps, settings.frame_ticks / TIMEBASE)
@@ -668,7 +710,7 @@ def compile_render_plan(
                 else:
                     paced = f"setpts=(PTS-STARTPTS)/{clip.speed_percent / 100},"
                 plan.filters.append(
-                    f"{source}{paced}{color}{fit_stage},"
+                    f"{source}{paced}{color}{stage},"
                     f"trim=duration={sec(clip.duration_ticks)},setpts=PTS-STARTPTS{label}"
                 )
             labels.append(label)
@@ -842,7 +884,7 @@ def compile_render_plan(
                     f"{color_filter(clip)}"
                     f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,"
                     f"format=rgba,pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,"
-                    "setsar=1"
+                    f"setsar=1{blur_clause(clip, out_h)}"
                 )
                 body = (
                     f"{transform}"

@@ -2050,3 +2050,113 @@ box_opacity 0.45`，所以老工程一字不改仍逐像素相同——`filter_s
 
 `suite_check.py` 靠 `*_check.py` 通配自动收新门禁，无需注册；README 的「嵌套合成」一行补了这三组数字，
 门禁计数从 56 项改为 57 项。本轮不改 `APP_VERSION`：没有新能力上线，只是把一条已交付的链路钉住。
+
+## 1.64.0 片段柔焦：把两端的「同一个数」变成实测的「同一个半径」（2026-10-08）
+
+剪映、达芬奇、AE 都有模糊这一挡，工程里却根本没有：`ClipEffects` 只有位置/缩放/旋转/透明度/音量，
+`grade` 全是每通道传递函数（不能碰空间），`feather` 只作用于遮罩边缘。做遮罩打码时能裁出形状，
+却糊不了形状里面的东西。
+
+取舍先落在「两端能不能是同一个函数」上，因为这条工程的规矩是：给不出同一个函数就不给这个旋钮。
+高斯模糊恰好是两端都有原生实现的那一类——FFmpeg 的 `gblur=sigma=`、CSS 的 `filter: blur()`，
+而且 CSS 的模糊半径按定义就是标准差。锐化当场被否掉：FFmpeg 的 `unsharp` 用的是窗口卷积
+（`luma_size_x` 那套），不是「同一个 sigma 的高斯」，接上就是两个函数共用一个名字。逐帧柔焦也被否掉：
+`gblur -h` 显示它的时间线钩子只有 `enable`（开关窗），没有逐帧 sigma，硬做导出是阶梯、预览是平滑。
+
+**先测量，再决定参数。** 用阶跃边沿（左白右黑）取三个交叉点直接反解标准差：50% 在边沿、84.13% 在一个
+标准差之前、15.87% 在一个标准差之后。第一版探针画布只有 160×64，σ≥32 时「比值掉到 0.75/0.54」——那是
+画布边沿把剖面吃掉了，不是滤波器的性质；把画布放大到 1024×512 后重测，随包的 FFmpeg 在默认
+`steps=1` 下标称 1/4/8/16/32/64/128 全部落在 **0.806..0.838 倍**，非常稳；Chromium 的 `blur()` 在
+1/4/8/16/32/64/128 上是 **1.196/1.071/0.961/0.977/0.977/0.969/0.969 倍**。也就是说直接把用户填的数
+同时喂给两边，成片的实际模糊半径会比分屏里的**锐 19%**。同一个探针扫 `steps`：
+`steps=6` 时 FFmpeg 落在 0.954..0.991 倍，正好进到浏览器那一侧的带里。于是导出写
+`gblur=sigma=R:steps=6`、预览写 `blur(R×100cqh)`（1cqh = 画面渲染高的 1%，`cqh` 在 `filter:` 里能用
+是先在 Chromium 里算过 computed style 才写进方案的），R 由 `contracts.blur_sigma()` 唯一确定。
+实测两端相差约 2%（≥8 px 时），以下不到半个像素。
+
+**边界靠拒，不靠夹。** 一致性只在 1..64 px 的实测带里声明；超过就 `BLUR_OUT_OF_RANGE`（422），
+`details.max_blur` 直接给出该画幅能承担的比例。界面滑杆的上限不在界面里写死，而是
+`blurMaxPercent(caps, 画面高)` 从引擎下发的 `limits.blur_fraction` 与 `limits.blur_radius_limit_px`
+取小——`tests/desktop_blur_check.ts` 断言 200/720/1080/2160/4320 五种画幅下给出的上限折算成像素都不超过
+64，把 helper 改成只看 fraction 之后该检查立刻红。旧引擎不下发这两个字段时那一行整个不出现。
+
+**加字段会把老回执劈成两半，这次是被变异试出来的。** `_fingerprint` 里原本写着「effects 整份等于
+默认就丢掉」，看着像是 1.63 文字那套时代规则的特例，其实是全有或全无：载荷只要设了 `opacity` 就保留
+整份 dump，多出来的 `blur: 0.0` 于是进了哈希。第一版 blur_check 只断言「全默认的老载荷仍然命中」，
+把 projects.py 换回旧写法后门禁**照样绿**——那条断言测不到真正的坑。改成从删掉 `blur` 字段的同一份代码
+里跑出两个锚点摘要（全默认 `550dda4e…`、`opacity=0.5` 的 `e811fc4f…`）再断言之后，才真正咬住：
+现在按 1.63 的规则推导「晚于该载荷时代的字段只要还在默认值上就不算请求内容」，两种载荷都命中。
+
+顺带清掉一处 1.63 留下的重复：`ClipPatch.valid_fields` 里 `TextStyle.model_validate` 被写了两遍
+（第二次只是把占位 body 换个词），是当时整行编辑合并留下的，删掉一条。
+
+**发布验收抓到的真缺陷：`cut` 快路径根本不知道有柔焦。** 打包后的引擎在 320×180 双轨工程里量到
+17.24 px（对），但验收脚本另建了一个**单轨**工程给 `blur=0.25`（70 px，应当被拒），任务却
+`succeeded`，成片边沿量到 **0.34 px**——不是拒绝没生效，是模糊压根没进图。查下去：`compile_render_plan`
+有两条画面链，`plan.mode == "cut"`（只有一条画面轨、没有任何需要合成的东西）走 `track_chain()`，
+那里只拼 `color_filter(clip)` 与 `fit_stage`，逐片段滤镜里只有调色被照顾到；决定走哪条链的谓词把
+x/y/scale/rotation/opacity/遮罩/转场/文字/嵌套都列进去了，是一份**手写的名单**，新字段没在里面。
+于是预览（每个 DOM 层都吃 CSS `filter`）一直是柔的，导出（快路径）是锐的，而且一声不吭。
+
+修法是把快路径补全，而不是把模糊的工程降级去走慢路径：`fit_stage` 拆成 `fit_pre`（缩放到输出画幅）
+与 `fit_post`（转目标像素格式），中间按需插入 `format=rgba,gblur=sigma=R:steps=6`——与分层链同一位置
+（缩放之后、转像素格式与遮罩之前），所以两端仍然同一个函数；`blur=0` 时字符串与改动前逐字节相同，
+快路径不受任何影响。同一处修改顺带让 70 px 的拒绝在快路径里也真的发生（`blur_clause` 现在两条链都调）。
+
+这条被永久钉住：`tests/blur_check.py` 里新增单轨用例，断言 `plan.mode == "cut"`、断言图里有
+`gblur=sigma=18.0000:steps=6`，并且**量出的半径与分层链相差 ≤1 px**（实测两边都是 17.26 px）。
+变异验证：把 `stage` 换回 `fit_stage`（即回到缺陷状态）→ 红在
+`the cut chain dropped the soft focus: [0:v]scale=320:180:…`，消息直接把丢掉滤镜的那条链打出来。
+教训也记下来：给 `ClipEffects` 加字段时，「有没有第二条画面链」不是可以想当然的事——这份名单本身
+是架构里的脆弱点，凡靠手写枚举决定行为分叉的地方，新字段都会静默掉出外面。
+
+### 1.64.0 发布验收
+
+冻结引擎 `--verify` 通过后重新打包（`FREEZE=0`、`DIST=0`，产物时间戳确认是这一轮，不是上一版留下的文件——
+上一轮的教训：`npm run dist | tail` 把 vite 的失败吞成了 exit 0，盘上的 exe 还是 1.63 的）。
+
+- 包内引擎（实例 `40e39c84617a`）：`app_version=1.64.0`、`frozen=true`、`features.clip_blur=true`、
+  `limits.blur_fraction=0.25`、`limits.blur_radius_limit_px=64.0`。
+- **成片实测**（320×180，白/黑各半的真实 mp4 素材）：`blur=0.1` 要 18.0 px 半径，交付文件量到
+  **17.24 px**；同一片源关掉柔焦量到 **0.34 px**（测量的分辨率）。`preview-manifest` 给界面的是
+  `'brightness(1.0) contrast(1.0) saturate(1.0) blur(10cqh)'`，10cqh × 180 px = 18.0 px，与导出侧同一个数。
+- **隐私遮罩**：矩形（宽 0.5）圈住中段，遮罩外与「完全不模糊」的成片**逐点相同（0 级差）**，
+  遮罩内与「整幅模糊」相同（0 级差）。
+- **超出实测带**：另建 320×280 单轨工程给 `blur=0.25`（70 px），提交渲染时 **POST 直接 422**
+  `BLUR_OUT_OF_RANGE`，消息写着「blur 0.25 is a 70 px radius at 280 px tall, and the export/preview
+  radius match is only verified to 64 px; the most this frame carries is 0.2286」——不是排队后再失败，
+  也不是悄悄夹住。这一条正是快路径缺陷的探针：修复前它 `succeeded` 且成片是锐的。
+- MCP stdio：`tools/list` 仍 39 个工具（没有新工具，能力在 `timeline_edit` 的 schema 里），生成的
+  schema 点名 `blur`。
+- `app.asar` 5,535,096 B：`柔焦`、`clip_blur`、`% 高 ·`、`不能打关键帧`、`fx-blur` 全部在包里
+  （只用打包后仍然存在的字符串断言）。帮助文案在第一次打包后又改过（把「1%/5%」这类只对低画幅成立的
+  说法改成由上限决定的中性描述），于是 renderer 与 asar 重打过一次包——上面所有包内数字与下面的产物
+  哈希都是**重打包之后**再跑一遍 `package_check_164.py` 得到的实例 `40e39c84617a`，不是上一份包的残留。
+- 界面实机（`ui_blur_164.py`，Playwright Chromium 驱动**构建产物** renderer 对着真引擎）：选中片段后
+  出现 `柔焦 | % 高 · ≈0.0 px` 一行，滑杆 `max=25%`＝`min(0.25, 64/180)`——上限来自引擎下发的两个数，
+  不是界面自己写的；填 10 回车 → 引擎存下 `blur=0.1` 且**恰好吃掉一个 revision**（r1→r2）；
+  浏览器把 `blur(10cqh)` 解析成 **26.8 px**，按 270 px 高的画面应是 27.0 px，差 0.2 px（0.74%，
+  即 Blink 三次盒式近似的本征误差，成片侧以 gblur 为准）。截图 `ui164/柔焦界面-040916.png`。这一行跑的
+  是第一次 1.64 打包的 renderer，重打包只改了帮助文案，柔焦那一行与上限推导逐字未动。
+- 原生窗口：`release/win-unpacked/AgentCut.exe` 用 `Start-Process` 脱离父 shell 启动，`PrintWindow(flags=2)`
+  采到 1480×900 的「AgentCut 剪辑台」画面（`AgentCut-1.64-原生窗口.png`，127,145 B），
+  `CloseMainWindow` 优雅关闭后 `no AgentCut/agentcut residue`。该会话打开的是用户 `%APPDATA%` 里的真实工程，
+  因此只截图与关闭，未编辑任何用户数据。未签名，NSIS 向导未点击验收。
+- 产物：便携版 189,738,107 字节 SHA256
+  `C86956331B1E854DD50CF5B18B4F461E6C415980176B1BD6EA8297C840FB951E`；安装版 189,898,820 字节 SHA256
+  `A1AC20491AA1409BBD0ED02F0D3A01C372C7CC127DE76B704576A4C82E6059FF`；根目录 `AgentCut.exe` 与便携版
+  逐字节一致（同一个 SHA256，189,738,107 B）。
+- 门禁：`ruff check` 与 `ruff format --check`（86 文件）全绿、`npm run typecheck` 干净、10 项桌面 TS
+  检查通过、`tests/self_check.py` 通过，`tests/suite_check.py` 串行 **58/58**（`SUITE=0`；本轮新增的
+  `blur_check.py` 与 `nestfx_check.py` 都在列）。打包教训也记一条：`npm run dist | tail` 会把 vite 的
+  失败吞成 exit 0，第一次「构建成功」其实是上一版留下的 exe——此后所有构建都写到日志文件里并显式记下
+  `EXIT=`，产物 mtime 也一起看。
+
+
+验收 `tests/blur_check.py`（2.1 秒）：`blur=0.1` 在 180 px 高的画幅上要 18.0 px 的半径，成片边沿剖面
+量到 **17.26 px**；关掉柔焦的同一条边沿只量到 **0.34 px**（说明这个测量本身有分辨率，不是噪声）；
+过 H.264 之后第 10 帧仍量到 **17.24 px**；矩形遮罩之外与「完全不模糊」逐点相同（**0 级差**）、之内与
+「整幅模糊」相同（0 级差），也就是打码真的只糊形状里；编译图里 `gblur` 恰好一次（只糊上面那条轨）；
+`preview-manifest` 的 `color_filter` 末尾是 `blur(10cqh)`，折算回像素与 sigma 完全相等，没开柔焦的片段
+字符串里没有 `blur`；280 px 高的画幅给 `0.25` 被 `BLUR_OUT_OF_RANGE` 拒；`/v1/capabilities` 报
+`features.clip_blur` 与两个 limits。

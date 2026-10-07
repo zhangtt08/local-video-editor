@@ -18,6 +18,7 @@
 | 深色工作台、可调整面板、素材/合成双监视器、逐帧与编辑点定位、磁吸、锁轨 | 已实现 | 桌面实际操作验收 |
 | 位置、缩放、旋转、透明度、音量关键帧；线性/保持/缓入缓出/可编辑贝塞尔 | 已实现 | `tests/editing_check.py`；真实像素与分割/修剪连续性 |
 | 可视数值曲线：Shift 多选/框选、整体移动/删除、拖点改时间/数值、双击加点、缩放、撤销、批次预演 | 已实现 | `tests/curve_check.py` / `tests/keygroups_check.py`、真实 HTTP/MCP 与 1040×660 界面操作；SVG 与渲染共享插值 |
+| 片段柔焦（高斯模糊）：`effects.blur` 是**画面高的比例**，同一个半径同时喂 FFmpeg `gblur=sigma=…:steps=6` 与浏览器 `filter: blur(…cqh)`；配上矩形/椭圆/路径遮罩就是打码与背景虚化 | 已实现（1.64） | `tests/blur_check.py`：要 18.0 px 的成片按边沿剖面量出 **17.26 px**（同一支 FFmpeg 用默认 `steps=1` 只有 14.57 px，那 19% 正是这条门禁盯着的东西——变异成 steps=1 当场红），过 H.264 编码之后的第 10 帧仍量到 17.24 px，而没开柔焦的同一条边沿只量到 0.34 px（证明测量的分辨率）；矩形遮罩外的像素与不模糊版本**逐点相同（0 级差）**；`0.25` 用在 280 px 高的画幅上以 `BLUR_OUT_OF_RANGE` 拒绝并在 details 里给出该画幅能承担的上限；**单轨工程也糊**——发布验收第一轮抓到「`cut` 快路径不知道有柔焦」：只有一条画面轨且没有东西要合成的工程走另一条画面链，那里只拼调色与缩放，于是预览是柔的、导出是锐的且一声不吭（量到 0.34 px），补全快路径（`fit_stage` 拆成 pre/post，中间按需插入 `format=rgba,gblur`）后两条链在同一条边沿上都量到 **17.26 px**，`tests/blur_check.py` 断言 `mode == "cut"` 且与分层链相差 ≤1 px，把 `stage` 换回旧写法当场红；1.64 之前捕获的两个回执摘要原样命中，包括「设了 opacity 却没提 blur」这种全有或全无比较会漏掉的情况；界面滑杆上限由 `blurMaxPercent` 从引擎下发的两个数推导（`tests/desktop_blur_check.ts` 断言任何画幅都不许给出导出会拒的比例，变异掉半径上限当场红）。**不做关键帧动画**（`gblur` 没有逐帧 sigma，只有 `enable` 开关窗，导出会变成阶梯而预览是平滑的），**不做锐化**（`unsharp` 是窗口卷积，不是同一个高斯）；两端一致只在实测的 1–64 px 带内声明，超出就点名拒绝 |
 | 0.25–4 倍速、保留音高、同轨涟漪调整 | 已实现 | 同上；导出长度与 440 Hz 音频检查 |
 | 曝光、对比度、饱和度 | 已实现 | 同上；灰阶像素与原生 CSS 合成预览 |
 | 文字图层、SRT 导入/复制、透明度与音量淡入淡出 | 已实现 | 同上；中文与特殊字符真实导出；界面 SRT 导入→成片 |
@@ -176,7 +177,7 @@ desktop/         electron/（无边框窗口 + 引擎生命周期） src/（Reac
 design/          旧静态设计稿；现行深色工作台以 desktop/src/ 为准
 examples/        Agent 调用示例与 MCP 配置模板
 docs/            architecture / api / decisions / agent-tasks / validation
-tests/           self_check.py（HTTP + MCP） suite_check.py（逐个跑 57 项 *_check.py） media_check.py（真实媒体） editing_check.py（编辑/动画/字幕/变速/像素） matrix_check.py（52 种命令的可靠性扫面）
+tests/           self_check.py（HTTP + MCP） suite_check.py（逐个跑 58 项 *_check.py） media_check.py（真实媒体） editing_check.py（编辑/动画/字幕/变速/像素） matrix_check.py（52 种命令的可靠性扫面）
 scripts/         build_engine.py（打包引擎） build_icon.py（生成图标）
 ```
 

@@ -1,12 +1,12 @@
 import type { Keyframe } from "../engine";
 import { useEffect, useId, useRef, useState } from "react";
 
-import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionChoices, type Clip, type Effects, type LinkStatus, type ShapeMask, type TransitionKind, BLEND_MODES} from "../engine";
+import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionChoices, type AnimatedEffect, type Clip, type LinkStatus, type SampledValues, type ShapeMask, type TransitionKind, BLEND_MODES} from "../engine";
 
 import { Icon, Modal } from "../ui";
 import { GradeFields } from "./GradeFields";
 import { SpeedFields } from "./SpeedFields";
-import { canAnimateMask, EFFECT_FIELDS, FIELD_LABEL } from "../effects";
+import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL } from "../effects";
 import { frameTicks, TIMEBASE, align, humanDuration, seconds, ticks } from "../time";
 import {
   clearBatch,
@@ -236,7 +236,7 @@ function EffectsFields({ clip }: { clip: Clip }) {
   const app = useApp();
   const play = usePlay();
   const [interpolation, setInterpolation] = useState<Keyframe["interpolation"]>("linear");
-  const [sampled, setSampled] = useState<{ at: number; clip: Clip; values: Effects } | null>(null);
+  const [sampled, setSampled] = useState<{ at: number; clip: Clip; values: SampledValues } | null>(null);
   const [fade, setFade] = useState(.5);
   const [slideFrames, setSlideFrames] = useState(1);
   const [fadeProperty, setFadeProperty] = useState<"opacity" | "gain">("opacity");
@@ -248,6 +248,9 @@ function EffectsFields({ clip }: { clip: Clip }) {
   const locked = Boolean(app.busy || !project || project.tracks.find((t) => t.id === clip.track_id)?.locked);
   const slidingBlocked = Boolean(clip.speed_curve) || Boolean(clip.link_id);
   const frames = (clip.keyframes ?? []).filter((k) => k.at_ticks >= offset && k.at_ticks <= offset + clip.duration_ticks);
+  // 柔焦这一行没有 ◇ 关键帧按钮：导出侧的 gblur 没有逐帧半径，界面不能假装能给它做动画。
+  // 上限完全由引擎下发的两个数决定（见 effects.ts 的 blurMaxPercent），界面不自己另写一套。
+  const blurMax = blurMaxPercent(app.caps, project?.settings.height ?? 0);
   const outside = play.ticks < clip.position_ticks || play.ticks > clip.position_ticks + clip.duration_ticks;
   useEffect(() => {
     if (!project || play.playing || !clip.keyframes?.length) return;
@@ -257,7 +260,7 @@ function EffectsFields({ clip }: { clip: Clip }) {
     }).catch(() => { if (!disposed) setSampled(null); }); }, 100);
     return () => { disposed = true; window.clearTimeout(timer); };
   }, [clip, project, at, play.playing]);
-  const currentValues = sampled?.at === at && sampled.clip === clip ? sampled.values : effects;
+  const currentValues: Record<AnimatedEffect, number> = sampled?.at === at && sampled.clip === clip ? sampled.values : effects;
   const sampleReady = !clip.keyframes?.length || Boolean(sampled?.at === at && sampled.clip === clip);
   return <section className="insp-section effects-section">
     <div className="row-title"><span className="panel-label">{asset?.kind === "audio" ? "声音" : "变换与动画"}</span><span className="spacer" />
@@ -276,6 +279,11 @@ function EffectsFields({ clip }: { clip: Clip }) {
             onClick={() => frame ? removeKeyframe(clip.id, f.property, at) : setKeyframe(clip.id, { property: f.property, at_ticks: at, value: currentValues[f.property], interpolation })}>◇</button>
         </div>;
       })}
+      {blurMax > 0 && asset?.kind !== "audio" ? <div className="effect-row">
+        <label htmlFor="fx-blur">柔焦</label>
+        <EffectInput id="fx-blur" value={(effects.blur ?? 0) * 100} min={0} max={blurMax} step={0.5} onCommit={(value) => setClipEffects(clip.id, { blur: value / 100 })} />
+        <span className="dim">% 高 · ≈{(effects.blur * (project?.settings.height ?? 0)).toFixed(1)} px</span>
+      </div> : null}
     </fieldset>
     <div className="animation-head"><span className="panel-label">关键帧</span><span className="spacer" />
       <button className="btn tiny subtle" onClick={() => setGraphOpen(true)}>曲线编辑</button>

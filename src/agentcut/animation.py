@@ -301,7 +301,10 @@ def preview_manifest(
                 f"brightness({2**clip.color.exposure}) "
                 f"contrast({clip.color.contrast}) saturate({clip.color.saturation})"
             )
-            + (f" url(#{grade['id']})" if grade else ""),
+            + (f" url(#{grade['id']})" if grade else "")
+            # The blur fraction the exporter feeds to `blur_sigma` becomes 1cqh = 1% of the frame's
+            # rendered height here, so the preview's radius is the same number of frame-heights.
+            + (f" blur({clip.effects.blur * 100:g}cqh)" if clip.effects.blur > 0 else ""),
             "grade": grade,
             "transition": transition_curves[clip.id],
         }

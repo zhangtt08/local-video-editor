@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type PointerEvent } from "react";
 
-import { DEFAULT_EFFECTS, type AnimationGraph, type Clip, type Effects, type Keyframe, type Property, type Bezier } from "../engine";
+import { DEFAULT_EFFECTS, type AnimatedEffect, type AnimationGraph, type Clip, type Keyframe, type Property, type Bezier } from "../engine";
 import { EFFECT_FIELDS, maskAnimFields } from "../effects";
 import { TIMEBASE, timecode } from "../time";
 import { appInfo, clearBatch, commitBatch, editAtRevision, playhead, quantum, redoStep, selectClips, setGraphOpen, setMode, toast, undo, useApp, usePlay } from "../store";
@@ -45,7 +45,7 @@ export function CurveEditor() {
 function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; disabled: boolean }) {
   const app = useApp(); const play = usePlay(); const project = app.project!;
   const options = [...EFFECT_FIELDS.filter((f) => !audio || f.property === "gain"), ...maskAnimFields(clip.mask)];
-  const baseOf = (f: (typeof options)[number]) => "field" in f ? clip.mask?.[f.field] ?? 0 : (clip.effects ?? DEFAULT_EFFECTS)[f.property as keyof Effects];
+  const baseOf = (f: (typeof options)[number]) => "field" in f ? clip.mask?.[f.field] ?? 0 : (clip.effects ?? DEFAULT_EFFECTS)[f.property as AnimatedEffect];
   const [property, setProperty] = useState<Property>(() => audio ? "gain" : clip.keyframes?.[0]?.property ?? "opacity");
   const field = options.find((f) => f.property === property) ?? options[0];
   const [selectedAt, setSelectedAt] = useState<number | null>(null);

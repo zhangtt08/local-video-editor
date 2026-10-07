@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 13  # v13 gives a path mask a real box; older rows are fitted on load (ge=1).
-APP_VERSION = "1.63.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.64.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -131,6 +131,9 @@ class Track(Contract):
 
 
 EffectProperty = Literal["x", "y", "scale", "rotation", "opacity", "gain"]
+# What `clip.patch` may write is wider than what can be keyframed: `blur` has no per-frame form
+# (see ClipEffects.blur), so it is patchable without being an animatable property.
+EffectField = EffectProperty | Literal["blur"]
 # Rectangle and ellipse masks keyframe in the mask's own normalized space, so the exporter and the
 # browser interpolate the same numbers. A free-form (path) mask rasterizes its outline once and can
 # be moved with mask_x/mask_y, but its drawn shape and size cannot change over time yet.
@@ -157,6 +160,40 @@ PROPERTY_LIMITS = {
 }
 
 
+# Soft focus as a fraction of the frame height: sigma_px = blur * height, so one number looks
+# the same at every delivery size. `gblur=sigma=` in the export and `filter: blur(Ncqh)` in the
+# preview are the same Gaussian by definition (a CSS blur radius *is* a standard deviation),
+# which is why this is a fraction rather than the "degree" people type into 剪映.
+#
+# Measured on the FFmpeg and the Chromium this app ships, using a step edge and reading where the
+# profile crosses 50%, 84.13% and 15.87% (those three points give the standard deviation directly):
+# `gblur=sigma=S` at the default `steps=1` really behaves like 0.81*S, which is why the exporter
+# asks for `steps=6`. Over a nominal radius of 1..64 px that measures 0.954..0.991 * S, and
+# Chromium's `blur(Rpx)` over the same band measures 0.96..1.07 * R, so both ends land on the same
+# radius within about 2% above 8 px and within half a pixel below it.
+#
+# `BLUR_LIMIT` is a quarter of the frame height because past that the picture has already averaged
+# into one color. `BLUR_RADIUS_LIMIT_PX` is the top of the measured band — the step-edge probe runs
+# out of contrast above it, so a bigger radius is refused by name rather than claimed as verified.
+# Two absences, each for the same reason: no keyframes (the only per-frame hook `gblur` offers is
+# `enable`, an on/off window, so an animated radius would export as a staircase while the preview
+# interpolates smoothly) and no sharpen (`unsharp` convolves a box-window kernel, not a Gaussian of
+# the named radius, so one name would be two functions).
+BLUR_LIMIT = 0.25
+BLUR_RADIUS_LIMIT_PX = 64.0
+GBLUR_STEPS = 6
+
+
+def blur_sigma(blur: float, frame_height: int) -> float:
+    """The one definition of the soft-focus radius: this fraction of the frame height, in pixels.
+
+    The export writes it as `gblur=sigma=` and the preview as `blur(<blur*100>cqh)`; both are the
+    same number of pixels because 1cqh is 1% of the frame's rendered height. Neither end is free to
+    invent its own units for "how blurry".
+    """
+    return blur * frame_height
+
+
 class ClipEffects(Contract):
     x: Annotated[float, Field(ge=-2, le=2)] = 0.0
     y: Annotated[float, Field(ge=-2, le=2)] = 0.0
@@ -164,6 +201,7 @@ class ClipEffects(Contract):
     rotation: Annotated[float, Field(ge=-360, le=360)] = 0.0
     opacity: Annotated[float, Field(ge=0, le=1)] = 1.0
     gain: Annotated[float, Field(ge=0, le=4)] = 1.0
+    blur: Annotated[float, Field(ge=0, le=BLUR_LIMIT)] = 0.0
 
 
 # The grade chain's shape limits live here and nowhere else: the interface enumerates its picker and
@@ -930,7 +968,7 @@ class ClipTextSet(Contract):
 class ClipPatch(Contract):
     op: Literal["clip.patch"]
     clip_id: Identifier
-    effects: dict[EffectProperty, float] | None = None
+    effects: dict[EffectField, float] | None = None
     color: dict[Literal["exposure", "contrast", "saturation", "grade"], Any] | None = None
     text: dict[str, str | float | bool] | None = None
 
@@ -944,8 +982,6 @@ class ClipPatch(Contract):
             ClipColor.model_validate({"grade": [], **self.color})
         # Re-read the patch through TextStyle rather than a hand-listed key union: the style grew in
         # 1.63 and a second list of its fields would have gone stale the same day.
-        if self.text is not None:
-            TextStyle.model_validate({"body": ".", **self.text})
         if self.text is not None:
             TextStyle.model_validate({"body": "validation", **self.text})
         return self
@@ -1909,6 +1945,7 @@ def capabilities(
             "grade_node_mix": True,
             "lut_import": True,
             "text_styling": True,
+            "clip_blur": True,
             "grade_node_blend_modes": True,
             "grade_parallel_branches": True,
             "timeline_marks": True,
@@ -1925,6 +1962,8 @@ def capabilities(
             "max_assets": 10_000,
             "max_clips": 20_000,
             "max_sequence_depth": 8,
+            "blur_fraction": BLUR_LIMIT,
+            "blur_radius_limit_px": BLUR_RADIUS_LIMIT_PX,
             "sample_rates": [44_100, 48_000, 96_000],
         },
         "render_presets": render_presets(),

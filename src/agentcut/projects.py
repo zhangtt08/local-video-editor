@@ -158,6 +158,20 @@ class ProjectStore:
         text_defaults = tuple(
             (name, TextStyle.model_fields[name].default) for name in sorted(text_dropped)
         )
+        # Same era treatment for the six effect keys that existed before 1.64 added `blur`.
+        from .contracts import ClipEffects
+
+        before_blur = {"x", "y", "scale", "rotation", "opacity", "gain"}
+        effects_added = tuple(
+            (name, field.default)
+            for name, field in sorted(ClipEffects.model_fields.items(), key=lambda e: e[0])
+            if name not in before_blur
+        )
+        effects_defaults = {
+            name: field.default
+            for name, field in ClipEffects.model_fields.items()
+            if name in before_blur
+        }
         for command in payload.get("commands", []):
             if (
                 command.get("op") == "asset.register"
@@ -206,8 +220,19 @@ class ProjectStore:
                     clip.pop("animation_offset_ticks", None)
                 from .contracts import ClipColor, ClipEffects
 
-                if clip.get("effects") == ClipEffects().model_dump():
-                    clip.pop("effects", None)
+                # `blur` arrived in 1.64, and by this point the payload has already been re-dumped
+                # through the model, so a receipt written before the field existed would pick up a
+                # seventh key and split in two. Same era rule as the text style above: a key the
+                # caller's version could not have named is not part of what was asked for as long as
+                # it sits at its default — and it has to be dropped even when another effect *was*
+                # asked for, which is the case an all-or-nothing comparison misses.
+                effects = clip.get("effects")
+                if effects is not None:
+                    for name, default in effects_added:
+                        if effects.get(name) == default:
+                            effects.pop(name, None)
+                    if not effects or effects == effects_defaults:
+                        clip.pop("effects", None)
                 if clip.get("color") == {
                     key: value for key, value in ClipColor().model_dump().items() if key != "grade"
                 }:

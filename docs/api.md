@@ -1299,3 +1299,52 @@ face（Windows 下微软雅黑/黑体/宋体/楷体/Arial/Consolas）。`fontfil
 验收 `tests/textstyle_check.py`（契约、字体可用性、编译串、成片像素、HTTP 往返五路）与
 `tests/desktop_text_check.ts`（CSS 逐字段）：描边加粗后红环 1639 px、阴影质心右移 31.1 px、
 垫子灰阶实测 64（要 64）、左/右质心 70 对 252、黑体与宋体在 712 个像素上不同。
+
+## 1.64 片段柔焦：一个半径，两端同高斯（工程 schema 仍是 v13）
+
+`ClipEffects` 新增 `blur: float`，取值 `0..0.25`（`capabilities.limits.blur_fraction`），语义是
+**画面高的比例**：真正的半径 `R = blur × 画面高`，由 `contracts.blur_sigma()` 一处定义，导出与预览
+都从这里取数，谁也不许自己换单位。命令不变，仍然只有 `clip.patch` 的 `effects`——为此把「可写入的
+效果字段」与「可打关键帧的属性」分开了：契约里 `EffectProperty`（六条可动画）与
+`EffectField = EffectProperty | "blur"`（七条可 patch）各管各的，客户端的 `AnimatedEffect` 同构。
+`Keyframe` 的 `property` 仍只接受那六条，所以 `blur` 天然没有关键帧。
+
+编译落点：`render.blur_clause()` 在片段已经缩放到输出画幅之后、遮罩 alpha 之前插入
+`,gblur=sigma=R:steps=6`；`blur=0` 时整段不出现。画面链有两条——需要合成的走分层链，单轨且没有
+任何东西要合成的走 `cut` 快路径——两处都在同一个位置插入同一个串（快路径的 `fit_stage` 因此拆成
+`fit_pre`/`fit_post`，中间按需塞 `format=rgba,gblur=…`），因为「谁决定走哪条链」是一份手写枚举，
+新字段很容易静默掉出外面：1.64 的发布验收就是这么抓到「单轨工程导出是锐的、预览是柔的」的。
+预览侧 `preview_manifest` 的 `color_filter` 追加
+`blur(blur×100cqh)`——1cqh 正好是画面渲染高的 1%，所以两端的数字是同一个半径。层级顺序也是同一个：
+CSS 先 `filter` 后 `mask-image`，FFmpeg 先 `gblur` 后 `geq a=`，因此「遮罩里柔、遮罩外原样」这条
+打码语义两端一致。
+
+**为什么写 `steps=6`**：用随包的 FFmpeg 与 Chromium 实测（阶跃边沿取 50% / 84.13% / 15.87% 三个
+交叉点，即直接量标准差）。`gblur=sigma=S` 在默认 `steps=1` 下的实际半径只有 **0.81×S**（S=1/4/8/16/32/64/128
+量到 0.838/0.817/0.805/0.813/0.814/0.813/0.806），而 CSS `blur(Rpx)` 是 0.96–1.07×R；换成 `steps=6`
+后 FFmpeg 落在 **0.954..0.991×S**，与浏览器在 ≥8 px 时相差约 2%、以下相差不到半个像素。
+所以这不是「猜的系数」，是把两个实现拉到同一个半径上的实测选择。
+
+超过 **64 px** 的半径是拒的，不是夹的：`BLUR_OUT_OF_RANGE`（422），`details` 里带
+`radius` 与 `max_blur`（= 64 / 画面高），因为一致性只在那个带里量过。界面滑杆的上限用同一个函数算
+（`desktop/src/effects.ts` 的 `blurMaxPercent`，取 `blur_fraction` 与 `blur_radius_limit_px/画面高`
+的小者），因此不存在「界面给得出、引擎拒得了」。旧引擎不下发这两个字段时该行直接隐藏。
+
+**回执兼容**：加一个带默认值的字段会改变载荷的 dump，`_fingerprint` 里原来的「effects 整份等于
+默认就丢掉」是全有或全无的比较，对**设了 opacity 却没提 blur** 的老载荷会多带一个键、把回执劈成
+两半。现在按 1.63 文字样式同一条时代规则推导：晚于该载荷时代的字段只要还在默认值上就不算请求内容
+（1.64 之前的六个键名在 `projects.py` 里列出，其余从 `ClipEffects.model_fields` 取默认值）。
+两个锚点摘要（全默认 `550dda4e…ad88`、opacity=0.5 `e811fc4f…c52f`）由删掉 `blur` 字段后的同一份代码
+跑出，写在 `tests/blur_check.py` 里。
+
+`capabilities`：`features.clip_blur=true`，`limits.blur_fraction=0.25`，
+`limits.blur_radius_limit_px=64.0`；MCP 的 `timeline_edit` schema 会点名 `blur`（`self_check` 断言）。
+
+验收 `tests/blur_check.py`：要 18.0 px（`blur=0.1`，180 px 高）的成片量到 **17.26 px**，同一条边沿
+关掉柔焦只量到 **0.34 px**（证明这个测量本身有分辨率），过 H.264 后第 10 帧仍 **17.24 px**；矩形遮罩外
+与不模糊版本逐点相同（**0 级差**）、遮罩内与全模糊版本相同（0 级差）；`gblur` 在编译图里恰好出现一次
+（只糊上面那条轨）；`color_filter` 给的 `10cqh` 折算回像素与 sigma 完全相等；280 px 高的画幅给 0.25
+被 `BLUR_OUT_OF_RANGE` 拒。变异验证：`steps=6`→`1` 时量到 14.57 px 当场红；去掉滤镜段时红在
+「the blur radius never reached the exporter」；把 `blurMaxPercent` 的上限只按 fraction 算时
+`tests/desktop_blur_check.ts` 当场红。**没有做**的：逐帧柔焦（`gblur` 只有 `enable` 这种开关窗，
+导出会变成阶梯）、锐化（`unsharp` 是窗口卷积，不是同一个高斯）。
