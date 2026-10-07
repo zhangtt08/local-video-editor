@@ -28,7 +28,7 @@ from .masks import (
 )
 from .speed import base_source_ticks, consumed_source_ticks, segments
 from .timeline import sequence_view, validate_timeline
-from .transitions import curve_expression, envelopes
+from .transitions import curve_expression, envelopes, wipe_expression
 
 
 def sec(ticks: int) -> str:
@@ -652,11 +652,30 @@ def compile_render_plan(
                 scale = expression(clip, "scale")
                 rotation = expression(clip, "rotation")
                 opacity = expression(clip, "opacity", "T")
+                zoom = None
                 if mixed_track:
                     weight = curve_expression(
                         transition_curves[clip.id]["picture"], clip.duration_ticks, "T"
                     )
                     opacity = f"({opacity})*({weight})"
+                    wipe = transition_curves[clip.id]["wipe"]
+                    if wipe:
+                        # The reveal is spatial, so it joins the alpha product, not
+                        # the scalar weight: the outgoing side already carries the
+                        opacity = (
+                            f"({opacity})*("
+                            + wipe_expression(
+                                wipe["kind"],
+                                wipe["invert"],
+                                curve_expression(wipe["curve"], clip.duration_ticks, "T"),
+                            )
+                            + ")"
+                        )
+                    scale_curve = transition_curves[clip.id]["scale"]
+                    if any(point["value"] != 1 for point in scale_curve):
+                        # `scale` names its clock `t`; only `geq` uses `T`. Feeding it the wrong one
+                        # is a graph-level "Invalid argument", not a silent misread.
+                        zoom = curve_expression(scale_curve, clip.duration_ticks)
                 animated = {k.property for k in clip.keyframes}
                 path_mask = clip.mask if clip.mask and clip.mask.shape == "path" else None
                 mask_values = (
@@ -682,10 +701,12 @@ def compile_render_plan(
                     if alpha
                     else ""
                 )
-                if clip.effects.scale != 1 or "scale" in animated:
+                if clip.effects.scale != 1 or "scale" in animated or zoom:
+                    # Not `size`: that name already holds the output canvas for every later stage.
+                    size_factor = f"({scale})*({zoom})" if zoom else scale
                     transform += (
-                        f"scale=w='max(2,trunc(iw*({scale})/2)*2)':"
-                        f"h='max(2,trunc(ih*({scale})/2)*2)':eval=frame,"
+                        f"scale=w='max(2,trunc(iw*({size_factor})/2)*2)':"
+                        f"h='max(2,trunc(ih*({size_factor})/2)*2)':eval=frame,"
                     )
                 if clip.effects.rotation != 0 or "rotation" in animated:
                     transform += (

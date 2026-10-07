@@ -2,7 +2,14 @@
 // translation itself: a preset list that gains a format must show that format, and a name this
 // table does not know has to appear verbatim rather than being dressed up as yesterday's H.264.
 import assert from "node:assert/strict";
-import { codecText, CODEC_NAMES, presetIsAudio, type Preset } from "../desktop/src/engine";
+import {
+  codecText,
+  CODEC_NAMES,
+  presetIsAudio,
+  transitionChoices,
+  transitionLabel,
+  type Preset,
+} from "../desktop/src/engine";
 
 const preset = (over: Partial<Preset>): Preset => ({
   id: "x",
@@ -57,6 +64,23 @@ assert.equal(codecText(audio({ container: "flac", audio_codec: "flac" })), "仅�
 assert.equal(presetIsAudio(audio({})), true);
 assert.equal(presetIsAudio(preset({})), false);
 assert.equal(presetIsAudio(null), false, "no preset selected is not an audio deliverable");
+// Transition kinds come from the engine's table; the fallback is only what a pre-1.59 engine can honour.
+assert.deepEqual(
+  transitionChoices(null).map((c) => c.id),
+  ["dissolve", "dip_black", "dip_white"],
+);
+const caps = {
+  transition_kinds: [
+    { id: "dissolve", label: "交叉溶解" },
+    { id: "wipe_from_top", label: "从上擦除" },
+    { id: "zoom_in", label: "放大进入" },
+  ],
+};
+assert.deepEqual(transitionChoices(caps), caps.transition_kinds, "the engine list is used verbatim");
+assert.equal(transitionLabel(caps, "wipe_from_top"), "从上擦除");
+assert.equal(transitionLabel(caps, "wipe_sideways"), "wipe_sideways", "an unknown id is shown, not guessed");
+assert.equal(transitionLabel(null, "dip_white"), "闪白", "the fallback covers the three old kinds");
+
 assert.deepEqual(Object.keys(CODEC_NAMES).sort(), [
   "aac",
   "flac",

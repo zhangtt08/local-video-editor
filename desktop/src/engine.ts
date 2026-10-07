@@ -105,7 +105,10 @@ export type Bezier = { x1: number; y1: number; x2: number; y2: number };
 export type Keyframe = { property: Property; at_ticks: number; value: number; interpolation: "hold" | "linear" | "ease" | "bezier"; bezier?: Bezier | null };
 export type Curve = { offset: number; value: number; easing: string }[];
 export type AnimationGraph = { property: Property; duration_ticks: number; limits: [number, number]; path: string; curve: Curve; keys: Keyframe[] };
-export type Transition = { from_clip_id: string; kind: "dissolve" | "dip_black" | "dip_white"; duration_ticks: number };
+/** 转场种类由引擎的 capabilities.transition_kinds 下发；这里是同一份清单的类型。 */
+export type TransitionKind = "dissolve" | "dip_black" | "dip_white" | "wipe_from_left" | "wipe_from_right" | "wipe_from_top" | "wipe_from_bottom" | "zoom_in" | "zoom_out";
+export type TransitionChoice = { id: string; label: string };
+export type Transition = { from_clip_id: string; kind: TransitionKind; duration_ticks: number };
 export type LinkStatus = { clip_ids: string[]; synchronized: boolean; anchor_clip_id: string; differences: Record<string, { position_ticks: number; source_ticks: number; duration_ticks: number; speed_percent: number }> };
 export type SpeedPoint = { at_ticks: number; percent: number };
 
@@ -298,6 +301,24 @@ export type Preset = {
   scale: [number, number] | null;
 };
 
+/**
+ * The transition list the picker shows. An engine older than 1.59 reports no list, so the three
+ * kinds it can honour are the fallback; anything newer drives the interface from its own table,
+ * which is why adding a kind to the contract is enough to make it pickable.
+ */
+export function transitionChoices(caps?: { transition_kinds?: TransitionChoice[] } | null): TransitionChoice[] {
+  return caps?.transition_kinds?.length
+    ? caps.transition_kinds
+    : [{ id: "dissolve", label: "交叉溶解" }, { id: "dip_black", label: "淡黑" }, { id: "dip_white", label: "闪白" }];
+}
+
+export function transitionLabel(
+  caps: { transition_kinds?: TransitionChoice[] } | null | undefined,
+  kind: string,
+): string {
+  return transitionChoices(caps).find((choice) => choice.id === kind)?.label ?? kind;
+}
+
 export function presetIsAudio(preset: Preset | null): boolean {
   return preset !== null && preset.codec === null;
 }
@@ -340,6 +361,8 @@ export type Capabilities = {
   /** 安全区的内缩量（占画面边长的比例），由引擎给出，界面不自己另写一套数字。 */
   safe_area_insets?: { action: number; title: number };
   mask_vertex_limit?: number;
+  /** 可选的转场种类与中文名：界面列的是这份表，不是自己写死的三个。 */
+  transition_kinds?: TransitionChoice[];
   /** 引擎自身的构建号；旧引擎不回这个字段，界面按空字符串处理。 */
   app_version?: string;
   project_schema_version: number;

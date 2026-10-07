@@ -1,6 +1,31 @@
-"""Server-issued scalar envelopes for premultiplied picture and linear sound blends."""
+"""Server-issued scalar envelopes for premultiplied picture and linear sound blends.
+
+Three shapes of transition are expressed here, and the exporter only ever consumes what this module
+returns:
+
+- a **scalar** picture/sound weight (dissolve, dip to black or white, and the audio of everything);
+- a **spatial reveal** (`wipe`): the picture weight stays whole and a ramp across the frame decides
+  who is visible, with the outgoing side getting the complement so the two layers still
+  sum to one. `{"kind", "curve", "invert"}` per clip, compiled into the layer's alpha by `render`.
+- a **size factor** (`scale`): zoom-in grows the incoming shot from `ZOOM_START` to 1 while it
+  dissolves, zoom-out shrinks the outgoing one to `ZOOM_END`. Multiplied into the layer's scale.
+"""
 
 from .contracts import TIMEBASE, Project
+
+WIPE_KINDS = {
+    # Named for where the revealing edge starts, because "wipe left" reads differently to different
+    # editors: this one starts at the left border and travels right, uncovering the incoming shot.
+    "wipe_from_left": ("x", False),
+    "wipe_from_right": ("x", True),
+    "wipe_from_top": ("y", False),
+    "wipe_from_bottom": ("y", True),
+}
+ZOOM_START = 1.6
+ZOOM_END = 0.6
+# The reveal edge is not a hard cut: a ramp this wide (as a fraction of the frame) is what makes the
+# boundary read as a wipe instead of a one-pixel jump between two opaque shots.
+WIPE_FEATHER = 0.02
 
 
 def envelopes(project: Project) -> dict:
@@ -23,20 +48,41 @@ def envelopes(project: Project) -> dict:
                 )
             )
 
+        def progress(at, window, from_start):
+            """How far the transition has run, 0 at its first frame and 1 at its last."""
+            if from_start:
+                return max(0.0, min(1.0, at / window))
+            return max(0.0, min(1.0, (at - clip.duration_ticks + window) / window))
+
         def weight(at, picture):
             value = 1.0
             if incoming:
-                p = max(0, min(1, at / incoming.duration_ticks))
-                fade = max(0, 2 * p - 1)
-                value *= fade if picture and incoming.kind in {"dip_black", "dip_white"} else p
+                p = progress(at, incoming.duration_ticks, True)
+                # A wipe reveals space, not light: its scalar picture weight stays whole so the two
+                # opaque layers still sum to one, while the audio cross-fades like a dissolve.
+                if not (picture and incoming.kind in WIPE_KINDS):
+                    fade = max(0, 2 * p - 1)
+                    value *= fade if picture and incoming.kind in {"dip_black", "dip_white"} else p
             if tail:
-                p = max(
-                    0,
-                    min(1, (at - clip.duration_ticks + tail.duration_ticks) / tail.duration_ticks),
-                )
-                fade = max(0, 1 - 2 * p)
-                value *= fade if picture and tail.kind in {"dip_black", "dip_white"} else 1 - p
+                p = progress(at, tail.duration_ticks, False)
+                if not (picture and tail.kind in WIPE_KINDS):
+                    fade = max(0, 1 - 2 * p)
+                    value *= fade if picture and tail.kind in {"dip_black", "dip_white"} else 1 - p
             return value
+
+        def scale_at(at):
+            if incoming and incoming.kind == "zoom_in":
+                return ZOOM_START + (1.0 - ZOOM_START) * progress(at, incoming.duration_ticks, True)
+            if tail and tail.kind == "zoom_out":
+                return 1.0 + (ZOOM_END - 1.0) * progress(at, tail.duration_ticks, False)
+            return 1.0
+
+        def wipe_at(at):
+            if incoming and incoming.kind in WIPE_KINDS:
+                return incoming.kind, progress(at, incoming.duration_ticks, True), False
+            if tail and tail.kind in WIPE_KINDS:
+                return tail.kind, progress(at, tail.duration_ticks, False), True
+            return None
 
         curves = {}
         for name in ("picture", "sound"):
@@ -68,6 +114,23 @@ def envelopes(project: Project) -> dict:
             }
             for t in sorted(times)
         ]
+        curves["scale"] = [
+            {"offset": t / clip.duration_ticks, "value": scale_at(t), "easing": "linear"}
+            for t in sorted(times)
+        ]
+        probe = wipe_at(0)
+        curves["wipe"] = (
+            None
+            if probe is None
+            else {
+                "kind": probe[0],
+                "invert": probe[2],
+                "curve": [
+                    {"offset": t / clip.duration_ticks, "value": wipe_at(t)[1], "easing": "linear"}
+                    for t in sorted(times)
+                ],
+            }
+        )
         result[clip.id] = curves
     return result
 
@@ -82,3 +145,20 @@ def curve_expression(curve: list[dict], duration_ticks: int, clock: str = "t") -
             value = f"({value}+({right['value'] - left['value']})*({clock}-{a:.12f})/{b - a:.12f})"
         result = f"if(lt({clock},{b:.12f}),{value},{result})"
     return f"if(lt({clock},0),{curve[0]['value']},{result})"
+
+
+def wipe_expression(kind: str, invert: bool, progress: str) -> str:
+    """Alpha of one side of a wipe, as a `geq` expression in the frame's own X/Y and the clip clock.
+
+    `progress` is the compiled 0..1 ramp for the transition window. The revealed edge travels along
+    one axis over `1 + WIPE_FEATHER` of the frame so it reaches the far border exactly when the
+    window ends; the outgoing layer is handed the complement, which keeps the two
+    opaque layers summing to one everywhere instead of double-counting the overlap.
+    """
+    axis, flipped = WIPE_KINDS[kind]
+    position = "X/W" if axis == "x" else "Y/H"
+    if flipped:
+        position = f"(1-({position}))"
+    edge = f"({progress})*{1.0 + WIPE_FEATHER:.6f}"
+    reveal = f"clip((({edge})-({position}))/{WIPE_FEATHER},0,1)"
+    return f"(1-({reveal}))" if invert else reveal

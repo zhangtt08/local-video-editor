@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Icon, IconBtn } from "../ui";
 import { TIMEBASE, align, frameTicks, humanDuration, timecode } from "../time";
+import { transitionLabel } from "../engine";
 import type { Clip, Marker, Project, Track } from "../engine";
 import {
   addLibraryItemToTimeline,
@@ -560,10 +561,10 @@ function TrackRow({
         ))}
         {clips.filter((clip) => clip.transition_in).map((clip) => <button key={`transition-${clip.id}`} type="button" className="transition-badge"
           style={{ left: clip.position_ticks / TIMEBASE * px, width: Math.max(24, clip.transition_in!.duration_ticks / TIMEBASE * px) }}
-          title={`${clip.transition_in!.kind === "dissolve" ? "交叉溶解" : clip.transition_in!.kind === "dip_white" ? "闪白" : "淡黑"} · ${humanDuration(clip.transition_in!.duration_ticks)}，点击编辑`}
-          aria-label={`编辑${clip.transition_in!.kind === "dissolve" ? "交叉溶解" : clip.transition_in!.kind === "dip_white" ? "闪白" : "淡黑"}转场`}
+          title={`${transitionLabel(app.caps, clip.transition_in!.kind)} · ${humanDuration(clip.transition_in!.duration_ticks)}，点击编辑`}
+          aria-label={`编辑${transitionLabel(app.caps, clip.transition_in!.kind)}转场`}
           onPointerDown={(event) => event.stopPropagation()}
-          onClick={() => { selectClip(clip.id); playhead.pause(); playhead.set(clip.position_ticks + clip.transition_in!.duration_ticks / 2); }}>{clip.transition_in!.kind === "dissolve" ? "溶解" : clip.transition_in!.kind === "dip_white" ? "闪白" : "淡黑"}</button>)}
+          onClick={() => { selectClip(clip.id); playhead.pause(); playhead.set(clip.position_ticks + clip.transition_in!.duration_ticks / 2); }}>{transitionLabel(app.caps, clip.transition_in!.kind)}</button>)}
         {dropHint?.trackId === track.id ? (
           <span className="drop-indicator" style={{ left: (dropHint.ticks / TIMEBASE) * px }} title={`放在 ${timecode(dropHint.ticks, project.settings.frame_rate)}`} />
         ) : null}

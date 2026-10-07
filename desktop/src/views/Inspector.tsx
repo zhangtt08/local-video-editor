@@ -1,7 +1,7 @@
 import type { Keyframe } from "../engine";
 import { useEffect, useId, useRef, useState } from "react";
 
-import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, type Clip, type Effects, type LinkStatus, type ShapeMask, BLEND_MODES} from "../engine";
+import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionChoices, type Clip, type Effects, type LinkStatus, type ShapeMask, type TransitionKind, BLEND_MODES} from "../engine";
 
 import { Icon, Modal } from "../ui";
 import { GradeFields } from "./GradeFields";
@@ -415,7 +415,7 @@ function SplitButton({ clip }: { clip: Clip }) {
 
 function TransitionFields({ clip }: { clip: Clip }) {
   const app = useApp(); const project = editableProject(app, true) ?? app.project;
-  const [kind, setKind] = useState<"dissolve" | "dip_black" | "dip_white">(clip.transition_in?.kind ?? "dissolve");
+  const [kind, setKind] = useState<TransitionKind>(clip.transition_in?.kind ?? "dissolve");
   const [duration, setDuration] = useState((clip.transition_in?.duration_ticks ?? TIMEBASE / 2) / TIMEBASE);
   useEffect(() => {
     setKind(clip.transition_in?.kind ?? "dissolve");
@@ -430,7 +430,11 @@ function TransitionFields({ clip }: { clip: Clip }) {
   const max = (Math.min(previous.duration_ticks, clip.duration_ticks) - q) / TIMEBASE;
   const locked = Boolean(track.locked || app.busy || !editableProject(app));
   return <section className="insp-section"><div className="row-title"><span className="panel-label">入场转场</span><span className="tag">{clip.transition_in ? "已应用" : "首尾衔接"}</span></div>
-    <div className="field"><label htmlFor={`transition-kind-${clip.id}`}>方式</label><select id={`transition-kind-${clip.id}`} className="input" value={kind} disabled={locked} onChange={(e) => setKind(e.target.value as typeof kind)}><option value="dissolve">交叉溶解</option><option value="dip_black">淡黑</option><option value="dip_white">闪白</option></select></div>
+    <div className="field"><label htmlFor={`transition-kind-${clip.id}`}>方式</label><select id={`transition-kind-${clip.id}`} className="input" value={kind} disabled={locked} onChange={(e) => setKind(e.target.value as typeof kind)}>{transitionChoices(app.caps).map((choice) => (
+                      <option key={choice.id} value={choice.id}>
+                        {choice.label}
+                      </option>
+                    ))}</select></div>
     <NumberField label="转场时长" hint="两个镜头重叠的时间，需短于每个镜头" value={duration} quantum={q} min={q / TIMEBASE} max={max} disabled={locked || max <= 0} onCommit={setDuration} />
     <div className="row"><button className="btn primary" disabled={locked || max <= 0 || duration <= 0 || duration > max} onClick={() => setTransition(clip.id, previous.id, kind, duration)}>{clip.transition_in ? "更新转场" : "添加转场"}</button>{clip.transition_in ? <button className="btn" disabled={locked} onClick={() => removeTransition(clip.id)}>移除</button> : null}</div>
     <p className="hint">与前一镜头重叠，本轨后续片段向前衔接；其他轨道保持位置。移除转场后恢复首尾衔接。</p>

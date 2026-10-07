@@ -1151,3 +1151,28 @@ POST /v1/projects/{id}/renders
 验收：`tests/audio_check.py`（参数分派 / 画面链没建 / 无声时间线拒绝 / 三份真实导出 + 单流 +
 两个音都在 + 与视频成片同一次混音的 LUFS / 区间音频 / 后缀互斥）与
 `tests/desktop_format_check.ts`（音频行的文字与 `presetIsAudio` 的三态）。
+
+
+## 1.59 转场扩到九种：方向擦除与缩放（工程 schema 不变）
+
+以前只有叠化、淡黑、闪白三种，全都是「整幅均匀变透明」。这一版加上空间揭示与尺寸变化，
+并把种类清单交给引擎。
+
+- `Transition.kind` 与 `transition.set.kind` 共用一个 `TransitionKind`，新增
+  `wipe_from_left` / `wipe_from_right` / `wipe_from_top` / `wipe_from_bottom`（按揭示边缘**从哪条边框
+  开始**命名，避开「向左擦除到底往哪走」的歧义）与 `zoom_in` / `zoom_out`。
+- `capabilities.transition_kinds` 下发 `{id,label}` 列表；界面的下拉框与时间线上的转场徽标都读这张表，
+  老引擎（没有这个字段）才退回三条。**新增一种转场不需要改界面**：reducer 认了、编译得出，下拉框就有。
+- 数学全在 `transitions.py`：`envelopes()` 除原有的 picture/sound/black/white 之外多给两条——
+  `wipe`（`{kind, invert, curve}`，两侧共用同一条 0→1 进度）与 `scale`（缩放因子折线）。
+  擦除**不碰画面权重**：两侧都保持 1.0，只有声音照常交叉淡化；`render` 把 `wipe_expression()` 出来的
+  空间斜坡乘进那一层的 alpha，出画那一侧取互补，于是同一像素上两层加起来仍是一个 alpha。
+- 边界不是硬边：`WIPE_FEATHER=0.02` 幅宽的渐变带，`edge = p·(1+feather)`，正好在窗口结束时抵达对边。
+- 缩放走 `scale` 滤镜的时间表达式（时钟是 `t`，不是 `geq` 的 `T`），`zoom_in` 从 1.6× 收到 1×、
+  `zoom_out` 从 1× 收到 0.6×，都与叠化同时发生。
+- 没有新增输入、没有新滤镜依赖，`fit` / 遮罩 / 母带处理链路不变；工程 schema 仍是 v13，
+  1.58 之前存的转场（三种）照读照放。
+
+验收：`tests/wipe_check.py`（契约与表同源、包络不动画面权重、成片量边界位置、羽化带半和证明
+alpha 相加为一、缩放量已知方块、叠化回归、九种往返与未知种类拒绝）与
+`tests/desktop_format_check.ts`（下拉列的是引擎表、未知 id 原样显示）。

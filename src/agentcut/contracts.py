@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 13  # v13 gives a path mask a real box; older rows are fitted on load (ge=1).
-APP_VERSION = "1.58.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.59.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -376,9 +376,36 @@ class TextStyle(Contract):
     box: bool = False
 
 
+# The transition vocabulary in one place: the contract, the capability document and the picker all
+# read this list, so a kind cannot appear in the interface before the exporter can honour it. The
+# `Literal` below has to name the same ids, and `tests/transition_check.py` asserts the two agree.
+TransitionKind = Literal[
+    "dissolve",
+    "dip_black",
+    "dip_white",
+    "wipe_from_left",
+    "wipe_from_right",
+    "wipe_from_top",
+    "wipe_from_bottom",
+    "zoom_in",
+    "zoom_out",
+]
+TRANSITION_KINDS: tuple[dict, ...] = (
+    {"id": "dissolve", "label": "交叉溶解"},
+    {"id": "dip_black", "label": "淡黑"},
+    {"id": "dip_white", "label": "闪白"},
+    {"id": "wipe_from_left", "label": "从左擦除"},
+    {"id": "wipe_from_right", "label": "从右擦除"},
+    {"id": "wipe_from_top", "label": "从上擦除"},
+    {"id": "wipe_from_bottom", "label": "从下擦除"},
+    {"id": "zoom_in", "label": "放大进入"},
+    {"id": "zoom_out", "label": "缩出"},
+)
+
+
 class Transition(Contract):
     from_clip_id: Identifier
-    kind: Literal["dissolve", "dip_black", "dip_white"] = "dissolve"
+    kind: TransitionKind = "dissolve"
     duration_ticks: Duration
 
 
@@ -869,7 +896,7 @@ class TransitionSet(Contract):
     op: Literal["transition.set"]
     clip_id: Identifier
     from_clip_id: Identifier
-    kind: Literal["dissolve", "dip_black", "dip_white"] = "dissolve"
+    kind: TransitionKind = "dissolve"
     duration_ticks: Duration
 
 
@@ -1623,6 +1650,9 @@ def capabilities(media_ready: bool = False) -> dict:
         # drift from any future burn-in or export check.
         "safe_area_insets": SAFE_AREA_INSETS,
         "mask_vertex_limit": MASK_VERTEX_LIMIT,
+        # The transition picker enumerates this list rather than carrying its own copy, so a kind
+        # the exporter cannot honour can never appear in the interface.
+        "transition_kinds": [dict(item) for item in TRANSITION_KINDS],
         "output_containers": list(OUTPUT_CONTAINERS),
         # The build identity, next to the schema it speaks: an Agent reading this document can tell
         # which engine answered, and the desktop shows it in the title bar.
@@ -1736,6 +1766,8 @@ def capabilities(media_ready: bool = False) -> dict:
             "insert_edit": True,
             "overwrite_edit": True,
             "transitions": True,
+            "wipe_transitions": True,
+            "zoom_transitions": True,
             "speed_change": True,
             "speed_curve": True,
             "color_correction": True,

@@ -38,7 +38,7 @@ import type {
   RenderRange,
   RenderBatchItem,
 } from "./engine";
-import { FIT_MODES } from "./engine";
+import { FIT_MODES, type TransitionKind } from "./engine";
 import { align, frameTicks, sampleTicks, ticks, TIMEBASE } from "./time";
 import { copyClips, pasteCommands, relatedClips, selectionQuantum, timelineTracks, type ClipClipboard } from "./selection";
 
@@ -1606,7 +1606,7 @@ export function splitSelection(at: number) {
   if (ids.length) submit([{ op: "clips.split", clip_ids: ids, at_ticks: Math.round(at), right_clip_ids: Object.fromEntries(ids.map((id) => [id, newId("c-")])) }], "分割选中片段");
 }
 
-export function setTransition(clipId: string, fromId: string, kind: "dissolve" | "dip_black" | "dip_white", duration: number) {
+export function setTransition(clipId: string, fromId: string, kind: TransitionKind, duration: number) {
   submit([{ op: "transition.set", clip_id: clipId, from_clip_id: fromId, kind, duration_ticks: ticks(duration) }], "设置镜头转场");
 }
 
