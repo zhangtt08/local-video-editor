@@ -1476,6 +1476,38 @@ export function setClipMask(clipId: string, mask: ShapeMask | null, projectId = 
   editAtRevision([{ op: "clip.mask", clip_id: clipId, mask }], projectId, revision, "调整遮罩");
 }
 
+const MASK_BOX_FIELDS: [Property, "center_x" | "center_y" | "width" | "height"][] = [
+  ["mask_x", "center_x"], ["mask_y", "center_y"], ["mask_width", "width"], ["mask_height", "height"],
+];
+
+/**
+ * 画面上拖遮罩的落笔处：已经打了关键帧的属性写**当前时间**的关键帧，没打关键帧的属性写遮罩本身。
+ * 一笔提交，所以一次拖动只产生一个 revision；否则拖动画好的框在曲线上毫无痕迹（看着像控件坏了）。
+ *
+ * 拖动中向导与预览都停在基准几何上（草稿是引擎按原样栅格化的），所以本地坐标就是该写进关键帧的值。
+ */
+export function commitMaskEdit(clipId: string, mask: ShapeMask, atTicks: number, projectId = state.project?.id, revision = state.project?.revision) {
+  const clip = projectId === undefined || revision === undefined ? undefined : state.project?.clips[clipId];
+  if (!clip || projectId === undefined || revision === undefined) return;
+  const before = clip.mask;
+  const keyed = new Set((clip.keyframes ?? []).map((key) => key.property));
+  const commands: Command[] = [];
+  // 路径遮罩的 box 是从顶点算出来的派生量：拖一个顶点不该顺手把位置曲线钉在当前时刻，
+  // 所以只有矩形/椭圆这种「框本身就是用户意图」的形状才把拖动写成关键帧。
+  const box = Boolean(before && before.shape !== "path");
+  if (before && box) {
+    for (const [property, field] of MASK_BOX_FIELDS) {
+      if (!keyed.has(property) || Math.abs(mask[field] - before[field]) < 1e-9) continue;
+      const existing = (clip.keyframes ?? []).find((key) => key.property === property && key.at_ticks === atTicks);
+      commands.push({ op: "keyframe.set", clip_id: clipId, keyframe: {
+        property, at_ticks: atTicks, value: mask[field], interpolation: existing?.interpolation ?? "linear",
+      } });
+    }
+  }
+  commands.push({ op: "clip.mask", clip_id: clipId, mask });
+  editAtRevision(commands, projectId, revision, commands.length > 1 ? "调整遮罩关键帧" : "调整遮罩");
+}
+
 export function setClipSpeedCurve(clipId: string, points: SpeedPoint[] | null, projectId = state.project?.id, revision = state.project?.revision) {
   if (projectId === undefined || revision === undefined) return;
   editAtRevision([{ op: "clip.speed_curve", clip_id: clipId, points }], projectId, revision, "调整曲线变速");

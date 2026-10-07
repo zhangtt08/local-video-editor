@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from "react";
 import type { Clip, Curve, MaskProperty, MaskVertex, ShapeMask } from "../engine";
 import { TIMEBASE } from "../time";
-import { appInfo, playhead, setClipMask, setMaskEditing, useApp, usePlay } from "../store";
+import { appInfo, commitMaskEdit, playhead, setClipMask, setMaskEditing, useApp, usePlay } from "../store";
 
 const CORNERS = [[-1,-1,"左上"],[1,-1,"右上"],[-1,1,"左下"],[1,1,"右下"]] as const;
 const MASK_VARIABLE: Record<MaskProperty, string> = { mask_x: "x", mask_y: "y", mask_width: "w", mask_height: "h" };
@@ -61,7 +61,7 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
   // free-form outline is different: its vertices are the shape itself and the curves only translate
   // it, so hiding the guide would make a tracked outline impossible to correct. It stays visible and
   // is moved to where the cut actually lands at this frame.
-  const visible = Boolean(editable && mask && app.maskEditing && !play.playing && (!animated || mask.shape === "path") && app.selectedClips.length === 1 && app.selectedClip === clip.id);
+  const visible = Boolean(editable && mask && app.maskEditing && !play.playing && app.selectedClips.length === 1 && app.selectedClip === clip.id);
   useEffect(() => {
     const element = picture.current;
     maskAnimations.current.forEach((effect) => effect.cancel());
@@ -92,7 +92,7 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
     // lands. The browser's own interpolation of the engine-supplied curve is the only authority for
     // that position, so read it back off the animated element instead of solving the curve again.
     const element = picture.current;
-    if (!element || !animated || mask?.shape !== "path") { setShift((old) => (old.x || old.y ? { x: 0, y: 0 } : old)); return; }
+    if (!element || !animated || !mask) { setShift((old) => (old.x || old.y ? { x: 0, y: 0 } : old)); return; }
     const style = getComputedStyle(element);
     const dx = Number(style.getPropertyValue("--mask-x")) - (mask.center_x ?? 0.5);
     const dy = Number(style.getPropertyValue("--mask-y")) - (mask.center_y ?? 0.5);
@@ -174,7 +174,7 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
   };
   const write = (value: ShapeMask) => {
     if (disabled || !app.project) return;
-    setClipMask(clip.id,value,app.project.id,app.project.revision);
+    commitMaskEdit(clip.id, value, Math.max(0, Math.min(clip.duration_ticks, play.ticks - clip.position_ticks)), app.project.id, app.project.revision);
   };
   const nudgeVertex = (event: React.KeyboardEvent, index: number) => {
     const step = event.shiftKey ? .1 : .01;
@@ -216,7 +216,7 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
         const step = e.shiftKey ? .1 : .01; svg.current?.focus();
         write({ ...mask, center_x: clamp(mask.center_x + (e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0),0,1), center_y: clamp(mask.center_y + (e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0),0,1) });
       }} onPointerMove={(e) => { if (owns(e)) setDraft(proposed(e)); }}
-      onPointerUp={(e) => { const gesture = drag.current; if (!gesture) return; const next = proposed(e); const moved = gesture.moved; cancel(); if (moved) { svg.current?.focus(); setClipMask(clip.id,next,gesture.projectId,gesture.revision); } }} onPointerCancel={cancel} onLostPointerCapture={() => { if (drag.current) cancel(); }}>
+      onPointerUp={(e) => { const gesture = drag.current; if (!gesture) return; const next = proposed(e); const moved = gesture.moved; cancel(); if (moved) { svg.current?.focus(); commitMaskEdit(clip.id,next,Math.max(0,Math.min(clip.duration_ticks,play.ticks - clip.position_ticks)),gesture.projectId,gesture.revision); } }} onPointerCancel={cancel} onLostPointerCapture={() => { if (drag.current) cancel(); }}>
       {mask.shape === "path" ? <>
         <path className="mask-outline" d={outline(vertices)} />
         {vertices.map((vertex, index) => <>
