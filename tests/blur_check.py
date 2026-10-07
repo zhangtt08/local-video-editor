@@ -1,12 +1,15 @@
-"""Soft focus: one radius, two renderers, measured on real pixels.
+"""Soft focus and the unsharp mask: one radius, two renderers, measured on real pixels.
 
-The knob is `ClipEffects.blur`, a fraction of the frame height, and this check insists on three
-things the project cares about: the exporter actually runs the radius it was given (measured from
-the edge profile of the rendered frame, not from the request), the preview is handed the same radius
-in the only units that stay correct when the panel is smaller than the frame, and a masked blur
-stays inside the mask. The contract/refusal cases pin the parts that would otherwise be silent:
-an out-of-range value must not burn a revision, and a frame too tall for the verified band must be
-refused by name instead of letting FFmpeg quietly clamp the kernel.
+The knobs are `ClipEffects.blur` and `ClipEffects.sharpen` (+ `sharpen_radius`), all fractions of
+the frame height, and this check insists on three things the project cares about: the exporter
+actually runs the radius it was given (measured from the edge profile of the rendered frame, not
+from the request), the preview is handed the same radius in the only units that stay correct when
+the panel is smaller than the frame, and a masked blur stays inside the mask. The unsharp half adds
+that the second Gaussian uses the same radius on both ends, that it narrows the ramp by more than
+the encoder's own softness, and that it never touches the layer's alpha. The contract/refusal cases
+pin the parts that would otherwise be silent: an out-of-range value must not burn a revision, and a
+frame too tall for the verified band must be refused by name instead of letting FFmpeg quietly
+clamp the kernel.
 """
 
 import struct
@@ -24,7 +27,7 @@ from agentcut.contracts import (
     CreateProject,
     EditBatch,
     Project,
-    blur_sigma,
+    spatial_radius,
 )
 from agentcut.contracts import TIMEBASE as T
 from agentcut.http_api import create_app
@@ -37,7 +40,7 @@ FFMPEG = ROOT / "desktop/resources/bin/ffmpeg.exe"
 FFPROBE = ROOT / "desktop/resources/bin/ffprobe.exe"
 WIDTH, HEIGHT = 320, 180
 BLUR = 0.10
-RADIUS = blur_sigma(BLUR, HEIGHT)
+RADIUS = spatial_radius(BLUR, HEIGHT)
 
 
 def edge_png(path: Path) -> None:
@@ -295,6 +298,122 @@ def main() -> None:
             cut_radius = radius_of(row(fast), WIDTH / 2 - 0.5)
             assert abs(cut_radius - blurred) <= 1.0, (cut_radius, blurred)
 
+            # The same second builder has to take the unsharp stage too — 1.64 found the blur
+            # silently dropped here, so the fan-out is pinned on this path as well.
+            fast_sharp = Project.model_validate(
+                edit(
+                    fast.id,
+                    fast.revision,
+                    [
+                        {
+                            "op": "clip.patch",
+                            "clip_id": "only",
+                            "effects": {"sharpen": 2.0, "sharpen_radius": BLUR},
+                        }
+                    ],
+                    "one-sharp",
+                ).json()["project"]
+            )
+            fast_graph = "\n".join(compile_render_plan(fast_sharp, "h264-source-quality").filters)
+            assert fast_sharp.clips["only"].effects.sharpen == 2.0
+            assert f"gblur=sigma={RADIUS:.4f}:steps={GBLUR_STEPS}:planes=7" in fast_graph
+            assert "clip(A+2.0*(A-B),0,255)" in fast_graph, "cut chain lost the clamp"
+
+            # ---- 1.65: unsharp mask on top of the same Gaussian -----------------------------
+            # The fixture plate is white|black, so the halo clamps away and the honest measurement
+            # is the ramp: sharpening a blurred edge has to narrow it, and by an amount far bigger
+            # than the encoder's own softness. Measured against the same blur-only frame above.
+            hard = edit(
+                project.id,
+                4,
+                [
+                    {"op": "clip.patch", "clip_id": "soft", "effects": {"blur": BLUR}},
+                    {"op": "clip.mask", "clip_id": "soft", "mask": None},
+                ],
+                "unmask",
+            )
+            sharp_project = edit(
+                project.id,
+                hard.json()["project"]["revision"],
+                [
+                    {
+                        "op": "clip.patch",
+                        "clip_id": "soft",
+                        "effects": {"blur": BLUR, "sharpen": 2.0, "sharpen_radius": BLUR},
+                    }
+                ],
+                "sharpen",
+            )
+            sharpened = Project.model_validate(sharp_project.json()["project"])
+            assert sharpened.clips["soft"].effects.sharpen == 2.0
+            assert sharpened.clips["soft"].effects.sharpen_radius == BLUR
+            graph = "\n".join(compile_render_plan(sharpened, "h264-source-quality").filters)
+            # Both stages are the same Gaussian at the same pixel radius here — the blur's own
+            # suffix has no `planes`, so the plane-qualified one is what names the unsharp copy.
+            assert f"gblur=sigma={RADIUS:.4f}:steps={GBLUR_STEPS}:planes=7" in graph, graph
+            assert graph.count("gblur=") == 2, "one of the two Gaussians is missing: " + graph
+            assert "clip(A+2.0*(A-B),0,255)" in graph, "the unsharp expression lost its clamp"
+            assert graph.count("c3_expr='A'") == 1, "alpha must be excluded from the blend"
+            assert ",split=2[" in graph and "]blend=c0_expr=" in graph
+
+            preview = client.get(f"/v1/projects/{project.id}/preview-manifest").json()["clips"][
+                "soft"
+            ]
+            css = preview["color_filter"]
+            assert " blur(10cqh) url(#sh" in css, css
+            spec = preview["sharpen"]
+            assert spec["amount"] == 2.0
+            # objectBoundingBox stdDeviation pairs: both must land on the exporter's pixel radius.
+            assert abs(spec["bbox"][1] * HEIGHT - RADIUS) < 1e-6, spec
+            assert abs(spec["bbox"][0] * WIDTH - RADIUS) < 1e-6, spec
+
+            narrowed = radius_of(row(sharpened), WIDTH / 2 - 0.5)
+            assert narrowed < blurred - 3, (blurred, narrowed)
+
+            # The unsharp blur must not touch the layer's alpha: the same picture behind a feathered
+            # shape has to keep the identical ramp with and without the sharpening.
+            feather = {
+                "op": "clip.mask",
+                "clip_id": "soft",
+                "mask": {"shape": "rectangle", "width": 0.5, "height": 1.0, "feather": 0.5},
+            }
+            plain_feather = edit(
+                project.id,
+                sharpened.revision,
+                [
+                    {
+                        "op": "clip.patch",
+                        "clip_id": "soft",
+                        "effects": {"blur": BLUR, "sharpen": 0.0},
+                    },
+                    feather,
+                ],
+                "feather-off",
+            )
+            ramp_before = row(Project.model_validate(plain_feather.json()["project"]))
+            kept = edit(
+                project.id,
+                plain_feather.json()["project"]["revision"],
+                [{"op": "clip.patch", "clip_id": "soft", "effects": {"sharpen": 2.0}}],
+                "feather-on",
+            )
+            ramp_after = row(Project.model_validate(kept.json()["project"]))
+            edge = max(abs(a - b) for a, b in zip(ramp_before[70:95], ramp_after[70:95]))
+            assert edge <= 2, f"the unsharp stage moved the mask's alpha ramp by {edge} levels"
+            assert ramp_before != ramp_after, "nothing inside the shape changed either?"
+
+            # Out of range: too much amount is the contract's business, too large a radius is the
+            # exporter's, and the refusal has to name the knob that went over.
+            over_amount = edit(
+                project.id,
+                kept.json()["project"]["revision"],
+                [{"op": "clip.patch", "clip_id": "soft", "effects": {"sharpen": 2.5}}],
+                "over-amount",
+                expect=422,
+            )
+            assert over_amount.json()["error"]["code"] == "INVALID_REQUEST", over_amount.text
+            assert store.get(project.id).revision == kept.json()["project"]["revision"]
+
             # The encoder is the last thing to touch the picture; the ramp has to survive it.
             out = folder / "blurred.mp4"
             plan = compile_render_plan(cut, "h264-source-quality")
@@ -360,14 +479,42 @@ def main() -> None:
                     ],
                 ),
             ).project
-            assert blur_sigma(BLUR_LIMIT, 280) > BLUR_RADIUS_LIMIT_PX
+            assert spatial_radius(BLUR_LIMIT, 280) > BLUR_RADIUS_LIMIT_PX
             try:
                 compile_render_plan(tall, "h264-source-quality")
             except Exception as refused:
                 assert getattr(refused, "code", None) == "BLUR_OUT_OF_RANGE", refused
-                assert refused.details["max_blur"] == BLUR_RADIUS_LIMIT_PX / 280
+                assert refused.details["blur"] == BLUR_LIMIT, refused.details
+                assert refused.details["max_radius_fraction"] == BLUR_RADIUS_LIMIT_PX / 280
             else:
                 raise AssertionError("a 70 px radius was not refused")
+            # The same ceiling guards the sharpen radius, and the refusal names that knob.
+            tall = store.mutate(
+                tall.id,
+                EditBatch(
+                    request_id="tall-sharp",
+                    expected_revision=tall.revision,
+                    commands=[
+                        {
+                            "op": "clip.patch",
+                            "clip_id": "soft",
+                            "effects": {
+                                "blur": 0.0,
+                                "sharpen": 1.0,
+                                "sharpen_radius": BLUR_LIMIT,
+                            },
+                        }
+                    ],
+                ),
+            ).project
+            try:
+                compile_render_plan(tall, "h264-source-quality")
+            except Exception as refused:
+                assert getattr(refused, "code", None) == "BLUR_OUT_OF_RANGE", refused
+                assert refused.details["sharpen_radius"] == BLUR_LIMIT, refused.details
+                assert refused.details["radius"] == 70.0, refused.details
+            else:
+                raise AssertionError("a 70 px sharpen radius was not refused")
 
             # Receipts must not split when a field the client never heard of is added. The two
             # digests below were captured from the model *before* `blur` existed, so a client
@@ -408,6 +555,11 @@ def main() -> None:
             assert digest({**legacy, "opacity": 0.5, "blur": 0.0}) == opacity_half
             assert digest({**legacy, "opacity": 0.5, "blur": 0.02}) != opacity_half
             assert digest({**legacy, "blur": 0.02}) != all_default
+            # 1.65 added two more keys the same way: absent from a pre-1.65 receipt's world, so a
+            # payload that never mentions them must keep hashing as the six it was written with.
+            assert digest({**legacy, "opacity": 0.5, "sharpen": 0.0}) == opacity_half
+            assert digest({**legacy, "sharpen_radius": 0.004}) == all_default
+            assert digest({**legacy, "sharpen": 1.0}) != all_default
 
             print(
                 f"PASS: blur {BLUR} asks for {RADIUS:.1f} px and the frame measures "
@@ -417,7 +569,10 @@ def main() -> None:
                 f"{video_radius:.2f} px; {BLUR_LIMIT} on a 280 px frame is refused as "
                 f"BLUR_OUT_OF_RANGE; the single-track cut chain blurs to the same radius "
                 f"({cut_radius:.2f} px); pre-1.64 effect receipts still hash the same with or "
-                f"without opacity set, and only a real blur value moves it"
+                f"without opacity set, and only a real blur value moves it; sharpen {2.0} at the "
+                f"same radius narrows the blurred ramp from {blurred:.2f} to {narrowed:.2f} px, "
+                f"leaves the mask alpha ramp to {edge} levels, refuses amount 2.5 before burning "
+                f"a revision and refuses a 70 px radius by the name `sharpen_radius`"
             )
 
 

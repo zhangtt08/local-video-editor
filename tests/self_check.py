@@ -420,6 +420,7 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
             # The Agent-facing schema must name the 1.64 knob, not just accept any key: this is the
             # only place a client that cannot read the contract learns what `clip.patch` may write.
             assert "blur" in json.dumps(tools["timeline_edit"].inputSchema)
+            assert "sharpen" in json.dumps(tools["timeline_edit"].inputSchema)
             assert tools["clip_silence"].annotations.readOnlyHint is True
             assert tools["lut_parse"].annotations.readOnlyHint is True
             assert "content" in json.dumps(tools["lut_parse"].inputSchema)

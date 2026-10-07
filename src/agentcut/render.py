@@ -24,8 +24,8 @@ from .contracts import (
     TIMEBASE,
     EditorError,
     Project,
-    blur_sigma,
     render_presets,
+    spatial_radius,
 )
 from .grade import grade_filter
 from .masks import (
@@ -108,29 +108,68 @@ def _rgb(color: str) -> tuple[int, int, int]:
     return values  # type: ignore[return-value]
 
 
-def blur_clause(clip, out_h: int) -> str:
-    """The soft-focus stage, appended to a layer once it already sits at output size.
+def focus_radius(fraction: float, knob: str, out_h: int) -> float:
+    """A fraction of the frame height turned into pixels, inside the band that was measured.
 
-    It runs before the mask's alpha, which is also how the preview stacks them (CSS `filter` first,
-    then `mask-image`), so a blurred picture clipped by a shape hides what is behind the shape the
-    same way on both ends. Zero blur adds nothing to the graph at all. `steps=6` is what makes
-    FFmpeg's radius match the browser's for the same number — see the measurement in contracts.
+    Both spatial knobs share the ceiling because both go through the same `gblur` sampling; past it
+    the export/preview agreement is claimed nowhere, so the exporter refuses by name instead of
+    letting FFmpeg quietly clamp the kernel.
     """
-    if clip.effects.blur <= 0:
-        return ""
-    radius = blur_sigma(clip.effects.blur, out_h)
+    radius = spatial_radius(fraction, out_h)
     if radius > BLUR_RADIUS_LIMIT_PX:
         raise EditorError(
             "BLUR_OUT_OF_RANGE",
-            f"blur {clip.effects.blur} is a {radius:.0f} px radius at {out_h} px tall, and the "
-            f"export/preview radius match is only verified to {BLUR_RADIUS_LIMIT_PX:.0f} px; "
-            f"the most this frame carries is {BLUR_RADIUS_LIMIT_PX / out_h:.4f}",
+            f"{knob} {fraction} is a {radius:.0f} px radius at {out_h} px tall, and the "
+            f"export/preview radius match is only verified to {BLUR_RADIUS_LIMIT_PX:.0f} px; the "
+            f"most this frame carries is {BLUR_RADIUS_LIMIT_PX / out_h:.4f}",
             422,
-            blur=clip.effects.blur,
-            radius=radius,
-            max_blur=BLUR_RADIUS_LIMIT_PX / out_h,
+            **{
+                knob: fraction,
+                "radius": radius,
+                "max_radius_fraction": BLUR_RADIUS_LIMIT_PX / out_h,
+            },
         )
-    return f",gblur=sigma={radius:.4f}:steps={GBLUR_STEPS}"
+    return radius
+
+
+def focus_stages(plan, head: str, clip, out_h: int, *, alpha: bool = False) -> str:
+    """The layer's soft focus and unsharp mask, applied once the picture sits at output size.
+
+    Returns the chain text, still hanging so the caller continues it with a comma. Both stages run
+    before the mask's alpha, which is also how the preview stacks them (CSS `filter` first, then
+    `mask-image`), so a blurred-and-clipped shape hides what is behind it the same way on both ends;
+    and the alpha arriving here is uniform, which is why `planes=7` and `c3_expr='A'` keep the
+    effect off it. Blur is a linear suffix; unsharp needs the original and the blurred copy side by
+    side, so it fans out and rejoins. The `clip()` in the blend expression is load-bearing:
+    measured, `blend` without it wraps modulo 256 rather than clamping (255 + 0.8·69 came back
+    as 54). The blend's output stays unlabeled on purpose: lavfi calls a pad label followed by
+    another filter "trailing garbage after a filter", so a closed pad can only end a chain, and
+    every caller here has more filters to append.
+    """
+    if clip.effects.blur > 0 or clip.effects.sharpen > 0:
+        if alpha:
+            # `gblur` samples planes, so the cut chain only asks for the rgba form when a spatial
+            # knob is actually on: with both at zero the emitted string stays what it always was,
+            # which is what the sampling-format acceptance (`tests/format_check.py`) pins.
+            head = f"{head},format=rgba"
+    if clip.effects.blur > 0:
+        radius = focus_radius(clip.effects.blur, "blur", out_h)
+        head = f"{head},gblur=sigma={radius:.4f}:steps={GBLUR_STEPS}"
+    if clip.effects.sharpen > 0:
+        amount = clip.effects.sharpen
+        sigma = focus_radius(clip.effects.sharpen_radius, "sharpen_radius", out_h)
+        original, to_blur, blurred = plan.tag("sharp"), plan.tag("toblu"), plan.tag("blurd")
+        expression = f"clip(A+{amount}*(A-B),0,255)"
+        plan.filters.append(f"{head},split=2{original}{to_blur}")
+        plan.filters.append(
+            f"{to_blur}gblur=sigma={sigma:.4f}:steps={GBLUR_STEPS}:planes=7{blurred}"
+        )
+        head = (
+            f"{original}{blurred}blend="
+            + ":".join(f"c{plane}_expr='{expression}'" for plane in (0, 1, 2))
+            + ":c3_expr='A'"
+        )
+    return head
 
 
 def color_filter(clip) -> str:
@@ -586,7 +625,6 @@ def compile_render_plan(
         )
     fit_pre = f"{sizing}setsar=1,fps={fps}"
     fit_post = f"format={pixel_format},settb=AVTB"
-    fit_stage = f"{fit_pre},{fit_post}"
 
     nested_sources = set()
 
@@ -695,23 +733,31 @@ def compile_render_plan(
             label = plan.tag("v")
             source = f"[{index}:v]"
             color = color_filter(clip)
-            # The `cut` chain is a second builder for the picture chain, and it is where a per-clip
-            # filter gets forgotten: the preview blurs every layer, so this path has to blur too, in
-            # RGBA at output size — the same place the layered chain puts it.
-            blur = blur_clause(clip, out_h)
-            stage = f"{fit_pre},format=rgba{blur},{fit_post}" if blur else fit_stage
+            # The `cut` chain is a second builder for the picture, and it is where a per-clip
+            # filter gets forgotten: the preview filters every layer, so this path runs the same
+            # spatial stages in the same place (after the fit to output size, before the target
+            # pixel format). With both knobs at zero the emitted string is what it always was.
             ramp = clip_ramp(clip, settings)
-            if entry["verified"].kind == "image":
-                plan.filters.append(f"{source}{color}{stage}{label}")
+            if entry["verified"].kind != "image" and not ramp:
+                paced = f"setpts=(PTS-STARTPTS)/{clip.speed_percent / 100},"
+            elif entry["verified"].kind != "image":
+                source = ramp_video(plan, source, ramp, fps, settings.frame_ticks / TIMEBASE)
+                paced = ""
             else:
-                if ramp:
-                    source = ramp_video(plan, source, ramp, fps, settings.frame_ticks / TIMEBASE)
-                    paced = ""
-                else:
-                    paced = f"setpts=(PTS-STARTPTS)/{clip.speed_percent / 100},"
+                paced = ""
+            head = focus_stages(
+                plan,
+                f"{source}{paced}{color}{fit_pre}",
+                clip,
+                out_h,
+                alpha=True,
+            )
+            head = f"{head},{fit_post}"
+            if entry["verified"].kind == "image":
+                plan.filters.append(f"{head}{label}")
+            else:
                 plan.filters.append(
-                    f"{source}{paced}{color}{stage},"
-                    f"trim=duration={sec(clip.duration_ticks)},setpts=PTS-STARTPTS{label}"
+                    f"{head},trim=duration={sec(clip.duration_ticks)},setpts=PTS-STARTPTS{label}"
                 )
             labels.append(label)
             windows.append((clip.position_ticks, clip.position_ticks + clip.duration_ticks))
@@ -884,8 +930,9 @@ def compile_render_plan(
                     f"{color_filter(clip)}"
                     f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,"
                     f"format=rgba,pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,"
-                    f"setsar=1{blur_clause(clip, out_h)}"
+                    "setsar=1"
                 )
+                head = focus_stages(plan, head, clip, out_h)
                 body = (
                     f"{transform}"
                     f"tpad=start_duration={sec(clip.position_ticks)}:start_mode=add:color=black@0,"

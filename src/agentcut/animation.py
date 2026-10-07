@@ -1,5 +1,6 @@
 """One animation clock shared by rendering and the browser's native animation plan."""
 
+import hashlib  # preview filter ids are content-addressed, like the caption text files
 from math import sqrt
 
 from .contracts import (
@@ -251,6 +252,26 @@ def property_curve(clip: Clip, prop: str) -> list[dict]:
     return curve
 
 
+def sharpen_preview(clip: Clip, width: int, height: int) -> dict | None:
+    """The browser's copy of the unsharp mask: the same amount, a radius expressed in frame units.
+
+    The preview filter runs in `objectBoundingBox` units, where a stdDeviation of 1 is the whole box
+    — so the y fraction is the radius over the frame height and the x one over the frame width. Both
+    come from `contracts.spatial_radius`, which is what the exporter hands `gblur`, so the two ends
+    convolve the same Gaussian. The id is content-addressed because the `<filter>` element is shared
+    by every clip asking for the same numbers, exactly like the grade tables.
+    """
+    if clip.effects.sharpen <= 0:
+        return None
+    fraction = clip.effects.sharpen_radius
+    spec = f"{clip.effects.sharpen:.6g}|{fraction:.6g}"
+    return {
+        "id": "sh" + hashlib.sha256(spec.encode()).hexdigest()[:12],
+        "amount": clip.effects.sharpen,
+        "bbox": [round(fraction * height / width, 6), round(fraction, 6)],
+    }
+
+
 def preview_manifest(
     project: Project, sequence_id: str | None = None, *, _include_sequences=True
 ) -> dict:
@@ -276,6 +297,7 @@ def preview_manifest(
             prop: property_curve(clip, prop) for prop in MASK_FIELDS if points(clip, prop)
         }
         animated = bool(mask_curves) and clip.mask is not None
+        sharpen = sharpen_preview(clip, project.settings.width, project.settings.height)
         quantum = (
             project.settings.frame_ticks
             if track.kind == "video"
@@ -297,6 +319,7 @@ def preview_manifest(
             else None,
             "curves": curves,
             "duration_ms": clip.duration_ticks / TIMEBASE * 1000,
+            "sharpen": sharpen,
             "color_filter": (
                 f"brightness({2**clip.color.exposure}) "
                 f"contrast({clip.color.contrast}) saturate({clip.color.saturation})"
@@ -304,7 +327,9 @@ def preview_manifest(
             + (f" url(#{grade['id']})" if grade else "")
             # The blur fraction the exporter feeds to `blur_sigma` becomes 1cqh = 1% of the frame's
             # rendered height here, so the preview's radius is the same number of frame-heights.
-            + (f" blur({clip.effects.blur * 100:g}cqh)" if clip.effects.blur > 0 else ""),
+            + (f" blur({clip.effects.blur * 100:g}cqh)" if clip.effects.blur > 0 else "")
+            # Unsharp last, as in the exporter: tonal grade, then radius, then edge enhancement.
+            + (f" url(#{sharpen['id']})" if sharpen else ""),
             "grade": grade,
             "transition": transition_curves[clip.id],
         }

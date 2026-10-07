@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 13  # v13 gives a path mask a real box; older rows are fitted on load (ge=1).
-APP_VERSION = "1.64.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.65.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -131,9 +131,10 @@ class Track(Contract):
 
 
 EffectProperty = Literal["x", "y", "scale", "rotation", "opacity", "gain"]
-# What `clip.patch` may write is wider than what can be keyframed: `blur` has no per-frame form
-# (see ClipEffects.blur), so it is patchable without being an animatable property.
-EffectField = EffectProperty | Literal["blur"]
+# What `clip.patch` may write is wider than what can be keyframed: `blur`, `sharpen` and
+# `sharpen_radius` have no per-frame form (see ClipEffects), so they are patchable without being
+# animatable properties.
+EffectField = EffectProperty | Literal["blur", "sharpen", "sharpen_radius"]
 # Rectangle and ellipse masks keyframe in the mask's own normalized space, so the exporter and the
 # browser interpolate the same numbers. A free-form (path) mask rasterizes its outline once and can
 # be moved with mask_x/mask_y, but its drawn shape and size cannot change over time yet.
@@ -182,16 +183,25 @@ PROPERTY_LIMITS = {
 BLUR_LIMIT = 0.25
 BLUR_RADIUS_LIMIT_PX = 64.0
 GBLUR_STEPS = 6
+# Sharpen is an unsharp mask, so it carries the two numbers that operation always has: an amount
+# (what 剪映 calls the degree, AE and Resolve call Amount) and a radius. The radius uses the same
+# unit as soft focus - a fraction of the frame height, capped by the same measured band - because
+# a fixed 3x3 Laplacian kernel would look different at 1080p and 4K, and this project's knobs are
+# defined against the frame, not a pixel count. Default ~4 px at 1080p: edge, not glow.
+SHARPEN_LIMIT = 2.0
+SHARPEN_RADIUS_DEFAULT = 0.004
 
 
-def blur_sigma(blur: float, frame_height: int) -> float:
-    """The one definition of the soft-focus radius: this fraction of the frame height, in pixels.
+def spatial_radius(fraction: float, frame_height: int) -> float:
+    """The one definition of a spatial radius: this fraction of the frame height, in pixels.
 
-    The export writes it as `gblur=sigma=` and the preview as `blur(<blur*100>cqh)`; both are the
-    same number of pixels because 1cqh is 1% of the frame's rendered height. Neither end is free to
-    invent its own units for "how blurry".
+    Soft focus and sharpening share it. The export writes it as `gblur=sigma=`; the preview writes
+    the same fraction as `blur(<fraction*100>cqh)` or, for the sharpening Gaussian, as an
+    `objectBoundingBox` `feGaussianBlur` stdDeviation pair derived from the delivery aspect. All of
+    them are the same number of pixels because the units are defined against the frame, so neither
+    end is free to invent its own units for "how blurry" or "how sharp".
     """
-    return blur * frame_height
+    return fraction * frame_height
 
 
 class ClipEffects(Contract):
@@ -202,6 +212,17 @@ class ClipEffects(Contract):
     opacity: Annotated[float, Field(ge=0, le=1)] = 1.0
     gain: Annotated[float, Field(ge=0, le=4)] = 1.0
     blur: Annotated[float, Field(ge=0, le=BLUR_LIMIT)] = 0.0
+    # Unsharp mask, one formula on both ends:
+    #     out = clip(source + sharpen * (source - gaussian(source)), 0, 255)
+    # The export runs `split` + `gblur=...:steps=6:planes=7` + a `blend` with
+    # `c*_expr='clip(A+a*(A-B),0,255)'` and `c3_expr='A'`. The `clip()` is load-bearing:
+    # measured, `blend` without it wraps modulo 256 instead of clamping (255+0.8*69 read back
+    # as 54). The preview runs `feGaussianBlur` + `feComposite operator="arithmetic"` with
+    # k2=1+a, k3=-a, which clamps by definition; on a hard edge the two agree to <=3 levels
+    # (export 77/68/57/44, browser 74/65/54/43, plate at 100). Same restrictions as `blur`: no
+    # keyframes (there is no per-frame radius to animate), and only inside the measured band.
+    sharpen: Annotated[float, Field(ge=0, le=SHARPEN_LIMIT)] = 0.0
+    sharpen_radius: Annotated[float, Field(ge=0, le=BLUR_LIMIT)] = SHARPEN_RADIUS_DEFAULT
 
 
 # The grade chain's shape limits live here and nowhere else: the interface enumerates its picker and
@@ -1946,6 +1967,7 @@ def capabilities(
             "lut_import": True,
             "text_styling": True,
             "clip_blur": True,
+            "clip_sharpen": True,
             "grade_node_blend_modes": True,
             "grade_parallel_branches": True,
             "timeline_marks": True,
@@ -1964,6 +1986,9 @@ def capabilities(
             "max_sequence_depth": 8,
             "blur_fraction": BLUR_LIMIT,
             "blur_radius_limit_px": BLUR_RADIUS_LIMIT_PX,
+            "sharpen_amount": SHARPEN_LIMIT,
+            "sharpen_radius_fraction": BLUR_LIMIT,
+            "sharpen_radius_default": SHARPEN_RADIUS_DEFAULT,
             "sample_rates": [44_100, 48_000, 96_000],
         },
         "render_presets": render_presets(),

@@ -13,6 +13,25 @@ export function blurMaxPercent(caps: Capabilities | null, frameHeight: number): 
   );
 }
 
+/**
+ * 清晰（unsharp）两条滑杆的上限，同样全部由引擎下发：强度上限 `limits.sharpen_amount`；半径上限取
+ * `limits.sharpen_radius_fraction` 与「验证过的像素半径 / 画面高」的小者——与柔焦共用同一个实测带，
+ * 因为两端都是同一次高斯采样。旧引擎不下发 `clip_sharpen` 时返回 0，界面把两行都收起来。
+ */
+export function sharpenLimits(
+  caps: Capabilities | null,
+  frameHeight: number,
+): { amount: number; radiusPercent: number } {
+  if (!caps?.features.clip_sharpen || frameHeight <= 0) return { amount: 0, radiusPercent: 0 };
+  return {
+    amount: caps.limits.sharpen_amount ?? 0,
+    radiusPercent: Math.min(
+      (caps.limits.sharpen_radius_fraction ?? 0) * 100,
+      ((caps.limits.blur_radius_limit_px ?? 0) / frameHeight) * 100,
+    ),
+  };
+}
+
 // The animatable set, not `keyof Effects`: `blur` is a static radius the exporter cannot animate.
 export const EFFECT_FIELDS: { property: AnimatedEffect; label: string; unit: string; min: number; max: number; step: number; factor: number }[] = [
   { property: "x", label: "位置 X", unit: "%", min: -200, max: 200, step: 1, factor: 100 },

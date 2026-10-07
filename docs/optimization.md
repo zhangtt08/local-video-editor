@@ -2160,3 +2160,73 @@ x/y/scale/rotation/opacity/遮罩/转场/文字/嵌套都列进去了，是一�
 `preview-manifest` 的 `color_filter` 末尾是 `blur(10cqh)`，折算回像素与 sigma 完全相等，没开柔焦的片段
 字符串里没有 `blur`；280 px 高的画幅给 `0.25` 被 `BLUR_OUT_OF_RANGE` 拒；`/v1/capabilities` 报
 `features.clip_blur` 与两个 limits。
+
+## 1.65.0 清晰（unsharp mask）：把 1.64 那一次高斯采样反过来用（2026-10-08）
+
+1.64 交付时把锐化列在「不做」里，理由是 FFmpeg 的 `unsharp` 是整数窗口卷积，和浏览器的高斯核对不上。
+这轮换个做法：不再找「另一个锐化滤镜」，而是把 1.64 已经实测对齐的那一次 `gblur` 采样反过来用——
+`out = clip(src + a·(src − gaussian(src)), 0, 255)`。同一条式子在两端各跑一遍，导出是
+`split=2` → `gblur=sigma=R:steps=6:planes=7` → `blend=c0..c2_expr='clip(A+a*(A-B),0,255)'`，
+预览是 `<filter>` 里 `feGaussianBlur` + `feComposite operator="arithmetic"`（`k2=1+a, k3=-a`）。
+半径仍由 `contracts.spatial_radius()` 一处换算，上限与柔焦共用同一条 1–64 px 实测带。
+
+三条只有实测才能发现的约束，都记进了代码注释：
+
+- `blend` **不做钳位，是按 256 取模回绕**：`255 + 0.8×69` 读回 **54**。所以钳位必须写进表达式里
+  `clip(...,0,255)`，而不是指望滤镜兜底；浏览器的 arithmetic 天然钳位，少写一个 `clip` 就是一端亮、
+  一端翻成暗色。
+- blend 的输出**不能带 pad 标签再接滤镜**：`[x]blend=...[y]tpad=...` 被 lavfi 判成
+  「Trailing garbage after a filter」，整条 filtergraph 直接 `Invalid argument`。第一版按「返回
+  head + 是否闭合」写的 `chain_join` 因此是多余的，改成让链子始终悬空、由调用方续逗号，
+  函数从 `tuple[str, bool]` 收回 `str`，删掉一个只有两个调用点的辅助函数。
+- 锐化不能碰 alpha：走到这一步的 alpha 还是均匀的（遮罩 alpha 在之后才乘上去，与预览「先 `filter`
+  后 `mask-image`」同序），所以 `gblur` 用 `planes=7`、blend 用 `c3_expr='A'` 就够；这条用「羽化 0.5
+  的矩形遮罩下，加与不加锐化的 alpha 斜坡逐点最多差 0 级」钉住，并同时断言形状内部确实变了，
+  免得差分量到空气。
+
+验收并入 `tests/blur_check.py`（同一个样片、同一套剖面测量）：`blur=0.1` 先把白|黑硬边铺到
+**17.26 px**，再加 `sharpen=2.0`（半径同为 18 px）收到 **9.52 px**——硬边plate上光晕会被钳掉，
+所以量的是斜率宽度而不是过冲高度；`cut` 快路径也补了同一条断言（1.64 就是在这条链上静默丢过滤镜）；
+`sharpen=2.5` 在契约层 422 且**不烧 revision**；280 px 画幅给 `sharpen_radius=0.25`（70 px）
+以 `BLUR_OUT_OF_RANGE` 点名 `sharpen_radius`；预览侧 `bbox` 横竖各折算一次，必须正好等于导出的
+sigma；回执锚点再加两条，确认「只写默认值的新键」不会把 1.64 的旧请求劈成两半。
+
+变异验证四处，全部当场红：去掉 `:planes=7` 红在编译图、把 `c3_expr='A'` 换成锐化式子红在
+「alpha must be excluded from the blend」、去掉 `clip(` 红在「lost its clamp」、把
+`sharpenLimits` 里「像素带 / 画幅高」那一项删掉则 `tests/desktop_blur_check.ts` 红。
+第一版 `:planes=7` 的变异用 `perl -i` 改源码时**模式没匹配上**，门禁是绿的——那是一次无效变异，
+改用 Edit 工具确认改动落进文件后重跑才真的红；这条教训和「门禁必须能失败」是同一件事。
+
+### 发布验收（1.65.0）
+
+- 冻结引擎：`scripts/build_engine.py` 重新打包（staged 324.9 MB，含随包 ffmpeg/ffprobe），
+  `desktop/release/win-unpacked` 与两个产物全部重生成（mtime 同一时刻，避免上一版残留冒充成功）。
+- 包内验收 `package_check_165.py`（实例 `00e9d5c28f09`，`/v1/info` 报 `1.65.0`，
+  `features.clip_blur` + `features.clip_sharpen` 与四个 limits 全部下发）：交付文件上
+  `blur=0.1` 量到 **17.24 px**（对照 0.34 px），再加 `sharpen=2.0`（半径 18 px）收到 **9.75 px**；
+  `preview-manifest` 给出 `shf05a35265c9c`，`bbox` 折算 **18.0 × 18.0 px** 与导出的 sigma 相等；
+  羽化遮罩下锐化让 alpha 斜坡动 **0 级**、形状内部动 **44 级**；`sharpen=2.5` 422 且 revision 不动；
+  280 px 画幅的 70 px 半径两条都点名拒绝（`blur` 与 `sharpen_radius`）；MCP stdio 39 个工具，
+  `timeline_edit` 的 schema 点名 `blur`/`sharpen`/`sharpen_radius`；`app.asar` 5,537,513 B 里
+  两行中文与 `fx-sharpen` / `fx-sharpen-radius` 的 id 都在。
+- 界面验收 `ui_sharpen_165.py`（Playwright 驱动构建后的 renderer）：两行的上限是引擎给的
+  （amount 200% = `sharpen_amount`，radius 25.00% = min(25%, 64px/180px)），敲进去两次 Enter 落成
+  两个 revision、`sharpen=1.5` / `sharpen_radius=0.1`；DOM 里 `feGaussianBlur` 的
+  `stdDeviation='0.05625 0.1'` 在 480×270 的预览框上解析成 **27.0 × 27.0 px**，即画面高的 10%，
+  与导出向 180 px 画幅要的 10%（18.0 px）是同一个比例——顺带把「objectBoundingBox 单位下横竖必须
+  各算一次、不然核就是椭的」这条钉住（新增的各向同性断言 ±0.5 px）。
+- 原生窗口：`release/win-unpacked/AgentCut.exe` 用 `Start-Process` 脱离父 shell 启动，
+  `PrintWindow(flags=2)` 采到 1480×900 的「AgentCut 剪辑台」，标题栏右侧写着 **引擎在线 v1.65.0**
+  （`AgentCut-1.65-原生窗口.png`），`CloseMainWindow` 优雅关闭后 `no AgentCut/agentcut residue`。
+  该会话打开的是用户 `%APPDATA%` 里的真实工程，只截图与关闭，未编辑任何用户数据。未签名，
+  NSIS 向导未点击验收。
+- 产物：便携版 189,741,176 字节 SHA256
+  `93F2BEA48157A5C5C0CB840CBA63BA02FE9B08D9544AE0E4CE9C3DDA7195012F`；安装版 189,901,889 字节
+  SHA256 `8A3270AF12D2F4B7F53D8FD27CE625F7C2CAD815EF896DE2EE04C14471BE31BB`。
+- 门禁：`ruff check` 与 `ruff format --check`（86 文件）全绿、`npm run typecheck` 干净、10 项桌面 TS
+  检查通过、`tests/self_check.py` 通过，`tests/suite_check.py` 串行 **58/58**（`SUITE=0`）。
+  本轮被门禁抓到的一次真回归：把 `format=rgba` 无条件塞进 `cut` 快路径，会让每个片段的采样格式链多一段
+  `format=rgba`，`tests/format_check.py` 当场红在 ProRes 的
+  `setsar=1,fps=30/1,format=yuv444p10le`；改成「只有 blur 或 sharpen 真的开着才转 rgba」，
+  两个旋钮都关着时输出串与 1.64 逐字节相同。另记一次流程教训：第一次串行套件是在编辑源码的同时跑的，
+  `speedramp_check` 的像素断言被读到半改状态而假红——跑套件期间不再动源码。

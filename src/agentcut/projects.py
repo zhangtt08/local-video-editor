@@ -161,16 +161,16 @@ class ProjectStore:
         # Same era treatment for the six effect keys that existed before 1.64 added `blur`.
         from .contracts import ClipEffects
 
-        before_blur = {"x", "y", "scale", "rotation", "opacity", "gain"}
+        spatial_keys = {"x", "y", "scale", "rotation", "opacity", "gain"}
         effects_added = tuple(
             (name, field.default)
             for name, field in sorted(ClipEffects.model_fields.items(), key=lambda e: e[0])
-            if name not in before_blur
+            if name not in spatial_keys
         )
         effects_defaults = {
             name: field.default
             for name, field in ClipEffects.model_fields.items()
-            if name in before_blur
+            if name in spatial_keys
         }
         for command in payload.get("commands", []):
             if (

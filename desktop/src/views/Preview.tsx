@@ -23,26 +23,39 @@ function gainNode(element: HTMLMediaElement): GainNode | undefined {
 }
 
 /** The server ships the same per-channel table the FFmpeg render uses; SVG exposes it to the compositor. */
-function GradeDefs({ plan }: { plan: PreviewManifest | null }) {
-  const tables = useMemo(() => {
-    const found = new Map<string, GradeTables>();
+/** The `<filter>` elements the engine's `color_filter` strings point at: grade tables and, since
+ * 1.65, the unsharp mask. Both are declared by the engine and only drawn here, so the numbers in the
+ * exporter's `lutrgb` / `blend` expressions and the ones the browser composites are the same ones. */
+function FilterDefs({ plan }: { plan: PreviewManifest | null }) {
+  const found = useMemo(() => {
+    const tables = new Map<string, GradeTables>();
+    const sharpens = new Map<string, { id: string; amount: number; bbox: [number, number] }>();
     const walk = (manifest: PreviewManifest | undefined) => {
       if (!manifest) return;
-      for (const clip of Object.values(manifest.clips)) if (clip.grade) found.set(clip.grade.id, clip.grade);
+      for (const clip of Object.values(manifest.clips)) {
+        if (clip.grade) tables.set(clip.grade.id, clip.grade);
+        if (clip.sharpen) sharpens.set(clip.sharpen.id, clip.sharpen);
+      }
       for (const nested of Object.values(manifest.sequences ?? {})) walk(nested);
     };
     walk(plan ?? undefined);
-    return [...found.values()];
+    return { tables: [...tables.values()], sharpens: [...sharpens.values()] };
   }, [plan]);
-  if (!tables.length) return null;
+  if (!found.tables.length && !found.sharpens.length) return null;
   return <svg className="grade-defs" aria-hidden="true" focusable="false">
-    <defs>{tables.map((table) => <filter key={table.id} id={table.id} colorInterpolationFilters="sRGB" x="0" y="0" width="100%" height="100%">
+    <defs>{found.tables.map((table) => <filter key={table.id} id={table.id} colorInterpolationFilters="sRGB" x="0" y="0" width="100%" height="100%">
       <feComponentTransfer>
         <feFuncR type="table" tableValues={table.r.join(" ")} />
         <feFuncG type="table" tableValues={table.g.join(" ")} />
         <feFuncB type="table" tableValues={table.b.join(" ")} />
       </feComponentTransfer>
-    </filter>)}</defs>
+    </filter>)}
+      {found.sharpens.map((spec) => <filter key={spec.id} id={spec.id} colorInterpolationFilters="sRGB" primitiveUnits="objectBoundingBox" x="-2%" y="-2%" width="104%" height="104%">
+        {/* Same formula the exporter compiles: 源 + 量×(源 − 高斯(源)). The arithmetic composite
+            clamps by definition, which is what `clip(...,0,255)` is for in the FFmpeg expression. */}
+        <feGaussianBlur in="SourceGraphic" stdDeviation={`${spec.bbox[0]} ${spec.bbox[1]}`} result="shb" />
+        <feComposite in="SourceGraphic" in2="shb" operator="arithmetic" k1="0" k2={1 + spec.amount} k3={-spec.amount} k4="0" />
+      </filter>)}</defs>
   </svg>;
 }
 
@@ -134,7 +147,7 @@ export function Preview() {
       <IconBtn icon="fullscreen" label="全屏预览" onClick={() => void monitorRef.current?.requestFullscreen()} />
     </div>
     <div ref={monitorRef} className="monitor-wrap"><div className="monitor" style={{ aspectRatio: `${project.settings.width} / ${project.settings.height}`, width: `min(100cqw, calc(100cqh * ${project.settings.width / project.settings.height}))` }}>
-      <GradeDefs plan={displayPlan} />
+      <FilterDefs plan={displayPlan} />
       {sourceMode && sourceUrl ? sourceInfo?.kind === "image" ? <img src={sourceUrl} alt={sourceInfo.label} /> : sourceInfo?.kind === "audio" ? <><audio key={sourceUrl} ref={(node) => { sourceRef.current = node; }} src={sourceUrl} preload="metadata" onTimeUpdate={(e) => setSourceCursor(e.currentTarget.currentTime * TIMEBASE)} onEnded={() => setSourcePlaying(false)} /><div className="monitor-empty"><Icon name="volume" size={32} /><div className="monitor-title">{sourceInfo.label}</div><div className="monitor-sub">标记需要的声音区间，插入或覆盖到目标声音轨</div></div></> : <video key={sourceUrl} ref={(node) => { sourceRef.current = node; }} src={sourceUrl} playsInline preload="metadata" onTimeUpdate={(e) => setSourceCursor(e.currentTarget.currentTime * TIMEBASE)} onEnded={() => setSourcePlaying(false)} onError={() => { setSourcePlaying(false); setPreviewError("素材无法解码"); }} /> : <>
         {displayPlan ? project.tracks.filter((track) => track.kind === "video" && !track.hidden).map((track) => <div key={track.id} className="preview-track" style={{ mixBlendMode: displayPlan.track_blend_modes?.[track.id] ?? "normal" }}>
           {visuals.filter((v) => v.track.id === track.id).map(({ clip }) => <PreviewLayer key={clip.id} clip={clip} track={track} project={project} plan={displayPlan.clips[clip.id]} manifest={displayPlan} streams={app.streams} mixed={displayPlan.mixed_track_ids.includes(track.id)} url={app.streams[clip.asset_id]} ticks={play.ticks} playing={ready && play.playing} monitorMuted={monitorMuted} />)}

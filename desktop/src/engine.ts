@@ -43,11 +43,11 @@ export type Track = {
  * has no per-frame radius, so the soft focus is a static knob and `keyof Effects` is no longer the
  * same set as the animatable set. */
 export type AnimatedEffect = "x" | "y" | "scale" | "rotation" | "opacity" | "gain";
-export type Effects = { x: number; y: number; scale: number; rotation: number; opacity: number; gain: number; blur: number };
+export type Effects = { x: number; y: number; scale: number; rotation: number; opacity: number; gain: number; blur: number; sharpen: number; sharpen_radius: number };
 export type MaskProperty = "mask_x" | "mask_y" | "mask_width" | "mask_height";
 export type Property = AnimatedEffect | MaskProperty;
 export type SampledValues = Record<AnimatedEffect, number> & { mask_x: number; mask_y: number; mask_width: number; mask_height: number };
-export const DEFAULT_EFFECTS: Effects = { x: 0, y: 0, scale: 1, rotation: 0, opacity: 1, gain: 1, blur: 0 };
+export const DEFAULT_EFFECTS: Effects = { x: 0, y: 0, scale: 1, rotation: 0, opacity: 1, gain: 1, blur: 0, sharpen: 0, sharpen_radius: 0.004 };
 export type GradeChannel = "rgb" | "red" | "green" | "blue";
 export type GradeCurvePoint = { x: number; y: number };
 export type BlendMode =
@@ -139,7 +139,7 @@ export type Transition = { from_clip_id: string; kind: TransitionKind; duration_
 export type LinkStatus = { clip_ids: string[]; synchronized: boolean; anchor_clip_id: string; differences: Record<string, { position_ticks: number; source_ticks: number; duration_ticks: number; speed_percent: number }> };
 export type SpeedPoint = { at_ticks: number; percent: number };
 
-export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; grade?: GradeTables | null; speed?: RampPiece[] | null; mask_image?: string | null; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; curves: Record<AnimatedEffect, Curve>; transition: Record<"picture" | "sound" | "black" | "white", Curve> }> };
+export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; grade?: GradeTables | null; sharpen?: { id: string; amount: number; bbox: [number, number] } | null; speed?: RampPiece[] | null; mask_image?: string | null; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; curves: Record<AnimatedEffect, Curve>; transition: Record<"picture" | "sound" | "black" | "white", Curve> }> };
 
 export type Clip = {
   mask?: ShapeMask | null;
@@ -403,7 +403,7 @@ export type Capabilities = {
   max_commands_per_batch: number;
   commands: string[];
   features: Record<string, boolean>;
-  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; blur_fraction?: number; blur_radius_limit_px?: number };
+  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number };
   render_presets: Preset[];
 };
 

@@ -1303,13 +1303,13 @@ face（Windows 下微软雅黑/黑体/宋体/楷体/Arial/Consolas）。`fontfil
 ## 1.64 片段柔焦：一个半径，两端同高斯（工程 schema 仍是 v13）
 
 `ClipEffects` 新增 `blur: float`，取值 `0..0.25`（`capabilities.limits.blur_fraction`），语义是
-**画面高的比例**：真正的半径 `R = blur × 画面高`，由 `contracts.blur_sigma()` 一处定义，导出与预览
+**画面高的比例**：真正的半径 `R = blur × 画面高`，由 `contracts.spatial_radius()` 一处定义，导出与预览
 都从这里取数，谁也不许自己换单位。命令不变，仍然只有 `clip.patch` 的 `effects`——为此把「可写入的
 效果字段」与「可打关键帧的属性」分开了：契约里 `EffectProperty`（六条可动画）与
 `EffectField = EffectProperty | "blur"`（七条可 patch）各管各的，客户端的 `AnimatedEffect` 同构。
 `Keyframe` 的 `property` 仍只接受那六条，所以 `blur` 天然没有关键帧。
 
-编译落点：`render.blur_clause()` 在片段已经缩放到输出画幅之后、遮罩 alpha 之前插入
+编译落点：`render.focus_stages()` 在片段已经缩放到输出画幅之后、遮罩 alpha 之前插入
 `,gblur=sigma=R:steps=6`；`blur=0` 时整段不出现。画面链有两条——需要合成的走分层链，单轨且没有
 任何东西要合成的走 `cut` 快路径——两处都在同一个位置插入同一个串（快路径的 `fit_stage` 因此拆成
 `fit_pre`/`fit_post`，中间按需塞 `format=rgba,gblur=…`），因为「谁决定走哪条链」是一份手写枚举，
@@ -1325,8 +1325,8 @@ CSS 先 `filter` 后 `mask-image`，FFmpeg 先 `gblur` 后 `geq a=`，因此「�
 后 FFmpeg 落在 **0.954..0.991×S**，与浏览器在 ≥8 px 时相差约 2%、以下相差不到半个像素。
 所以这不是「猜的系数」，是把两个实现拉到同一个半径上的实测选择。
 
-超过 **64 px** 的半径是拒的，不是夹的：`BLUR_OUT_OF_RANGE`（422），`details` 里带
-`radius` 与 `max_blur`（= 64 / 画面高），因为一致性只在那个带里量过。界面滑杆的上限用同一个函数算
+超过 **64 px** 的半径是拒的，不是夹的：`BLUR_OUT_OF_RANGE`（422），`details` 里点名是哪个旋钮
+（`blur` 或 `sharpen_radius`）、`radius` 与 `max_radius_fraction`（= 64 / 画面高），因为一致性只在那个带里量过。界面滑杆的上限用同一个函数算
 （`desktop/src/effects.ts` 的 `blurMaxPercent`，取 `blur_fraction` 与 `blur_radius_limit_px/画面高`
 的小者），因此不存在「界面给得出、引擎拒得了」。旧引擎不下发这两个字段时该行直接隐藏。
 
@@ -1347,4 +1347,44 @@ CSS 先 `filter` 后 `mask-image`，FFmpeg 先 `gblur` 后 `geq a=`，因此「�
 被 `BLUR_OUT_OF_RANGE` 拒。变异验证：`steps=6`→`1` 时量到 14.57 px 当场红；去掉滤镜段时红在
 「the blur radius never reached the exporter」；把 `blurMaxPercent` 的上限只按 fraction 算时
 `tests/desktop_blur_check.ts` 当场红。**没有做**的：逐帧柔焦（`gblur` 只有 `enable` 这种开关窗，
-导出会变成阶梯）、锐化（`unsharp` 是窗口卷积，不是同一个高斯）。
+导出会变成阶梯）。锐化在 1.65 补上，但仍不走 FFmpeg 的 `unsharp`（那是整数窗口卷积，和预览的
+高斯不是同一个核对不上），而是用同一次 `gblur` 采样做 unsharp mask。
+
+## 1.65 清晰（unsharp mask）：同一个高斯，两端同一条式子（工程 schema 仍是 v13）
+
+`ClipEffects` 再加两个键：`sharpen: float`（`0..2.0`，`capabilities.limits.sharpen_amount`）与
+`sharpen_radius: float`（`0..0.25`，默认 `0.004`，即画面高的 0.4%）。语义仍是**画面高的比例**，
+半径同样只由 `contracts.spatial_radius()` 一处给出，命令也只有 `clip.patch` 的 `effects`。
+
+一条式子在两端各跑一遍：
+
+```
+out = clip(source + sharpen * (source - gaussian(source)), 0, 255)
+```
+
+导出是 `split=2` → `[b]gblur=sigma=R:steps=6:planes=7` → `[a][b]blend=c0_expr='clip(A+a*(A-B),0,255)'`
+（c1/c2 同式），预览是 `<filter>` 里 `feGaussianBlur` + `feComposite operator="arithmetic"`
+`k2=1+a, k3=-a`。两处都必须写 `clip(...,0,255)`：实测 `blend` 不做钳位而是**按 256 取模回绕**
+（255+0.8×69 读回 54），浏览器的 arithmetic 天然钳位，少一个 `clip` 就是一端亮一端翻转。
+`planes=7` 与 `c3_expr='A'` 是为了不碰 alpha：走到这一步的 alpha 还是均匀的，遮罩 alpha 在之后才乘上去。
+半径上限沿用 1.64 那条实测带（同一个 `gblur` 采样），超了就 `BLUR_OUT_OF_RANGE` 点名 `sharpen_radius`；
+强度越界是契约的事，`INVALID_REQUEST`（422），且**不烧 revision**。
+
+`capabilities`：`features.clip_sharpen=true`，`limits.sharpen_amount=2.0`、
+`limits.sharpen_radius_fraction=0.25`、`limits.sharpen_radius_default=0.004`；
+`timeline_edit` 的 MCP schema 点名 `sharpen`（`self_check` 断言）。界面两行的上限由
+`desktop/src/effects.ts` 的 `sharpenLimits(caps, 画面高)` 算，与柔焦共用同一个像素带，旧引擎不下发
+`clip_sharpen` 时两行一起隐藏。
+
+验收（并入 `tests/blur_check.py`）：`blur=0.1` 先把边沿铺到 **17.26 px**，再加 `sharpen=2.0`
+（半径同 18 px）收到 **9.52 px**——样片是白|黑硬边，光晕会钳位，所以诚实的量法是斜率宽度而不是
+过冲高度；羽化 0.5 的矩形遮罩下，加与不加锐化的 alpha 斜坡逐点最多差 **0 级**，而形状内部确实变了
+（反向断言，防止量空气）；`planes=7`、`clip(A+2.0*(A-B),0,255)`、恰好一个 `c3_expr='A'`、
+`split=2` 与 `blend=c0_expr=` 都在编译图里，**两条画面链各自都查**（`cut` 快路径也补了一条）；
+预览侧 `bbox` 折算回像素与导出的 sigma 完全相等（横纵各查一次，`objectBoundingBox` 单位下 1 就是整框）；
+`sharpen=2.5` 在 HTTP 层 422 且 revision 不动；280 px 画幅给 `sharpen_radius=0.25`（70 px）被点名拒绝；
+回执锚点再加两条：`{...,"sharpen":0.0}` 仍命中 1.64 的摘要，只写默认 `sharpen_radius` 也命中。
+变异验证：把 `:planes=7` 去掉红在图里、把 `c3_expr='A'` 换成锐化式子红在「alpha must be excluded」、
+把 `clip(` 去掉红在「lost its clamp」、把 `sharpenLimits` 的像素带项删掉则
+`tests/desktop_blur_check.ts` 当场红。**没有做**的：锐化关键帧（与柔焦同理，导出只有开关窗）、
+边缘相关锐化（`guided`/`boxblur` 那条核函数在浏览器没有对应实现）。
