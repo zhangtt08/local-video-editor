@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 13  # v13 gives a path mask a real box; older rows are fitted on load (ge=1).
-APP_VERSION = "1.55.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.56.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]

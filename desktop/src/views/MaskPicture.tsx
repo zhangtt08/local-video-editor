@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type PointerEvent, typ
 import type { Clip, Curve, MaskProperty, MaskVertex, ShapeMask } from "../engine";
 import { TIMEBASE } from "../time";
 import { appInfo, commitMaskEdit, moveMaskCentre, playhead, setClipMask, setMaskEditing, useApp, usePlay } from "../store";
-import { nearestEdge, withVertex } from "../maskOutline";
+import { asCorner, asSmooth, nearestEdge, withoutVertex, withVertex } from "../maskOutline";
 
 const CORNERS = [[-1,-1,"左上"],[1,-1,"右上"],[-1,1,"左下"],[1,1,"右下"]] as const;
 const MASK_VARIABLE: Record<MaskProperty, string> = { mask_x: "x", mask_y: "y", mask_width: "w", mask_height: "h" };
@@ -205,6 +205,16 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
     if (disabled || !app.project) return;
     commitMaskEdit(clip.id, value, Math.max(0, Math.min(clip.duration_ticks, play.ticks - clip.position_ticks)), app.project.id, app.project.revision);
   };
+  // The cap comes from the engine and the three vertex ops say why they are dead, so a click is never
+  // swallowed: before this, deleting a point needed the keyboard and hitting the cap did nothing silent.
+  const vertexLimit = app.caps?.mask_vertex_limit ?? FALLBACK_VERTEX_LIMIT;
+  const atCap = mask?.shape === "path" && vertices.length >= vertexLimit;
+  const applyVertex = (next: ShapeMask | null) => {
+    if (!next || disabled) return;
+    write(next);
+    // Stay on the point so the other two ops remain one click away; a delete has nothing left to pick.
+    if ((next.vertices?.length ?? 0) < vertices.length) setActive(null);
+  };
   const nudgeVertex = (event: React.KeyboardEvent, index: number) => {
     const step = event.shiftKey ? .1 : .01;
     if (!["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key)) return;
@@ -277,5 +287,14 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
         }} />)}
       </>}
     </svg> : null}
+    {visible && mask?.shape === "path" ? <div className="mask-vertex-panel" role="group" aria-label="顶点操作">
+      {atCap ? <span className="dim">顶点 {vertices.length}/{vertexLimit}，已到上限，双击不再加点</span> : null}
+      {active !== null ? <>
+        <span className="dim">选中顶点 {active + 1}</span>
+        <button type="button" className="btn tiny" disabled={disabled || !withoutVertex(mask, active)} title={vertices.length <= 3 ? "只剩三个顶点，不能再删" : "删掉这个顶点"} onClick={() => applyVertex(withoutVertex(mask, active))}>删除顶点</button>
+        <button type="button" className="btn tiny" disabled={disabled || !asCorner(mask, active)} title="把两条控制柄收掉，曲线在这个点折断" onClick={() => applyVertex(asCorner(mask, active))}>抹成角点</button>
+        <button type="button" className="btn tiny" disabled={disabled || !asSmooth(mask, active)} title="按左右两个顶点补出控制柄" onClick={() => applyVertex(asSmooth(mask, active))}>自动平滑</button>
+      </> : null}
+    </div> : null}
   </>;
 }

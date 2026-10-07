@@ -334,7 +334,7 @@ function MaskFields({ clip }: { clip: Clip }) {
     <fieldset className="effects-fields" disabled={disabled}>
       <label className="mask-shape">形状 <select className="input" aria-label="遮罩形状" value={mask?.shape ?? "none"} onChange={(e) => { const shape = e.target.value; if (shape === "none") { setClipMask(clip.id, null); return; } const base = { ...(mask ?? DEFAULT_MASK), shape: shape as ShapeMask["shape"] }; setClipMask(clip.id, shape === "path" ? { ...base, vertices: base.vertices?.length ? base.vertices : DEFAULT_PATH.map((vertex) => ({ ...vertex, handle_out: [...vertex.handle_out] as [number, number], handle_in: [...vertex.handle_in] as [number, number] })) } : { ...base, vertices: null }); }}><option value="none">无</option><option value="ellipse">椭圆</option><option value="rectangle">矩形</option><option value="path">路径</option></select></label>
       {mask ? <>
-        {mask.shape === "path" ? <p className="hint">路径顶点 {mask.vertices?.length ?? 0} 个：画面中拖顶点改形状（拖动即整体搬动轮廓），拖小方块改曲线控制柄，双击在最近的那条边上加一个点，选中后方向键微调、Delete 删除。向内羽化按画面短边折算成高斯半径。轮廓按画好的形状与大小裁切：要让它随时间移动就点「跟踪主体」，或在曲线编辑器里给「遮罩中心 X/Y」双击加关键帧；形状与大小本身还不能随时间变化。</p> : null}
+        {mask.shape === "path" ? <p className="hint">路径顶点 {mask.vertices?.length ?? 0} 个：画面中拖顶点改形状（拖动即整体搬动轮廓），拖小方块改曲线控制柄，双击在最近的那条边上加一个点，选中后方向键微调、Delete 删除，或点画面下方出现的小面板用「删除顶点 / 抹成角点 / 自动平滑」。向内羽化按画面短边折算成高斯半径。轮廓按画好的形状与大小裁切：要让它随时间移动就点「跟踪主体」，或在曲线编辑器里给「遮罩中心 X/Y」双击加关键帧；形状与大小本身还不能随时间变化。</p> : null}
         {(canAnimateMask(mask) ? maskRows(mask) : []).map(([field, label, min, max, property]) => {
           const frame = frames.find((k) => k.property === property && k.at_ticks === at + (clip.animation_offset_ticks ?? 0));
           const animated = (clip.keyframes ?? []).some((k) => k.property === property);

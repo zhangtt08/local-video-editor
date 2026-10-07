@@ -812,6 +812,9 @@ table.table tr.current td { background: var(--accent-soft); }
 .mask-handle:nth-last-child(2), .mask-handle:nth-last-child(3) { cursor: nesw-resize; }
 .mask-hit:focus-visible, .mask-handle:focus-visible { outline: none; stroke: white; stroke-width: 2; vector-effect: non-scaling-stroke; }
 .mask-guide.locked .mask-hit, .mask-guide.locked .mask-handle { cursor: not-allowed; }
+.mask-vertex-panel { position: absolute; left: 50%; transform: translateX(-50%); bottom: 10px; display: flex;
+  gap: 8px; align-items: center; padding: 6px 10px; border: 1px solid rgba(255,255,255,.14); border-radius: 7px;
+  background: rgba(14,16,20,.88); font-size: 12px; white-space: nowrap; }
 .link-status { margin-top: 8px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 4px; color: #a8dcca; font-size: 11px; }
 .link-status.out-of-sync { color: #efbc85; }
 .preview-sequence { position: absolute; inset: 0; isolation: isolate; overflow: hidden; }

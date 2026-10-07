@@ -4,7 +4,7 @@
 
 import assert from "node:assert/strict";
 
-import { nearestEdge, withVertex, type OutlineVertex } from "../desktop/src/maskOutline";
+import { asCorner, asSmooth, nearestEdge, withoutVertex, withVertex, type OutlineVertex } from "../desktop/src/maskOutline";
 
 const vertex = (x: number, y: number, out: [number, number] = [0, 0], inn: [number, number] = [0, 0]): OutlineVertex => ({ x, y, handle_out: out, handle_in: inn });
 const square = [vertex(0.1, 0.1), vertex(0.9, 0.1), vertex(0.9, 0.9), vertex(0.1, 0.9)];
@@ -56,5 +56,29 @@ const onCorner = withVertex(mask(bow), { x: 0.9, y: 0.2 }).vertices!;
 assert.ok(Math.hypot(...onCorner[1].handle_out) > 0, "the edge's start keeps part of its arm");
 assert.ok(Math.hypot(...onCorner[2].handle_in) > 0, "the edge's end keeps part of its arm");
 assert.equal(onCorner.length, 5);
+
+// 5. The vertex operations a mouse-only user needs. Deleting must never take a closed outline below
+//    three points, and each op says no (null) when it has nothing to do — that is what disables the
+//    button instead of swallowing the click.
+const pentagon = [vertex(0.1, 0.1), vertex(0.9, 0.1), vertex(0.95, 0.5), vertex(0.9, 0.9), vertex(0.1, 0.9)];
+const deleted = withoutVertex(mask(pentagon), 2);
+assert.equal(deleted?.vertices?.length, 4);
+assert.deepEqual(deleted?.vertices?.[2], pentagon[3], "everything after the deleted point shifts up by one");
+assert.equal(withoutVertex(mask(pentagon.slice(0, 3)), 1), null, "three points is the floor");
+assert.equal(withoutVertex(mask(pentagon), 9), null, "an index off the end does nothing");
+assert.equal(pentagon.length, 5, "the caller's list is still untouched");
+
+const smoothedEdge = [vertex(0.1, 0.2, [0.2, 0.1]), vertex(0.9, 0.2, [-0.1, 0.2], [-0.2, -0.1]), vertex(0.9, 0.8), vertex(0.1, 0.8)];
+const cornered = asCorner(mask(smoothedEdge), 1);
+assert.deepEqual(cornered?.vertices?.[1].handle_out, [0, 0]);
+assert.deepEqual(cornered?.vertices?.[1].handle_in, [0, 0]);
+assert.deepEqual(cornered?.vertices?.[0].handle_out, [0.2, 0.1], "only the picked vertex changes");
+assert.equal(asCorner(mask(pentagon), 0), null, "a corner has nothing to flatten");
+
+const softened = asSmooth(mask(pentagon), 2);
+assert.deepEqual(softened?.vertices?.[2].handle_out, [(0.9 - 0.9) / 6, (0.9 - 0.1) / 6], "one sixth of the neighbour chord");
+assert.deepEqual(softened?.vertices?.[2].handle_in, [-((0.9 - 0.9) / 6), -((0.9 - 0.1) / 6)], "the two arms leave opposite ways");
+assert.equal(asSmooth(mask(smoothedEdge), 1), null, "an already smooth point is left alone");
+assert.equal(asSmooth(mask([vertex(0.1, 0.1), vertex(0.9, 0.1), vertex(0.5, 0.9)]), 1), null, "three points give no neighbour pair to fit");
 
 console.log("desktop_mask_check: outline inserts on the picked edge, splits the curve exactly, copies the input");

@@ -48,6 +48,36 @@ export function nearestEdge(vertices: MaskVertex[], point: { x: number; y: numbe
   return { edge, t: Math.min(0.95, Math.max(0.05, at)) };
 }
 
+/** A closed outline needs three points, so the last three are never deletable. Returns null when the
+ *  index is out of range or the shape would collapse — the caller shows that as a disabled button. */
+export function withoutVertex(mask: ShapeMask, index: number): ShapeMask | null {
+  const list = mask.vertices ?? [];
+  if (index < 0 || index >= list.length || list.length <= 3) return null;
+  return { ...mask, vertices: list.filter((_, position) => position !== index) };
+}
+
+/** Drop both tangents: the curve passing through this vertex becomes two straight edges. */
+export function asCorner(mask: ShapeMask, index: number): ShapeMask | null {
+  const list = mask.vertices ?? [];
+  const current = list[index];
+  if (!current) return null;
+  const smoothed = current.handle_out[0] || current.handle_out[1] || current.handle_in[0] || current.handle_in[1];
+  if (!smoothed) return null;
+  return { ...mask, vertices: list.map((entry, position) => position === index ? { ...entry, handle_out: [0, 0], handle_in: [0, 0] } : entry) };
+}
+
+/** The inverse: hand the corner the tangent a curve through its two neighbours would carry
+ *  (Catmull-Rom to Bézier, one sixth of the neighbour chord per arm), so a drawn corner can be
+ *  softened without dragging two handles blind. */
+export function asSmooth(mask: ShapeMask, index: number): ShapeMask | null {
+  const list = mask.vertices ?? [];
+  const current = list[index];
+  if (!current || list.length < 4) return null;
+  if (current.handle_out[0] || current.handle_out[1] || current.handle_in[0] || current.handle_in[1]) return null;
+  const previous = list[(index - 1 + list.length) % list.length], next = list[(index + 1) % list.length];
+  const arm: [number, number] = [(next.x - previous.x) / 6, (next.y - previous.y) / 6];
+  return { ...mask, vertices: list.map((entry, position) => position === index ? { ...entry, handle_out: arm, handle_in: [-arm[0], -arm[1]] } : entry) };
+}
 /** Insert `point` on the edge it is nearest to, rewriting the two bordering vertices' handles so the
  *  outline keeps its curvature. Vertices are copied; the mask that comes back is a fresh write object. */
 export function withVertex(mask: ShapeMask, point: { x: number; y: number }): ShapeMask {
