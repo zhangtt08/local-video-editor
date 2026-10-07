@@ -53,6 +53,28 @@ def plan_for(
     )
 
 
+# Windows reports a crashed child as its exception code, and FFmpeg dies that way without writing a
+# single line to stderr. "退出码 3221225477：" with nothing after the colon is no use to a person or
+# an Agent, so name what the code means and say out loud that nothing was reported.
+WINDOWS_EXCEPTIONS = {
+    0xC0000005: "访问越界（滤镜链里有滤镜收到了每帧都在变的画面尺寸）",
+    0xC00000FD: "栈溢出（表达式嵌套过深）",
+    0xC0000409: "运行时安全检查中止（同样是滤镜链越界）",
+}
+
+
+def describe_exit(return_code: int, stderr: str) -> str:
+    tail = stderr.strip()[-MAX_LOG:]
+    unsigned = return_code & 0xFFFFFFFF
+    named = WINDOWS_EXCEPTIONS.get(unsigned)
+    if named:
+        head = f"FFmpeg 进程异常退出：退出码 {return_code}（0x{unsigned:08X}）{named}"
+        return f"{head}；它没有留下任何错误输出" if not tail else f"{head}；最后输出：{tail}"
+    if not tail:
+        return f"FFmpeg 退出码 {return_code}，且没有留下任何错误输出"
+    return f"FFmpeg 退出码 {return_code}：{tail}"
+
+
 class JobRuntime:
     def __init__(
         self, db_path: Path, ffmpeg: Path | None, output_dir: Path, output_roots: list[Path]
@@ -571,7 +593,7 @@ class JobRuntime:
                         update={
                             "status": "failed",
                             "error_code": "FFMPEG_FAILED",
-                            "message": f"FFmpeg 退出码 {return_code}：{stderr[-MAX_LOG:]}",
+                            "message": describe_exit(return_code, stderr),
                             "elapsed_seconds": round(time.time() - started, 2),
                         }
                     )
