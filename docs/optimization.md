@@ -1582,3 +1582,7 @@ WebM 第一次真跑就崩：FFmpeg 的进度行对 WebM/Opus 的第一拍报 `o
 - ProRes 那条保住的是 4:4:4 采样与 10 位量化；时间线与调色链本身仍是 8 位精度，不是 10 位动态范围。
 - 路径遮罩的顶点/形状动画、多目标与长时遮挡跟踪、旋转估计、色彩节点图的分层与连线
   （亮度曲线、LUT、色彩管理）、自动语音字幕——仍待实现。
+- 发布包原生窗口：`win-unpacked/AgentCut.exe` 用 `Start-Process` 脱离父 shell 启动，`PrintWindow(flags=2)`
+  采到 1480×900 一帧（PNG 127,127 B，MD5 `bcbd4f49b912e5653328fc20d3f10c0c`，与 1.56 那张不同），
+  标题栏裁条放大后逐字读作「导出 · 引擎在线 v1.57.0」；关闭后 `Get-Process AgentCut, agentcut` 无残留。
+  这一帧是用户 `%APPDATA%` 里的真实工程，只截图未编辑。
