@@ -102,9 +102,12 @@ def contract_suite() -> None:
     for changes, expect in (
         ({"filename": "sub/dir.mp4"}, "bare file name"),
         ({"filename": "no-extension"}, ".mp4"),
+        # The required suffix is the preset's container, so an mp4 name on a WebM preset is its own
+        # rejection with its own reason.
+        ({"preset_id": "vp9-1080p-web", "filename": "a.mp4"}, ".webm"),
         ({"fit": "smart"}, "fit"),
     ):
-        item = {"preset_id": "p", "filename": "a.mp4"} | changes
+        item = {"preset_id": "h264-1080p", "filename": "a.mp4"} | changes
         try:
             RenderBatchItem.model_validate(item)
         except ValidationError as error:

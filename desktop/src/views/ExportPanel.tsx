@@ -16,9 +16,12 @@ import {
   timelineEnd,
   useApp,
 } from "../store";
-import { FIT_MODES, type RenderFit, type RenderRange } from "../engine";
+import { codecText, FIT_MODES, type RenderFit, type RenderRange } from "../engine";
 
 const POLL_MS = 1500;
+
+/** 勾选「附带竖屏」时那一条用的预设 id：由引擎的预设表定义，这里只引用。 */
+const VERTICAL_PRESET = "h264-1080x1920-vertical";
 
 const STATUS: Record<RenderJob["status"], { label: string; tone: string }> = {
   queued: { label: "排队中", tone: "" },
@@ -103,7 +106,9 @@ export function ExportPanel(): JSX.Element {
     outSize[0] / outSize[1] === project.settings.width / project.settings.height
       ? "导出比例与时间线一致，三种适配的结果相同"
       : `时间线 ${project.settings.width}×${project.settings.height} 要放进 ${outSize[0]}×${outSize[1]}，这里决定多出来的部分怎么处理`;
-  const verticalName = `${(filename.trim() || sanitizeName(timelineName)).replace(/\.[A-Za-z0-9]+$/, "")}-9x16.mp4`;
+  const vertical = presets.find((item) => item.id === VERTICAL_PRESET) ?? null;
+  // 后缀跟着那条交付自己的容器，不再钉死 .mp4：竖屏那条换成 WebM 预设时，文件名也得是 .webm。
+  const verticalName = `${(filename.trim() || sanitizeName(timelineName)).replace(/\.[A-Za-z0-9]+$/, "")}-9x16.${vertical?.container ?? "mp4"}`;
   const inTicks = project.settings.in_ticks ?? null;
   const outTicks = project.settings.out_ticks ?? null;
   const marked = inTicks != null && outTicks != null;
@@ -116,8 +121,8 @@ export function ExportPanel(): JSX.Element {
   // 方案存的就是「点开始导出会发出去的那组交付」，所以这里只算一次，界面和方案不会各说一套。
   const pendingItems: RenderBatchItem[] = [
     { preset_id: preset?.id ?? "", filename: finalName, fit, range },
-    ...(alsoVertical
-      ? [{ preset_id: "h264-1080x1920-vertical", filename: verticalName, fit: "cover" as RenderFit, range }]
+    ...(alsoVertical && vertical
+      ? [{ preset_id: vertical.id, filename: verticalName, fit: "cover" as RenderFit, range }]
       : []),
   ];
   const recipeHint = (project.recipes ?? []).length
@@ -186,7 +191,7 @@ export function ExportPanel(): JSX.Element {
                         {item.scale
                           ? ` · ${item.scale[0]}×${item.scale[1]}`
                           : ` · 跟随工程 ${project.settings.width}×${project.settings.height}`}{" "}
-                        · H.264 / AAC
+                        · {codecText(item)}
                       </span>
                     </span>
                   </button>
@@ -359,27 +364,24 @@ export function ExportPanel(): JSX.Element {
             >
               查看渲染计划
             </Btn>
-            <label className="batch-row">
-              <input
-                type="checkbox"
-                checked={alsoVertical}
-                onChange={(event) => setAlsoVertical(event.target.checked)}
-                disabled={Boolean(blocked)}
-              />
-              附带一个 9:16 竖屏（裁切填满），一次交付两个画幅
-            </label>
+            {vertical && (
+              <label className="batch-row">
+                <input
+                  type="checkbox"
+                  checked={alsoVertical}
+                  onChange={(event) => setAlsoVertical(event.target.checked)}
+                  disabled={Boolean(blocked)}
+                />
+                附带一个 9:16 竖屏（裁切填满），一次交付两个画幅
+              </label>
+            )}
             <Btn
               variant="primary"
               full
               onClick={() =>
-                alsoVertical
-                  ? void startRenderBatch(
-                      [
-                        { preset_id: preset.id, filename: finalName, fit, range },
-                        { preset_id: "h264-1080x1920-vertical", filename: verticalName, fit: "cover", range },
-                      ],
-                      folder || undefined
-                    )
+                // 点下去要发出去的就是 pendingItems 那一组，界面不再另写一份交付清单。
+                alsoVertical && vertical
+                  ? void startRenderBatch(pendingItems, folder || undefined)
                   : void startRender(preset.id, finalName, folder || undefined, fit, range)
               }
               disabled={Boolean(blocked) || Boolean(app.busy)}

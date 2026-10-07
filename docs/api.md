@@ -605,7 +605,7 @@ POST /v1/projects/{id}/renders/batch
 ```
 
 - 1–4 条，每条 `{{preset_id, filename, folder?, sequence_id?, fit}}`；文件名沿用单条导出的同一套校验
-  （裸文件名、必须 `.mp4`），且**批内不得重名**。
+  （裸文件名；1.35 起必须 `.mp4`，1.57 起后缀必须是该预设的容器——`.mp4`/`.mov`/`.webm`），且**批内不得重名**。
 - 原子性：先给每一条编译渲染计划，任何一条编译失败就整批 422，队列里什么都不会出现；全部通过才逐条入队。
 - 回执：每条派生一个 `{{request_id}}-{{index}}` 的独立回执，所以重放同一批返回同样的任务集合、不会重复排队；
   改了其中一条会撞 `IDEMPOTENCY_CONFLICT`（409）。
@@ -1074,3 +1074,50 @@ Chromium 盒子（400×200，见 `agentcut-验收脚本/guide_transform_152.html
 
 仍未完成：路径遮罩的**顶点/形状动画**（要逐帧重栅格化）、路径遮罩的尺寸动画、多目标与长时遮挡
 跟踪、旋转估计。
+
+
+## 1.57 交付格式：容器、编码与采样格式都由预设决定（工程 schema 不变）
+
+「导出」以前只有一种答案：H.264/AAC 装进 MP4。这一版把交付的三件事——容器、视频/音频编码、
+采样格式——交给预设表，并把「文件名后缀必须是该预设的容器」写成一条规则。
+
+```
+POST /v1/projects/{id}/renders
+{ "request_id": "r", "expected_revision": 4, "preset_id": "vp9-1080p-web",
+  "filename": "网页版.webm" }        // 后缀跟着容器：.mp4 / .mov / .webm
+```
+
+- 预设多出三个键：`audio_codec`、`pixel_format`、`profile`；`crf`/`encoder_preset`/`audio_bitrate`
+  改成可以为 `null`——ProRes 由 profile 决定质量，VP9 的 crf 必须配 `-b:v 0`，PCM 无所谓码率。
+  `GET /v1/render-presets` 与 `capabilities.render_presets` 原样下发，界面只念不写。
+- 新增预设：`h265-1080p`、`h265-2160p`（MP4 + `hvc1`，让 QuickTime 和剪辑软件认）、
+  `vp9-1080p-web`（WebM + Opus）、`prores-422hq`（MOV + 24 位 PCM，`yuv444p10le`）。
+- `render.output_args(preset, sample_rate, frame_rate)` 是**唯一**把预设变成 FFmpeg 参数的地方，
+  按 codec 名字分派，只认 `OUTPUT_CODECS` 里的四个；不在表里的 codec 直接 422，不会拼出一条没验证过的
+  命令。调用方自始至终只能给 `preset_id`，拿不到任何原始参数位（AGENTS.md「不把 FFmpeg 参数作为工具暴露」）。
+- `pixel_format` 不是只写进 `-pix_fmt` 的装饰：它同时是解码段、`fit_stage` 与 `[vout]` 的 `format=`。
+  只在编码参数上写 4:4:4 而画面链中途压成 4:2:0，等于换个壳子撒谎。
+- 契约侧 `checked_render_name` 的后缀由 `preset_container(preset_id)` 查表得到，单条与批量共用这一条
+  规则；未知 `preset_id` 不在这里抢错误，仍由 `render.preset_by_id` 报 `UNKNOWN_PRESET`。
+  `jobs` 写文件前的同一处检查与 `.part.<container>` 临时名也改为跟随容器。
+- capabilities：新增 `output_containers`（`mp4/mov/webm`）与 `features.multi_codec_delivery`
+  （与其余渲染能力一样按 `media_ready` 声明）。
+- 工程 schema 仍是 v13，`Recipe`/`RenderBatchItem` 的形状没变，旧预设 id 与旧回执照读；预设表是
+  纯增量，1.56 之前存的交付方案不动。
+
+验收与实测：见 `tests/format_check.py`（契约自洽 + 参数分派 + 真实导出四份 + Cb 平面色差宽度）与
+`tests/desktop_format_check.ts`（界面那一行完全由预设算出）。
+
+**本轮抓到的一个真实交付缺陷**：FFmpeg 给 WebM/Opus 的第一条进度行是 `out_time_us=-6500`
+（Opus 编码器前置延迟把音频轨放到零之前），换算成整数 tick 是 -458640；`RenderJob` 的
+`rendered_ticks >= 0` 当场拒绝，worker 把任务判成 `RENDER_CRASHED`，而 `finally` 之后临时文件还挂在
+原地。任何一条 WebM 导出都会撞上它。修法是在读遥测这条边界上夹住——进度不是时间线的事实，不能原样
+写进带约束的状态里。这个缺陷不是设计出来的题，是新写的检查第一次真跑 VP9+Opus 时抓出来的。
+
+**没测的就不说**：HEVC 的标签不写「体积更小」。在一段 2 秒 1080p 合成测试片段（`testsrc2`）上实测
+x264 crf 23 得 SSIM 0.996313 / 1,409,249 B，x265 crf 24 得 0.996687 / 1,734,249 B，x265 crf 26 得
+0.995211 / 1,425,982 B——这段素材上 HEVC 并不省体积。实拍素材上通常更省，但本轮没有量过，
+所以预设只声明编码格式，不承诺体积。
+
+仍未完成：纯音频交付（MP3/WAV，需要让「没有画面的时间线」也能编译）、MXF/DPX 一类后期格式、
+路径遮罩的顶点/形状动画、多目标与长时遮挡跟踪、旋转估计、色彩节点图的分层与连线。

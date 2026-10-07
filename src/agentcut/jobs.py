@@ -18,7 +18,7 @@ from uuid import uuid4
 
 from .contracts import TIMEBASE, EditorError, Project, RenderBatch, RenderJob, RenderRequest
 from .media import _NO_WINDOW
-from .render import RenderPlan, compile_render_plan, marked_range
+from .render import RenderPlan, compile_render_plan, marked_range, preset_by_id
 
 STATUS_STEPS = ("queued", "running", "succeeded", "failed", "cancelled")
 TERMINAL = ("succeeded", "failed", "cancelled")
@@ -217,8 +217,11 @@ class JobRuntime:
 
     def _target_path(self, request: RenderRequest) -> Path:
         name = Path(request.filename).name
-        if not name.lower().endswith(".mp4"):
-            raise EditorError("OUTPUT_NAME_INVALID", "output file name must end with .mp4")
+        # The extension is the container the preset will actually write, so a delivered file cannot
+        # be a stream the wrapper cannot hold (an hvc1 track named .webm would never play back).
+        container = preset_by_id(request.preset_id)["container"]
+        if not name.lower().endswith(f".{container}"):
+            raise EditorError("OUTPUT_NAME_INVALID", f"output file name must end with .{container}")
         base = Path(request.folder) if request.folder else self.output_dir
         if not base.is_absolute() or "\x00" in (request.folder or ""):
             raise EditorError("OUTPUT_ROOT_INVALID", "output folder must be absolute")
@@ -498,7 +501,7 @@ class JobRuntime:
         )
         target = Path(job.output_path or (self.output_dir / job.filename))
         target.parent.mkdir(parents=True, exist_ok=True)
-        temp = target.with_suffix(".part.mp4")
+        temp = target.with_suffix(f".part.{preset_by_id(job.preset_id)['container']}")
         argv = plan.ffmpeg_argv(str(self.ffmpeg), str(temp))
         work = self.db_path.parent / "render-assets" / job_id
         work.mkdir(parents=True, exist_ok=True)
@@ -550,7 +553,13 @@ class JobRuntime:
                         seconds = int(value) / 1_000_000
                     except ValueError:
                         continue
-                    ticks = min(plan.duration_ticks, int(seconds * TIMEBASE))
+                    # A progress line is telemetry, not a fact about the timeline. WebM with Opus
+                    # really does report a negative `out_time_us` on its first packets (measured
+                    # -6500 us, i.e. -458640 ticks): the codec's encoder delay puts the audio track
+                    # before zero, and `RenderJob` rightly refuses a negative tick count. So the
+                    # reading is clamped here instead of being stored raw and crashing the job.
+                    ticks = max(0, min(plan.duration_ticks, int(seconds * TIMEBASE)))
+                    seconds = max(0.0, seconds)
                     now = time.time()
                     if now - last_write > 0.2 or ticks >= plan.duration_ticks:
                         last_write = now

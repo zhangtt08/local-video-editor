@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 13  # v13 gives a path mask a real box; older rows are fitted on load (ge=1).
-APP_VERSION = "1.56.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.57.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -474,13 +474,28 @@ RenderFit = Literal["contain", "cover", "stretch"]
 RenderRange = Literal["full", "marks"]
 
 
+def preset_container(preset_id: str) -> str | None:
+    """The container one preset writes, or None when no such preset exists.
+
+    `render_presets` is the only table of delivery targets, so the suffix a file name carries is
+    read from there instead of written down again beside each new format.
+    """
+    for item in render_presets():
+        if item["id"] == preset_id:
+            return item["container"]
+    return None
+
+
 def checked_render_name(value):
-    """One rule for one field: a bare `*.mp4` name, shared by the single and the batch request."""
+    """One rule for one field: a bare file name carrying its preset's container suffix, shared by
+    the single and the batch request. An unknown preset id is left to `render.preset_by_id`, which
+    names it and reports it as UNKNOWN_PRESET."""
     name = value.filename
     if "/" in name or "\\" in name or "\x00" in name or name in {".", ".."}:
         raise ValueError("filename must be a bare file name")
-    if not name.lower().endswith(".mp4"):
-        raise ValueError("filename must end with .mp4")
+    container = preset_container(value.preset_id)
+    if container is not None and not name.lower().endswith(f".{container}"):
+        raise ValueError(f"filename must end with .{container} for the {value.preset_id} preset")
     return value
 
 
@@ -1370,80 +1385,194 @@ class EditorError(Exception):
         return {"code": self.code, "message": self.message, "details": self.details}
 
 
+# Containers this build can write. A request picks a preset id, the preset names one of these, and
+# `jobs` requires the file name to carry the matching extension — so a delivered file is never a
+# stream the container cannot hold, and no caller can aim FFmpeg at an arbitrary muxer.
+OUTPUT_CONTAINERS = ("mp4", "mov", "webm")
+# The codecs `render.output_args` knows how to ask for. Anything outside this set is refused rather
+# than passed through, which is what keeps the preset table a closed vocabulary of encoder knobs.
+OUTPUT_CODECS = ("libx264", "libx265", "libvpx-vp9", "prores_ks")
+OUTPUT_AUDIO_CODECS = ("aac", "libopus", "pcm_s24le")
+
+
+def _preset(
+    preset_id: str,
+    label: str,
+    container: str,
+    codec: str,
+    *,
+    crf: int | None,
+    encoder_preset: str | None,
+    audio_codec: str,
+    audio_bitrate: str | None,
+    pixel_format: str,
+    scale: list[int] | None,
+    profile: int | None = None,
+) -> dict:
+    """One delivery target: encoder knobs from a closed set, never raw FFmpeg arguments.
+
+    `crf`, `encoder_preset` and `audio_bitrate` are None where the codec has no such knob: ProRes is
+    chosen by a profile, VP9 needs an explicit zero video bitrate next to its crf, and PCM is
+    lossless so a bitrate would be a lie. `pixel_format` is not cosmetic — it decides the chroma
+    subsampling the final graph stage is written to, so a 4:4:10-bit intermediate really does keep
+    the colour the composite had.
+    """
+    return {
+        "id": preset_id,
+        "label": label,
+        "container": container,
+        "codec": codec,
+        "crf": crf,
+        "encoder_preset": encoder_preset,
+        "audio_codec": audio_codec,
+        "audio_bitrate": audio_bitrate,
+        "pixel_format": pixel_format,
+        "profile": profile,
+        "scale": scale,
+    }
+
+
 def render_presets() -> list[dict]:
     """Controlled output presets. Callers choose one; they never pass encoder flags."""
 
     return [
-        {
-            "id": "h264-source-quality",
-            "label": "原始画质 H.264（推荐交付）",
-            "container": "mp4",
-            "codec": "libx264",
-            "crf": 18,
-            "encoder_preset": "medium",
-            "audio_bitrate": "256k",
-            "scale": None,
-        },
-        {
-            "id": "h264-1080p",
-            "label": "1080p 标准（体积均衡）",
-            "container": "mp4",
-            "codec": "libx264",
-            "crf": 23,
-            "encoder_preset": "veryfast",
-            "audio_bitrate": "192k",
-            "scale": [1920, 1080],
-        },
-        {
-            "id": "h264-720p-web",
-            "label": "720p 网络分享（最小体积）",
-            "container": "mp4",
-            "codec": "libx264",
-            "crf": 26,
-            "encoder_preset": "veryfast",
-            "audio_bitrate": "128k",
-            "scale": [1280, 720],
-        },
-        {
-            "id": "h264-2160p",
-            "label": "4K 高画质存档",
-            "container": "mp4",
-            "codec": "libx264",
-            "crf": 20,
-            "encoder_preset": "slow",
-            "audio_bitrate": "320k",
-            "scale": [3840, 2160],
-        },
-        {
-            "id": "h264-1080x1920-vertical",
-            "label": "9:16 竖屏（抖音/Shorts 交付）",
-            "container": "mp4",
-            "codec": "libx264",
-            "crf": 20,
-            "encoder_preset": "veryfast",
-            "audio_bitrate": "192k",
-            "scale": [1080, 1920],
-        },
-        {
-            "id": "h264-1080-square",
-            "label": "1:1 方形（信息流卡片）",
-            "container": "mp4",
-            "codec": "libx264",
-            "crf": 21,
-            "encoder_preset": "veryfast",
-            "audio_bitrate": "160k",
-            "scale": [1080, 1080],
-        },
-        {
-            "id": "proxy-540p-fast",
-            "label": "540p 代理（快速查看/审片）",
-            "container": "mp4",
-            "codec": "libx264",
-            "crf": 30,
-            "encoder_preset": "superfast",
-            "audio_bitrate": "96k",
-            "scale": [960, 540],
-        },
+        _preset(
+            "h264-source-quality",
+            "原始画质 H.264（推荐交付）",
+            "mp4",
+            "libx264",
+            crf=18,
+            encoder_preset="medium",
+            audio_codec="aac",
+            audio_bitrate="256k",
+            pixel_format="yuv420p",
+            scale=None,
+        ),
+        _preset(
+            "h264-1080p",
+            "1080p 标准（体积均衡）",
+            "mp4",
+            "libx264",
+            crf=23,
+            encoder_preset="veryfast",
+            audio_codec="aac",
+            audio_bitrate="192k",
+            pixel_format="yuv420p",
+            scale=[1920, 1080],
+        ),
+        _preset(
+            "h264-720p-web",
+            "720p 网络分享（最小体积）",
+            "mp4",
+            "libx264",
+            crf=26,
+            encoder_preset="veryfast",
+            audio_codec="aac",
+            audio_bitrate="128k",
+            pixel_format="yuv420p",
+            scale=[1280, 720],
+        ),
+        _preset(
+            "h264-2160p",
+            "4K 高画质存档",
+            "mp4",
+            "libx264",
+            crf=20,
+            encoder_preset="slow",
+            audio_codec="aac",
+            audio_bitrate="320k",
+            pixel_format="yuv420p",
+            scale=[3840, 2160],
+        ),
+        _preset(
+            "h264-1080x1920-vertical",
+            "9:16 竖屏（抖音/Shorts 交付）",
+            "mp4",
+            "libx264",
+            crf=20,
+            encoder_preset="veryfast",
+            audio_codec="aac",
+            audio_bitrate="192k",
+            pixel_format="yuv420p",
+            scale=[1080, 1920],
+        ),
+        _preset(
+            "h264-1080-square",
+            "1:1 方形（信息流卡片）",
+            "mp4",
+            "libx264",
+            crf=21,
+            encoder_preset="veryfast",
+            audio_codec="aac",
+            audio_bitrate="160k",
+            pixel_format="yuv420p",
+            scale=[1080, 1080],
+        ),
+        _preset(
+            "proxy-540p-fast",
+            "540p 代理（快速查看/审片）",
+            "mp4",
+            "libx264",
+            crf=30,
+            encoder_preset="superfast",
+            audio_codec="aac",
+            audio_bitrate="96k",
+            pixel_format="yuv420p",
+            scale=[960, 540],
+        ),
+        # HEVC's rate-control tiers were measured, not guessed (see docs/optimization.md 1.57): on a
+        # 2-second 1080p synthetic clip x265 crf 24 reached SSIM 0.996687 where x264 crf 23 gave
+        # 0.996313, so this is a quality tier, not a promised size win — the label says no more than
+        # that. hvc1 (not hev1) so QuickTime and editors accept the MP4.
+        _preset(
+            "h265-1080p",
+            "1080p HEVC/H.265（需播放器支持）",
+            "mp4",
+            "libx265",
+            crf=24,
+            encoder_preset="medium",
+            audio_codec="aac",
+            audio_bitrate="192k",
+            pixel_format="yuv420p",
+            scale=[1920, 1080],
+        ),
+        _preset(
+            "h265-2160p",
+            "4K HEVC/H.265 存档",
+            "mp4",
+            "libx265",
+            crf=22,
+            encoder_preset="medium",
+            audio_codec="aac",
+            audio_bitrate="256k",
+            pixel_format="yuv420p",
+            scale=[3840, 2160],
+        ),
+        _preset(
+            "vp9-1080p-web",
+            "1080p WebM/VP9（网页与开放分发）",
+            "webm",
+            "libvpx-vp9",
+            crf=32,
+            encoder_preset=None,
+            audio_codec="libopus",
+            audio_bitrate="128k",
+            pixel_format="yuv420p",
+            scale=[1920, 1080],
+        ),
+        _preset(
+            "prores-422hq",
+            "ProRes 422 HQ 中间码（后期交接，体积大）",
+            "mov",
+            "prores_ks",
+            crf=None,
+            encoder_preset=None,
+            audio_codec="pcm_s24le",
+            audio_bitrate=None,
+            pixel_format="yuv444p10le",
+            scale=None,
+            profile=3,
+        ),
     ]
 
 
@@ -1454,6 +1583,7 @@ def capabilities(media_ready: bool = False) -> dict:
         # drift from any future burn-in or export check.
         "safe_area_insets": SAFE_AREA_INSETS,
         "mask_vertex_limit": MASK_VERTEX_LIMIT,
+        "output_containers": list(OUTPUT_CONTAINERS),
         # The build identity, next to the schema it speaks: an Agent reading this document can tell
         # which engine answered, and the desktop shows it in the title bar.
         "app_version": APP_VERSION,
@@ -1548,6 +1678,7 @@ def capabilities(media_ready: bool = False) -> dict:
             "silence_detection": media_ready,
             "loudness_metering": media_ready,
             "output_fit_modes": media_ready,
+            "multi_codec_delivery": media_ready,
             "batch_delivery": media_ready,
             "master_loudness": media_ready,
             "master_limiter": media_ready,

@@ -64,6 +64,8 @@
 | 标记拖拽移动、双击改名与五种颜色（落点走磁吸，一次提交 = 一个 revision） | 已实现 | `desktop/src/views/Timeline.tsx` 的 `MarkerEditor`；1280×800 同源 iframe 真实指针事件验收（拖动改 `at_ticks`、单击仍跳转、双击弹面板），命令与 Agent 用的 `marker.set` 完全同一条 |
 | 交付画幅：竖屏 9:16 与方形 1:1 预设，导出时三种适配（完整保留补边 / 裁切填满 / 拉伸填满），选择记进渲染任务 | 已实现 | `tests/fit_check.py`；三种适配各自导出 1080×1920 实测：源里 60×60 的白方块落地宽高比 **contain 1.000、cover 0.998、stretch 0.317**，顶行均值 **0.0 / 64.0 / 65.8**（只有 contain 有黑边），源最左侧的白色竖条在 contain/stretch 出现在 x=0、在 cover 找不到（x=222 起才是方块）证明真的被裁掉；`fit` 进入渲染指纹（同 request_id 换 fit 得 409），未知适配名 422，任务读回 `fit=cover` |
 | 批量交付：一次点击出多个画幅（最多 4 条，各自预设/适配/文件名），整批先编译通过才入队 | 已实现 | `tests/batch_check.py`；一次调用实测导出 1920×1080 + 1080×1920 + 1080×1080 三份；`dry_run` 批次不排队不落盘；重放同 request_id 返回同样三个任务、任务表仍是 3 条；第二条预设名写错 → 422 且任务表**仍是 3 条**（变异测试：去掉预编译后当场报多出 `横版-2.mp4` 的部分排队）；同名两条、5 条一批、`sub/dir.mp4`、无扩展名、未知适配名全部被契约拒绝 |
+| 交付格式：不再只有 H.264/MP4。HEVC(hvc1)/MP4、VP9+Opus/WebM、ProRes 422 HQ+PCM/MOV 各一条预设；容器、视频/音频编码、采样格式都由预设决定，文件名后缀必须与预设的容器一致 | 已实现（1.57） | `tests/format_check.py`：同一条 2 秒时间线走真实 HTTP + 任务 worker 各导一份，ffprobe 逐条核对 `codec_name / pix_fmt / 音频编码 / 采样率 / 时长 / major_brand`（h264→`isom`、prores→`qt`，WebM 另查 EBML DocType，因为 ffprobe 对 MKV 与 WebM 报同一个 `format_name`）；实测 `h264/yuv420p+aac`、`hevc/yuv420p+aac`、`vp9/yuv420p+opus`、`prores/yuv444p10le+pcm_s24le`，四份里 440 Hz 探针 0.088~0.089，时长 2.000 秒（WebM 2.008 秒，按容器容差断言）；**采样格式是走完整条画面链的**：同一条 1:1 画幅时间线里红\|蓝接缝在 Cb 平面上的过渡像素 ProRes **0 个**、H.264 **2 个**（平台值 90/240），把 `format=` 改回写死 `yuv420p` 这一条立刻变红；编码器参数按 codec 分派并被断言（VP9 不给 `-preset` 且必须 `-b:v 0`、ProRes 不给 `-crf`/`-b:a`、`-movflags` 只出现在 mp4/mov），预设表里出现未知 codec 时 `output_args` 直接 422 而不是拼出一条没验证过的命令；`.mp4` 名字配 WebM 预设被 422 拒绝并在消息里点名 `.webm`，未知预设仍报 `UNKNOWN_PRESET` 不被后缀规则抢走；`tests/desktop_format_check.ts` 断言界面的编码器行完全由预设算出（未知名字原样透出，不冒充 H.264） |
+| 交付缺陷修复：WebM/Opus 一导出就崩掉任务——FFmpeg 的进度行第一拍就报 `out_time_us=-6500`（Opus 编码器前置延迟把音频轨放在零之前），换成 tick 是 **-458640**，存进 `RenderJob` 被 `rendered_ticks >= 0` 拒绝，任务以 `RENDER_CRASHED` 收场、临时文件留在原地 | 已实现（1.57） | 缺陷是新写的 `tests/format_check.py` 第一次真跑 VP9+Opus 导出时抓到的（不是推测：包内 FFmpeg 6.1.1 实测首行 `out_time_us=-6500 / out_time=-00:00:00.006500`）；修法是在读进度这条边界上夹住——遥测不是时间线的事实；同一检查里 `vp9-1080p-web` 那条任务现在报 `succeeded`，产出 2.008 秒可 ffprobe 的 WebM |
 | 母带响度目标：一次 64×36 探测渲染量出整片真实混音，写一个母带增益对齐 -14 LUFS（真峰值不超 -1 dBTP） | 已实现 | `tests/master_check.py`；探测渲染量到 **-25.9 LUFS**，同一条时间线的完整导出实测 **-25.9 LUFS（相差 0.00 LU）**；点一次对齐后导出实测 **-20.0 LUFS** 对 -20.0 目标（真峰值 -18.5 dBTP）；到不了的目标如实报 `limited_by=gain_range` 只到 -13.86 LUFS；已对齐时再点报 422「already sits」；撤销回到 1.0；探测文件用完即删 |
 | 母带限制器：真峰值由 FFmpeg `alimiter`（attack 5 ms / release 80 ms，关掉自动电平）守住，增益不再被峰值上限压住 | 已实现 | `tests/limiter_check.py`；同一条 -3.7 LUFS / 峰值 -2.2 dBTP 的素材，目标 -6 LUFS + 上限 -7 dBTP：**不开限制器**增益被压到 0.5754、只到 -8.5 LUFS（`limited_by=ceiling`）；**开限制器**增益 0.7674 不被压，导出实测 **-7.7 LUFS / 峰值 -6.4 dBTP**（峰值比未处理低 4.2 dB，比被压的方案响 0.8 LU）；端点写入后再探一次，`after` 与真实导出相差 ≤0.3 LU/dB；`ceiling_dbtp=-20` 越界 422；撤销把限制器、上限与母带增益一起还原 |
 | 自动闪避（配乐让口播）：用与「去空白」同一个静音扫描找出说话区间，写成音量关键帧 | 已实现 | `tests/duck_check.py`；包络与测试内**独立重写的梯形函数**逐点比较误差 0.0e+00，断点只落在整帧上（4 秒 2 段说话 = 12 个断点，不是 120 个）；说话区间实测精确等于合成的 [(1.0, 2.5), (3.5, 4.5)] 秒；**导出实测**：同一条配乐在无闪避成片里 -13.5 dB，闪避后说话段 -25.5 dB、停顿段 -13.5 dB，12.00 dB 之差对 12.0 dB 请求；再点一次是替换不是叠加（20 dB 重跑后最低点 0.1、无重复时间点）；替换 `gain` 不动 `opacity` 的曲线；四种非法替换（时间倒序、混第二种属性、增益 9.0、空表）全部 422 且不写库；变异测试：把释放斜坡写死 → 门禁止报 0.7239，把「替换」改成「追加」→ 第二次闪避直接 422 PROJECT_LIMIT |
@@ -168,7 +170,7 @@ desktop/         electron/（无边框窗口 + 引擎生命周期） src/（Reac
 design/          旧静态设计稿；现行深色工作台以 desktop/src/ 为准
 examples/        Agent 调用示例与 MCP 配置模板
 docs/            architecture / api / decisions / agent-tasks / validation
-tests/           self_check.py（HTTP + MCP） suite_check.py（逐个跑 40 项 *_check.py） media_check.py（真实媒体） editing_check.py（编辑/动画/字幕/变速/像素）
+tests/           self_check.py（HTTP + MCP） suite_check.py（逐个跑 49 项 *_check.py） media_check.py（真实媒体） editing_check.py（编辑/动画/字幕/变速/像素）
 scripts/         build_engine.py（打包引擎） build_icon.py（生成图标）
 ```
 
@@ -198,7 +200,7 @@ uv run python tests/suite_check.py grade marks fourpoint   # 只跑名字含这�
 - 同轨重叠只允许明确的两镜头转场；画面轨支持上下层合成和 8 种混合模式，已支持六属性关键帧。
 - 历史保存每次全量快照，频繁编辑大工程会让数据库变大；未做结构共享与压缩。
 - 安装包未做代码签名，首次运行 Windows 可能提示 SmartScreen。
-- 导出为 H.264/AAC MP4 预设；未覆盖其它容器与编解码器，也不承诺可再分发全部 codec。
+- 导出预设覆盖 mp4（H.264/HEVC+AAC）、webm（VP9+Opus）、mov（ProRes 422 HQ + 24 位 PCM）三种容器；仍没有纯音频交付（MP3/WAV）、MXF/DPX 一类的后期格式，也不承诺可再分发全部 codec。中间码那条保住的是 4:4:4 采样与 10 位量化——时间线与调色链仍在 8 位精度上算，不是 10 位动态范围。
 
 ## 工作台升级
 

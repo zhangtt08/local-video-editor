@@ -285,13 +285,46 @@ export type RenderJob = {
 export type Preset = {
   id: string;
   label: string;
+  /** 容器与编解码器由引擎的预设表决定，界面只念出来，不自己拼 FFmpeg 参数。 */
   container: string;
   codec: string;
-  crf: number;
-  encoder_preset: string;
-  audio_bitrate: string;
+  crf: number | null;
+  encoder_preset: string | null;
+  audio_codec: string;
+  audio_bitrate: string | null;
+  pixel_format: string;
+  profile: number | null;
   scale: [number, number] | null;
 };
+
+/** 引擎给的是 FFmpeg 的编码器名，这一层只负责念给人听；不认识的名字原样显示，不猜。 */
+export const CODEC_NAMES: Record<string, string> = {
+  libx264: "H.264",
+  libx265: "HEVC",
+  "libvpx-vp9": "VP9",
+  prores_ks: "ProRes 422 HQ",
+  aac: "AAC",
+  libopus: "Opus",
+  pcm_s24le: "PCM 24-bit",
+};
+
+const SAMPLING_NAMES: Record<string, string> = {
+  yuv420p: "4:2:0 8-bit",
+  yuv444p10le: "4:4:4 10-bit",
+};
+
+/**
+ * The codec line under a preset. Written from the preset the engine returned, never from a string
+ * baked into the panel: a preset list that grows a format must show that format, not yesterday's
+ * "H.264 / AAC". Sampling is only named when it differs from the plain 4:2:0 8-bit every H.264
+ * delivery uses, so the common rows stay short.
+ */
+export function codecText(item: Preset): string {
+  const video = CODEC_NAMES[item.codec] ?? item.codec;
+  const audio = CODEC_NAMES[item.audio_codec] ?? item.audio_codec;
+  const sampling = SAMPLING_NAMES[item.pixel_format];
+  return `${video} / ${audio}${sampling && item.pixel_format !== "yuv420p" ? ` · ${sampling}` : ""}`;
+}
 
 export type Capabilities = {
   api_version: string;

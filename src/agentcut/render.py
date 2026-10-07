@@ -169,6 +169,60 @@ def preset_by_id(preset_id: str) -> dict:
     raise EditorError("UNKNOWN_PRESET", "unknown render preset", 422, preset_id=preset_id)
 
 
+def output_args(preset: dict, sample_rate: int, frame_rate: float) -> list[str]:
+    """Encode and mux arguments for one preset, switched by the codec the preset names.
+
+    The vocabulary is closed here, not in the caller: a preset may only name a codec this function
+    knows, so a render request steers FFmpeg with an id and nothing else. Each branch is what that
+    encoder actually accepts rather than one template forced on all of them — VP9 takes no
+    `-preset` and wants `-b:v 0` beside its crf, ProRes takes neither and is chosen by a profile,
+    PCM has no bitrate, and `-movflags` belongs to the mp4/mov muxer only.
+    """
+    codec = preset["codec"]
+    video = ["-c:v", codec]
+    if codec in ("libx264", "libx265"):
+        video += ["-preset", str(preset["encoder_preset"]), "-crf", str(preset["crf"])]
+        if codec == "libx265":
+            # hvc1, not hev1: the parameter sets go into the sample description, which is what lets
+            # QuickTime and editors play the file instead of only FFmpeg reading it back.
+            video += ["-tag:v", "hvc1"]
+    elif codec == "libvpx-vp9":
+        video += [
+            "-b:v",
+            "0",
+            "-crf",
+            str(preset["crf"]),
+            "-deadline",
+            "good",
+            "-cpu-used",
+            "4",
+            "-row-mt",
+            "1",
+        ]
+    elif codec == "prores_ks":
+        video += ["-profile:v", str(preset["profile"])]
+    else:
+        raise EditorError(
+            "UNKNOWN_PRESET", f"this build cannot encode {codec}", 422, preset_id=preset["id"]
+        )
+    # GOP sizing stays the same on every codec: the checks in curvefidelity/gradelevels read frames
+    # at arbitrary times, and a keyframe every two seconds is what makes that cheap.
+    video += [
+        "-pix_fmt",
+        preset["pixel_format"],
+        "-keyint_min",
+        str(max(1, round(frame_rate))),
+        "-g",
+        str(max(2, round(frame_rate) * 2)),
+    ]
+    audio = ["-c:a", preset["audio_codec"]]
+    if preset["audio_bitrate"]:
+        audio += ["-b:a", preset["audio_bitrate"]]
+    audio += ["-ar", str(sample_rate), "-ac", "2"]
+    mux = ["-movflags", "+faststart"] if preset["container"] in ("mp4", "mov") else []
+    return [*video, *audio, *mux]
+
+
 @dataclass
 class RenderPlan:
     input_args: list[str] = field(default_factory=list)
@@ -330,6 +384,11 @@ def compile_render_plan(
     fps = f"{settings.frame_rate.numerator}/{settings.frame_rate.denominator}"
     rate = settings.frame_rate.numerator / settings.frame_rate.denominator
     size = f"{out_w}x{out_h}"
+    # The preset's sampling format runs through the whole picture chain, not just the encoder flag:
+    # a 4:4:10-bit intermediate has to keep 4:4:4 from the decode and the framing stages too, or the
+    # chroma is thrown away upstream and the wrapper only looks deep. Every H.264/HEVC/VP9 preset
+    # says yuv420p, so the graphs those presets compile are unchanged.
+    pixel_format = preset["pixel_format"]
 
     video_tracks = [track for track in project.tracks if track.kind == "video" and not track.hidden]
     audio_tracks = [track for track in project.tracks if track.kind == "audio" and not track.muted]
@@ -417,7 +476,7 @@ def compile_render_plan(
             f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease:flags=bicubic,"
             f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color=black,"
         )
-    fit_stage = f"{sizing}setsar=1,fps={fps},format=yuv420p,settb=AVTB"
+    fit_stage = f"{sizing}setsar=1,fps={fps},format={pixel_format},settb=AVTB"
 
     nested_sources = set()
 
@@ -508,7 +567,7 @@ def compile_render_plan(
         )
         label = plan.tag("blank")
         plan.filters.append(
-            f"[{index}:v]fps={fps},format={'rgba' if _transparent else 'yuv420p'},"
+            f"[{index}:v]fps={fps},format={'rgba' if _transparent else pixel_format},"
             f"setsar=1,settb=AVTB{label}"
         )
         return label
@@ -553,7 +612,7 @@ def compile_render_plan(
 
     if plan.mode == "cut":
         chain, _, pieces = track_chain(layers[0])
-        plan.filters.append(f"{chain}format=yuv420p[vout]")
+        plan.filters.append(f"{chain}format={pixel_format}[vout]")
         plan.summary["segments"] = pieces
     else:
         current = blank_label(total)
@@ -809,7 +868,7 @@ def compile_render_plan(
             elif mode != "normal":
                 current = blend_track(plan, lower, current, mode)
             painted.append(len(entries))
-        plan.filters.append(f"{current}format={'rgba' if _transparent else 'yuv420p'}[vout]")
+        plan.filters.append(f"{current}format={'rgba' if _transparent else pixel_format}[vout]")
         plan.summary["layers"] = len(layers)
     plan.video_label = "[vout]"
 
@@ -911,34 +970,15 @@ def compile_render_plan(
     else:
         plan.duration_ticks = total
 
-    plan.output_args = [
-        "-c:v",
-        preset["codec"],
-        "-preset",
-        preset["encoder_preset"],
-        "-crf",
-        str(preset["crf"]),
-        "-pix_fmt",
-        "yuv420p",
-        "-keyint_min",
-        str(max(1, round(rate))),
-        "-g",
-        str(max(2, round(rate) * 2)),
-        "-c:a",
-        "aac",
-        "-b:a",
-        preset["audio_bitrate"],
-        "-ar",
-        str(settings.sample_rate),
-        "-ac",
-        "2",
-        "-movflags",
-        "+faststart",
-    ]
+    plan.output_args = output_args(preset, settings.sample_rate, rate)
     plan.summary.update(
         {
             "encoder": f"{preset['label']} ({preset['container']})",
             "preset_id": preset["id"],
+            "container": preset["container"],
+            "video_codec": preset["codec"],
+            "audio_codec": preset["audio_codec"],
+            "pixel_format": preset["pixel_format"],
             "resolution": size,
             "frame_rate": fps,
             "project": {"id": project.id, "name": project.name, "revision": project.revision},
