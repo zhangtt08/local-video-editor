@@ -615,6 +615,21 @@ def media_suite(folder: Path) -> None:
         want = 255 * expected_source(plan, at) / 4
         got = red_at(video, at)
         assert abs(got - want) <= 6, (at, got, want)
+    # The five points above sit near the segment ends. A curve can be right at every knot and wrong
+    # in the middle of a piece, so sweep the whole export: every tenth of a second, and record the
+    # worst offender rather than stopping at the first.
+    swept = []
+    for step in range(1, 40):
+        at = step / 10
+        want = 255 * expected_source(plan, at) / 4
+        drift = abs(red_at(video, at) - want)
+        swept.append((drift, at, want))
+    worst = max(swept)
+    assert worst[0] <= 8, f"the ramp drifts {worst[0]:.1f} levels at {worst[1]}s"
+    print(
+        f"   curve reads true across the export: {len(swept)} probes, worst {worst[0]:.1f} levels"
+        f" (at {worst[1]}s)"
+    )
     assert abs(red_at(video, 2.0) - 255 * 2.0 / 4) > 30, (
         "a curve the graph ignored sits at the linear level"
     )
