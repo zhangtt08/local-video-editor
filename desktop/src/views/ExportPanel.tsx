@@ -16,7 +16,7 @@ import {
   timelineEnd,
   useApp,
 } from "../store";
-import { codecText, FIT_MODES, type RenderFit, type RenderRange } from "../engine";
+import { codecText, presetIsAudio, FIT_MODES, type RenderFit, type RenderRange } from "../engine";
 
 const POLL_MS = 1500;
 
@@ -102,8 +102,11 @@ export function ExportPanel(): JSX.Element {
           : "";
   const timelineName = app.sequenceId ? project.sequences?.[app.sequenceId]?.name ?? project.name : project.name;
   const outSize = preset?.scale ?? [project.settings.width, project.settings.height];
-  const fitHint =
-    outSize[0] / outSize[1] === project.settings.width / project.settings.height
+  // 音频交付没有画面：画幅适配与「附带竖屏」对它都不成立，面板不收起来就会让人以为它们参与了。
+  const audioOnly = presetIsAudio(preset);
+  const fitHint = audioOnly
+    ? "这条交付只有声音，没有画面，也就没有画幅适配一说"
+    : outSize[0] / outSize[1] === project.settings.width / project.settings.height
       ? "导出比例与时间线一致，三种适配的结果相同"
       : `时间线 ${project.settings.width}×${project.settings.height} 要放进 ${outSize[0]}×${outSize[1]}，这里决定多出来的部分怎么处理`;
   const vertical = presets.find((item) => item.id === VERTICAL_PRESET) ?? null;
@@ -121,7 +124,7 @@ export function ExportPanel(): JSX.Element {
   // 方案存的就是「点开始导出会发出去的那组交付」，所以这里只算一次，界面和方案不会各说一套。
   const pendingItems: RenderBatchItem[] = [
     { preset_id: preset?.id ?? "", filename: finalName, fit, range },
-    ...(alsoVertical && vertical
+    ...(alsoVertical && vertical && !audioOnly
       ? [{ preset_id: vertical.id, filename: verticalName, fit: "cover" as RenderFit, range }]
       : []),
   ];
@@ -190,7 +193,9 @@ export function ExportPanel(): JSX.Element {
                         {item.container}
                         {item.scale
                           ? ` · ${item.scale[0]}×${item.scale[1]}`
-                          : ` · 跟随工程 ${project.settings.width}×${project.settings.height}`}{" "}
+                          : presetIsAudio(item)
+                            ? " · 无画面"
+                            : ` · 跟随工程 ${project.settings.width}×${project.settings.height}`}{" "}
                         · {codecText(item)}
                       </span>
                     </span>
@@ -209,7 +214,8 @@ export function ExportPanel(): JSX.Element {
                   role="radio"
                   aria-checked={fit === mode.id}
                   className={`fit-chip${fit === mode.id ? " active" : ""}`}
-                  title={mode.hint}
+                  title={audioOnly ? "音频交付没有画面，这一项不参与" : mode.hint}
+                  disabled={audioOnly}
                   onClick={() => setFit(mode.id)}
                 >
                   {mode.label}
@@ -368,9 +374,10 @@ export function ExportPanel(): JSX.Element {
               <label className="batch-row">
                 <input
                   type="checkbox"
-                  checked={alsoVertical}
+                  checked={alsoVertical && !audioOnly}
                   onChange={(event) => setAlsoVertical(event.target.checked)}
-                  disabled={Boolean(blocked)}
+                  disabled={Boolean(blocked) || audioOnly}
+                  title={audioOnly ? "音频交付没有画面，也就没有竖屏那一条" : undefined}
                 />
                 附带一个 9:16 竖屏（裁切填满），一次交付两个画幅
               </label>
@@ -380,12 +387,12 @@ export function ExportPanel(): JSX.Element {
               full
               onClick={() =>
                 // 点下去要发出去的就是 pendingItems 那一组，界面不再另写一份交付清单。
-                alsoVertical && vertical
+                pendingItems.length > 1
                   ? void startRenderBatch(pendingItems, folder || undefined)
                   : void startRender(preset.id, finalName, folder || undefined, fit, range)
               }
               disabled={Boolean(blocked) || Boolean(app.busy)}
-              title={blocked || (alsoVertical
+              title={blocked || (pendingItems.length > 1
                 ? `按 r${project.revision} 导出 ${finalName} 与 ${verticalName}`
                 : `按 r${project.revision} 导出 ${finalName}`)}
             >

@@ -1121,3 +1121,33 @@ x264 crf 23 得 SSIM 0.996313 / 1,409,249 B，x265 crf 24 得 0.996687 / 1,734,2
 
 仍未完成：纯音频交付（MP3/WAV，需要让「没有画面的时间线」也能编译）、MXF/DPX 一类后期格式、
 路径遮罩的顶点/形状动画、多目标与长时遮挡跟踪、旋转估计、色彩节点图的分层与连线。
+
+
+## 1.58 纯音频交付：`codec=null` 表示根本没有画面链（工程 schema 不变）
+
+「只要声音」是交付页的常规出口（口播、配乐、进混音台），以前这里根本没有出口：`compile_render_plan`
+遇到没有可见画面层的时间线就报 `EMPTY_TIMELINE`，而所有预设都强制 `-c:v`。
+
+```
+POST /v1/projects/{id}/renders
+{ "request_id": "r", "expected_revision": 4, "preset_id": "audio-mp3",
+  "filename": "口播.mp3" }        // 容器 mp3 / wav / flac，后缀仍是预设的事
+```
+
+- 三条新预设：`audio-mp3`（libmp3lame 192k）、`audio-wav`（pcm_s24le）、`audio-flac`。它们的
+  `codec`、`pixel_format`、`scale` 都是 `null`，这是「没有画面」在契约里的唯一写法。
+- `OUTPUT_CONTAINERS` 加 `mp3/wav/flac`，`OUTPUT_CODECS` 加 `None`，`OUTPUT_AUDIO_CODECS` 加
+  `libmp3lame/flac`；`render.output_args` 对 `codec is None` 只给 `-vn` 与音频参数，不给
+  `-c:v`/`-pix_fmt`/`-movflags`。
+- `RenderPlan.mode` 多一种取值 `"audio"`：画面链**整段不编译**（不是编完再丢弃），所以 `ffmpeg_argv`
+  只有一个 `-map`，输入里只出现有声素材。区间导出（`range=marks`）此时只 `atrim`，不再 `trim` 画面。
+- 只有画面、没有声音的时间线：按名字拒绝 `EMPTY_TIMELINE`「an audio deliverable needs audible
+  material」；同一条时间线出画面照旧。
+- capabilities 新增 `output_containers` 的三个音频容器与 `features.audio_delivery`。
+- 界面：`presetIsAudio()` 为真时，「画幅适配」三个芯片灰掉并写明「音频交付没有画面」，「附带竖屏」
+  同样灰掉，预设那行写「仅音频 · MP3」而不是编一个不存在的编码器；主按钮要发的清单仍只算一次
+  （`pendingItems`），灰掉的那条不会偷偷混进批次。
+
+验收：`tests/audio_check.py`（参数分派 / 画面链没建 / 无声时间线拒绝 / 三份真实导出 + 单流 +
+两个音都在 + 与视频成片同一次混音的 LUFS / 区间音频 / 后缀互斥）与
+`tests/desktop_format_check.ts`（音频行的文字与 `presetIsAudio` 的三态）。

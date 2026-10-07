@@ -122,7 +122,7 @@ def plan_suite(folder: Path) -> None:
     presets = {item["id"]: item for item in render_presets()}
     assert presets["h264-1080x1920-vertical"]["scale"] == [1080, 1920], presets
     assert presets["h264-1080-square"]["scale"] == [1080, 1080], presets
-    assert len(presets) == 11, sorted(presets)
+    assert len(presets) == 14, sorted(presets)
 
     contain = stage_for(project, "contain")
     cover = stage_for(project, "cover")

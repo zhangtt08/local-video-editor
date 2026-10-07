@@ -1586,3 +1586,38 @@ WebM 第一次真跑就崩：FFmpeg 的进度行对 WebM/Opus 的第一拍报 `o
   采到 1480×900 一帧（PNG 127,127 B，MD5 `bcbd4f49b912e5653328fc20d3f10c0c`，与 1.56 那张不同），
   标题栏裁条放大后逐字读作「导出 · 引擎在线 v1.57.0」；关闭后 `Get-Process AgentCut, agentcut` 无残留。
   这一帧是用户 `%APPDATA%` 里的真实工程，只截图未编辑。
+
+## 1.58.0 纯音频交付：MP3 / WAV / FLAC，画面链整段不编译（2026-10-07）
+
+1.57 把「导出只有一种答案」拆开了，这一版补上交付页的另一半：只要声音。做法不是「渲染视频再抽音频」，
+而是让预设说「没有画面」，编译器就真的不建画面链。
+
+- 契约：`codec` / `pixel_format` / `scale` 允许 `null`，三条音频预设
+  `audio-mp3`（libmp3lame 192k）、`audio-wav`（pcm_s24le）、`audio-flac`；
+  `OUTPUT_CONTAINERS` 加 `mp3/wav/flac`，`OUTPUT_CODECS` 加 `None`。
+- 编译：`RenderPlan.mode` 多一种 `"audio"`，`video_label=""`，`ffmpeg_argv` 只剩一个 `-map`；
+  区间导出只 `atrim`。`EMPTY_TIMELINE` 从「必须有可见画面层」改成「按交付种类要求相应内容」——
+  音频交付要的是**听得见的素材**，只有画面的无声时间线按名字拒绝。
+- 界面：`presetIsAudio()` 驱动「画幅适配」与「附带竖屏」灰掉并说明原因，预设行写「仅音频 · MP3」。
+
+### 验证与突变
+
+`tests/audio_check.py`（新增，套件第 50 项）实测：
+
+- 参数层：三条音频预设 `-vn`、无 `-c:v`、无 `-pix_fmt`、无 `-movflags`；mp3 有 `-b:a 192k`，
+  wav/flac 没有 `-b:a`（无损谈码率是撒谎）；反过来视频预设没有 `-vn`。
+- 画面链真的没建：同一条时间线（有声画面 + **无声**上层 + 配乐轨）里，音频计划 4 段滤镜 / 3 个输入，
+  视频计划 11 段；那段无声素材在音频计划的输入里**根本不出现**，在视频计划里出现。
+  突变：把跳过条件改成 `if False and audio_only:`（即照常建画面链），检查立刻
+  `AssertionError: [vout]`——这条不是自我确认。
+- 真实导出（HTTP + worker）：`mp3 48000Hz×2, 3.024s, 73,197 B`、`pcm_s24le 3.000s, 864,102 B`、
+  `flac 3.000s, 186,048 B`，每条 ffprobe 只有**一个流**，容器名按 demuxer 核对（不按扩展名）；
+  440 Hz 口播 0.085 与 220 Hz 配乐 0.042 都在里面。
+- **同一次混音**而不是重算：ebur128 量视频成片 -20.8 LUFS，WAV / FLAC 同为 -20.8，MP3 -21.1
+  （有损，差 0.3 LU，容差 0.6）。区间导出实测 1.032 秒对 1.000 秒的标记窗口（MP3 帧填充）。
+- 拒绝面：`.mp4` 名字配音频预设、`.mp3` 名字配视频预设，各自 422 并点名要的后缀。
+- 壳层：`tests/desktop_format_check.ts` 增加音频三行与 `presetIsAudio` 三态（含 `null` 预设不是音频）。
+- 门禁：`ruff check` / `format --check` 全绿，`npm run typecheck` 通过，
+  `tests/suite_check.py` **50/50**（单独串行）。
+
+仍未做：MXF/DPX 等后期格式；音频交付仍走同一张混音图，没有独立的总线插件（EQ/压缩）。

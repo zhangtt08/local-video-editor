@@ -179,42 +179,48 @@ def output_args(preset: dict, sample_rate: int, frame_rate: float) -> list[str]:
     PCM has no bitrate, and `-movflags` belongs to the mp4/mov muxer only.
     """
     codec = preset["codec"]
-    video = ["-c:v", codec]
-    if codec in ("libx264", "libx265"):
-        video += ["-preset", str(preset["encoder_preset"]), "-crf", str(preset["crf"])]
-        if codec == "libx265":
-            # hvc1, not hev1: the parameter sets go into the sample description, which is what lets
-            # QuickTime and editors play the file instead of only FFmpeg reading it back.
-            video += ["-tag:v", "hvc1"]
-    elif codec == "libvpx-vp9":
-        video += [
-            "-b:v",
-            "0",
-            "-crf",
-            str(preset["crf"]),
-            "-deadline",
-            "good",
-            "-cpu-used",
-            "4",
-            "-row-mt",
-            "1",
-        ]
-    elif codec == "prores_ks":
-        video += ["-profile:v", str(preset["profile"])]
+    video: list[str] = []
+    if codec is None:
+        # An audio-only deliverable: `-vn` is belt-and-braces next to not mapping a picture at all,
+        # because the mp3/wav/flac muxers would refuse a video stream anyway.
+        video = ["-vn"]
     else:
-        raise EditorError(
-            "UNKNOWN_PRESET", f"this build cannot encode {codec}", 422, preset_id=preset["id"]
-        )
-    # GOP sizing stays the same on every codec: the checks in curvefidelity/gradelevels read frames
-    # at arbitrary times, and a keyframe every two seconds is what makes that cheap.
-    video += [
-        "-pix_fmt",
-        preset["pixel_format"],
-        "-keyint_min",
-        str(max(1, round(frame_rate))),
-        "-g",
-        str(max(2, round(frame_rate) * 2)),
-    ]
+        video = ["-c:v", codec]
+        if codec in ("libx264", "libx265"):
+            video += ["-preset", str(preset["encoder_preset"]), "-crf", str(preset["crf"])]
+            if codec == "libx265":
+                # hvc1, not hev1: the parameter sets go into the sample description, so QuickTime
+                # and editors can play the file, not only FFmpeg reading it back.
+                video += ["-tag:v", "hvc1"]
+        elif codec == "libvpx-vp9":
+            video += [
+                "-b:v",
+                "0",
+                "-crf",
+                str(preset["crf"]),
+                "-deadline",
+                "good",
+                "-cpu-used",
+                "4",
+                "-row-mt",
+                "1",
+            ]
+        elif codec == "prores_ks":
+            video += ["-profile:v", str(preset["profile"])]
+        else:
+            raise EditorError(
+                "UNKNOWN_PRESET", f"this build cannot encode {codec}", 422, preset_id=preset["id"]
+            )
+        # GOP sizing stays the same on every codec: the checks read frames at arbitrary
+        # times, and a keyframe every two seconds is what makes that cheap.
+        video += [
+            "-pix_fmt",
+            preset["pixel_format"],
+            "-keyint_min",
+            str(max(1, round(frame_rate))),
+            "-g",
+            str(max(2, round(frame_rate) * 2)),
+        ]
     audio = ["-c:a", preset["audio_codec"]]
     if preset["audio_bitrate"]:
         audio += ["-b:a", preset["audio_bitrate"]]
@@ -279,8 +285,7 @@ class RenderPlan:
             *self.input_args,
             "-filter_complex",
             ";".join(self.filters),
-            "-map",
-            self.video_label,
+            *(["-map", self.video_label] if self.video_label else []),
             "-map",
             self.audio_label,
             "-t",
@@ -388,7 +393,10 @@ def compile_render_plan(
     # a 4:4:10-bit intermediate has to keep 4:4:4 from the decode and the framing stages too, or the
     # chroma is thrown away upstream and the wrapper only looks deep. Every H.264/HEVC/VP9 preset
     # says yuv420p, so the graphs those presets compile are unchanged.
-    pixel_format = preset["pixel_format"]
+    pixel_format = preset["pixel_format"] or "yuv420p"
+    # `codec=None` is the audio-only case: no picture is compiled at all, so an MP3 of a long cut
+    # costs the mix rather than a full render. The format above is then simply unused.
+    audio_only = preset["codec"] is None
 
     video_tracks = [track for track in project.tracks if track.kind == "video" and not track.hidden]
     audio_tracks = [track for track in project.tracks if track.kind == "audio" and not track.muted]
@@ -400,7 +408,7 @@ def compile_render_plan(
         if entries:
             layers.append(entries)
             visible.append((track, entries))
-    if not layers and _duration_ticks is None:
+    if not layers and _duration_ticks is None and not audio_only:
         raise EditorError("EMPTY_TIMELINE", "a render needs visible video or image clips", 422)
 
     sounds: list[dict] = []
@@ -424,6 +432,12 @@ def compile_render_plan(
             if entry["verified"] and entry["verified"].kind != "image"
         )
     sounds.sort(key=lambda item: (item["clip"].position_ticks, item["clip"].id))
+    if audio_only and not sounds:
+        raise EditorError(
+            "EMPTY_TIMELINE",
+            "an audio deliverable needs audible material: a sounding clip or a sound track",
+            422,
+        )
 
     total = _duration_ticks or 0
     for entries in layers:
@@ -458,7 +472,7 @@ def compile_render_plan(
             for entry in entries
         )
     )
-    plan = RenderPlan(mode="layered" if compositing else "cut")
+    plan = RenderPlan(mode="audio" if audio_only else "layered" if compositing else "cut")
     transition_curves = envelopes(project)
     # Three framings, because a 16:9 timeline is delivered to 9:16 more often than not:
     # `contain` keeps every pixel and bars the rest, `cover` fills the frame and crops the
@@ -610,7 +624,11 @@ def compile_render_plan(
             plan.filters.append("".join(labels) + f"concat=n={len(labels)}:v=1:a=0{out}")
         return out, windows, len(labels)
 
-    if plan.mode == "cut":
+    if audio_only:
+        # The whole picture chain is skipped, not merely unmapped: no clip is decoded, no layer is
+        # composited, and the only inputs that appear are the ones the audio loop below pulls.
+        plan.video_label = ""
+    elif plan.mode == "cut":
         chain, _, pieces = track_chain(layers[0])
         plan.filters.append(f"{chain}format={pixel_format}[vout]")
         plan.summary["segments"] = pieces
@@ -870,7 +888,8 @@ def compile_render_plan(
             painted.append(len(entries))
         plan.filters.append(f"{current}format={'rgba' if _transparent else pixel_format}[vout]")
         plan.summary["layers"] = len(layers)
-    plan.video_label = "[vout]"
+    if not audio_only:
+        plan.video_label = "[vout]"
 
     mixed = ["[abase]"]
     base_audio = plan.add_lavfi(
@@ -951,11 +970,12 @@ def compile_render_plan(
                 out_ticks=end,
             )
         frame = settings.frame_ticks
-        plan.filters.append(
-            f"{plan.video_label}trim=start_frame={start // frame}:end_frame={end // frame},"
-            f"setpts=PTS-STARTPTS[vrange]"
-        )
-        plan.video_label = "[vrange]"
+        if plan.video_label:
+            plan.filters.append(
+                f"{plan.video_label}trim=start_frame={start // frame}:end_frame={end // frame},"
+                f"setpts=PTS-STARTPTS[vrange]"
+            )
+            plan.video_label = "[vrange]"
         plan.filters.append(
             f"{plan.audio_label}atrim=start={sec(start)}:end={sec(end)},"
             f"asetpts=PTS-STARTPTS[arange]"
@@ -979,7 +999,7 @@ def compile_render_plan(
             "video_codec": preset["codec"],
             "audio_codec": preset["audio_codec"],
             "pixel_format": preset["pixel_format"],
-            "resolution": size,
+            "resolution": None if audio_only else size,
             "frame_rate": fps,
             "project": {"id": project.id, "name": project.name, "revision": project.revision},
             "tracks": [

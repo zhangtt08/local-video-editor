@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 13  # v13 gives a path mask a real box; older rows are fitted on load (ge=1).
-APP_VERSION = "1.57.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.58.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -1388,24 +1388,25 @@ class EditorError(Exception):
 # Containers this build can write. A request picks a preset id, the preset names one of these, and
 # `jobs` requires the file name to carry the matching extension — so a delivered file is never a
 # stream the container cannot hold, and no caller can aim FFmpeg at an arbitrary muxer.
-OUTPUT_CONTAINERS = ("mp4", "mov", "webm")
+OUTPUT_CONTAINERS = ("mp4", "mov", "webm", "mp3", "wav", "flac")
 # The codecs `render.output_args` knows how to ask for. Anything outside this set is refused rather
 # than passed through, which is what keeps the preset table a closed vocabulary of encoder knobs.
-OUTPUT_CODECS = ("libx264", "libx265", "libvpx-vp9", "prores_ks")
-OUTPUT_AUDIO_CODECS = ("aac", "libopus", "pcm_s24le")
+# `None` means the deliverable carries no picture at all: the mix is the product.
+OUTPUT_CODECS = (None, "libx264", "libx265", "libvpx-vp9", "prores_ks")
+OUTPUT_AUDIO_CODECS = ("aac", "libopus", "pcm_s24le", "libmp3lame", "flac")
 
 
 def _preset(
     preset_id: str,
     label: str,
     container: str,
-    codec: str,
+    codec: str | None,
     *,
     crf: int | None,
     encoder_preset: str | None,
     audio_codec: str,
     audio_bitrate: str | None,
-    pixel_format: str,
+    pixel_format: str | None,
     scale: list[int] | None,
     profile: int | None = None,
 ) -> dict:
@@ -1573,6 +1574,45 @@ def render_presets() -> list[dict]:
             scale=None,
             profile=3,
         ),
+        # Audio-only deliverables: `codec=None` means the picture chain is never compiled, so an MP3
+        # of a three-minute cut costs the mix, not a full render. The mix is the same authoritative
+        # one the video presets use — master gain, ducking envelopes and the limiter included.
+        _preset(
+            "audio-mp3",
+            "MP3 音频（口播与配乐交付）",
+            "mp3",
+            None,
+            crf=None,
+            encoder_preset=None,
+            audio_codec="libmp3lame",
+            audio_bitrate="192k",
+            pixel_format=None,
+            scale=None,
+        ),
+        _preset(
+            "audio-wav",
+            "WAV 音频（24 位无损，进混音台）",
+            "wav",
+            None,
+            crf=None,
+            encoder_preset=None,
+            audio_codec="pcm_s24le",
+            audio_bitrate=None,
+            pixel_format=None,
+            scale=None,
+        ),
+        _preset(
+            "audio-flac",
+            "FLAC 音频（无损存档，体积小）",
+            "flac",
+            None,
+            crf=None,
+            encoder_preset=None,
+            audio_codec="flac",
+            audio_bitrate=None,
+            pixel_format=None,
+            scale=None,
+        ),
     ]
 
 
@@ -1679,6 +1719,7 @@ def capabilities(media_ready: bool = False) -> dict:
             "loudness_metering": media_ready,
             "output_fit_modes": media_ready,
             "multi_codec_delivery": media_ready,
+            "audio_delivery": media_ready,
             "batch_delivery": media_ready,
             "master_loudness": media_ready,
             "master_limiter": media_ready,

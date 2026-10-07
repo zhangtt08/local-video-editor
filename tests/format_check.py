@@ -214,6 +214,11 @@ def contract_suite() -> None:
     argv = {preset_id: output_args(preset, 48000, 25.0) for preset_id, preset in presets.items()}
     for preset_id, args in argv.items():
         joined = " ".join(args)
+        if presets[preset_id]["codec"] is None:
+            # An audio-only preset has no picture arguments at all; tests/audio_check.py owns that
+            # shape, and asserting `-pix_fmt None` here would only prove the loop runs.
+            assert "-c:v" not in joined and "-pix_fmt" not in joined, (preset_id, joined)
+            continue
         assert f"-pix_fmt {presets[preset_id]['pixel_format']}" in joined, (preset_id, joined)
         assert "-ar 48000 -ac 2" in joined, joined
         if presets[preset_id]["container"] in ("mp4", "mov"):

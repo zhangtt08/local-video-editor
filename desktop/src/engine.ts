@@ -287,15 +287,20 @@ export type Preset = {
   label: string;
   /** 容器与编解码器由引擎的预设表决定，界面只念出来，不自己拼 FFmpeg 参数。 */
   container: string;
-  codec: string;
+  /** null 表示这条交付根本没有画面（MP3/WAV/FLAC），导出面板据此收起与画幅有关的一切。 */
+  codec: string | null;
   crf: number | null;
   encoder_preset: string | null;
   audio_codec: string;
   audio_bitrate: string | null;
-  pixel_format: string;
+  pixel_format: string | null;
   profile: number | null;
   scale: [number, number] | null;
 };
+
+export function presetIsAudio(preset: Preset | null): boolean {
+  return preset !== null && preset.codec === null;
+}
 
 /** 引擎给的是 FFmpeg 的编码器名，这一层只负责念给人听；不认识的名字原样显示，不猜。 */
 export const CODEC_NAMES: Record<string, string> = {
@@ -306,6 +311,8 @@ export const CODEC_NAMES: Record<string, string> = {
   aac: "AAC",
   libopus: "Opus",
   pcm_s24le: "PCM 24-bit",
+  libmp3lame: "MP3",
+  flac: "FLAC",
 };
 
 const SAMPLING_NAMES: Record<string, string> = {
@@ -317,12 +324,14 @@ const SAMPLING_NAMES: Record<string, string> = {
  * The codec line under a preset. Written from the preset the engine returned, never from a string
  * baked into the panel: a preset list that grows a format must show that format, not yesterday's
  * "H.264 / AAC". Sampling is only named when it differs from the plain 4:2:0 8-bit every H.264
- * delivery uses, so the common rows stay short.
+ * delivery uses, so the common rows stay short; an audio-only preset says so instead of naming a
+ * picture it does not have.
  */
 export function codecText(item: Preset): string {
-  const video = CODEC_NAMES[item.codec] ?? item.codec;
   const audio = CODEC_NAMES[item.audio_codec] ?? item.audio_codec;
-  const sampling = SAMPLING_NAMES[item.pixel_format];
+  if (item.codec === null) return `仅音频 · ${audio}`;
+  const video = CODEC_NAMES[item.codec] ?? item.codec;
+  const sampling = item.pixel_format ? SAMPLING_NAMES[item.pixel_format] : undefined;
   return `${video} / ${audio}${sampling && item.pixel_format !== "yuv420p" ? ` · ${sampling}` : ""}`;
 }
 

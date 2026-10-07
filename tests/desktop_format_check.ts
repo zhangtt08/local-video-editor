@@ -2,7 +2,7 @@
 // translation itself: a preset list that gains a format must show that format, and a name this
 // table does not know has to appear verbatim rather than being dressed up as yesterday's H.264.
 import assert from "node:assert/strict";
-import { codecText, CODEC_NAMES, type Preset } from "../desktop/src/engine";
+import { codecText, CODEC_NAMES, presetIsAudio, type Preset } from "../desktop/src/engine";
 
 const preset = (over: Partial<Preset>): Preset => ({
   id: "x",
@@ -18,6 +18,9 @@ const preset = (over: Partial<Preset>): Preset => ({
   scale: [1920, 1080],
   ...over,
 });
+
+const audio = (over: Partial<Preset>): Preset =>
+  preset({ container: "mp3", codec: null, pixel_format: null, scale: null, ...over });
 
 assert.equal(codecText(preset({})), "H.264 / AAC");
 assert.equal(codecText(preset({ codec: "libx265" })), "HEVC / AAC");
@@ -47,8 +50,17 @@ assert.equal(codecText(preset({ codec: "av1", audio_codec: "opus" })), "av1 / op
 // The 4:2:0 8-bit case carries no sampling suffix, so the common rows stay short; the deep ones do.
 assert.ok(!codecText(preset({})).includes("4:2:0"), codecText(preset({})));
 assert.ok(codecText(preset({ pixel_format: "yuv444p10le" })).includes("4:4:4 10-bit"));
+// An audio-only preset names no picture, so the line says so instead of inventing a video codec.
+assert.equal(codecText(audio({ audio_codec: "libmp3lame" })), "仅音频 · MP3");
+assert.equal(codecText(audio({ container: "wav", audio_codec: "pcm_s24le" })), "仅音频 · PCM 24-bit");
+assert.equal(codecText(audio({ container: "flac", audio_codec: "flac" })), "仅音频 · FLAC");
+assert.equal(presetIsAudio(audio({})), true);
+assert.equal(presetIsAudio(preset({})), false);
+assert.equal(presetIsAudio(null), false, "no preset selected is not an audio deliverable");
 assert.deepEqual(Object.keys(CODEC_NAMES).sort(), [
   "aac",
+  "flac",
+  "libmp3lame",
   "libopus",
   "libvpx-vp9",
   "libx264",
@@ -58,6 +70,6 @@ assert.deepEqual(Object.keys(CODEC_NAMES).sort(), [
 ]);
 
 console.log(
-  "PASS: every preset's codec line is derived from the preset, unknown names pass through, and only " +
-    "the non-default sampling is spelled out"
+  "PASS: every preset's codec line is derived from the preset, audio-only lines say 仅音频, unknown " +
+    "names pass through, and only the non-default sampling is spelled out"
 );
