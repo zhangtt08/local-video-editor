@@ -44,7 +44,7 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
   const [draft, setDraft] = useState<ShapeMask | null>(null);
   const [compiled, setCompiled] = useState<{ mask: ShapeMask; image: string } | null>(null);
   const [handleSize, setHandleSize] = useState({ x: 5, y: 9 });
-  const [shift, setShift] = useState({ x: 0, y: 0 });
+  const [shift, setShift] = useState({ tx: 0, ty: 0, sx: 1, sy: 1 });
   const [active, setActive] = useState<number | null>(null);
   const draftRef = useRef(draft); draftRef.current = draft;
   const svg = useRef<SVGSVGElement | null>(null);
@@ -88,15 +88,28 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
   useEffect(() => {
     const at = Math.max(0, (play.ticks - clip.position_ticks) / TIMEBASE * 1000);
     for (const effect of maskAnimations.current) effect.currentTime = at;
-    // A free-form outline moves as a whole, so the editing guide has to sit where the cut actually
-    // lands. The browser's own interpolation of the engine-supplied curve is the only authority for
-    // that position, so read it back off the animated element instead of solving the curve again.
+    // The guide has to sit where the cut actually is, so it reads the same animated box the picture
+    // is masked with instead of solving the engine's curve a second time: the browser's own
+    // interpolation of that curve is the only authority. A box mask also *resizes* over time, so
+    // the guide scales as well as moves — otherwise the corner handle you grab is not the edge you
+    // see. translate(T) + scale(S) about the centre maps a base coordinate u to
+    // 0.5 + S(u-0.5) + T, and that has to equal cx_now + S(u-cx_base), hence T below.
     const element = picture.current;
-    if (!element || !animated || !mask) { setShift((old) => (old.x || old.y ? { x: 0, y: 0 } : old)); return; }
+    if (!element || !animated || !mask) {
+      setShift((old) => (old.tx || old.ty || old.sx !== 1 || old.sy !== 1 ? { tx: 0, ty: 0, sx: 1, sy: 1 } : old));
+      return;
+    }
     const style = getComputedStyle(element);
-    const dx = Number(style.getPropertyValue("--mask-x")) - (mask.center_x ?? 0.5);
-    const dy = Number(style.getPropertyValue("--mask-y")) - (mask.center_y ?? 0.5);
-    setShift((old) => (Math.abs(old.x - dx) + Math.abs(old.y - dy) < 0.001 ? old : { x: dx, y: dy }));
+    const centre = { x: Number(style.getPropertyValue("--mask-x")), y: Number(style.getPropertyValue("--mask-y")) };
+    const size = { w: Number(style.getPropertyValue("--mask-w")), h: Number(style.getPropertyValue("--mask-h")) };
+    const sx = mask.width ? size.w / mask.width : 1;
+    const sy = mask.height ? size.h / mask.height : 1;
+    const tx = centre.x - sx * mask.center_x - 0.5 + 0.5 * sx;
+    const ty = centre.y - sy * mask.center_y - 0.5 + 0.5 * sy;
+    setShift((old) => (
+      Math.abs(old.tx - tx) + Math.abs(old.ty - ty) + Math.abs(old.sx - sx) + Math.abs(old.sy - sy) < 0.001
+        ? old : { tx, ty, sx, sy }
+    ));
   }, [play.ticks, clip.position_ticks, animated, mask]);
   useEffect(() => {
     if (!visible || !svg.current) return;
@@ -192,7 +205,7 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
   return <>
     <div ref={picture} className={`layer-transform masked-picture${animated ? " animated-mask" : ""}`} style={pictureStyle}>{children}</div>
     {visible && mask ? <svg ref={svg} className={`mask-guide${disabled ? " locked" : ""}`} viewBox="0 0 100 100" preserveAspectRatio="none" role="group" aria-label="画面遮罩编辑器" tabIndex={0}
-      style={shift.x || shift.y ? { transform: `translate(${(shift.x * 100).toFixed(4)}%, ${(shift.y * 100).toFixed(4)}%)` } : undefined}
+      style={shift.tx || shift.ty || shift.sx !== 1 || shift.sy !== 1 ? { transform: `translate(${(shift.tx * 100).toFixed(4)}%, ${(shift.ty * 100).toFixed(4)}%) scale(${shift.sx.toFixed(6)}, ${shift.sy.toFixed(6)})` } : undefined}
       onDoubleClick={(event) => {
         if (mask.shape !== "path" || disabled || !mask.vertices || mask.vertices.length >= MAX_VERTICES) return;
         const point = locate(event); if (!point) return;
