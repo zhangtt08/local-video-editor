@@ -1,3 +1,4 @@
+import { textLayerStyle } from "../textStyle";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Icon, IconBtn } from "../ui";
 import { MaskPicture } from "./MaskPicture";
@@ -243,13 +244,13 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
     return () => element.removeEventListener("loadedmetadata", synchronize);
   }, [relative, playing, clip.source_in_ticks, clip.speed_percent, clip.embedded_audio, isAudio, track.muted, track.volume, monitorMuted, asset?.verified?.has_audio, plan, parentGain, clockRate]);
   useEffect(() => { const element = elementRef.current; return () => element?.pause(); }, []);
-  const fs = (clip.text?.font_size ?? 0.06) * 150;
-  const band = clip.text?.box ? `linear-gradient(to bottom, transparent ${clip.text.align === "center" ? `${50 - fs / 2}%` : clip.text.align === "top" ? "8%" : `${96 - fs}%`}, rgba(0, 0, 0, 0.45) ${clip.text.align === "center" ? `${50 - fs / 2}%` : clip.text.align === "top" ? "8%" : `${96 - fs}%`}, rgba(0, 0, 0, 0.45) ${clip.text.align === "center" ? `${50 + fs / 2}%` : clip.text.align === "top" ? `${8 + fs}%` : "96%"}, transparent ${clip.text.align === "center" ? `${50 + fs / 2}%` : clip.text.align === "top" ? `${8 + fs}%` : "96%"})` : undefined;
+  // 文字层的 CSS 由 textStyle.ts 从同一份 TextStyle 算出，界面不再自己拼一遍。
+  const textFonts = useApp().caps?.text_fonts ?? [];
   const inheritedGain = () => {
     const gain = wrappers.current.gain; const sound = blends.current.sound;
     return (gain ? Number(getComputedStyle(gain).opacity) * 4 : 1) * (sound ? Number(getComputedStyle(sound).opacity) : 1) * track.volume * (plan?.sound_enabled ? 1 : 0) * (parentGain?.() ?? 1);
   };
-  const media = asset?.sequence_id && manifest ? <NestedPreview id={asset.sequence_id} project={project} manifest={manifest} streams={streams} ticks={clip.source_in_ticks + Math.floor((ticks - clip.position_ticks) * (clip.speed_percent ?? 100) / 100)} playing={playing} monitorMuted={monitorMuted || track.muted || !plan?.sound_enabled} parentGain={inheritedGain} clockRate={clockRate * (clip.speed_percent ?? 100) / 100} /> : clip.text ? <div className="caption-layer" style={{ fontSize: `${clip.text.font_size * 100}cqh`, color: clip.text.color, alignItems: clip.text.align === "top" ? "flex-start" : clip.text.align === "bottom" ? "flex-end" : "center", paddingTop: clip.text.align === "top" ? "8%" : undefined, paddingBottom: clip.text.align === "bottom" ? "8%" : undefined, background: band }}><span>{clip.text.body}</span></div> : !url ? <div className="layer-error">「{asset?.label}」素材离线或未导入</div> : isImage ? <img src={url} alt={asset?.label} /> : isAudio ? <audio ref={(node) => { elementRef.current = node; }} crossOrigin="anonymous" src={url} preload="auto" onError={() => setError("音频无法解码")} /> : <video ref={(node) => { elementRef.current = node; }} crossOrigin="anonymous" src={url} playsInline preload="auto" onError={() => setError("视频无法解码")} />;
+  const media = asset?.sequence_id && manifest ? <NestedPreview id={asset.sequence_id} project={project} manifest={manifest} streams={streams} ticks={clip.source_in_ticks + Math.floor((ticks - clip.position_ticks) * (clip.speed_percent ?? 100) / 100)} playing={playing} monitorMuted={monitorMuted || track.muted || !plan?.sound_enabled} parentGain={inheritedGain} clockRate={clockRate * (clip.speed_percent ?? 100) / 100} /> : clip.text ? <div className="caption-layer" style={textLayerStyle(clip.text, textFonts)}><span>{clip.text.body}</span></div> : !url ? <div className="layer-error">「{asset?.label}」素材离线或未导入</div> : isImage ? <img src={url} alt={asset?.label} /> : isAudio ? <audio ref={(node) => { elementRef.current = node; }} crossOrigin="anonymous" src={url} preload="auto" onError={() => setError("音频无法解码")} /> : <video ref={(node) => { elementRef.current = node; }} crossOrigin="anonymous" src={url} playsInline preload="auto" onError={() => setError("视频无法解码")} />;
   return <><div className={`preview-layer${isAudio ? " audio-layer" : ""}`} style={{ mixBlendMode: mixed ? "plus-lighter" : "normal" }} onClick={interactive ? () => selectClip(clip.id) : undefined}>
     <div ref={(node) => { wrappers.current.gain = node; }} className="gain-sample" aria-hidden="true" />
     <div ref={(node) => { blends.current.sound = node; }} className="gain-sample" aria-hidden="true" />

@@ -94,8 +94,10 @@ def main():
             ):
                 clip.pop(field)
             clip["color"].pop("grade", None)
-            clip["text"].pop("align")
-            clip["text"].pop("box")
+            # A v1.5-era nested style carried only these three keys; anything the model has grown
+            # since must be stripped here as well, or this fixture is a 1.5 payload in name only.
+            for name in [key for key in clip["text"] if key not in ("body", "font_size", "color")]:
+                clip["text"].pop(name)
             if op != "clips.add":
                 clip.pop("transition_in")
             if op == "clip.add":

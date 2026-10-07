@@ -76,7 +76,7 @@ from .loudness import measure as measure_loudness
 from .masks import mask_image
 from .media import ALLOWED_SUFFIXES, PROXY_WIDTHS, MediaService
 from .projects import ProjectStore
-from .render import compile_render_plan
+from .render import compile_render_plan, text_fonts_available
 from .subtitles import export_srt
 from .timeline import sequence_view, validate_timeline
 from .tracking import track_mask
@@ -244,12 +244,14 @@ def create_app(
         payload["render_ready"] = bool(jobs and jobs.ffmpeg)
         payload["media_roots"] = media.describe_roots() if media else []
         payload["output_roots"] = jobs.describe_output_roots() if jobs else []
-        payload["capabilities"] = capabilities(bool(media and media.enabled), speech_ready())
+        payload["capabilities"] = capabilities(
+            bool(media and media.enabled), speech_ready(), text_fonts_available()
+        )
         return payload
 
     @app.get("/v1/capabilities", dependencies=auth)
     def editor_capabilities():
-        return capabilities(bool(media and media.enabled), speech_ready())
+        return capabilities(bool(media and media.enabled), speech_ready(), text_fonts_available())
 
     @app.get("/v1/contracts", dependencies=auth)
     def contracts():

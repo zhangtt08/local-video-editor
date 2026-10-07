@@ -1267,3 +1267,35 @@ max_lut_samples: 1024}`，界面从这份表限制节点数、曲线控制点数
 [2,18,62,126,194,249] → [0,2,41,137,235,253] 十八个点全部对得住下发的表，parse 回复直接进 `clip.grade`
 往返 17×3 个采样点一字不差，七种写坏的载荷 422 且 revision 不动，3D/缺 size/行数不符/非默认 DOMAIN/
 读不出数字/行列数不对各按原因拒绝，2048 行的文件重采样到 1024 并写明 `resampled_from`。
+
+## 1.63 文字样式（工程 schema 仍是 v13）
+
+`TextStyle` 在原有 `body / font_size / color / align / box` 之外长到 15 个字段，全部是**字号的比例**：
+`font`（face id）、`text_align`（left|center|right）、`outline_width`（0..0.2）、`outline_color`、
+`shadow_x`/`shadow_y`（-1..1）、`shadow_color`、`box_color`、`box_opacity`（0..1）、`line_spacing`（0..2）。
+颜色一律 `#rrggbb`。命令不变：还是 `clip.text`（整份替换）与 `clip.patch` 的 `text`（按字段改），
+后者不再手写键清单，而是拿 `TextStyle` 复检（`{"body": ".", **text}`），所以字段再长也不会漏。
+
+导出侧编译成 `drawtext`：`fontsize=out_h*font_size`、`borderw=round(outline_width*fontsize)`、
+`bordercolor`、`shadowx/shadowy=round(offset*fontsize)`、`shadowcolor`、`line_spacing=round(...)`、
+`x` 按横排取 `w*0.08` / `(w-text_w)/2` / `w-text_w-w*0.08`；`box` 仍然用 `geq` 的 alpha 带表达
+（drawtext 自带的垫子不可靠），带色与浓度由 `box_color`/`box_opacity` 决定。界面侧 `desktop/src/textStyle.ts`
+把**同一组数**写成 CSS（`em` 单位、`lineHeight = 1 + line_spacing`、`text-shadow` 模糊位固定 0、
+`linear-gradient` 的垫子带），因此不存在「只有预览里有」的效果。
+
+**没有的两档**：阴影模糊与字距（letter spacing）。drawtext 画不出这两样，给了就只有浏览器看得到，
+所以不做——与 1.62 拒绝 3D LUT 是同一条理由。
+
+字体：`GET /v1/capabilities` 新增 `text_fonts = [{id, label, family}]`，只列**本机真的存在字体文件**的
+face（Windows 下微软雅黑/黑体/宋体/楷体/Arial/Consolas）。`fontfile` 路径必须写成
+`C\:/Windows/Fonts/<file>`：正斜杠加转义冒号。反斜杠形式（`C\:\Windows\...`）不报错，drawtext 会
+悄悄退回默认字面，两种字体逐像素相同——这是本轮实测踩到并用像素钉住的坑，`text_font_path` 一次
+转换、`tests/textstyle_check.py` 断言三种字体三张不同的图。点了一个本机没有的 face 报
+`FONT_UNAVAILABLE`（503）并列出可用项，绝不静默换脸。
+
+`features.text_styling=true`。默认值等于 1.62 的渲染（4% 黑描边、0.2 行距、115/255 黑垫），
+老工程读回来逐像素不变；`_fingerprint` 按「晚于该载荷时代的字段不算请求内容」的规则自动兼容
+（从 `TextStyle.model_fields` 推导，不再手写 align/box 两个名字），所以 v1.5/v1.7 的文字回执照旧命中。
+验收 `tests/textstyle_check.py`（契约、字体可用性、编译串、成片像素、HTTP 往返五路）与
+`tests/desktop_text_check.ts`（CSS 逐字段）：描边加粗后红环 1639 px、阴影质心右移 31.1 px、
+垫子灰阶实测 64（要 64）、左/右质心 70 对 252、黑体与宋体在 712 个像素上不同。

@@ -90,7 +90,26 @@ export const COLOR_SPACES: [ColorSpace, string][] = [
 export const DEFAULT_TRANSFER = { input_space: "srgb", output_space: "rec709" } as const;
 export type GradeTables = { id: string; r: number[]; g: number[]; b: number[] };
 export type ClipColor = { exposure: number; contrast: number; saturation: number; grade?: GradeNode[] };
-export type TextStyle = { body: string; font_size: number; color: string; align?: "top" | "center" | "bottom"; box?: boolean };
+/** 文字层：所有比例值都以「字号的几分之几」表达，与导出侧 drawtext 读同一组数（见 textStyle.ts）。 */
+export type TextStyle = {
+  body: string;
+  font_size: number;
+  color: string;
+  align?: "top" | "center" | "bottom";
+  box?: boolean;
+  font?: string;
+  text_align?: "left" | "center" | "right";
+  outline_width?: number;
+  outline_color?: string;
+  shadow_x?: number;
+  shadow_y?: number;
+  shadow_color?: string;
+  box_color?: string;
+  box_opacity?: number;
+  line_spacing?: number;
+};
+/** 引擎按本机实际装着的字体下发，界面照这份表建选择器。 */
+export type TextFont = { id: string; label: string; family: string };
 export const DEFAULT_COLOR: ClipColor = { exposure: 0, contrast: 1, saturation: 1, grade: [] };
 export const DEFAULT_WHEELS = { lift: [0, 0, 0], gamma: [1, 1, 1], gain: [1, 1, 1] };
 export const DEFAULT_CURVE_POINTS: GradeCurvePoint[] = [
@@ -371,6 +390,8 @@ export type Capabilities = {
   grade_limits?: { max_nodes: number; max_branches: number; max_curve_points: number; max_lut_samples: number };
   /** 可选的转场种类与中文名：界面列的是这份表，不是自己写死的三个。 */
   transition_kinds?: TransitionChoice[];
+  /** 本机装着的文字字体（id / 中文名 / CSS family）；选择器列的是这份表。 */
+  text_fonts?: TextFont[];
   /** 引擎自身的构建号；旧引擎不回这个字段，界面按空字符串处理。 */
   app_version?: string;
   project_schema_version: number;

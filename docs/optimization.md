@@ -1945,3 +1945,78 @@ invented 的 `spectron` 类型、9 个节点、越界 effects、错类型文字�
 仍未完成：**3D LUT**（跨通道，需要另一条编译路径与浏览器端的三维取样，塞不进每通道表）、亮度/色度分离曲线、
 色彩节点图的分层与连线视图、完整色彩管理（ICC/ACES、色域矩阵与文件标签）、路径遮罩顶点动画、多目标与长时
 遮挡跟踪、旋转估计、字幕说话人分离与标点。
+
+## 1.63.0 文字样式：一份数，两遍渲染（2026-10-07）
+
+字幕和花字是剪映类工具最常用的入口，而 1.62 之前的文字层只有「内容 / 字号 / 颜色 / 靠上居中靠下 / 要不要
+垫子」五件事。这一节把它扩到 15 个字段：face、横排左中右、描边宽度与颜色、阴影 X/Y 与颜色、垫子颜色与
+浓度、行距。三条设计决定不是审美问题，是这套架构的边界：
+
+1. **所有比例都相对字号**。`outline_width: 0.12` 在导出侧是 `borderw=round(0.12*fontsize)`，在浏览器侧是
+   `text-stroke-width: 0.12em`——`em` 本身就是字号的倍数，所以两边读的是同一个数，不需要任何换算表，
+   也不会出现「预览里描边更粗」。行距同理：CSS `lineHeight = 1 + line_spacing` 对 drawtext
+   `line_spacing = round(line_spacing*fontsize)`。
+2. **drawtext 画不出的，契约里就不存在**。阴影模糊与字距（letter spacing）被明确拒之门外：浏览器能画
+   `text-shadow: 0 0 8px`，drawtext 不能；给了这一档就只有预览里好看、成片里没有。这与 1.62 拒绝 3D LUT
+   是同一条理由——宁可少一档，不做「只有预览看得到」的效果。
+3. **face 是机器事实，不是字符串**。`capabilities.text_fonts` 只列本机真的存在字体文件的那几个
+   （Windows：微软雅黑 / 黑体 / 宋体 / 楷体 / Arial / Consolas），界面按它建选择器，Agent 按它选值；
+   点一个本机没有的 face 报 `FONT_UNAVAILABLE`（503）并把可用项列回去，**不静默换脸**。
+
+**踩到并用像素钉住的坑**：`fontfile` 的路径写法。第一版按 `os.path.join` 的结果转义冒号，得到
+`C\:\Windows\Fonts\simhei.ttf`；FFmpeg 不报错，但会**悄悄退回默认字面**——于是「黑体」和「宋体」导出后
+逐像素完全相同，`tests/textstyle_check.py` 的 `differ > 300` 当场报 **0**。用包内 FFmpeg 把两种写法各跑
+一遍比对哈希才确认：能用的是 `C\:/Windows/Fonts/<file>`（正斜杠 + 转义冒号，也就是 1.62 里唯一那个写死的
+路径的形状）。修在 `text_font_path` 一处，检查里再加「三种字体三张不同的图」，这条就不会再退回去。
+
+**默认值就是 1.62 的画面**：`outline_width 0.04 / outline_color #000000 / line_spacing 0.2 /
+box_opacity 0.45`，所以老工程一字不改仍逐像素相同——`filter_suite` 直接断言默认样式编译出的
+`borderw`、`line_spacing`、`x`、`fontfile` 与 1.62 的公式一致，且没有 `shadowx`、没有 `geq` 垫子带。
+
+**回执指纹不能再手写名单**。`clip.patch` 的 `text` 原先写死 `Literal["body","font_size","color","align","box"]`，
+1.63 一加字段，界面新控件第一次写入就被契约拒绝（`Input should be 'body', 'font_size'...`）；改成拿
+`TextStyle` 复检（`{"body": ".", **text}`），键的白名单与取值范围从此只有一份主人。历史兼容同一处：
+`_fingerprint` 里「哪些文字字段属于更晚的时代」现在从 `TextStyle.model_fields` 推导，
+`tests/text_receipt_check.py` 的 v1.5 / v1.7 回执都重新命中——但注意它**先红过一次**：第一版我把
+`body/font_size/color` 也当成「可丢的默认值」，v1.5 的哈希反而被推走了；规则是「只有晚于该载荷时代
+出现的字段才不算请求内容」，1.7 那一份确实显式带了 `align/box`，所以比较旧回执的那一路必须留着它们。
+
+验收 `tests/textstyle_check.py`（五路）+ `tests/desktop_text_check.ts`（CSS 逐字段）：
+契约层七个越界样式被拒、默认值等于 1.62；字体层 6 个 face 因为文件真在盘上被下发，把
+`FONT_ROOT` 换成空目录后清单为空且请求按 `FONT_UNAVAILABLE` 拒绝；编译层断言 `borderw`/`shadowx`/
+`shadowy`/`line_spacing` 都是按字号取整的整数、`x` 随横排取 `w*0.08` / `(w-text_w)/2` /
+`w-text_w-w*0.08`、垫子带写出 `geq=r='64':g='64':b='64'` 与 `204/255` 的 alpha、正文只以
+`textfile=text-<sha256>.txt` 进命令；**成片实测**（320×180 黑底白字，字号 12%）——描边加粗后红环
+**1639 px**、绿色阴影质心相对字形右移 **31.1 px**、垫子带灰阶实测 **64**（要的就是 64）、
+左/右对齐文字质心 **70 对 252**、黑体与宋体在 **712 个像素**上不同、楷体与黑体也不同；HTTP 层
+15 个字段的样式经 `clip.text` 与 `clip.patch` 原样往返，声音片段与越界宽度被拒且 revision 不动。
+### 1.63.0 发布验收
+
+- `scripts/build_engine.py --verify`：冻结引擎 `app_version=1.63.0`、`frozen=true`，带媒体冷启动 755 ms、
+  裸启动 657 ms。
+- 包内引擎（`package_check_163.py`）：`/v1/capabilities` 回 `text_styling=true` 与 6 个 face（雅黑/黑体/
+  宋体/楷体/Arial/Consolas，逐个断言字体文件确实在盘上）；一个 15 字段的样式经 `clip.text` 写入后逐字段
+  读回相同；同一工程**先出一版对照成片**（渲染按当前 head 校验，没有「渲染 revision 1」这个旋钮），
+  再出样式版，两份都 `output_checked=true`。成片像素实测：红描边 **1665 px**、绿阴影 **573 px** 且质心
+  在字形右侧 **46.3 px**、垫子带灰阶 **64**（要的就是 64）；包内 `agentcut.exe mcp` 的 `tools/list` 仍是
+  **39** 个工具（1.63 不加端点），而 `timeline_edit` 由契约生成的 schema 里 `text_align`、
+  `outline_width`、`shadow_color`、`box_opacity`、`line_spacing` 全在——Agent 看到的字段与人能改的是同一份。
+- ASAR：5,533,579 字节，needles 为「描边」「阴影左右」「垫子浓度」「行距」「字体」「caption-layer」
+  「text_styling」「drawtext 画不出」。第一条包内检查跑在能力门控之前，`text_styling` 那个 needle 当场
+  报缺——因为界面的新控件当时没有按能力隐藏。补上 `app.caps?.features.text_styling` 门控后重建重验：
+  新界面遇到不认识这些字段的旧引擎会**整段不显示**，而不是发一份会被契约拒绝的载荷。
+- 原生窗口：`win-unpacked/AgentCut.exe` PrintWindow 抓帧 1480×900
+  （`Documents/Codex/2026-10-04/du/outputs/AgentCut-1.63-原生窗口.png`），裁条放大四倍读作
+  「引擎在线 v1.63.0」；关闭后 `tasklist` 查无 AgentCut/agentcut 残留。**同时记一件自己造成的损害**：
+  复制上一版抓屏脚本时把 `162` 全局替换成 `163`，没有命中输出路径里的 `1.62`，于是 1.62 的原生窗口 PNG
+  被 1.63 的帧覆盖。已把该文件按真实内容改名为 `AgentCut-1.63-原生窗口.png`（帧内标题栏即证明是 1.63），
+  并删除被误标的 1.62 PNG——留着标错的文件比留一张空缺更危险。1.62 的原生窗口截图因此不再在档，
+  该版本的验收结论仍由它自己的记录与产物哈希支撑。脚本里的路径已修正，下一版不会再踩。
+- 产物：便携版 189,737,243 字节 SHA256
+  `FBF3AEAFDF8CDB348D490599A93D80CAC5CD582E86A6D194671EEF63532EA8E2`；安装版 189,897,966 字节 SHA256
+  `B9A8F44C773E68DCAC7A750722D37BACB722D655ECDCB6DC7CE83D28CF6E14B2`；根目录 `AgentCut.exe` 与便携版
+  逐字节一致。未签名，NSIS 向导未点击验收。
+- 门禁：`ruff check` / `ruff format --check`（84 文件）、`tests/self_check.py`、`tests/suite_check.py`
+  **56/56**（新 `textstyle_check.py` 在列；构建与界面改动全部落定后单独串行复跑）、`npm run typecheck`
+  与 9 项桌面 TS 检查全绿。`tests/patch_check.py` 因样式长了 10 个字段而红过一次——它断言的是旧的 5 字段
+  存储形状，改断言时把「未被 patch 的新旋钮停在默认值」写进期望里，而不是把断言删掉。

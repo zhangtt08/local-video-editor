@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 13  # v13 gives a path mask a real box; older rows are fitted on load (ge=1).
-APP_VERSION = "1.62.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.63.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -410,12 +410,47 @@ class Keyframe(Contract):
         return self
 
 
+# The text faces this build can draw with. Each entry is (Windows font file, the CSS family the
+# browser needs, the label the interface shows); `capabilities.text_fonts` publishes the list after
+# dropping any file that is not on disk, so neither the picker nor an Agent can name a face this
+# machine cannot render.
+TEXT_FONTS: dict[str, tuple[str, str, str]] = {
+    "yahei": ("msyh.ttc", "Microsoft YaHei", "微软雅黑"),
+    "hei": ("simhei.ttf", "SimHei", "黑体"),
+    "song": ("simsun.ttc", "SimSun", "宋体"),
+    "kai": ("simkai.ttf", "KaiTi", "楷体"),
+    "arial": ("arial.ttf", "Arial", "Arial"),
+    "mono": ("consolab.ttf", "Consolas", "等宽 Consolas"),
+}
+TEXT_COLORS = r"^#[0-9a-fA-F]{6}$"
+
+
 class TextStyle(Contract):
+    """One text layer. Every knob is a number both renderers can honour exactly: FFmpeg's
+    ``drawtext`` and CSS take the same offsets, widths and colours, scaled by the same font size.
+
+    What is deliberately absent: shadow blur and letter spacing. ``drawtext`` has no blur and no
+    tracking, so offering them would mean a preview that shows something the delivered file does not
+    contain — the same reason the grade chain refuses a cross-channel 3D LUT. Defaults reproduce the
+    1.62 rendering (4% black outline, 0.2 line spacing, 45 %-opaque black band), so an old project
+    reads back with the pixels it had.
+    """
+
     body: Annotated[str, Field(min_length=1, max_length=4000, pattern=r"^[^\x00]*$")]
     font_size: Annotated[float, Field(ge=0.01, le=0.2)] = 0.06
-    color: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] = "#FFFFFF"
+    color: Annotated[str, Field(pattern=TEXT_COLORS)] = "#FFFFFF"
     align: Literal["top", "center", "bottom"] = "center"
     box: bool = False
+    font: Literal["yahei", "hei", "song", "kai", "arial", "mono"] = "yahei"
+    text_align: Literal["left", "center", "right"] = "center"
+    outline_width: Annotated[float, Field(ge=0, le=0.2)] = 0.04
+    outline_color: Annotated[str, Field(pattern=TEXT_COLORS)] = "#000000"
+    shadow_x: Annotated[float, Field(ge=-1, le=1)] = 0.0
+    shadow_y: Annotated[float, Field(ge=-1, le=1)] = 0.0
+    shadow_color: Annotated[str, Field(pattern=TEXT_COLORS)] = "#000000"
+    box_color: Annotated[str, Field(pattern=TEXT_COLORS)] = "#000000"
+    box_opacity: Annotated[float, Field(ge=0, le=1)] = 0.45
+    line_spacing: Annotated[float, Field(ge=0, le=2)] = 0.2
 
 
 # The transition vocabulary in one place: the contract, the capability document and the picker all
@@ -897,9 +932,7 @@ class ClipPatch(Contract):
     clip_id: Identifier
     effects: dict[EffectProperty, float] | None = None
     color: dict[Literal["exposure", "contrast", "saturation", "grade"], Any] | None = None
-    text: dict[Literal["body", "font_size", "color", "align", "box"], str | float | bool] | None = (
-        None
-    )
+    text: dict[str, str | float | bool] | None = None
 
     @model_validator(mode="after")
     def valid_fields(self):
@@ -909,6 +942,10 @@ class ClipPatch(Contract):
             ClipEffects.model_validate(self.effects)
         if self.color is not None:
             ClipColor.model_validate({"grade": [], **self.color})
+        # Re-read the patch through TextStyle rather than a hand-listed key union: the style grew in
+        # 1.63 and a second list of its fields would have gone stale the same day.
+        if self.text is not None:
+            TextStyle.model_validate({"body": ".", **self.text})
         if self.text is not None:
             TextStyle.model_validate({"body": "validation", **self.text})
         return self
@@ -1721,9 +1758,15 @@ def render_presets() -> list[dict]:
     ]
 
 
-def capabilities(media_ready: bool = False, speech_ready: bool = False) -> dict:
+def capabilities(
+    media_ready: bool = False, speech_ready: bool = False, text_fonts: list[dict] | None = None
+) -> dict:
     return {
         "api_version": "v1",
+        # The text faces installed here, as `{id, label, family}`. The interface builds its font
+        # picker from this list and the browser draws with `family`, so a face the exporter cannot
+        # load is never offered to a person or an Agent.
+        "text_fonts": list(text_fonts or []),
         # The guide geometry the monitor draws: the engine owns the numbers so the overlay cannot
         # drift from any future burn-in or export check.
         "safe_area_insets": SAFE_AREA_INSETS,
@@ -1865,6 +1908,7 @@ def capabilities(media_ready: bool = False, speech_ready: bool = False) -> dict:
             "grade_nodes": True,
             "grade_node_mix": True,
             "lut_import": True,
+            "text_styling": True,
             "grade_node_blend_modes": True,
             "grade_parallel_branches": True,
             "timeline_marks": True,

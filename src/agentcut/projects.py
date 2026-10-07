@@ -144,6 +144,20 @@ class ProjectStore:
         if payload.get("sequence_id") is None:
             payload.pop("sequence_id", None)
         # v3 additive defaults must not change fingerprints of v1/v2 receipts.
+        from .contracts import TextStyle
+
+        # Derived from the model, so the next style field a text layer grows cannot silently split
+        # an old receipt in two. A field that arrived after a payload's era was not asked for, so it
+        # must not enter the hash: `normalize_text=True` is the current form (only
+        # body/font_size/color were ever sent at first), and the `False` form is the 1.7 comparison,
+        # which did send align/box and must keep them.
+        text_era = {"body", "font_size", "color"} | (set() if normalize_text else {"align", "box"})
+        text_dropped = {name for name in TextStyle.model_fields if name not in text_era}
+        # Only a field sitting at its default is "not part of what was asked for"; a payload that
+        # deliberately set the same value as another field's default still hashes as it was sent.
+        text_defaults = tuple(
+            (name, TextStyle.model_fields[name].default) for name in sorted(text_dropped)
+        )
         for command in payload.get("commands", []):
             if (
                 command.get("op") == "asset.register"
@@ -159,8 +173,8 @@ class ProjectStore:
             )
             for clip in clips:
                 text = clip.get("text")
-                if text and normalize_text:
-                    for field, default in (("align", "center"), ("box", False)):
+                if text:
+                    for field, default in text_defaults:
                         if text.get(field) == default:
                             text.pop(field, None)
                 for field, default in (
@@ -173,8 +187,8 @@ class ProjectStore:
                 ):
                     if clip.get(field) == default:
                         clip.pop(field, None)
-            if command.get("op") == "clip.text" and normalize_text:
-                for field, default in (("align", "center"), ("box", False)):
+            if command.get("op") == "clip.text":
+                for field, default in text_defaults:
                     if command["text"].get(field) == default:
                         command["text"].pop(field, None)
             if command.get("op") in {"clip.add", "clip.insert", "clip.overwrite"}:

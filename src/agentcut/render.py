@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 
 from .animation import expression, sound_enabled
 from .compositing import blend_track
-from .contracts import MASK_FIELDS, TIMEBASE, EditorError, Project, render_presets
+from .contracts import MASK_FIELDS, TEXT_FONTS, TIMEBASE, EditorError, Project, render_presets
 from .grade import grade_filter
 from .masks import (
     alpha_expression,
@@ -37,6 +37,65 @@ def sec(ticks: int) -> str:
 
 def ms(ticks: int) -> int:
     return max(0, round(ticks / TIMEBASE * 1000))
+
+
+FONT_ROOT = "C:\\Windows\\Fonts" if os.name == "nt" else "/usr/share/fonts/truetype/dejavu"
+# Off Windows these faces do not exist, and DejaVu is the only thing drawtext can be pointed at. The
+# capability table then publishes just that one face, so the interface and an Agent cannot ask for a
+# font this machine would silently substitute.
+FONT_FALLBACK = "msyh.ttc" if os.name == "nt" else "DejaVuSans.ttf"
+
+
+def text_font_file(face_id: str) -> str:
+    if os.name == "nt":
+        return TEXT_FONTS[face_id][0]
+    return FONT_FALLBACK
+
+
+def text_fonts_available() -> list[dict]:
+    """The faces installed here, as ``{id, label, family}`` — ``family`` is the CSS name."""
+    ready = []
+    for face_id, (_file_name, family, label) in TEXT_FONTS.items():
+        path = os.path.join(FONT_ROOT, text_font_file(face_id))
+        if not os.path.isfile(path):
+            continue
+        if os.name == "nt":
+            entry = {"id": face_id, "label": label, "family": family}
+        else:
+            entry = {
+                "id": face_id,
+                "label": "DejaVu Sans（非 Windows 退路）",
+                "family": "DejaVu Sans",
+            }
+        if entry not in ready:
+            ready.append(entry)
+    return ready
+
+
+def text_font_path(face_id: str) -> str:
+    """The path ``drawtext`` wants: forward slashes, colon escaped. A missing face is refused, not
+    swapped.
+
+    The shape matters and is not obvious: `C\\:\\Windows\\Fonts\\simhei.ttf` does not error, it
+    quietly falls back to a default face, so two different fonts render byte-identical. Measured
+    both ways against the packaged FFmpeg; `tests/textstyle_check.py` keeps the pixel proof.
+    """
+    path = os.path.join(FONT_ROOT, text_font_file(face_id))
+    if not os.path.isfile(path):
+        raise EditorError(
+            "FONT_UNAVAILABLE",
+            f"the text face {face_id!r} is not installed here; pick one of the faces listed by "
+            "GET /v1/capabilities under text_fonts",
+            503,
+            face_id=face_id,
+            installed=[entry["id"] for entry in text_fonts_available()],
+        )
+    return path.replace("\\", "/").replace(":", "\\:")
+
+
+def _rgb(color: str) -> tuple[int, int, int]:
+    values = tuple(int(color[index : index + 2], 16) for index in (1, 3, 5))
+    return values  # type: ignore[return-value]
 
 
 def color_filter(clip) -> str:
@@ -719,17 +778,18 @@ def compile_render_plan(
                     text = clip.text
                     name = "text-" + hashlib.sha256(text.body.encode()).hexdigest() + ".txt"
                     plan.text_files[name] = text.body
-                    font = (
-                        "C\\:/Windows/Fonts/msyh.ttc"
-                        if os.name == "nt"
-                        else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-                    )
+                    font = text_font_path(text.font)
                     font_size = out_h * text.font_size
                     y = "(h-text_h)/2"
                     if text.align == "top":
                         y = "h*0.08"
                     elif text.align == "bottom":
                         y = "h-text_h-h*0.08"
+                    x = "(w-text_w)/2"
+                    if text.text_align == "left":
+                        x = "w*0.08"
+                    elif text.text_align == "right":
+                        x = "w-text_w-w*0.08"
                     # drawtext's own box plate is unreliable, so express the subtitle
                     # backing as an alpha band via geq (same pattern as dip_black).
                     band = ""
@@ -742,16 +802,27 @@ def compile_render_plan(
                         else:
                             y0 = (out_h - band_h) / 2
                         y1 = y0 + band_h
+                        alpha = round(text.box_opacity * 255)
                         band = (
-                            "format=rgba,geq=r='0':g='0':b='0':"
-                            f"a='if(gte(Y,{y0:.1f})*lt(Y,{y1:.1f}),115,0)',"
+                            f"format=rgba,geq=r='{_rgb(text.box_color)[0]}':"
+                            f"g='{_rgb(text.box_color)[1]}':b='{_rgb(text.box_color)[2]}':"
+                            f"a='if(gte(Y,{y0:.1f})*lt(Y,{y1:.1f}),{alpha},0)',"
+                        )
+                    shadow = ""
+                    if text.shadow_x or text.shadow_y:
+                        shadow = (
+                            f"shadowx={round(text.shadow_x * font_size)}:"
+                            f"shadowy={round(text.shadow_y * font_size)}:"
+                            f"shadowcolor={text.shadow_color}:"
                         )
                     title = (
                         f"{band}"
                         f"drawtext=fontfile='{font}':textfile={name}:expansion=none:"
-                        f"fontsize={font_size}:fontcolor={text.color}:bordercolor=black:"
-                        f"borderw={max(1, font_size * 0.04)}:line_spacing={font_size * 0.2}:"
-                        f"x=(w-text_w)/2:y={y},"
+                        f"fontsize={font_size}:fontcolor={text.color}:{shadow}"
+                        f"bordercolor={text.outline_color}:"
+                        f"borderw={round(text.outline_width * font_size)}:"
+                        f"line_spacing={round(text.line_spacing * font_size)}:"
+                        f"x={x}:y={y},"
                     )
                 ramp = clip_ramp(clip, settings)
                 video_source = entry.get("video", f"[{index}:v]")

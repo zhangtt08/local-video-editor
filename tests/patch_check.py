@@ -111,6 +111,18 @@ def main():
                 "color": "#FFFFFF",
                 "align": "bottom",
                 "box": True,
+                # 1.63's knobs were not part of this patch, so they stay at the defaults that
+                # reproduce the pre-1.63 rendering rather than going missing from the record.
+                "font": "yahei",
+                "text_align": "center",
+                "outline_width": 0.04,
+                "outline_color": "#000000",
+                "shadow_x": 0.0,
+                "shadow_y": 0.0,
+                "shadow_color": "#000000",
+                "box_color": "#000000",
+                "box_opacity": 0.45,
+                "line_spacing": 0.2,
             }
             assert c["keyframes"] == before["clips"]["c"]["keyframes"]
             assert client.get(path).json() == before
