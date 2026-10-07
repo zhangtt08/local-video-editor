@@ -1621,3 +1621,26 @@ WebM 第一次真跑就崩：FFmpeg 的进度行对 WebM/Opus 的第一拍报 `o
   `tests/suite_check.py` **50/50**（单独串行）。
 
 仍未做：MXF/DPX 等后期格式；音频交付仍走同一张混音图，没有独立的总线插件（EQ/压缩）。
+
+### 1.58.0 发布验收
+
+- `scripts/build_engine.py --verify`：冻结引擎 `app_version=1.58.0`、`frozen=true`，media/render 就绪。
+- `package_check_158.py`（包内引擎，实例 `7836177e5ee7`）：capabilities 报 14 条预设、
+  `output_containers=['mp4','mov','webm','mp3','wav','flac']`、`features.audio_delivery=true`，三条音频
+  预设的 `codec/pixel_format/scale` 都是 `null`；真实导出 `mp3 48000Hz×2 3.024s 73,197 B`、
+  `wav 3.000s 864,102 B`、`flac 3.000s 184,833 B`，每条**只有一个音频流**、容器名按 demuxer 核对，
+  440/220 Hz 都在；ebur128 量包内视频成片 -18.9 LUFS、MP3 -19.1（0.2 LU，有损）；`.mp4` 名字配 MP3
+  预设 422 点名 `.mp3`；只有无声画面的时间线出 MP3 被 `EMPTY_TIMELINE` 按名字拒绝；
+  `app.asar` 5,522,028 B 里有「仅音频」「libmp3lame」「PCM 24-bit」「FLAC」这些不会被改名的字符串。
+- `asar_compare.py`：包内 5 个 renderer/shell 文件与本地构建逐字节一致，ASAR 版本 1.58.0。
+- 界面（构建产物点包内引擎）：14 条预设；选中 MP3 那条后行内文字是
+  「MP3 音频（口播与配乐交付）mp3 · 无画面 · 仅音频 · MP3」，后缀提示 `.mp3`，
+  「完整保留 / 裁切填满 / 拉伸填满」三个芯片 `disabled=true` 且 title 写「音频交付没有画面，这一项不参与」，
+  「附带竖屏」勾选同样禁用并说明原因；主按钮 title「按 r1 导出 交付格式界面验收.mp3」，点下去任务行
+  「已完成 · 交付格式界面验收.mp3」，磁盘 49,581 B，包内 ffprobe 读回**只有 mp3 一个流**、2.040 秒。
+- 原生窗口：`win-unpacked/AgentCut.exe` 的 1480×900 一帧（`AgentCut-1.58-原生窗口.png`，
+  MD5 `6a8b5c522ce6a9bee57af1a5352f3025`，与 1.57 的 `bcbd4f49…` 不同），标题栏裁条读作
+  「导出 · 引擎在线 v1.58.0」；关闭后无残留。
+- 产物：便携版 132,522,770 B SHA256 `ED936434B223A71D06B3FBF62F3412D7BE528816DE3E4FFAD36F6E3E7CC8A0AE`
+  （根目录 `AgentCut.exe` 与便携版逐字节一致）；安装版 132,683,482 B SHA256
+  `E4F1D0DC3772D19F5617D84ED76D0246FCE59D7361067B61A71047315868BD9C`。未签名，NSIS 向导未点击验收。
