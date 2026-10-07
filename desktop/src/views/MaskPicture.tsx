@@ -7,7 +7,9 @@ import { nearestEdge, withVertex } from "../maskOutline";
 const CORNERS = [[-1,-1,"左上"],[1,-1,"右上"],[-1,1,"左下"],[1,1,"右下"]] as const;
 const MASK_VARIABLE: Record<MaskProperty, string> = { mask_x: "x", mask_y: "y", mask_width: "w", mask_height: "h" };
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
-const MAX_VERTICES = 64;
+// The engine publishes the real cap through capabilities; this only covers the first paint
+// before that payload arrives, and must never be raised on its own.
+const FALLBACK_VERTEX_LIMIT = 64;
 
 type Gesture = {
   mask: ShapeMask; x: number; y: number;
@@ -221,7 +223,8 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
     {visible && mask ? <svg ref={svg} className={`mask-guide${disabled ? " locked" : ""}`} viewBox="0 0 100 100" preserveAspectRatio="none" role="group" aria-label="画面遮罩编辑器" tabIndex={0}
       style={shift.tx || shift.ty || shift.sx !== 1 || shift.sy !== 1 ? { transform: `translate(${(shift.tx * 100).toFixed(4)}%, ${(shift.ty * 100).toFixed(4)}%) scale(${shift.sx.toFixed(6)}, ${shift.sy.toFixed(6)})` } : undefined}
       onDoubleClick={(event) => {
-        if (mask.shape !== "path" || disabled || !mask.vertices || mask.vertices.length >= MAX_VERTICES) return;
+        if (mask.shape !== "path" || disabled || !mask.vertices) return;
+        if (mask.vertices.length >= (app.caps?.mask_vertex_limit ?? FALLBACK_VERTEX_LIMIT)) return;
         const raw = locate(event); if (!raw) return;
         const point = { x: clamp(raw.x, 0, 1), y: clamp(raw.y, 0, 1) };
         setActive(nearestEdge(mask.vertices, point).edge + 1);

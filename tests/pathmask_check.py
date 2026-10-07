@@ -7,9 +7,10 @@ import tempfile
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
+from agentcut.contracts import MASK_VERTEX_LIMIT, Project, ShapeMask
 from agentcut.contracts import TIMEBASE as T
-from agentcut.contracts import Project, ShapeMask
 from agentcut.http_api import create_app
 from agentcut.masks import coverage, mask_png, raster_size
 from agentcut.render import compile_render_plan
@@ -408,6 +409,18 @@ def http_suite(folder: Path) -> None:
     ) as client:
         capabilities = client.get("/v1/capabilities").json()
         assert capabilities["features"]["path_masks"] is True
+        # One number, owned by the contract: the shell reads the cap from here instead of
+        # carrying a second literal that can quietly disagree with what the engine accepts.
+        assert capabilities["mask_vertex_limit"] == MASK_VERTEX_LIMIT
+        ring = lambda count: [  # noqa: E731
+            vertex(0.1 + 0.8 * (index % 2), 0.1 + 0.01 * index) for index in range(count)
+        ]
+        ShapeMask(shape="path", vertices=ring(MASK_VERTEX_LIMIT))
+        try:
+            ShapeMask(shape="path", vertices=ring(MASK_VERTEX_LIMIT + 1))
+            raise AssertionError("an outline longer than the published cap must be refused")
+        except ValidationError:
+            pass
         project = client.post("/v1/projects", json={"request_id": "new", "name": "path"}).json()[
             "project"
         ]

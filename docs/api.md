@@ -819,6 +819,7 @@ Agent 也没法说「按上次那份竖屏方案出」。现在它是工程状�
   **不新增命令、不新增端点、不新增 MCP 工具**。
 - 内缩数字只有一处来源：`contracts.SAFE_AREA_INSETS = {action: 0.035, title: 0.05}`（ITU-R BT.601/709 的
   3.5% / 5%），通过 `capabilities.safe_area_insets` 发给界面。CSS 里那两个写死的百分比被删掉了。
+- 路径遮罩的顶点上限 `MASK_VERTEX_LIMIT`（当前 64）同样只由契约持有，通过 `capabilities.mask_vertex_limit` 发给界面：画面的「双击加点」在到达上限时不再加点，而界面自己不再保存这个数字（1.55 前 `MaskPicture` 里另写了一个 64，两边可以各自漂移）。契约侧的边界由 `PathVertices` 的 `max_length` 把住：64 个顶点的轮廓收，65 个退 `ValidationError`。
 - capabilities 增 `features.safe_area_guides`（不依赖媒体：它只是监视器上的参考线）。
 - 语义边界：**它只影响界面**。同一时刻的两种状态各导一次文件，逐通道取样完全相同——这条是断言出来的，
   不是声明出来的（`tests/safearea_check.py`）。
