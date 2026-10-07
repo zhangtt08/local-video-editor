@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type PointerEvent, typ
 import type { Clip, Curve, MaskProperty, MaskVertex, ShapeMask } from "../engine";
 import { TIMEBASE } from "../time";
 import { appInfo, commitMaskEdit, moveMaskCentre, playhead, setClipMask, setMaskEditing, useApp, usePlay } from "../store";
+import { nearestEdge, withVertex } from "../maskOutline";
 
 const CORNERS = [[-1,-1,"左上"],[1,-1,"右上"],[-1,1,"左下"],[1,1,"右下"]] as const;
 const MASK_VARIABLE: Record<MaskProperty, string> = { mask_x: "x", mask_y: "y", mask_width: "w", mask_height: "h" };
@@ -221,9 +222,10 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
       style={shift.tx || shift.ty || shift.sx !== 1 || shift.sy !== 1 ? { transform: `translate(${(shift.tx * 100).toFixed(4)}%, ${(shift.ty * 100).toFixed(4)}%) scale(${shift.sx.toFixed(6)}, ${shift.sy.toFixed(6)})` } : undefined}
       onDoubleClick={(event) => {
         if (mask.shape !== "path" || disabled || !mask.vertices || mask.vertices.length >= MAX_VERTICES) return;
-        const point = locate(event); if (!point) return;
-        setActive(mask.vertices.length);
-        write({ ...mask, vertices: [...mask.vertices, { x: point.x, y: point.y, handle_out: [0, 0], handle_in: [0, 0] }] });
+        const raw = locate(event); if (!raw) return;
+        const point = { x: clamp(raw.x, 0, 1), y: clamp(raw.y, 0, 1) };
+        setActive(nearestEdge(mask.vertices, point).edge + 1);
+        write(withVertex(mask, point));
       }}
       onClick={(e) => e.stopPropagation()} onKeyDown={(e) => {
         if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); if (drag.current) cancel(); else setMaskEditing(false); return; }
