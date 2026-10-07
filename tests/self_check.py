@@ -378,6 +378,7 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
                 "editor_capabilities",
                 "editor_contracts",
                 "editor_info",
+                "lut_parse",
                 "project_create",
                 "project_list",
                 "project_get",
@@ -417,6 +418,8 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
             assert set(tools) == expected, set(tools) ^ expected
             assert "request" in tools["timeline_edit"].inputSchema["properties"]
             assert tools["clip_silence"].annotations.readOnlyHint is True
+            assert tools["lut_parse"].annotations.readOnlyHint is True
+            assert "content" in json.dumps(tools["lut_parse"].inputSchema)
             assert tools["clip_track"].annotations.readOnlyHint is False
             assert tools["marker_split"].annotations.readOnlyHint is True
             assert tools["clip_four_point"].annotations.readOnlyHint is True

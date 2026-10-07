@@ -59,7 +59,7 @@ Electron 管理本地引擎生命周期与凭证；renderer 不读取数据库�
 
 ## 调色节点（1.16）
 
-grade.py 是每通道传递函数的唯一编译处：把 ClipColor.grade 的启用节点按顺序合成为一条输入轴折线（65 点基准栅格与控制点位置取并集，近共线点合并），再从这条折线导出两份产物——FFmpeg `lutrgb` 的分段线性表达式，和 preview-manifest 里每片段 `grade:{id,r,g,b}` 的 256 项表。浏览器用 `feComponentTransfer type="table"` 与 `color-interpolation-filters=sRGB` 应用同一张表，因此调色预览与导出是同一个函数，而不是两套近似实现；节点链为空或恒等时两份产物都不存在，渲染图不增加任何滤镜。链路排在原有曝光/对比度/饱和度之后，界面 CSS 滤镜列表也按同序组合。
+grade.py 是每通道传递函数的唯一编译处：把 ClipColor.grade 的启用节点按顺序合成为一条输入轴折线（65 点基准栅格与控制点位置取并集，近共线点合并），再从这条折线导出两份产物——FFmpeg `lutrgb` 的分段线性表达式，和 preview-manifest 里每片段 `grade:{id,r,g,b}` 的 256 项表。浏览器用 `feComponentTransfer type="table"` 与 `color-interpolation-filters=sRGB` 应用同一张表，因此调色预览与导出是同一个函数，而不是两套近似实现；节点链为空或恒等时两份产物都不存在，渲染图不增加任何滤镜。链路排在原有曝光/对比度/饱和度之后，界面 CSS 滤镜列表也按同序组合。`.cube` 查找表也只有这一处读取：`parse_1d_cube` 是引擎里唯一的 LUT 解析器，桌面界面把文件文本 POST 到 `/v1/lut/parse`、Agent 用同一个工具，拿回的就是可直接入链的 `GradeLUT` 载荷（等距网格、线性插值、越界值夹住、超过 `LUT_SAMPLE_LIMIT` 就重采样并回报 `resampled_from`），客户端不第二遍解释文件；只接受 1D，因为 3D 表跨通道混合就不再是每通道函数，这份架构不假装能替它做决定。
 
 每个节点另带 mix 强度：先算节点结果，再按 out=in+mix*(node(in)-in) 与该节点输入逐通道插值（达芬奇的 Mix 语义），所以整条链仍折叠成同一条每通道折线，mix 全为 0 与停用节点一样不产生任何滤镜、不申请 LUT。节点全部只依赖本通道数值：曲线为分段线性（端点外保持），白平衡为逐通道增益，RGB 增益为 `gain*in^(1/gamma)+lift` 并逐节点钳位。曲线节点的 y 允许超出 0..1，由链尾钳位实现压黑/溢出。表达式只由数值拼接，不引入调用方文本；`clip.grade` 与 `clip.patch.color.grade` 共用原 reducer、锁轨、整批回滚、request_id/expected_revision 与历史，schema v10 兼容读取 v1–v9，color 中的默认 `grade` 已从请求指纹剔除以保留旧回执重放。
 

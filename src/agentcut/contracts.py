@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 13  # v13 gives a path mask a real box; older rows are fitted on load (ge=1).
-APP_VERSION = "1.61.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.62.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -166,6 +166,14 @@ class ClipEffects(Contract):
     gain: Annotated[float, Field(ge=0, le=4)] = 1.0
 
 
+# The grade chain's shape limits live here and nowhere else: the interface enumerates its picker and
+# clamps its inputs from `capabilities.grade_limits`, so a node the compiler cannot honour can never
+# be built by hand. `LUT_SAMPLE_LIMIT` is 1024 because a `.cube` 1D table ships with 256 or 1024
+# rows as often as 33 — a limit below that would refuse files people already own.
+CURVE_POINT_LIMIT = 16
+LUT_SAMPLE_LIMIT = 1024
+
+
 class GradeCurvePoint(Contract):
     x: Annotated[float, Field(ge=0, le=1)]
     y: Annotated[float, Field(ge=-0.5, le=1.5)]
@@ -183,7 +191,7 @@ class GradeCurve(Contract):
 
     kind: Literal["curve"] = "curve"
     channel: Literal["rgb", "red", "green", "blue"] = "rgb"
-    points: Annotated[list[GradeCurvePoint], Field(min_length=2, max_length=16)]
+    points: Annotated[list[GradeCurvePoint], Field(min_length=2, max_length=CURVE_POINT_LIMIT)]
     enabled: bool = True
     mix: GradeMix = 1.0
     blend: BlendMode = "normal"
@@ -250,7 +258,41 @@ class GradeTransfer(Contract):
     blend: BlendMode = "normal"
 
 
-GradeBranch = GradeCurve | GradeWhiteBalance | GradeWheels | GradeTransfer
+class GradeLUT(Contract):
+    """An imported 1D lookup table: three per-channel sample lists, one value per input level.
+
+    This is the `.cube` `LUT_1D_SIZE` flavour — the only kind that stays a per-channel function, so
+    the whole grade chain still compiles to one table per channel and both renderers keep reading
+    the same data. A 3D LUT mixes channels (its output red depends on input green and blue) and is
+    refused at parse time with that sentence rather than silently flattened. Grid spacing is the
+    importer's `1/(size-1)`; the sampler interpolates linearly between samples, exactly like the
+    curve nodes' piecewise sections.
+    """
+
+    kind: Literal["lut"] = "lut"
+    title: Annotated[str, Field(max_length=64)] = "LUT"
+    size: Annotated[int, Field(ge=2, le=LUT_SAMPLE_LIMIT)]
+    channels: Annotated[
+        list[
+            Annotated[
+                list[Annotated[float, Field(ge=0, le=1)]],
+                Field(min_length=2, max_length=LUT_SAMPLE_LIMIT),
+            ]
+        ],
+        Field(min_length=3, max_length=3),
+    ]
+    enabled: bool = True
+    mix: GradeMix = 1.0
+    blend: BlendMode = "normal"
+
+    @model_validator(mode="after")
+    def channels_match_size(self):
+        if any(len(table) != self.size for table in self.channels):
+            raise ValueError("each LUT channel must carry exactly `size` samples")
+        return self
+
+
+GradeBranch = GradeCurve | GradeWhiteBalance | GradeWheels | GradeTransfer | GradeLUT
 
 GRADE_NODE_LIMIT = 8
 GRADE_BRANCH_LIMIT = 4
@@ -274,7 +316,7 @@ class GradeParallel(Contract):
     blend: BlendMode = "normal"
 
 
-GradeNode = GradeCurve | GradeWhiteBalance | GradeWheels | GradeTransfer | GradeParallel
+GradeNode = GradeCurve | GradeWhiteBalance | GradeWheels | GradeTransfer | GradeLUT | GradeParallel
 
 
 class ClipColor(Contract):
@@ -1330,6 +1372,17 @@ class CachePrune(Contract):
     dry_run: bool = False
 
 
+class LutParse(Contract):
+    """The text of a `.cube` file, handed to the engine's one parser.
+
+    The client uploads the file content instead of interpreting it: there is exactly one `.cube`
+    reader, in the engine, so the interface and an Agent cannot disagree about what a LUT means.
+    The reply is a ready-to-send `GradeLUT` payload (without the per-node defaults).
+    """
+
+    content: Annotated[str, Field(min_length=1, max_length=524_288)]
+
+
 class RenderRequest(Contract):
     request_id: Identifier
     expected_revision: Revision
@@ -1675,6 +1728,15 @@ def capabilities(media_ready: bool = False, speech_ready: bool = False) -> dict:
         # drift from any future burn-in or export check.
         "safe_area_insets": SAFE_AREA_INSETS,
         "mask_vertex_limit": MASK_VERTEX_LIMIT,
+        # The grade chain's own shape limits, published the same way: the node picker, the curve
+        # point budget, the branch count and the largest LUT grid all come from here, so the
+        # interface cannot offer a node the compiler would refuse.
+        "grade_limits": {
+            "max_nodes": GRADE_NODE_LIMIT,
+            "max_branches": GRADE_BRANCH_LIMIT,
+            "max_curve_points": CURVE_POINT_LIMIT,
+            "max_lut_samples": LUT_SAMPLE_LIMIT,
+        },
         # The transition picker enumerates this list rather than carrying its own copy, so a kind
         # the exporter cannot honour can never appear in the interface.
         "transition_kinds": [dict(item) for item in TRANSITION_KINDS],
@@ -1802,6 +1864,7 @@ def capabilities(media_ready: bool = False, speech_ready: bool = False) -> dict:
             "color_correction": True,
             "grade_nodes": True,
             "grade_node_mix": True,
+            "lut_import": True,
             "grade_node_blend_modes": True,
             "grade_parallel_branches": True,
             "timeline_marks": True,

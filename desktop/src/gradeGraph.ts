@@ -13,6 +13,7 @@ export const NODE_NAMES: Record<GradeNode["kind"], string> = {
   white_balance: "白平衡",
   wheels: "RGB 增益",
   transfer: "色彩空间",
+  lut: "LUT 查找表",
   parallel: "并联",
 };
 
@@ -39,6 +40,9 @@ function mixText(node: GradeOperation | GradeParallel): string {
 
 function operationText(node: GradeNode): string {
   const parts = [mixText(node)];
+  // An imported table says which file it came from and how coarse its grid is, because that is the
+  // whole of what the node knows: the card must not look like a control the user can still dial in.
+  if (node.kind === "lut") parts.push(`${node.title} · ${node.size} 点`);
   if (node.blend && node.blend !== "normal") parts.push(blendLabel(node.blend));
   return parts.filter(Boolean).join(" · ");
 }

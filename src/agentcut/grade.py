@@ -123,12 +123,39 @@ def blend_values(mode: str, backdrop: float, picture: float) -> float:
     return BLEND_FUNCTIONS[mode](backdrop, picture)
 
 
+def lut_function(table):
+    """Linearly interpolated lookup for one imported 1D LUT channel, on the 0..1 domain.
+
+    The grid is even at `1/(n-1)` — the `.cube` 1D layout has no per-sample positions — so the
+    mapping is the same piecewise shape the curve nodes compile, and the chain composes it like any
+    other node.
+    """
+    count = len(table)
+    step = 1 / (count - 1)
+
+    def lookup(value: float) -> float:
+        if value <= 0:
+            return _clamp(table[0])
+        if value >= 1:
+            return _clamp(table[-1])
+        position = value / step
+        index = int(position)
+        if index >= count - 1:
+            return _clamp(table[-1])
+        fraction = position - index
+        return _clamp(table[index] + fraction * (table[index + 1] - table[index]))
+
+    return lookup
+
+
 def _op_function(node, index: int):
     """Per-channel mapping of one operation, or None when it leaves this channel untouched."""
     if node.kind == "curve":
         if node.channel != "rgb" and CURVE_CHANNELS[node.channel] != index:
             return None
         return _piecewise([(point.x, point.y) for point in node.points])
+    if node.kind == "lut":
+        return lut_function(node.channels[index])
     if node.kind == "transfer":
         source, target = node.input_space, node.output_space
 
@@ -194,14 +221,16 @@ def node_function(node, index: int):
 
 
 def _curve_knots(node, index: int):
-    """Input positions where a curve in this node (or one of its branches) actually bends."""
+    """Input positions where a node (or one of its branches) actually bends this channel."""
     operations = node.branches if node.kind == "parallel" else [node]
     for operation in operations:
-        if operation.kind != "curve":
-            continue
-        if operation.channel != "rgb" and CURVE_CHANNELS[operation.channel] != index:
-            continue
-        yield from (point.x for point in operation.points)
+        if operation.kind == "curve":
+            if operation.channel != "rgb" and CURVE_CHANNELS[operation.channel] != index:
+                continue
+            yield from (point.x for point in operation.points)
+        elif operation.kind == "lut":
+            count = operation.size
+            yield from (step / (count - 1) for step in range(count))
 
 
 def _channel_points(nodes, index: int) -> list[tuple[float, float]] | None:
@@ -319,3 +348,102 @@ def grade_filter(color) -> str:
     if all(value == "val" for value in stages.values()):
         return ""
     return "lutrgb=" + ":".join(f"{name}='{value}'" for name, value in stages.items())
+
+
+def parse_1d_cube(text: str, *, title_default: str = "LUT") -> dict:
+    """Parse the 1D flavour of an Autodesk `.cube` file into a `GradeLUT` payload.
+
+    Only `LUT_1D_SIZE` is accepted: its rows are independent per-channel ramps, which is exactly
+    the per-channel table this chain can hold. A 3D LUT's output depends on all three inputs at
+    once, so accepting it here would mean quietly flattening a cross-channel transform into three
+    independent ones — refuse with that sentence instead. The samples clamp onto 0..1; rows come
+    red-fastest per the format's definition.
+    """
+    title = title_default
+    size = 0
+    domain_min, domain_max = (0.0, 0.0, 0.0), (1.0, 1.0, 1.0)
+    samples: list[tuple[float, float, float]] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        upper = stripped.upper()
+        if upper.startswith("TITLE"):
+            words = stripped.split(None, 1)
+            if len(words) > 1:
+                title = words[1].strip().strip('"')[:64]
+            continue
+        if upper.startswith("LUT_1D_SIZE"):
+            size = _cube_int(upper.split()[1], "LUT_1D_SIZE")
+            continue
+        if upper.startswith("LUT_3D_SIZE"):
+            raise _cube_error("this is a 3D LUT; cross-channel tables are not supported yet")
+        if upper.startswith("DOMAIN_MIN") or upper.startswith("DOMAIN_MAX"):
+            values = [_cube_float(item) for item in stripped.split()[1:]]
+            if len(values) != 3:
+                raise _cube_error("DOMAIN needs three numbers")
+            if upper.startswith("DOMAIN_MIN"):
+                domain_min = tuple(values)  # type: ignore[assignment]
+            else:
+                domain_max = tuple(values)  # type: ignore[assignment]
+            continue
+        parts = stripped.split()
+        if len(parts) != 3:
+            raise _cube_error(f"cannot read the row {stripped[:40]!r}")
+        samples.append(tuple(_cube_float(item) for item in parts))  # type: ignore[arg-type]
+    if size < 2:
+        raise _cube_error("the file needs a LUT_1D_SIZE of 2 or more")
+    if len(samples) != size:
+        raise _cube_error(f"expected {size} rows but found {len(samples)}")
+    if domain_min != (0.0, 0.0, 0.0) or domain_max != (1.0, 1.0, 1.0):
+        raise _cube_error("only the default DOMAIN 0..1 is supported")
+    channels = [[_clamp(row[index]) for row in samples] for index in range(3)]
+    size_limit = _lut_size_limit()
+    if size <= size_limit:
+        return {"title": title, "size": size, "channels": channels}
+    # More rows than the contract's grid allows — and the table is read as piecewise-linear either
+    # way, so resample it evenly rather than refusing a file the user already owns. Nothing is
+    # silent: `resampled_from` travels in the reply, and the node says so in the interface.
+    step = (size - 1) / (size_limit - 1)
+    channels = [
+        [_sample(row, position * step) for position in range(size_limit)] for row in channels
+    ]
+    return {"title": title, "size": size_limit, "channels": channels, "resampled_from": size}
+
+
+def _lut_size_limit() -> int:
+    from .contracts import LUT_SAMPLE_LIMIT
+
+    return LUT_SAMPLE_LIMIT
+
+
+def _sample(table: list[float], position: float) -> float:
+    """The piecewise-linear value of one channel's table at an fractional grid index."""
+    index = int(position)
+    if index >= len(table) - 1:
+        return table[-1]
+    fraction = position - index
+    return table[index] + fraction * (table[index + 1] - table[index])
+
+
+def _cube_error(message: str) -> Exception:
+    from .contracts import EditorError
+
+    return EditorError("INVALID_LUT", message, 422)
+
+
+def _cube_int(text: str, what: str) -> int:
+    try:
+        return int(text)
+    except ValueError as error:
+        raise _cube_error(f"{what} must be a whole number") from error
+
+
+def _cube_float(text: str) -> float:
+    try:
+        value = float(text)
+    except ValueError as error:
+        raise _cube_error(f"cannot read the number {text[:20]!r}") from error
+    if value != value or value in (float("inf"), float("-inf")):
+        raise _cube_error("LUT numbers must be finite")
+    return value

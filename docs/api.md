@@ -269,6 +269,7 @@ SRT 时间量化到序列帧；原文字换行保留，基础 b/i/u/font 标记�
 |---|---|---|
 | POST /v1/preview-manifest | preview_candidate(project) | 验证完整候选 Project、返回只读预览计划，不写项目/历史/回执 |
 | POST /v1/mask/preview | — | ShapeMask 请求体，返回只读 mask_image（原生 SVG data URL），供拖动草稿 |
+| POST /v1/lut/parse | lut_parse | `LutParse{content}`（.cube 文本，≤512 KiB）请求体；引擎唯一的 LUT 解析器返回可直接放进 `clip.color.grade` 的 `GradeLUT` 载荷，只读、不写项目 |
 
 已提交 GET preview-manifest 与候选 POST 返回每片段 mask_image，null 表示无遮罩；动画/颜色/转场亦按候选编译。MCP timeline_edit 的 clip.mask 仍从同一契约生成，不暴露自定义 SVG、FFmpeg 参数或路径执行。服务端媒体仍使用已验证记录。capabilities 新增 shape_masks=true；尚未实现自由路径、遮罩动画/跟踪、多遮罩堆叠。
 
@@ -1235,3 +1236,34 @@ request_id 重跑会被 reducer 以 DUPLICATE_ID 拒绝而不是叠出第二条�
 重放 replayed、换 request 撞 DUPLICATE_ID、dry-run 不落库、replace 原位重生成同 id 轨 →
 真实导出帧里有字幕亮像素、前导空帧没有 → 200% 速度下同样的文本落在减半的时间上 →
 无声素材/变速曲线/双语种缺模型各按原因拒绝。
+
+## 1.62 LUT 查找表导入（`.cube` 1D，工程 schema 仍是 v13）
+
+调色节点里多一种 `lut`：`{kind: "lut", title, size, channels:[[r…],[g…],[b…]], enabled, mix, blend}`，
+三个通道各一条折线，`channels[c].length == size`（契约校验），`size` 2..`LUT_SAMPLE_LIMIT`（1024），
+采样点取值 0..1。它仍是**每通道函数**，所以整条链照旧塌缩成一张每通道表，`lutrgb` 与浏览器
+`feComponentTransfer` 读同一组数——这是不做「3D LUT」的唯一原因：3D 表的输出红取决于输入的绿与蓝，
+那是跨通道矩阵，不再是每通道一条曲线，硬压成三条就是骗人。
+
+`.cube` 文本**只由引擎的 `grade.parse_1d_cube` 读一次**。客户端（桌面界面）与 Agent 都不自己解释文件：
+`POST /v1/lut/parse`（MCP 只读工具 `lut_parse`）收 `LutParse{content}`（1..512 KiB 文本），回
+`{title, size, channels}`，那就是一份可直接写进 `clip.color.grade` 的载荷；超过 1024 行的表按等距网格
+重采样，并在回复里带上 `resampled_from`（原文件的行数），界面把它说给人听，不静默改数。解析规则：
+只认 `LUT_1D_SIZE`（大小写都读），`TITLE` 可带引号可含空格，`#` 注释与空行跳过，CRLF 可用，行内三个数
+按 R G B 顺序、越界值夹到 0..1；`DOMAIN_MIN/MAX` 非默认、声明行数与实际不符、`LUT_3D_SIZE`、读不出数字、
+行列数不对，各自 422 `INVALID_LUT` 并写明原因（新错误码只有这一个，走既有 EditorError 信封）。
+`GET /v1/contracts` 现在也回 `LutParse` 的 schema。
+
+命令层不新增任何一条：写入仍然是 `clip.grade`（整串替换）或 `clip.patch` 的 `color.grade`，HTTP/MCP/界面
+共用同一条 reducer 路径，`mix`（0..1 与输入按比例混合）与 `blend`（八种可分混合）与其它节点完全同义，
+`mix=0` 或 `enabled=false` 时连滤镜阶段都不产生。
+
+上限的唯一主人是 `capabilities.grade_limits = {max_nodes: 8, max_branches: 4, max_curve_points: 16,
+max_lut_samples: 1024}`，界面从这份表限制节点数、曲线控制点数、并联支数与 LUT 采样数，不再自带数字
+（1.55 的同一课）；`features.lut_import=true`。验收 `tests/lut_check.py` 与
+`tests/desktop_graph_check.ts`：解析层用「自己按公式写出来的文件」逐值核对（构造即事实，不拿解析器再
+解析一遍），768 格浏览器表对独立写出的等距线性插值最大 0.125 阶，编译出的 `lutrgb` 串喂给 FFmpeg 自己
+的求值器（256 级灰度斜坡、不经编码器）三条通道各 1.00/1.00/1.09 阶，真实 H.264 成片六档灰带
+[2,18,62,126,194,249] → [0,2,41,137,235,253] 十八个点全部对得住下发的表，parse 回复直接进 `clip.grade`
+往返 17×3 个采样点一字不差，七种写坏的载荷 422 且 revision 不动，3D/缺 size/行数不符/非默认 DOMAIN/
+读不出数字/行列数不对各按原因拒绝，2048 行的文件重采样到 1024 并写明 `resampled_from`。

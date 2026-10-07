@@ -1,15 +1,18 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 
 import {DEFAULT_TRANSFER, COLOR_SPACES, DEFAULT_CURVE_POINTS, DEFAULT_WHEELS, type GradeChannel, type GradeCurvePoint, type GradeNode, type GradeOperation, type GradeParallel, type ColorSpace, BLEND_MODES, type BlendMode} from "../engine";
-import { editableProject, setClipColor, useApp } from "../store";
+import { editableProject, setClipColor, useApp, applyLut } from "../store";
 import { NODE_NAMES, cardsFor, moveWithin } from "../gradeGraph";
 
 const CHANNELS: [GradeChannel, string][] = [["rgb", "主色"], ["red", "红"], ["green", "绿"], ["blue", "蓝"]];
 const GREEN_MAGENTA = [0.70710678, -0.70710678, 0];
 const BLUE_YELLOW = [0.40824829, 0.40824829, -0.81649758];
-const MAX_NODES = 8;
-const MAX_POINTS = 16;
-const MAX_BRANCHES = 4;
+/** 链子上限的唯一主人是引擎的 `capabilities.grade_limits`；下面三个数只在引擎没有回该字段时兜底。 */
+const FALLBACK_NODES = 8;
+const FALLBACK_POINTS = 16;
+const FALLBACK_BRANCHES = 4;
+
+export type GradeLimits = { nodes: number; points: number; branches: number };
 
 function clamp(value: number, lo: number, hi: number) {
   return Math.min(hi, Math.max(lo, value));
@@ -78,7 +81,7 @@ function WheelPad({ values, base, span, lo, hi, onCommit }: { values: number[]; 
 }
 
 /** Transfer curve editor on the same control points the engine samples into the shared LUT. */
-function CurvePad({ points, onCommit }: { points: GradeCurvePoint[]; onCommit: (next: GradeCurvePoint[]) => void }) {
+function CurvePad({ points, maxPoints, onCommit }: { points: GradeCurvePoint[]; maxPoints: number; onCommit: (next: GradeCurvePoint[]) => void }) {
   const svg = useRef<SVGSVGElement>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const draftRef = useRef<GradeCurvePoint[] | null>(null);
@@ -132,7 +135,7 @@ function CurvePad({ points, onCommit }: { points: GradeCurvePoint[]; onCommit: (
         track(null);
       }}
       onDoubleClick={(e) => {
-        if (shown.length >= MAX_POINTS) return;
+        if (shown.length >= maxPoints) return;
         const point = at(e);
         if (shown.some((candidate) => Math.abs(candidate.x - point.x) < 0.02)) return;
         const index = shown.filter((candidate) => candidate.x < point.x).length;
@@ -180,13 +183,13 @@ function CurvePad({ points, onCommit }: { points: GradeCurvePoint[]; onCommit: (
   </div>;
 }
 
-/** 一个操作的编辑控件：曲线、白平衡、色彩空间、RGB 增益。串行节点与并联分支共用这一套。 */
-function OpFields({ node, idPrefix, onCommit }: { node: GradeNode; idPrefix: string; onCommit: (next: GradeNode) => void }) {
+/** 一个操作的编辑控件：曲线、白平衡、色彩空间、RGB 增益、LUT。串行节点与并联分支共用这一套。 */
+function OpFields({ node, idPrefix, limits, onReplace, onCommit }: { node: GradeNode; idPrefix: string; limits: GradeLimits; onReplace?: () => void; onCommit: (next: GradeNode) => void }) {
   if (node.kind === "curve") {
     return <div className="grade-body">
       <label className="mask-shape">通道 <select className="input" aria-label="曲线通道" value={node.channel} onChange={(e) => onCommit({ ...node, channel: e.target.value as GradeChannel })}>{CHANNELS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-      <CurvePad points={node.points} onCommit={(points) => onCommit({ ...node, points })} />
-      <p className="hint">{node.channel === "rgb" ? "主色曲线同时作用于三个通道" : `只改${CHANNELS.find(([value]) => value === node.channel)?.[1]}通道`}，共 {node.points.length} 个点。</p>
+      <CurvePad points={node.points} maxPoints={limits.points} onCommit={(points) => onCommit({ ...node, points })} />
+      <p className="hint">{node.channel === "rgb" ? "主色曲线同时作用于三个通道" : `只改${CHANNELS.find(([value]) => value === node.channel)?.[1]}通道`}，共 {node.points.length} 个点（上限 {limits.points} 个）。</p>
     </div>;
   }
   if (node.kind === "white_balance") {
@@ -201,6 +204,13 @@ function OpFields({ node, idPrefix, onCommit }: { node: GradeNode; idPrefix: str
       <label className="mask-shape">输入色彩空间 <select className="input" aria-label="输入色彩空间" value={node.input_space} onChange={(e) => onCommit({ ...node, input_space: e.target.value as ColorSpace })}>{COLOR_SPACES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <label className="mask-shape">输出色彩空间 <select className="input" aria-label="输出色彩空间" value={node.output_space} onChange={(e) => onCommit({ ...node, output_space: e.target.value as ColorSpace })}>{COLOR_SPACES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <p className="hint">只换算传递函数（gamma / sRGB / BT.1886），不动色域基色也不做矩阵变换：手机素材与屏幕录制是 sRGB，广播时间线是 BT.1886（等于 gamma 2.4），这一节把前者的暗部按发布标准抬到后者。预览与导出共用同一张每通道表，暗部拐点用自适应打点，误差不超过半个色阶。</p>
+    </div>;
+  }
+  if (node.kind === "lut") {
+    return <div className="grade-body">
+      <p className="hint">正在用「{node.title}」：三个通道各 {node.size} 个采样点，点与点之间线性插值。这张表是引擎解析 .cube 文件得到的，界面不自己读文件，预览和导出读同一组数。</p>
+      {onReplace ? <button className="btn tiny" onClick={onReplace}>换一张 LUT</button> : null}
+      <p className="hint">只支持 1D（逐通道）查找表；3D LUT 会把红绿蓝互相混在一起，就不再是每通道一条曲线，引擎会当场说明不接受的原因。强度与混合方式仍然照用。</p>
     </div>;
   }
   if (node.kind === "wheels") {
@@ -230,8 +240,10 @@ function MixFields({ node, idPrefix, label, onCommit }: { node: GradeNode; idPre
   </div>;
 }
 
-/** 新建一个操作：串行节点与并联分支的起点都一样，全部是「不动画面」的中性值。 */
-function newOperation(kind: GradeOperation["kind"]): GradeOperation {
+/** 新建一个操作：串行节点与并联分支的起点都一样，全部是「不动画面」的中性值。
+ *  LUT 不在其中——一张查找表的内容只能来自文件，没有中性值可给，所以它由「+LUT」走引擎解析导入，
+ *  类型上也排除掉：误把 "lut" 传进来会在编译期报错，而不是悄悄建出一个 RGB 增益节点。 */
+function newOperation(kind: Exclude<GradeOperation["kind"], "lut">): GradeOperation {
   return kind === "curve"
     ? { kind: "curve", channel: "rgb", points: DEFAULT_CURVE_POINTS.map((point) => ({ ...point })), enabled: true }
     : kind === "white_balance"
@@ -252,6 +264,14 @@ export function GradeFields({ clipId }: { clipId: string }) {
   const dragging = useRef<number | null>(null);
   const clip = project?.clips[clipId];
   const nodes = clip?.color?.grade ?? [];
+  // 上限由引擎下发（1.55 的同一课）：界面不自己数一遍，就不会出现界面允许、引擎拒绝的节点。
+  const limits: GradeLimits = {
+    nodes: app.caps?.grade_limits?.max_nodes ?? FALLBACK_NODES,
+    points: app.caps?.grade_limits?.max_curve_points ?? FALLBACK_POINTS,
+    branches: app.caps?.grade_limits?.max_branches ?? FALLBACK_BRANCHES,
+  };
+  const lutFile = useRef<HTMLInputElement>(null);
+  const lutTarget = useRef<number | null>(null);
   const locked = Boolean(app.busy || !project || project.tracks.find((track) => track.id === clip?.track_id)?.locked);
 
   useEffect(() => {
@@ -272,13 +292,20 @@ export function GradeFields({ clipId }: { clipId: string }) {
     write(next);
     setActive(Math.min(Math.max(0, target), next.length - 1));
   };
-  const add = (kind: GradeNode["kind"]) => {
-    if (nodes.length >= MAX_NODES) return;
+  const add = (kind: "curve" | "white_balance" | "wheels" | "transfer" | "parallel") => {
+    if (nodes.length >= limits.nodes) return;
     const node: GradeNode = kind === "parallel"
       ? { kind: "parallel", branches: [newOperation("white_balance"), newOperation("white_balance")], enabled: true }
       : newOperation(kind);
     write([...nodes, node]);
     pending.current = nodes.length;
+  };
+
+  /** LUT 节点没有“中性值”可新建：表内容只能来自文件，所以点它就是为了打开文件选择。 */
+  const pickLut = (index: number | null) => {
+    if (index === null && nodes.length >= limits.nodes) return;
+    lutTarget.current = index;
+    lutFile.current?.click();
   };
 
   const current = nodes[active];
@@ -304,7 +331,15 @@ export function GradeFields({ clipId }: { clipId: string }) {
     <summary className="panel-label">调色节点{nodes.length ? ` · ${nodes.length} 个` : ""}</summary>
     <fieldset className="effects-fields" disabled={locked}>
       <div className="batch-actions">
-        {(["curve", "white_balance", "wheels", "transfer", "parallel"] as const).map((kind) => <button key={kind} className="btn tiny" disabled={nodes.length >= MAX_NODES} onClick={() => add(kind)}>+{NODE_NAMES[kind]}</button>)}
+        {(["curve", "white_balance", "wheels", "transfer", "parallel"] as const).map((kind) => <button key={kind} className="btn tiny" disabled={nodes.length >= limits.nodes} onClick={() => add(kind)}>+{NODE_NAMES[kind]}</button>)}
+        {app.caps?.features.lut_import ? <button className="btn tiny" disabled={nodes.length >= limits.nodes} title="选择 .cube 文件（1D 逐通道查找表），由引擎解析" onClick={() => pickLut(null)}>+LUT</button> : null}
+        <input ref={lutFile} type="file" accept=".cube,text/plain" hidden onChange={(event) => {
+          const file = event.target.files?.[0];
+          const target = lutTarget.current;
+          lutTarget.current = null;
+          event.target.value = "";
+          if (file) void applyLut(clipId, file, target);
+        }} />
       </div>
       {nodes.length ? <div className="grade-graph" role="list" aria-label="调色节点链">
         <span className="gg-io">输入</span>
@@ -341,18 +376,18 @@ export function GradeFields({ clipId }: { clipId: string }) {
         </Fragment>)}
         <span className="gg-wire" aria-hidden="true" />
         <span className="gg-io">输出</span>
-      </div> : <p className="hint">曝光、对比度、饱和度之后按顺序执行这些节点。曲线、白平衡、RGB 增益、色彩空间与并联都只改每通道值，预览与导出共用同一张表。</p>}
+      </div> : <p className="hint">曝光、对比度、饱和度之后按顺序执行这些节点。曲线、白平衡、RGB 增益、色彩空间、LUT 查找表与并联都只改每通道值，预览与导出共用同一张表。</p>}
 
-      {current && current.kind !== "parallel" ? <OpFields node={current} idPrefix="grade" onCommit={(next) => replace(active, next)} /> : null}
+      {current && current.kind !== "parallel" ? <OpFields node={current} idPrefix="grade" limits={limits} onReplace={current.kind === "lut" ? () => pickLut(active) : undefined} onCommit={(next) => replace(active, next)} /> : null}
 
       {current?.kind === "parallel" ? <div className="grade-body">
         <div className="batch-actions">
           {current.branches.map((branch, index) => <button key={index} className={`grade-pick${index === slot ? " active" : ""}`} onClick={() => setSlot(index)} aria-label={`选择第 ${index + 1} 支`}>{index + 1}. {NODE_NAMES[branch.kind]}{branch.mix === undefined || branch.mix === 1 ? "" : ` · ${Math.round(branch.mix * 100)}%`}</button>)}
-          <button className="btn tiny" disabled={current.branches.length >= MAX_BRANCHES} onClick={() => addBranch(current)} aria-label="增加一支">+支</button>
+          <button className="btn tiny" disabled={current.branches.length >= limits.branches} onClick={() => addBranch(current)} aria-label="增加一支">+支</button>
           <button className="btn tiny danger" disabled={current.branches.length <= 1} onClick={() => removeBranch(current)} aria-label="删除本支">删支</button>
         </div>
         {shown ? <>
-          <OpFields node={shown} idPrefix={`grade-b${slot}`} onCommit={(next) => replaceBranch(current, slot, next)} />
+          <OpFields node={shown} idPrefix={`grade-b${slot}`} limits={limits} onCommit={(next) => replaceBranch(current, slot, next)} />
           <MixFields node={shown} idPrefix={`grade-b${slot}`} label="支" onCommit={(next) => replaceBranch(current, slot, next)} />
           <label className="grade-switch"><input type="checkbox" checked={shown.enabled} onChange={(e) => replaceBranch(current, slot, { ...shown, enabled: e.target.checked })} />启用本支</label>
         </> : null}

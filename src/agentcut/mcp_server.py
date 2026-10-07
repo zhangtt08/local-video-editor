@@ -21,6 +21,7 @@ from .contracts import (
     FourPointRequest,
     Identifier,
     ImportRequest,
+    LutParse,
     MarkerSplitRequest,
     MaskTrackRequest,
     MasterLoudnessRequest,
@@ -113,6 +114,12 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
     async def editor_info() -> dict[str, Any]:
         """Runtime facts: media/render readiness, media roots, output roots, data dir."""
         return await call("GET", "/v1/info")
+
+    @server.tool(annotations=read)
+    async def lut_parse(request: LutParse) -> dict[str, Any]:
+        """Read `.cube` text with the engine's only LUT parser; returns a grade node payload to put
+        in clip.color.grade. 1D tables only — a 3D LUT mixes channels and is refused by name."""
+        return await call("POST", "/v1/lut/parse", request.model_dump(mode="json"))
 
     @server.tool(annotations=safe_write)
     async def project_create(request: CreateProject) -> MutationResult:

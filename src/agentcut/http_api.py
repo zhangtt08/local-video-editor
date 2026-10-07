@@ -43,6 +43,7 @@ from .contracts import (
     Identifier,
     ImportRequest,
     LoudnessRequest,
+    LutParse,
     MarkerSplitRequest,
     MaskTrackRequest,
     MasterLoudnessRequest,
@@ -68,6 +69,7 @@ from .contracts import (
     capabilities,
     render_presets,
 )
+from .grade import parse_1d_cube
 from .jobs import JobRuntime, plan_for
 from .loudness import master_plan, normalize_gain, probe_mix, volume_problem
 from .loudness import measure as measure_loudness
@@ -262,6 +264,7 @@ def create_app(
                 RestoreProject,
                 MutationResult,
                 ImportRequest,
+                LutParse,
                 RenderRequest,
             )
         }
@@ -1318,6 +1321,17 @@ def create_app(
         frame_height: Annotated[int, Query(ge=16, le=16_384)] = 1080,
     ):
         return {"mask_image": mask_image(mask, frame_width, frame_height)}
+
+    @app.post("/v1/lut/parse", dependencies=auth)
+    def lut_parse(request: LutParse) -> dict:
+        """Read a `.cube` file with the engine's one parser and return a ready grade node payload.
+
+        The client uploads the text instead of interpreting it: there is exactly one meaning for a
+        LUT here, so the interface and an Agent cannot disagree about a table's grid, domain or
+        channel order. A 3D LUT — which mixes channels and so is not a per-channel function — is
+        refused by name, and the reply is the payload that goes straight into `clip.color.grade`.
+        """
+        return parse_1d_cube(request.content)
 
     @app.post("/v1/animation/curve", dependencies=auth)
     def animation_curve(clip: Clip, property: Property):

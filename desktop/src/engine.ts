@@ -67,7 +67,11 @@ export type GradeOperation =
   | { kind: "curve"; channel: GradeChannel; points: GradeCurvePoint[]; enabled: boolean; mix?: number; blend?: BlendMode }
   | { kind: "white_balance"; temperature: number; tint: number; enabled: boolean; mix?: number; blend?: BlendMode }
   | { kind: "wheels"; lift: number[]; gamma: number[]; gain: number[]; enabled: boolean; mix?: number; blend?: BlendMode }
-  | { kind: "transfer"; input_space: ColorSpace; output_space: ColorSpace; enabled: boolean; mix?: number; blend?: BlendMode };
+  | { kind: "transfer"; input_space: ColorSpace; output_space: ColorSpace; enabled: boolean; mix?: number; blend?: BlendMode }
+  /** 导入的 1D 查找表：三个通道各一条折线，采样点由引擎解析 `.cube` 文件得到，界面不自己读文件。 */
+  | { kind: "lut"; title: string; size: number; channels: number[][]; enabled: boolean; mix?: number; blend?: BlendMode };
+/** 引擎 `/v1/lut/parse` 的回复：可直接放进调色链的节点内容（不含启用、强度等每节点默认值）。 */
+export type LutPayload = { title: string; size: number; channels: number[][]; resampled_from?: number };
 /** A parallel node's branch is always a single operation, so the graph never nests. */
 export type GradeBranch = GradeOperation;
 export type GradeParallel = { kind: "parallel"; branches: GradeBranch[]; enabled: boolean; mix?: number; blend?: BlendMode };
@@ -363,6 +367,8 @@ export type Capabilities = {
   /** 安全区的内缩量（占画面边长的比例），由引擎给出，界面不自己另写一套数字。 */
   safe_area_insets?: { action: number; title: number };
   mask_vertex_limit?: number;
+  /** 调色链的形状上限（节点数、并联支数、曲线点数、LUT 采样数）由引擎下发，界面照此限制。 */
+  grade_limits?: { max_nodes: number; max_branches: number; max_curve_points: number; max_lut_samples: number };
   /** 可选的转场种类与中文名：界面列的是这份表，不是自己写死的三个。 */
   transition_kinds?: TransitionChoice[];
   /** 引擎自身的构建号；旧引擎不回这个字段，界面按空字符串处理。 */
@@ -398,6 +404,7 @@ export class EngineError extends Error {
       CLIP_OVERLAP: "同轨重叠需要转场。先将镜头首尾衔接，再在后一个镜头的属性面板添加转场。",
       INVALID_TRANSITION: "选择首尾衔接的两个镜头，转场需短于每个镜头。",
       INVALID_MASK: "遮罩只能用于画面轨片段，请检查轨道和遮罩范围。整批操作没有被保存。",
+      INVALID_LUT: "这个 .cube 文件引擎读不了：只有 1D（逐通道）查找表能用，3D 表会跨通道混合，暂不支持。",
       INVALID_BLEND_MODE: "混合模式只能用于画面轨。整批操作没有被保存。",
       INVALID_SELECTION: "选中的片段已变化，请重新选择后操作。整组没有被修改。",
       NEST_LAYER_CONFLICT: "所选图层之间还有重叠镜头，请一并选择，避免预合成后改变叠放顺序。",
@@ -669,6 +676,11 @@ export class Engine {
         commands: Record<string, unknown>[];
       };
     }>("POST", `/v1/projects/${projectId}/clips/${clipId}/silence`, body, 300000);
+  }
+
+  /** 解析 .cube 文本：查找表只由引擎那一个解析器读，界面与 Agent 拿到的数完全一致。 */
+  lutParse(content: string) {
+    return this.request<LutPayload>("POST", "/v1/lut/parse", { content });
   }
 
   /** 本地语音识别：把选中片段（或整条轨）的说话转成字幕命令，落库走 captions.import。 */

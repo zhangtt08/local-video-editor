@@ -1469,6 +1469,42 @@ export function setClipColor(clipId: string, patch: Partial<ClipColor>) {
   submit([{ op: "clip.patch", clip_id: clipId, color: patch }], "调整画面色彩", { quiet: true });
 }
 
+/** 导入 .cube 查找表：文件内容交给引擎里唯一的解析器，回来的节点原样进调色链。
+ *  index 为 null 追加到链尾；给了下标就是换一张表，强度、混合方式和启用状态都留着。 */
+export async function applyLut(clipId: string, file: File, index: number | null) {
+  const project = state.project;
+  const clip = project?.clips[clipId];
+  if (!engine || !project || !clip) return;
+  set({ busy: "读取 LUT…" });
+  try {
+    const lut = await engine.lutParse(await file.text());
+    const node = {
+      kind: "lut" as const,
+      title: lut.title,
+      size: lut.size,
+      channels: lut.channels,
+      enabled: true,
+    };
+    const grade = (clip.color?.grade ?? []).slice();
+    if (index === null || index >= grade.length) grade.push(node);
+    else grade[index] = { ...grade[index], ...node };
+    setClipColor(clipId, { grade });
+    toast(
+      "info",
+      `导入 ${lut.title}`,
+      `三个通道各 ${lut.size} 个采样点，预览和导出用的都是引擎算出的同一张表。` +
+        (lut.resampled_from
+          ? `原文件每通道 ${lut.resampled_from} 行，超出引擎的采样上限，已按等距网格重采样到 ${lut.size} 行。`
+          : ""),
+    );
+  } catch (error) {
+    const { title, detail } = describe(error);
+    toast("error", title, detail);
+  } finally {
+    set({ busy: "" });
+  }
+}
+
 export function setClipText(clipId: string, patch: Partial<TextStyle>) {
   submit([{ op: "clip.patch", clip_id: clipId, text: patch }], "编辑文字", { quiet: true });
 }

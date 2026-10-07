@@ -17,10 +17,18 @@ const chain = [
     ],
   },
   { kind: "transfer", enabled: true, target: "bt709" },
+  {
+    kind: "lut",
+    enabled: true,
+    mix: 0.4,
+    title: "Film Look 01",
+    size: 33,
+    channels: [[0, 0.5, 1], [0, 0.25, 0.5], [0, 1, 1]],
+  },
 ] as never as Parameters<typeof cardsFor>[0];
 
 const cards = cardsFor(chain);
-assert.equal(cards.length, 3);
+assert.equal(cards.length, 4);
 assert.equal(cards[0].label, "1. 白平衡");
 assert.match(cards[0].detail, /强度 50%/, cards[0].detail);
 assert.doesNotMatch(cards[0].detail, /100%/, cards[0].detail);
@@ -32,6 +40,10 @@ assert.match(cards[1].lanes[1].detail, /强度 25%/, cards[1].lanes[1].detail);
 assert.equal(cards[2].label, "3. 色彩空间");
 assert.equal(cards[2].lanes.length, 0);
 assert.equal(cards.every((card) => card.enabled), true);
+assert.equal(cards[3].label, "4. LUT 查找表");
+assert.match(cards[3].detail, /Film Look 01 · 33 点/, cards[3].detail);
+assert.match(cards[3].detail, /强度 40%/, cards[3].detail);
+assert.equal(cards[3].lanes.length, 0, "a LUT is one node, not a set of branches");
 
 assert.equal(dropIndex(0, 5), 0, "an empty chain has nowhere to drop");
 assert.equal(dropIndex(3, -3), 0, "a drag past the left edge lands on the first slot");
