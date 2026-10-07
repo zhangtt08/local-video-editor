@@ -477,6 +477,34 @@ def http_suite(folder: Path) -> None:
         saved = written.json()["project"]["clips"]["c"]["mask"]
         assert saved["shape"] == "path" and len(saved["vertices"]) == 3
         assert saved["vertices"][0]["handle_out"] == [0.0, 0.0]
+        # v13: the box is the drawn outline, not the shape's default. This is what a centre curve is
+        # keyed against, so a mask arriving through `clip.mask` has to arrive fitted.
+        assert abs(saved["center_x"] - 0.25) < 1e-9 and abs(saved["center_y"] - 0.5) < 1e-9, saved
+        assert abs(saved["width"] - 0.5) < 1e-9 and abs(saved["height"] - 1.0) < 1e-9, saved
+        arrived = edit(
+            "m13",
+            2,
+            [
+                {
+                    "op": "clip.add",
+                    "clip": {
+                        "id": "also",
+                        "asset_id": "pic",
+                        "track_id": "v",
+                        "position_ticks": 2 * T,
+                        "duration_ticks": T,
+                        "mask": mask,
+                    },
+                }
+            ],
+            dry=True,
+        )
+        assert arrived.status_code == 200, arrived.text
+        assert arrived.json()["committed"] is False
+        # The same outline reaching the timeline inside a whole clip must land in the same place —
+        # otherwise one mask would sit in two spots depending on the command that carried it.
+        inline = arrived.json()["project"]["clips"]["also"]["mask"]
+        assert inline == saved, (inline, saved)
 
         replay = edit("m1", 1, [command])
         assert replay.json()["replayed"] is True and replay.json()["project"]["revision"] == 2

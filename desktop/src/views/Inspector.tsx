@@ -317,9 +317,9 @@ function EffectInput({ id, value, min, max, step, onCommit }: { id: string; valu
 /** Numeric mask rows: field, label, min, max, keyframe property. */
 const MASK_ROWS = [['center_x', '中心 X', 0, 100, 'mask_x'], ['center_y', '中心 Y', 0, 100, 'mask_y'], ['width', '宽度', 1, 200, 'mask_width'], ['height', '高度', 1, 200, 'mask_height']] as const;
 
-/** A free-form outline keeps its drawn shape and size, so only its centre can be keyframed. */
-const maskRows = (mask: ShapeMask) =>
-  mask.shape === "path" ? MASK_ROWS.filter((row) => row[4] === "mask_x" || row[4] === "mask_y") : MASK_ROWS;
+/** A free-form outline is positioned by its vertices, and its box is always the drawn bounds, so
+ * there is no numeric box to edit — the centre curves come from 跟踪主体 or the curve editor. */
+const maskRows = (mask: ShapeMask) => (mask.shape === "path" ? [] : MASK_ROWS);
 
 function MaskFields({ clip }: { clip: Clip }) {
   const app = useApp();
@@ -334,7 +334,7 @@ function MaskFields({ clip }: { clip: Clip }) {
     <fieldset className="effects-fields" disabled={disabled}>
       <label className="mask-shape">形状 <select className="input" aria-label="遮罩形状" value={mask?.shape ?? "none"} onChange={(e) => { const shape = e.target.value; if (shape === "none") { setClipMask(clip.id, null); return; } const base = { ...(mask ?? DEFAULT_MASK), shape: shape as ShapeMask["shape"] }; setClipMask(clip.id, shape === "path" ? { ...base, vertices: base.vertices?.length ? base.vertices : DEFAULT_PATH.map((vertex) => ({ ...vertex, handle_out: [...vertex.handle_out] as [number, number], handle_in: [...vertex.handle_in] as [number, number] })) } : { ...base, vertices: null }); }}><option value="none">无</option><option value="ellipse">椭圆</option><option value="rectangle">矩形</option><option value="path">路径</option></select></label>
       {mask ? <>
-        {mask.shape === "path" ? <p className="hint">路径顶点 {mask.vertices?.length ?? 0} 个：画面中拖顶点改形状，拖小方块改曲线控制柄，双击加一个点，选中后方向键微调、Delete 删除。向内羽化按画面短边折算成高斯半径。轮廓按画好的样子裁切，关键帧只把它整体搬动；要变形请在画面里重画顶点。</p> : null}
+        {mask.shape === "path" ? <p className="hint">路径顶点 {mask.vertices?.length ?? 0} 个：画面中拖顶点改形状（拖动即整体搬动轮廓），拖小方块改曲线控制柄，双击加一个点，选中后方向键微调、Delete 删除。向内羽化按画面短边折算成高斯半径。轮廓按画好的形状与大小裁切：要让它随时间移动就点「跟踪主体」，或在曲线编辑器里给「遮罩中心 X/Y」双击加关键帧；形状与大小本身还不能随时间变化。</p> : null}
         {(canAnimateMask(mask) ? maskRows(mask) : []).map(([field, label, min, max, property]) => {
           const frame = frames.find((k) => k.property === property && k.at_ticks === at + (clip.animation_offset_ticks ?? 0));
           const animated = (clip.keyframes ?? []).some((k) => k.property === property);

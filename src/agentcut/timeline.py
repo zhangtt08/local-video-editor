@@ -556,7 +556,7 @@ def apply_commands(
                             raise EditorError("INVALID_TEXT", "select a text clip")
                         clip.text = TextStyle.model_validate(clip.text.model_dump() | command.text)
                 elif command.op == "clip.mask":
-                    clip.mask = _prepared_mask(command.mask)
+                    clip.mask = command.mask.model_copy(deep=True) if command.mask else None
                 elif command.op == "clip.mask_track":
                     _apply_mask_track(clip, command.points)
                 elif command.op == "clip.color":
@@ -871,17 +871,17 @@ def apply_commands(
         raise EditorError(
             "PROJECT_LIMIT", "project exceeds the supported contract limits"
         ) from error
+    # One rule for every way a mask can arrive: a free-form outline's box *is* the outline it was
+    # drawn in. The exporter places the cut with that box and the browser sizes the same unit image
+    # by it, so a clip added whole, a mask edited in place and one inside a nested sequence have to
+    # agree — fitting the final state means no ingest path can forget it and no command can store a
+    # box the picture would ignore.
+    for entry in _all_clips(candidate, candidate):
+        if entry.mask is not None and entry.mask.shape == "path":
+            entry.mask = fit_box(entry.mask)
     # Validate the final batch state, allowing atomic swaps with temporary overlaps.
     validate_timeline(candidate)
     return candidate
-
-
-def _prepared_mask(mask):
-    """Store a path mask with the box it was drawn in, so the box can later be animated."""
-    if mask is None:
-        return None
-    stored = mask.model_copy(deep=True)
-    return fit_box(stored) if stored.shape == "path" else stored
 
 
 def _apply_mask_track(clip, points) -> None:
