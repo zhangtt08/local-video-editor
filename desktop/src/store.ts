@@ -648,6 +648,37 @@ function countCuts(commands: Record<string, unknown>[]) {
   return commands.filter((command) => command.op === "clip.ripple_remove").length;
 }
 
+/** 自动字幕：本地语音模型把这段的说话转成一条字幕轨，一次提交一个版本，撤销即删整轨。
+ *  重跑时替换上一轮生成的同一条轨（按工程+片段+语言记住轨 id），不会把相同字幕摞两层。 */
+export async function autoCaptions(clipId: string) {
+  const project = state.project;
+  if (!engine || !project) return;
+  set({ busy: "识别语音…" });
+  try {
+    const key = `agentcut.asrTrack.${project.id}.${clipId}.zh`;
+    const previous = localStorage.getItem(key) ?? "";
+    const known = previous && project.tracks.some((track) => track.id === previous) ? previous : null;
+    const result = await engine.speechCaptions(project.id, {
+      request_id: newId("speech-"), expected_revision: project.revision,
+      clip_id: clipId, language: "zh", replace_track_id: known,
+    });
+    const speech = result.speech;
+    if (!speech.cues.length) {
+      toast("info", "没有听清说话", "这段声音里没有识别出语句。");
+      return;
+    }
+    submit(speech.commands as Command[], known ? "重新生成自动字幕" : "自动字幕");
+    try { localStorage.setItem(key, String(speech.command.track_id)); } catch { /* 存储不可用则下次重跑会另起一条 */ }
+    toast("info", `生成 ${speech.cues.length} 条字幕`,
+      `本地模型 ${speech.model}（中文）按停顿和行长分了行；双击字幕片段即可改字，撤销一次整轨消失。`);
+  } catch (error) {
+    const { title, detail } = describe(error);
+    toast("error", title, detail);
+  } finally {
+    set({ busy: "" });
+  }
+}
+
 /** 把这段的响度统一到目标 LUFS：引擎测一次，写进去的只是一个线性增益。 */
 export async function normaliseLoudness(clipId: string) {
   const project = state.project;

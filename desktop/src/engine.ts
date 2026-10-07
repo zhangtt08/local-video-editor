@@ -671,6 +671,21 @@ export class Engine {
     }>("POST", `/v1/projects/${projectId}/clips/${clipId}/silence`, body, 300000);
   }
 
+  /** 本地语音识别：把选中片段（或整条轨）的说话转成字幕命令，落库走 captions.import。 */
+  speechCaptions(projectId: string, body: Record<string, unknown>) {
+    return this.request<{
+      committed: boolean;
+      speech: {
+        cues: { from_ticks: number; to_ticks: number; text: string }[];
+        srt: string;
+        command: Record<string, unknown>;
+        commands: Record<string, unknown>[];
+        language: string;
+        model: string;
+      };
+    }>("POST", `/v1/projects/${projectId}/speech-captions`, body, 600000);
+  }
+
   loudnessScan(projectId: string, clipId: string, body: Record<string, unknown>) {
     return this.request<{
       committed: boolean;

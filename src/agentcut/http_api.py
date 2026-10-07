@@ -22,6 +22,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from . import asr as asr_module
 from . import duck, silence
 from . import fourpoint as fourpoint_module
 from . import markers as marker_plan
@@ -61,6 +62,7 @@ from .contracts import (
     Revision,
     ShapeMask,
     SilenceRequest,
+    SpeechCaptionsRequest,
     Ticks,
     audio_scan_problem,
     capabilities,
@@ -230,6 +232,9 @@ def create_app(
             "render_ready": bool(jobs and jobs.ffmpeg),
         }
 
+    def speech_ready() -> bool:
+        return bool(media and media.enabled and media.asr_ready())
+
     @app.get("/v1/info", dependencies=auth)
     def info():
         payload = dict(app_info or {})
@@ -237,12 +242,12 @@ def create_app(
         payload["render_ready"] = bool(jobs and jobs.ffmpeg)
         payload["media_roots"] = media.describe_roots() if media else []
         payload["output_roots"] = jobs.describe_output_roots() if jobs else []
-        payload["capabilities"] = capabilities(bool(media and media.enabled))
+        payload["capabilities"] = capabilities(bool(media and media.enabled), speech_ready())
         return payload
 
     @app.get("/v1/capabilities", dependencies=auth)
     def editor_capabilities():
-        return capabilities(bool(media and media.enabled))
+        return capabilities(bool(media and media.enabled), speech_ready())
 
     @app.get("/v1/contracts", dependencies=auth)
     def contracts():
@@ -986,6 +991,112 @@ def create_app(
         )
         mutation = projects.mutate(project_id, batch).model_dump()
         return {**mutation, "silence": body}
+
+    @app.post("/v1/projects/{project_id}/speech-captions", dependencies=auth)
+    def speech_captions(project_id: Identifier, request: SpeechCaptionsRequest, projects: Store):
+        """Transcribe speech on one clip (or every clip on one track) into subtitle cues.
+
+        The plan is the single ordinary `captions.import` command, so landing it is undoable as one
+        step and a client that wants different wording can take the SRT and submit it itself. Clips
+        that cannot carry audio are skipped with the reason, the same judgement the silence scan
+        makes, so one answer cannot differ between the two buttons.
+        """
+        engine = require_media()
+        if request.clip_id is None and request.track_id is None:
+            raise EditorError("INVALID_REQUEST", "name a clip_id or a track_id to transcribe", 422)
+        if request.clip_id is not None and request.track_id is not None:
+            raise EditorError(
+                "INVALID_REQUEST", "name either a clip_id or a track_id, not both", 422
+            )
+        project = projects.get(project_id)
+        if request.clip_id is not None:
+            chosen = project.clips.get(request.clip_id)
+            if chosen is None:
+                raise EditorError("NOT_FOUND", "clip is not in this project", 404)
+            clips = [chosen]
+        else:
+            clips = sorted(
+                (c for c in project.clips.values() if c.track_id == request.track_id),
+                key=lambda c: c.position_ticks,
+            )
+            if not clips:
+                raise EditorError("NOT_FOUND", "this track holds no clips", 404)
+        cues: list[dict] = []
+        scanned: list[dict] = []
+        model_name = ""
+        for clip in clips:
+            problem = audio_scan_problem(project, clip)
+            if problem:
+                # The clip the caller named is refused with its reason; on a track the unsuitable
+                # ones are skipped so one bad clip cannot hide the captions the rest carry.
+                if request.clip_id is not None:
+                    raise EditorError("INVALID_CAPTIONS_TARGET", problem, 422, clip_id=clip.id)
+                scanned.append({"clip_id": clip.id, "skipped": problem})
+                continue
+            source = Path(project.assets[clip.asset_id].verified.path)
+            if not source.is_file():
+                raise EditorError("MEDIA_MISSING", "source file is gone", 410)
+            clip_cues, model_name = asr_module.cues_from_clip(
+                engine.ffmpeg,
+                source,
+                clip,
+                project.settings.frame_ticks,
+                language=request.language,
+                dirs=engine.asr_dirs,
+                max_chars=request.max_chars,
+            )
+            cues.extend(clip_cues)
+            scanned.append({"clip_id": clip.id, "cues": clip_cues})
+        if not cues:
+            raise EditorError(
+                "SPEECH_NOT_FOUND",
+                "no speech was recognised in the selected material",
+                422,
+                track_id=request.track_id,
+                clip_id=request.clip_id,
+            )
+        command = asr_module.caption_command(cues, scope=request.clip_id or request.track_id or "")
+        commands: list[dict] = []
+        if request.replace_track_id is not None:
+            replaced = next((t for t in project.tracks if t.id == request.replace_track_id), None)
+            if replaced is None:
+                raise EditorError(
+                    "NOT_FOUND",
+                    "the track to replace does not exist in this project",
+                    404,
+                    track_id=request.replace_track_id,
+                )
+            replaced_clips = sorted(
+                (c for c in project.clips.values() if c.track_id == replaced.id),
+                key=lambda c: c.position_ticks,
+            )
+            for clip in replaced_clips:
+                commands.append({"op": "clip.remove", "clip_id": clip.id})
+            # The text asset goes too: the new import re-mints the same content-derived ids, so a
+            # lingering asset would refuse the very import this batch ends with.
+            for asset_id in sorted({c.asset_id for c in replaced_clips}):
+                commands.append({"op": "asset.remove", "asset_id": asset_id})
+            commands.append({"op": "track.remove", "track_id": replaced.id})
+        commands.append(command)
+        body = {
+            "cues": cues,
+            "srt": asr_module.srt_body(cues),
+            "command": command,
+            "commands": commands,
+            "language": request.language,
+            "model": model_name,
+            "clips": scanned,
+        }
+        if not request.apply:
+            return {"committed": False, "project": project.model_dump(), "speech": body}
+        batch = EditBatch(
+            request_id=request.request_id,
+            expected_revision=request.expected_revision,
+            commands=commands,  # type: ignore[arg-type]
+            dry_run=request.dry_run,
+        )
+        mutation = projects.mutate(project_id, batch).model_dump()
+        return {**mutation, "speech": body}
 
     @app.post("/v1/projects/{project_id}/tracks/{track_id}/duck", dependencies=auth)
     def duck_track(

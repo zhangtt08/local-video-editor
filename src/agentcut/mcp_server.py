@@ -35,6 +35,7 @@ from .contracts import (
     RestoreProject,
     Revision,
     SilenceRequest,
+    SpeechCaptionsRequest,
     Ticks,
 )
 
@@ -223,6 +224,24 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         return await call(
             "POST",
             f"/v1/projects/{project_id}/clips/{clip_id}/silence",
+            body,
+            timeout=600,
+        )
+
+    @server.tool(annotations=read)
+    async def captions_auto(
+        project_id: Identifier, request: SpeechCaptionsRequest
+    ) -> dict[str, Any]:
+        """Transcribe speech into subtitle cues with the local model; plan only.
+
+        Read-only here: `apply` and `dry_run` are forced off, so nothing is written. The answer
+        carries the cues, their SubRip text and the one `captions.import` command — submit it with
+        `timeline_edit` to land the whole subtitle track as a single undoable revision.
+        """
+        body = request.model_dump(mode="json") | {"apply": False, "dry_run": False}
+        return await call(
+            "POST",
+            f"/v1/projects/{project_id}/speech-captions",
             body,
             timeout=600,
         )

@@ -102,6 +102,11 @@ def build_engine(layout: str, use_uv: bool) -> Path:
         ENGINE_NAME,
         "--paths",
         str(ROOT / "src"),
+        # vosk's own __init__ runs os.add_dll_directory on its package folder; without the folder
+        # (and the dll it expects beside it) the frozen import raises FileNotFoundError and every
+        # capability query would 500. Collect the whole package so it looks like a normal install.
+        "--collect-all",
+        "vosk",
         "--distpath",
         str(dist),
         "--workpath",
@@ -203,6 +208,32 @@ def stage_media() -> list[Path]:
         step(f"        {kind}.exe -version -> {binary_version(target)}")
         staged.append(target)
     return staged
+
+
+def stage_asr_models() -> None:
+    """Copy any local speech model next to the staged engine so the frozen exe can find it.
+
+    Models are data, not code: the repo keeps them in `desktop/resources/asr/` (never committed).
+    A missing model is not an error — the engine reports `speech_captions` as unavailable and says
+    so, rather than shipping a half-copied model that pretends to recognise speech.
+    """
+    source_root = ROOT / "desktop" / "resources" / "asr"
+    if not source_root.is_dir():
+        step("no speech models staged (desktop/resources/asr is absent)")
+        return
+    staged_any = False
+    for model in sorted(source_root.iterdir()):
+        if not (model / "am").is_dir() or not (model / "graph").is_dir():
+            continue
+        target = DEST / "agentcut" / "asr" / model.name
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(model, target)
+        size = human(sum(f.stat().st_size for f in target.rglob("*") if f.is_file()))
+        step(f"staged speech model {model.name} {size}")
+        staged_any = True
+    if not staged_any:
+        step("desktop/resources/asr holds no complete model folders; nothing staged")
 
 
 # --------------------------------------------------------------------------- staging
@@ -596,6 +627,7 @@ def main() -> None:
         exe = stage_engine(exe, args.layout)
         step(f"staged engine executable {exe} ({human(exe.stat().st_size)})")
     stage_media()
+    stage_asr_models()
     report()
     if args.verify:
         if not exe:

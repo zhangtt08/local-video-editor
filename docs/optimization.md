@@ -1767,3 +1767,69 @@ WebM 第一次真跑就崩：FFmpeg 的进度行对 WebM/Opus 的第一拍报 `o
   根目录 `AgentCut.exe` 与便携版逐字节一致。未签名，NSIS 向导未点击验收。
 - 门禁：`ruff check` / `ruff format --check`（79 文件）、`tests/self_check.py`、`tests/suite_check.py`
   52/52 全绿（含新 `verify_check.py` 与桌面 TS 检查）。
+
+## 1.61.0 自动语音字幕（2026-10-07）
+
+「常用成片」清单里最后一块纯本地就能做的大件：口播素材不用再逐句手打字幕。选中带声音的片段点
+「自动字幕」，引擎抽原片声音（16 kHz 单声道 s16le 管道喂给 vosk），词级时间戳换算到时间线 tick
+（源秒 ÷ 速度 → 片段本地 tick + 片段位置；变速曲线时间不是线性，与静音扫描同一句拒绝），按
+「16 字 / 4 秒 / 0.7 秒停顿」断行，最后把 SubRip 文本交回**既有的** `captions.import` 命令落轨——
+轨道、文字素材、片段、帧对齐、2000 条上限、撤销与去重全部是导入器已有的规则，ASR 不另立一条路。
+
+三条实测逼出来的设计：
+
+1. **内容寻址 id**：字幕轨/素材 id 取 `sha256(scope + cues)` 而不是随机数也不是请求 id。第一版用
+   `os.urandom`，同 request_id 重放的 payload 变了，去重当场报 IDEMPOTENCY_CONFLICT（自己的套件抓住的）；
+   改成含 request_id 后重放好了，但换 request 重跑会叠出第二条一模一样的轨。最终摘要只含 scope 与
+   cues：同一段话永远映射同一条轨——重放命中回执，重跑被 reducer 的 DUPLICATE_ID 拒绝，界面用
+   `replace_track_id`（引擎出 `clip.remove×N + asset.remove×N + track.remove + captions.import` 一笔事务）
+   做成「重新生成」语义，替换后轨 id 与片段 id 都不变（真·原位重生成）。asset.remove 这步是
+   实测补的：track.remove 不清素材，同 id 的 import 会被它自己挡住。
+2. **非 ASCII 路径**：`Model()` 在任何含非 ASCII 的目录上都加载失败（libvosk 用 ANSI 码页开文件），
+   8.3 短路径也救不了中文目录名。运行时回退：ASCII 直用 → GetShortPathName → 复制到
+   `%PROGRAMDATA%\AgentCut\asr` 缓存 → 还不行就 503 并指路 AGENTCUT_ASR_MODELS。
+3. **片段级拒绝、整轨级跳过**：与静音扫描同一份 `audio_scan_problem` 判定。第一版把显式点名的片段
+   也静默跳过了（报成 SPEECH_NOT_FOUND），被 refusal 套件当场纠正——点名的片段必须带着原因 422。
+
+验收 `tests/asr_check.py`（不是冒桩：Windows SAPI 合成真实中文两句、中间 1 秒静音）：识别 ≥2 条线索、
+「大家好/剪辑/自动」在文本里、时间全部落在片段内、SRT 重解析条数一致；apply 一个 revision、同
+request 重放 replayed=true、换 request 撞 DUPLICATE_ID、dry-run 前瞻不落库；replace 原位重生成同 id
+同条数；**成片实测**——纯声音时间线导出后字幕帧有亮像素、前导空帧为 0（黑底上唯一的亮字只可能来自
+生成的字幕）；200% 变速同样的文本落在减半窗口；静音/变速曲线/缺模型各按原因拒绝。
+界面真机实测（vite 渲染层 + 引擎 1280×800）：选中口播片段 →「自动字幕」按钮按能力出现 → 点一次
+r1→r2，时间线上方新增「字幕」轨、4 条紫色片段与语音逐句对齐（截图在案）；重跑走替换不叠轨。
+
+模型分发：中文小模型（vosk-model-small-cn-0.22，66 MB）放 `desktop/resources/asr/`（不入库），
+`build_engine.py` 暂存到冻结引擎旁的 `asr/`，随包开箱即用；英语小模型同机制、未随包，
+`SUBTITLES_MODEL_MISSING` 会点名放哪里。pyproject 增加 `vosk>=0.3.45,<0.4`（wheel 自带
+libvosk.dll，PyInstaller 直接打包），无其它新依赖。
+
+仍未完成：字幕的说话人分离与标点恢复（vosk 小模型不输出标点）、多语言混说、大模型精度
+（同音字需人工校对）、路径遮罩顶点动画、色彩节点图的分层与连线（亮度曲线、LUT、色彩管理）、
+多目标与长时遮挡跟踪、旋转估计。
+
+### 1.61.0 发布验收
+
+- `scripts/build_engine.py --verify`：冻结引擎 `app_version=1.61.0`、`frozen=true`，冷启动 779 ms、
+  `mcp` 模式存活；本轮新增 `--collect-all vosk`——不加它，vosk 的 `__init__` 在冻结包里
+  `os.add_dll_directory` 找不到包目录抛 FileNotFoundError，而 `asr_ready()` 只捕 ImportError，
+  `/v1/info` 直接 500（第一次构建就是这样红的）；修复同时把 `asr_ready()` 改成捕获一切导入失败，
+  语音栈坏了只降级能力、不拖垮信息端点。
+- 包内引擎（`release/win-unpacked/resources/bin/agentcut/agentcut.exe`）：`/v1/info` 报
+  1.61.0/`frozen=true`，capabilities 报 `verified_delivery` 与 `speech_captions` 双真；对包内随附
+  模型（staged 65.1 MB）实测识别真实中文语音 4 条线索、`h264-1080p` 导出 `output_checked=true`
+  （复检消息在案）；包内 MCP stdio 38 个工具（含新 `captions_auto`），`timeline_edit` 写入 r2。
+- ASAR：100 条目；`dist/`+`dist-electron/` 8 个构建产物与本地构建逐字节一致（唯一差异是
+  electron-builder 重写的 `package.json`，版本 1.61.0）。
+- 界面真机（vite 渲染层 + 引擎，1280×800）：「自动字幕」按钮按 `capabilities.speech_captions`
+  出现在片段区，点击 r1→r2 生成「字幕」轨 4 条与语音逐句对齐的字幕片段（截图在案）。
+- 原生窗口：`win-unpacked/AgentCut.exe` PrintWindow 1480×900
+  （`C:/tmp/AgentCut-1.61-原生窗口.png`），自绘标题栏「引擎在线 v1.61.0」，工作台完整渲染；
+  关闭后无 AgentCut/agentcut 残留进程。
+- 产物：便携版 189,720,995 字节 SHA256 `B7B0F91CFC4AA149C8B9E7CA9E220DFE0D961B3A1C07E2B0FB839A83F489B5C1`；
+  安装版 189,881,706 字节 SHA256 `0EF53526192AE5D94C2E094DAD201A125473A3348B9E9B0D2E1CD037AF69D2F9`
+  （+57 MB 来自随包语音模型与 libvosk）；根目录 `AgentCut.exe` 与便携版逐字节一致。未签名，
+  NSIS 向导未点击验收。
+- 门禁：`ruff check` / `ruff format --check`（81 文件）、`tests/self_check.py`（含 `captions_auto`
+  工具断言）、`tests/suite_check.py` **53/53** 全绿（新 `asr_check.py` 在列）、`npm run typecheck`
+  与 8 项桌面 TS 检查全绿。

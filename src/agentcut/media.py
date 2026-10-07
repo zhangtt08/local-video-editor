@@ -107,12 +107,14 @@ class MediaService:
         cache_dir: Path,
         ffmpeg: Path | None,
         ffprobe: Path | None,
+        asr_dirs: list[Path] | None = None,
     ):
         self.db_path = db_path
         self.roots = [root.resolve() for root in roots if str(root)]
         self.cache_dir = cache_dir
         self.ffmpeg = ffmpeg
         self.ffprobe = ffprobe
+        self.asr_dirs = asr_dirs or []
         self.enabled = bool(ffmpeg and ffprobe and self.roots)
         # ponytail: serialize cache builds; use per-digest locks if intake throughput needs it.
         self._cache_lock = threading.Lock()
@@ -130,6 +132,32 @@ class MediaService:
     @property
     def media_root(self) -> Path:
         return self.roots[0]
+
+    def asr_ready(self) -> bool:
+        """True when the vosk wheel is importable and at least one model folder is on disk.
+
+        Checked lazily and remembered, because loading the wheel is not free and the model folders
+        do not appear mid-session by themselves. Any import failure means unavailable — never an
+        error response: vosk's module init can raise OSError from DLL loading (measured in the
+        frozen build before --collect-all), and a broken speech stack must degrade the capability,
+        not take /v1/info down with it.
+        """
+        if getattr(self, "_asr_ready", None) is not None:
+            return self._asr_ready
+        try:
+            import vosk  # noqa: F401
+        except Exception:
+            self._asr_ready = False
+            return False
+        from . import asr as asr_module
+
+        self._asr_ready = bool(asr_module.available_models(self.asr_dirs))
+        return self._asr_ready
+
+    def asr_models(self) -> dict[str, str]:
+        from . import asr as asr_module
+
+        return asr_module.available_models(self.asr_dirs)
 
     def describe_roots(self) -> list[str]:
         return [str(root) for root in self.roots]

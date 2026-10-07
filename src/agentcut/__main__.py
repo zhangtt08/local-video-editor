@@ -76,7 +76,11 @@ def build_services(args, data_dir: Path, token: str, db_file: Path):
         root.mkdir(parents=True, exist_ok=True)
     ffmpeg = _find_binary("ffmpeg", args.ffmpeg)
     ffprobe = _find_binary("ffprobe", args.ffprobe)
-    media = MediaService(db_file, roots, cache_dir, ffmpeg, ffprobe)
+    from .asr import model_dirs
+
+    media = MediaService(
+        db_file, roots, cache_dir, ffmpeg, ffprobe, asr_dirs=model_dirs([data_dir / "asr"])
+    )
     jobs = JobRuntime(
         db_file,
         ffmpeg,

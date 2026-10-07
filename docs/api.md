@@ -20,6 +20,7 @@ HTTP 使用 `Authorization: Bearer <AGENTCUT_TOKEN>`。JSON 请求严格校验�
 | POST /v1/projects/{id}/clips/{c}/loudness | — | 响度表读数与建议增益；`apply=true` 时引擎一次写入 |
 | POST /v1/projects/{id}/tracks/{t}/loudness | — | 整轨响度对齐：逐片段测量并合并成一次写入 |
 | POST /v1/projects/{id}/markers/split | marker_split | 按标记分割：只出普通 `clip.split` 计划，`apply` 才写入 |
+| POST /v1/projects/{id}/speech-captions | captions_auto | 本地语音识别成字幕线索并取回 `captions.import` 计划（`apply`/`dry_run` 在该工具里固定为 false） |
 | `clip.slip` / `clip.slide`（`/edits`） | timeline_edit | 划动素材窗口 / 左右滑移，两侧相邻段各自补让 |
 | POST /v1/projects/{id}/clips/{c}/track | clip_track | 分析画面并把遮罩路径一次写成关键帧（与 `/edits` 同一事务语义） |
 
@@ -1210,3 +1211,27 @@ alpha 相加为一、缩放量已知方块、叠化回归、九种往返与未�
 `ffprobe_beside` 只认同目录、三个真跑的任务分别量过/无探针/探针失灵且失败后目录为空、
 `verified_delivery` 下发；三处变异各让对应断言红一次）；`tests/format_check.py` 与
 `tests/audio_check.py` 的每份真实导出现在都断言 `output_checked is True`。
+
+## 1.61 自动语音字幕（2026-10-07）
+
+新端点 `POST /v1/projects/{project_id}/speech-captions`，载荷 `{request_id, expected_revision,
+clip_id?|track_id?（二选一）, language="zh"|"en", max_chars=16(4..60), replace_track_id?,
+apply=false, dry_run=false}`。引擎把选中片段（或整条轨逐个片段）的原片声音抽成 16 kHz 单声道，
+交给本机 vosk 模型识别（词级时间戳），按行长/时长/停顿断行成字幕线索，换算到时间线 tick
+（速度线性换算，带变速曲线的片段与静音扫描一样被拒绝/跳过）。回包 `speech` 是
+`{cues:[{from_ticks,to_ticks,text}], srt, command, commands, language, model, clips:[…skipped…]}`；
+`commands` 是落库计划：`replace_track_id` 给出时先 `clip.remove`×N + `asset.remove`×N +
+`track.remove` 再 `captions.import`，否则只有 `captions.import` 一条——新字幕轨与素材的 id 由
+scope+cues 的摘要决定（不含 request_id），同一段话永远映射同一条轨：重放走回执去重，换
+request_id 重跑会被 reducer 以 DUPLICATE_ID 拒绝而不是叠出第二条一样的轨。`apply=true` 时引擎
+按既有 EditBatch 语义一次写入；`dry_run` 只出前瞻快照。识别不出任何语句报 `SPEECH_NOT_FOUND`，
+模型缺失报 `SUBTITLES_MODEL_MISSING`（422，点名语言与放置目录），vosk 未安装报
+`SUBTITLES_UNAVAILABLE`（503）；模型目录查找顺序：`AGENTCUT_ASR_MODELS` → 冻结引擎旁的
+`asr/` → 数据目录 `asr/`；路径含非 ASCII 时运行时复制到 `%PROGRAMDATA%\AgentCut\asr` 再加载
+（libvosk 的 ANSI 文件 I/O 打不开中文路径，实测确认）。`capabilities.speech_captions` 按
+`media_ready && vosk 可导入 && 至少一个模型在盘` 声明。MCP 只读工具 `captions_auto`
+（`apply`/`dry_run` 固定 false）。验收 `tests/asr_check.py`：SAPI 合成真实中文语音 → 识别断言
+（≥2 条线索、关键短语在文本里、时间落在片段内、SRT 重解析条数一致）→ apply 一个 revision、
+重放 replayed、换 request 撞 DUPLICATE_ID、dry-run 不落库、replace 原位重生成同 id 轨 →
+真实导出帧里有字幕亮像素、前导空帧没有 → 200% 速度下同样的文本落在减半的时间上 →
+无声素材/变速曲线/双语种缺模型各按原因拒绝。

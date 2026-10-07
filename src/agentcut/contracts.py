@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 13  # v13 gives a path mask a real box; older rows are fitted on load (ge=1).
-APP_VERSION = "1.60.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.61.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -1270,6 +1270,27 @@ class SilenceRequest(Contract):
     dry_run: bool = False
 
 
+class SpeechCaptionsRequest(Contract):
+    """Transcribe speech into subtitle cues and hand back the one command that lands them.
+
+    The plan is the ordinary `captions.import` the SRT importer takes, so the reducer keeps creating
+    the track, the text asset and every cue clip; `apply` lets the engine submit it as one batch. A
+    client that wants to retime or reword a line edits the SRT before sending the command itself.
+    """
+
+    request_id: Identifier
+    expected_revision: Revision
+    clip_id: Identifier | None = None
+    track_id: Identifier | None = None
+    language: Literal["zh", "en"] = "zh"
+    max_chars: Annotated[int, Field(ge=4, le=60)] = 16
+    # A previous auto-caption track to remove in the same batch, so re-running the button replaces
+    # its own output instead of stacking a second identical track under the same speech.
+    replace_track_id: Identifier | None = None
+    apply: bool = False
+    dry_run: bool = False
+
+
 class DuckRequest(Contract):
     """Plan the gain keyframes that pull one track back while another one is talking.
 
@@ -1647,7 +1668,7 @@ def render_presets() -> list[dict]:
     ]
 
 
-def capabilities(media_ready: bool = False) -> dict:
+def capabilities(media_ready: bool = False, speech_ready: bool = False) -> dict:
     return {
         "api_version": "v1",
         # The guide geometry the monitor draws: the engine owns the numbers so the overlay cannot
@@ -1751,6 +1772,8 @@ def capabilities(media_ready: bool = False) -> dict:
             "mask_tracking": media_ready,
             "silence_detection": media_ready,
             "loudness_metering": media_ready,
+            # A local speech model turns one clip's own audio into an SRT the importer lands.
+            "speech_captions": media_ready and speech_ready,
             "output_fit_modes": media_ready,
             "multi_codec_delivery": media_ready,
             "audio_delivery": media_ready,

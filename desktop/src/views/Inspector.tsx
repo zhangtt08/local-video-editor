@@ -56,6 +56,7 @@ import {
   updateSequence,
   reframeClip, trackMask,
   cutSilence,
+  autoCaptions,
   normaliseLoudness,
   alignMasterLoudness,
 } from "../store";
@@ -184,6 +185,9 @@ function ClipFields({ clip }: { clip: Clip }) {
           </button> : null}
           {(asset?.kind === "audio" || (asset?.kind === "video" && asset.verified?.has_audio && clip.embedded_audio !== false)) ? <button className="btn" disabled={Boolean(clip.speed_curve) || (clip.keyframes ?? []).some((key) => key.property === "gain")} title={clip.speed_curve ? "带变速曲线的片段还不能测响度：时间不是线性的，量到的区间对不上" : (clip.keyframes ?? []).some((key) => key.property === "gain") ? "这段的音量已经由关键帧画过包络，改单个增益听不出来；请直接编辑那些关键帧" : "用 FFmpeg 的 EBU R128 表量这段的积分响度，写入一个线性增益把它统一到 -16 LUFS（真峰值不超过 -1 dBTP）；不加压缩器，动态保持录下来的样子"} onClick={() => normaliseLoudness(clip.id)}>
             <Icon name="volume" /> 统一响度
+          </button> : null}
+          {app.caps?.features?.speech_captions && (asset?.kind === "audio" || (asset?.kind === "video" && asset.verified?.has_audio && clip.embedded_audio !== false)) ? <button className="btn" disabled={Boolean(clip.speed_curve)} title={clip.speed_curve ? "带变速曲线的片段还不能自动字幕：时间不是线性的，字会对不上画面" : "用本机语音模型听这段的说话，生成一条可编辑的字幕轨；识别在本地完成，不会上传声音"} onClick={() => autoCaptions(clip.id)}>
+            <Icon name="captions" /> 自动字幕
           </button> : null}
         </div>
         <div className="insp-actions">

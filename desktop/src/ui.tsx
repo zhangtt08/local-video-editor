@@ -156,6 +156,12 @@ const PATHS: Record<string, ReactNode> = {
       <path d="M11 6.4l3 3.2M14 6.4l-3 3.2" />
     </g>
   ),
+  captions: (
+    <g>
+      <rect x="1.6" y="3.2" width="12.8" height="8.4" rx="1.6" />
+      <path d="M4.6 9h2.4M8.6 9h2.8M4.6 6.4h6.8" />
+    </g>
+  ),
   chevron: <path d="M6 4l4 4-4 4" />,
   spark: <path d="M8 2l1.6 4.4L14 8l-4.4 1.6L8 14l-1.6-4.4L2 8l4.4-1.6z" />,
   flag: <path d="M4.2 2.2v10.4M4.2 2.6h7.4l-1.7 2.5 1.7 2.5H4.2z" />,
