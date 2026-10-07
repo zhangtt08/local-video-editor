@@ -504,6 +504,9 @@ def media_suite(folder: Path) -> None:
             assert job.status_code == 200, job.text
             summary = wait(client, job.json()["job"]["id"])
             assert summary["status"] == "succeeded", summary
+            # An audio deliverable is re-opened like any other, and the worker reports what it saw.
+            assert summary["output_checked"] is True, summary
+            assert "复检" in summary["message"], summary
             out = Path(summary["output_path"])
             outputs[preset_id] = out
             rows, fmt = streams(out)
@@ -514,6 +517,8 @@ def media_suite(folder: Path) -> None:
             # The demuxer name is the container the file really is, not the asked-for extension.
             assert fmt["format_name"] == AUDIO_PRESETS[preset_id][0], (preset_id, fmt)
             assert [row["codec_type"] for row in rows] == ["audio"], (preset_id, rows)
+            # No picture stream, and the worker's own measurement agrees.
+            assert "1 路流" in summary["message"], summary
             row = rows[0]
             assert row["codec_name"] == AUDIO_PRESETS[preset_id][2], (preset_id, row)
             assert int(row["sample_rate"]) == 48000 and int(row["channels"]) == 2, row

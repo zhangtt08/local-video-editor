@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 13  # v13 gives a path mask a real box; older rows are fitted on load (ge=1).
-APP_VERSION = "1.59.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.60.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -1387,6 +1387,10 @@ class RenderJob(Contract):
     error_code: Annotated[str | None, Field(max_length=64)] = None
     output_path: Annotated[str | None, Field(max_length=2048)] = None
     output_size_bytes: Annotated[int | None, Field(ge=0)] = None
+    # Whether the finished file was re-opened and measured before it was called a delivery. False is
+    # a real state, not a default to ignore: it means no ffprobe stood beside the FFmpeg that ran
+    # this job, so `message` says the file went out unchecked.
+    output_checked: bool = False
     created_at: Annotated[str, Field(max_length=64)] = ""
     updated_at: Annotated[str, Field(max_length=64)] = ""
     elapsed_seconds: Annotated[float | None, Field(ge=0)] = None
@@ -1750,6 +1754,8 @@ def capabilities(media_ready: bool = False) -> dict:
             "output_fit_modes": media_ready,
             "multi_codec_delivery": media_ready,
             "audio_delivery": media_ready,
+            # Every finished job is re-opened and measured before it is called a delivery.
+            "verified_delivery": media_ready,
             "batch_delivery": media_ready,
             "master_loudness": media_ready,
             "master_limiter": media_ready,

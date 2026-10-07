@@ -1,12 +1,12 @@
 """Wipe and zoom transitions: what the exporter promises about a moving edge has to be measurable in
 the exported frames.
 
-A wipe is not a cross-fade — the two shots stay opaque and a ramp across the frame decides which one
-owns each pixel, the outgoing side carrying the complement so the sum stays at one. So the test finds
-the boundary in the picture and compares where it actually is with where the compiled ramp says it
-must be, in both directions, and checks the middle of the edge is a half-and-half of the two shots
-rather than a brighter double-count or a black hole. The zoom is measured the same way off a known
-square, and a plain dissolve is re-measured to prove the new kinds did not move the old path.
+A wipe is not a cross-fade — the two shots stay opaque and a ramp across the frame decides which
+pixel belongs to whom, the outgoing side carrying the complement so the sum stays at one. So the
+test finds the boundary in the picture and compares where it actually is with where the compiled
+ramp says it must be, in both directions, and checks the middle of the edge is a half-and-half of
+the two shots rather than a brighter double-count or a black hole. The zoom is measured the same way
+off a known square, and a plain dissolve is re-measured to prove the new kinds left it alone.
 """
 
 import subprocess

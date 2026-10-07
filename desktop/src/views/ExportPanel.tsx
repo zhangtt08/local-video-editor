@@ -462,6 +462,11 @@ function JobRow({ job }: { job: RenderJob }): JSX.Element {
         {job.output_size_bytes != null ? (
           <span className="mono dim">{prettyBytes(job.output_size_bytes)}</span>
         ) : null}
+        {job.status === "succeeded" && !job.output_checked ? (
+          <Tag mono tone="warn">
+            未复检
+          </Tag>
+        ) : null}
       </div>
 
       {active || job.status === "succeeded" ? (

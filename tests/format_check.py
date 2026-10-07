@@ -459,6 +459,10 @@ def media_suite(folder: Path) -> dict:
             assert job.status_code == 200, job.text
             summary = wait(client, job.json()["job"]["id"])["job"]
             assert summary["status"] == "succeeded", summary
+            # The worker only calls a file delivered after re-opening it, so a succeeded job here
+            # carries the measurement of the very file this loop is about to probe again.
+            assert summary["output_checked"] is True, summary
+            assert "复检" in summary["message"], summary
             out = Path(summary["output_path"])
             assert out.suffix == f".{container}", out
             outputs[preset_id] = out

@@ -279,6 +279,8 @@ export type RenderJob = {
   error_code: string | null;
   output_path: string | null;
   output_size_bytes: number | null;
+  /** 引擎是否用同一目录下的 ffprobe 重新打开并量过这个文件；false 表示未经复检就交付。 */
+  output_checked: boolean;
   created_at: string;
   updated_at: string;
   elapsed_seconds: number | null;

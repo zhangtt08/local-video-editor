@@ -1176,3 +1176,37 @@ POST /v1/projects/{id}/renders
 验收：`tests/wipe_check.py`（契约与表同源、包络不动画面权重、成片量边界位置、羽化带半和证明
 alpha 相加为一、缩放量已知方块、叠化回归、九种往返与未知种类拒绝）与
 `tests/desktop_format_check.ts`（下拉列的是引擎表、未知 id 原样显示）。
+
+## 1.60 交付前先复检：`succeeded` 现在意味着文件被量过（工程 schema 不变）
+
+以前任务成功的判据是「FFmpeg 退出码 0」加上「临时文件非空」。这一版在把 `.part.<容器>` 命名成
+最终文件**之前**，用它旁边的那个 ffprobe 重新打开产物，按渲染计划逐项核对。
+
+- `RenderJob` 多一个布尔字段 `output_checked`（默认 false）。它是三种真实状态之一：
+  `true` 且 `message` 带实测值（`已输出 x.mp4（复检：3.000 秒 / 2 路流（h264/aac）/ mp4，尾部可解码）`）；
+  `false` 且 `message` 写明「未经复检：… 目录里没有 ffprobe」；或 `false` 加 `status=failed` 与
+  `error_code=OUTPUT_INVALID`。界面在已完成但 `output_checked=false` 的任务行上给「未复检」黄标。
+- 复检只认**同一个 FFmpeg 旁边**的 ffprobe（`ffprobe_beside()`），不从 PATH 借，也不用 `--ffprobe` 那一份：
+  换一个构建的 demuxer 来量这台机器上写出的容器，量的是别人的实现而不是这次编码的事实；
+  `--ffprobe` 是入库素材用的探针，两个用途分开，谁也不绑架谁。旁边没有就不量，并如实说出来。
+- 核对四件事，全部按 `error_code=OUTPUT_INVALID` 拒绝并**销毁候选文件**（最终名一次都不出现，导出目录
+  里不留 `.part.`）：
+  1. 读得出流（ffprobe 非零退出、或 JSON 里 `streams` 为空即拒）；
+  2. 流的种类对得上计划——`plan.video_label` 非空必须有视频流，纯音频预设（`-vn`）必须没有视频流，
+     两种情况都各有一条拒因；声音流恒必存在（混音以 anullsrc 打底，`[aout]` 总在）；
+  3. `format.format_name` 必须包含预设点名的容器（webm 读作 `matroska,webm`，mp4/mov 读作
+     `mov,mp4,…`，所以按逗号切开取成员，不按扩展名）；
+  4. `format.duration` 与 `plan.duration_ticks` 相差不得超过 `max(0.150 秒, 两帧)`。实测七种容器的
+     合法偏差是 mp4/mov/wav/flac 0.000、webm 0.008、mp3 0.024 秒（编码器前置延迟），容差是它们的六倍。
+- 第四条查不出截断写，所以再加一次**尾部解码**：用同一个 ffmpeg 从 `时长-0.5 秒` 起把两路流解到结尾
+  （`-f null`），`-v error` 下有任何输出即拒。这条不是猜测：一个只写了 30 % 字节的 faststart MP4，
+  头部仍报两路流与 3.000000 秒，元数据四项全部放行，是尾部解码的 `partial file` +
+  `Invalid NAL unit size` 把它拦下来的。代价实测每份 0.044–0.066 秒。
+- `capabilities.verified_delivery` 按 `media_ready` 声明；纯音频预设的复检只看声音流，画面链本来就没编译。
+- 渲染计划、命令行、容器选择、母带链一律不变；这是成功判定这一层的收紧，不是新的剪辑能力。
+  工程 schema 仍是 v13，`RenderJob` 的 JSON 是加法（旧任务快照读回来 `output_checked=false`）。
+
+验收：`tests/verify_check.py`（六类坏文件各按原因拒、截断那条用差量实测证明元数据会放行、
+`ffprobe_beside` 只认同目录、三个真跑的任务分别量过/无探针/探针失灵且失败后目录为空、
+`verified_delivery` 下发；三处变异各让对应断言红一次）；`tests/format_check.py` 与
+`tests/audio_check.py` 的每份真实导出现在都断言 `output_checked is True`。

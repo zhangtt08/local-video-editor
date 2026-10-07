@@ -75,6 +75,157 @@ def describe_exit(return_code: int, stderr: str) -> str:
     return f"FFmpeg 退出码 {return_code}：{tail}"
 
 
+def ffprobe_beside(ffmpeg: Path | None) -> Path | None:
+    """The inspector that ships next to the FFmpeg which encoded this job, or None.
+
+    A probe found on PATH could be another build with another demuxer, so measuring our container
+    with it would say nothing about what this encoder actually wrote. With no sibling the job
+    reports the file as unverified instead of claiming a check it never ran.
+    """
+    if ffmpeg is None:
+        return None
+    for name in ("ffprobe.exe", "ffprobe"):
+        sibling = ffmpeg.with_name(name)
+        if sibling.is_file():
+            return sibling
+    return None
+
+
+TAIL_WINDOW = 0.5
+
+
+def verify_output(ffmpeg: Path, ffprobe: Path, path: Path, plan: RenderPlan) -> str:
+    """Re-open the candidate file and hold it against the plan before it gets the final name.
+
+    FFmpeg returning 0 only proves the process stopped without an error. It does not prove the
+    container matches the preset, that the streams the filtergraph was built for came out, or that
+    the length survived — and those three are exactly how a mistuned ``output_args`` shows up. Then
+    the last half second is decoded, because a truncated write keeps a complete header: measured on
+    a real MP4 cut to 30 % of its bytes, the inspector still reported both streams and 3.000000 s
+    while the decoder answered ``partial file`` and ``Invalid NAL unit size``.
+    Returns a measurement sentence for the job log; raises so the caller destroys the candidate.
+    """
+    reading = subprocess.run(
+        [
+            str(ffprobe),
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type,codec_name:format=format_name,duration",
+            "-of",
+            "json",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        creationflags=_NO_WINDOW,
+        timeout=60,
+    )
+    try:
+        document = json.loads(reading.stdout)
+    except ValueError:
+        document = {}
+    streams = document.get("streams") if isinstance(document, dict) else None
+    complaint = reading.stderr.strip()[-200:]
+    if reading.returncode != 0 or not isinstance(streams, list) or not streams:
+        raise EditorError(
+            "OUTPUT_INVALID",
+            f"FFmpeg 结束了，但产出的文件读不出任何流（ffprobe 退出码 {reading.returncode}）"
+            + (f"：{complaint}" if complaint else ""),
+            500,
+        )
+    kinds = {stream.get("codec_type") for stream in streams}
+    if plan.video_label and "video" not in kinds:
+        raise EditorError(
+            "OUTPUT_INVALID", f"计划要求画面，但文件里只有 {'/'.join(sorted(map(str, kinds)))}", 500
+        )
+    if not plan.video_label and "video" in kinds:
+        raise EditorError(
+            "OUTPUT_INVALID",
+            f"纯音频预设不该出画面，但文件里带着视频流（{'/'.join(sorted(map(str, kinds)))}）",
+            500,
+        )
+    if "audio" not in kinds:
+        raise EditorError(
+            "OUTPUT_INVALID",
+            f"文件里没有声音流，而渲染计划带着混音输出 {plan.audio_label}，这一路本该写进去",
+            500,
+        )
+    container = str(plan.summary.get("container") or "")
+    reported = str((document.get("format") or {}).get("format_name") or "")
+    demuxers = [name for name in reported.split(",") if name]
+    if container and container not in demuxers:
+        raise EditorError(
+            "OUTPUT_INVALID",
+            f"预设要求 {container} 容器，文件实际是 {reported or '未知'}",
+            500,
+        )
+    expected = plan.duration_ticks / TIMEBASE
+    # Two frames of rounding, plus a floor for the encoder delay a container may write ahead of
+    # the first sample. A shorter file than this is a truncated write, not a rounding artefact.
+    tolerance = max(0.15, frame_seconds(plan) * 2)
+    raw = (document.get("format") or {}).get("duration")
+    try:
+        measured = float(raw)
+    except (TypeError, ValueError):
+        raise EditorError(
+            "OUTPUT_INVALID",
+            f"文件读不出时长（容器 {reported}），无法确认它装完了整条时间线",
+            500,
+        ) from None
+    if abs(measured - expected) > tolerance:
+        raise EditorError(
+            "OUTPUT_INVALID",
+            f"文件时长 {measured:.3f} 秒，与计划的 {expected:.3f} 秒相差超过 {tolerance:.3f} 秒",
+            500,
+        )
+    # Decode the tail with the encoder that wrote it. `-v error` prints nothing unless something is
+    # actually wrong, so any text at all here means the last frames or samples are not in the file.
+    tail = subprocess.run(
+        [
+            str(ffmpeg),
+            "-v",
+            "error",
+            "-ss",
+            f"{max(0.0, measured - TAIL_WINDOW):.3f}",
+            "-i",
+            str(path),
+            "-map",
+            "0",
+            "-f",
+            "null",
+            "-",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        creationflags=_NO_WINDOW,
+        timeout=120,
+    )
+    damage = tail.stderr.strip()
+    if damage:
+        raise EditorError(
+            "OUTPUT_INVALID",
+            f"文件的最后 {TAIL_WINDOW} 秒解不出画面或声音，写入在中途被截断：{damage[-240:]}",
+            500,
+        )
+    names = "/".join(str(stream.get("codec_name")) for stream in streams)
+    return f"{measured:.3f} 秒 / {len(streams)} 路流（{names}）/ {container}，尾部可解码"
+
+
+def frame_seconds(plan: RenderPlan) -> float:
+    """The plan's frame rate as seconds per frame, tolerant of the ``num/den`` string it carries."""
+    text = str(plan.summary.get("frame_rate") or "")
+    numerator, _, denominator = text.partition("/")
+    try:
+        return float(denominator or 1) / float(numerator or 1)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 class JobRuntime:
     def __init__(
         self, db_path: Path, ffmpeg: Path | None, output_dir: Path, output_roots: list[Path]
@@ -619,15 +770,47 @@ class JobRuntime:
                 )
             )
             return
+        probe = ffprobe_beside(self.ffmpeg)
+        measurement = None
+        if probe is not None:
+            try:
+                measurement = verify_output(self.ffmpeg, probe, temp, plan)
+            except EditorError as failure:
+                # The candidate is destroyed instead of published: a file that cannot be measured
+                # is not a deliverable, and leaving it under the final name would let a person or
+                # an Agent hand it to a client.
+                temp.unlink(missing_ok=True)
+                self._save(
+                    job.model_copy(
+                        update={
+                            "status": "failed",
+                            "error_code": failure.code,
+                            "message": failure.message,
+                            "output_path": None,
+                            "output_size_bytes": None,
+                            "output_checked": False,
+                            "elapsed_seconds": round(time.time() - started, 2),
+                        }
+                    )
+                )
+                return
         temp.replace(target)  # atomic publish: only finished files carry the final name
         self._save(
             job.model_copy(
                 update={
                     "status": "succeeded",
                     "rendered_ticks": plan.duration_ticks,
-                    "message": f"已输出 {target.name}",
+                    # Says what was measured, or says nothing was measured. A silent success would
+                    # read the same either way, which is exactly how an unchecked file gets trusted.
+                    "message": f"已输出 {target.name}"
+                    + (
+                        f"（复检：{measurement}）"
+                        if measurement
+                        else f"（未经复检：{self.ffmpeg.parent.name} 目录里没有 ffprobe）"
+                    ),
                     "output_path": str(target),
                     "output_size_bytes": target.stat().st_size,
+                    "output_checked": measurement is not None,
                     "elapsed_seconds": round(time.time() - started, 2),
                     "error_code": None,
                 }

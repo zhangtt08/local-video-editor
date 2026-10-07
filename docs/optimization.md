@@ -1700,3 +1700,70 @@ WebM 第一次真跑就崩：FFmpeg 的进度行对 WebM/Opus 的第一拍报 `o
 - 产物：便携版 SHA256 `C0FB4987BF9EC27B6785B3111D06EB9E1EEF5429FA8B2EE01697D310F4245022`
   （根目录 `AgentCut.exe` 与便携版逐字节一致）；安装版 SHA256
   `AC24E9E15D60421FFE426E00119E06C365737A89486AADC8F211349D27876175`。未签名，NSIS 向导未点击验收。
+
+## 1.60.0 交付前先复检：FFmpeg 退出 0 不再等于成功（2026-10-07）
+
+「渲染任务 succeeded」原来的判据只有两条：子进程退出码 0、临时文件非空。这两条挡住的是崩溃和空文件，
+挡不住**结构与内容不符**：编码器可以高高兴兴地写出一个容器名不对、少一路流、或者长度不对的文件，
+而 faststart 的 MP4 甚至可以只写了 30 % 字节却仍带着完整头部。这一版收紧的是成功判定这一层。
+
+### 判据变成四条半，且不合格就不出货
+
+`jobs._run_one` 在 `temp.replace(target)` 之前调用 `verify_output()`，用它旁边那个 ffprobe
+（`ffprobe_beside()`，只认同目录，不从 PATH 借）重开候选文件：
+
+1. 读不出流即拒（ffprobe 非零退出或 `streams` 空）；
+2. 流的种类按计划：`plan.video_label` 非空必须有 video，纯音频预设必须没有 video，两者都有独立拒因；
+   声音流恒必存在（混音以 anullsrc 打底）；
+3. `format.format_name` 必须含预设点名的容器（按逗号切成员：webm 报 `matroska,webm`、
+   mp4/mov 报 `mov,mp4,m4a,…`）；
+4. `format.duration` 与 `plan.duration_ticks` 相差 ≤ `max(0.150 秒, 两帧)`；
+4.5 尾部解码：同一个 ffmpeg 从 `时长-0.5` 秒解到结尾，`-v error` 有任何输出即拒。
+
+拒绝时**删掉候选**再落 `failed`，`output_path`/`output_size_bytes` 留空；验收断言导出目录
+`glob("*")` 为空，也就是调用者不可能拿到一个半文件。
+
+### 实测
+
+- 七种容器的合法时长偏差（各自真导一份再量）：mp4/mov/wav/flac **0.000** 秒、webm **0.008**、
+  mp3 **0.024**（编码器前置延迟）。容差 0.150 秒是最大合法偏差的六倍，也是 30 fps 下两帧的 2.25 倍。
+- 尾部解码耗时每份 **0.044–0.066** 秒（320×180/3 秒的样本），相对一次真实导出不值一提。
+- **截断写是差量实测出来的**：同一个 faststart MP4 截到 30 % 字节后，ffprobe 仍报两路流、
+  `format.duration=3.000000`——元数据四项全部放行；尾部解码报
+  `stream 1, offset 0xa4ed: partial file` 与 `Invalid NAL unit size (718 > 650)`，被拒。
+  这条不是补出来的故事：先量到元数据放行了，才加的第 4.5 步。
+- 三种真跑的任务：量过的写 `已输出 probe.mp4（复检：3.000 秒 / 2 路流（h264/aac）/ mp4，尾部可解码）`
+  且 `output_checked=true`；只有 ffmpeg.exe 的目录（硬链接造出来的）写「未经复检：no-probe 目录里没有
+  ffprobe」且照常出货；把 ffmpeg.exe 复制成 ffprobe 让探针失灵时任务 `failed`、
+  `error_code=OUTPUT_INVALID`、目录里一个文件都不留。
+- 门禁不挡合法工作：套件里跑过真实导出的检查全绿——`format_check` 那 4 条视频预设、`audio_check` 的
+  3 条音频预设加 1 条视频对照，每一条任务的 `output_checked` 都是 true（这两条断言就是这一版新加的）。
+
+### 本轮被自己的检查抓出来的一处断言错误
+
+`tests/audio_check.py` 的导出循环里第一条是**对照组**（`h264-source-quality`，两路流），我按音频形状
+断言消息里是「1 路流」，套件跑第一遍就红在对照组的行号上。改成：`output_checked`/「复检」对所有导出断言，
+「1 路流」只对纯音频那三条。失败信息里带着引擎实际写的
+`复检：3.000 秒 / 2 路流（h264/aac）/ mp4`，也就是门禁本身没错，是我断言放错了位置。
+
+
+### 1.60.0 发布验收
+
+- `scripts/build_engine.py --verify`：冻结引擎 `app_version=1.60.0`、`frozen=true`，冷启动到 ready 735 ms，
+  `mcp` 模式存活、无 ffmpeg 参数时如实报告；裸启动 media_ready 由 PATH 上的 ffmpeg/ffprobe 兜住。
+- 包内引擎（`release/win-unpacked/resources/bin/agentcut/agentcut.exe`，实例随临时目录）：
+  `/v1/info` 报 1.60.0/`frozen=true`，capabilities 报 `features.verified_delivery=true`；真实素材导入、
+  建工程上轨后 `h264-1080p` 导出，任务 `succeeded` 且 `output_checked=true`，消息写
+  `已输出 pkg160.mp4（复检：3.000 秒 / 2 路流（h264/aac）/ mp4，尾部可解码）`，产出文件用包内 ffprobe
+  复核为 h264+aac 两路。包内 `agentcut.exe mcp` 经官方 stdio 客户端 `tools/list` 37 个工具，
+  `timeline_edit` 写入 r2，工程 revision 实涨。
+- ASAR：100 条目；`dist/`+`dist-electron/` 全部 7 个构建产物与本地构建逐字节一致（唯一差异是
+  electron-builder 重写的 `package.json`，版本 1.60.0）。
+- 原生窗口：`win-unpacked/AgentCut.exe` PrintWindow 抓帧 1480×900
+  （`C:/tmp/AgentCut-1.60-原生窗口.png`），自绘标题栏读作「引擎在线 v1.60.0」，工作台完整渲染；
+  `taskkill` 后 `Get-Process AgentCut,agentcut` 查无残留。
+- 产物：便携版 132,530,580 字节 SHA256 `D5C500EAAE8C54D3AA61A6172CA9F94CC23954F3678729D78AC9994E610231B9`；
+  安装版 132,691,299 字节 SHA256 `E5B05B8850D9637BA5042953BA07DE73061962D0B7C68641733B686BC3387CAC`；
+  根目录 `AgentCut.exe` 与便携版逐字节一致。未签名，NSIS 向导未点击验收。
+- 门禁：`ruff check` / `ruff format --check`（79 文件）、`tests/self_check.py`、`tests/suite_check.py`
+  52/52 全绿（含新 `verify_check.py` 与桌面 TS 检查）。
