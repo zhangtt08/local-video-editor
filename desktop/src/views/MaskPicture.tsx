@@ -44,7 +44,6 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
   const [draft, setDraft] = useState<ShapeMask | null>(null);
   const [compiled, setCompiled] = useState<{ mask: ShapeMask; image: string } | null>(null);
   const [handleSize, setHandleSize] = useState({ x: 5, y: 9 });
-  const [stage, setStage] = useState({ w: 1, h: 1 });
   const [shift, setShift] = useState({ x: 0, y: 0 });
   const [active, setActive] = useState<number | null>(null);
   const draftRef = useRef(draft); draftRef.current = draft;
@@ -58,7 +57,11 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
   const pendingBatch = app.mode === "batch" && app.batch.length > 0;
   const candidateReady = !app.dryRunError && app.candidate?.id === app.project?.id && app.candidate?.revision === (app.project?.revision ?? 0) + 1;
   const disabled = Boolean(app.busy || app.dryRunBusy || app.project?.tracks.find((t) => t.id === clip.track_id)?.locked || (pendingBatch && !candidateReady));
-  const visible = Boolean(editable && mask && app.maskEditing && !play.playing && !animated && app.selectedClips.length === 1 && app.selectedClip === clip.id);
+  // A keyframed box mask is edited through its numeric curves, so the canvas guide stands down. A
+  // free-form outline is different: its vertices are the shape itself and the curves only translate
+  // it, so hiding the guide would make a tracked outline impossible to correct. It stays visible and
+  // is moved to where the cut actually lands at this frame.
+  const visible = Boolean(editable && mask && app.maskEditing && !play.playing && (!animated || mask.shape === "path") && app.selectedClips.length === 1 && app.selectedClip === clip.id);
   useEffect(() => {
     const element = picture.current;
     maskAnimations.current.forEach((effect) => effect.cancel());
@@ -68,9 +71,6 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
       const box = element.getBoundingClientRect();
       element.style.setProperty("--mask-lw", String(Math.max(1, box.width)));
       element.style.setProperty("--mask-lh", String(Math.max(1, box.height)));
-      setStage((old) =>
-        Math.abs(old.w - box.width) + Math.abs(old.h - box.height) < 1 ? old : { w: box.width, h: box.height }
-      );
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -192,7 +192,7 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
   return <>
     <div ref={picture} className={`layer-transform masked-picture${animated ? " animated-mask" : ""}`} style={pictureStyle}>{children}</div>
     {visible && mask ? <svg ref={svg} className={`mask-guide${disabled ? " locked" : ""}`} viewBox="0 0 100 100" preserveAspectRatio="none" role="group" aria-label="画面遮罩编辑器" tabIndex={0}
-      style={shift.x || shift.y ? { transform: `translate(${shift.x * stage.w}px, ${shift.y * stage.h}px)` } : undefined}
+      style={shift.x || shift.y ? { transform: `translate(${(shift.x * 100).toFixed(4)}%, ${(shift.y * 100).toFixed(4)}%)` } : undefined}
       onDoubleClick={(event) => {
         if (mask.shape !== "path" || disabled || !mask.vertices || mask.vertices.length >= MAX_VERTICES) return;
         const point = locate(event); if (!point) return;
