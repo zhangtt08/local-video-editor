@@ -27,7 +27,7 @@
 | 矩形/椭圆遮罩、向内羽化、反转、画面拖动/缩放、候选画面预演 | 已实现 | `tests/mask_check.py`、HTTP/MCP 和实际界面 |
 | 画面轨混合：正常/正片叠底/滤色/叠加/变暗/变亮/差值/排除 | 已实现 | `tests/blend_check.py`；遮罩/透明度/转场共同验证 |
 | 连续属性/调色/文字编辑、候选检查器与只读候选动画采样 | 已实现 | `tests/patch_check.py`、HTTP/MCP、真实界面；单项移除与整体撤销 |
-| 嵌套合成、内部编辑、复用、独立导出、跨工程复制 | 已实现 | `tests/nest_check.py`、`tests/desktop_nest_check.ts`；同工程画幅/帧率、最多 8 层 |
+| 嵌套合成、内部编辑、复用、独立导出、跨工程复制 | 已实现 | `tests/nest_check.py`、`tests/desktop_nest_check.ts`；同工程画幅/帧率、最多 8 层；`tests/nestfx_check.py` 另证组合不吞逐片段滤镜——同一份 LUT 节点 + 同一套 1.63 文字样式，写在根时间线与写在合成内部，三帧逐像素**0 级差**，把内部那张表的红通道改 knot 后成片动 **85 级**（证明内部的 LUT 真在生效而非两头都丢），去掉全部旋钮的对照组差 **241 级** |
 | 串行调色节点：每通道曲线（RGB/红/绿/蓝）、白平衡、RGB 增益（阴影/中间调/亮部）、节点强度 Mix（0–100% 与输入按比例混合） | 已实现 | `tests/grade_check.py`；同一张每通道表同时驱动 FFmpeg `lutrgb` 与浏览器 `feComponentTransfer`，真实 H.264 像素与预览表偏差 ≤1.5 LSB；半强度成片实测落在无调色与满强度之间且明显偏离满强度；工程 schema v10；**逐电平验证**：`tests/gradelevels_check.py` 用一张 256 级灰度斜坡 + 8 个纯色块，把编译出来的 `lutrgb` 表达式与浏览器拿到的 256 项表在**每一个输入电平**上比对（792 个比较点，实测最大偏差 1.00 级，即 8 bit 量化本身）；密集比对不经编码器（x264 自己就会把平滑渐变挪动几级，那测的是编码器不是调色），另跑一次真实导出证明这一级确实在成片里（红通道 64–192 段平均位移 52.6 对表算 53.2）。门禁自带反向断言：同一批比较若对着「恒等表」算，必须有 300 个以上点不一致，否则说明它在量空气。 |
 | 时间线入出点区间与区间导出：标尺上一条带子两个可拖手柄（整帧量化、方向键微调、Alt+X 清除），导出面板选「整条时间线 / 入出点区间」 | 已实现 | `tests/marks_check.py`：契约拒绝半写、非整帧与倒序区间；`validate_timeline` 拒绝越过内容的出点（`INVALID_MARKS`、不烧 revision）；渲染图在**混音与母带处理之后**才 `trim=start_frame=60:end_frame=120` + `atrim=start=2:end=4`，所以区间成片与整片是同一次混音而不是重算；真实导出实测整片 6.000 秒、区间 2.000 秒，区间文件首帧是第二段（绿）、音高 879 Hz（整片同点是 439 Hz），且区间第 0.5 秒与整片第 2.5 秒逐通道差 **0 阶**；老载荷（不带 `range`）重放仍是同一张回执，改 `range` 得 409；批量交付两条一条整片一条区间各自落盘 6.000/2.000 秒；界面 I→O→拖手柄→Alt+X 逐笔 r1→r5，1040×660 无横向溢出 |
 | 四点剪辑：素材入出点 + 时间线入出点四个整数一次算成一条 `clip.insert` / `clip.overwrite`——源长于目标窗口就裁掉多余的源，源短于窗口就按整数百分比改速铺满（音高不变），`fit=auto` 让这四个数自己决定用哪种；界面在素材监视器取 `I`/`O`、在标尺上取时间线区间，然后一键「四点→时间线区间（插入/覆盖）」 | 已实现 | `tests/fourpoint_check.py`：exact / trimmed / re-timed 三种解算都只产一条命令，12 组不可能的点位组合各自返回说清原因的 `INVALID_FOUR_POINT`（越界 `SOURCE_OUT_OF_BOUNDS`、未验证素材 `UNVERIFIED_ASSET`、轨别不匹配、非整帧、零长、百分比超出 25–400%）；`fit=auto` 由四个数自己决定裁尾还是变速；HTTP 侧 plan / `dry_run` 不写库、一次 apply 恰好一个 revision、同 `request_id` 重放不涨（clip id 由 request_id 派生，因此重试能对上自己的回执）、旧 revision 409、`restore` 是新 revision；真实导出：2 秒素材以 50% 铺满 4 秒窗口，成片 4.000 秒，第 0.5 秒红 / 第 3.5 秒绿，音高 439 Hz → 825 Hz（时间被拉长、音高保持）；裁尾那条覆盖 4–6 秒，最后一帧仍是绿，被裁掉的蓝色尾段从未出现在画面里。界面（1280×800 同源 iframe 真实点击）：素材监视器里 `入点 I` / `出点 O` 取 1–3 秒、时间线标尺取 1–3.03 秒，点「四点→时间线区间（插入）」→ r4→r5 一个 revision，提示条按引擎回包如实写「素材更短，按 98% 变速铺满 2.03 秒 · 读素材 1.99 秒」，库里落库的正是 `position=1.0s, duration=2.0333s, source_in=1.0s, speed_percent=98`，被插入点切开的原片段仍首尾相接 |
@@ -176,7 +176,7 @@ desktop/         electron/（无边框窗口 + 引擎生命周期） src/（Reac
 design/          旧静态设计稿；现行深色工作台以 desktop/src/ 为准
 examples/        Agent 调用示例与 MCP 配置模板
 docs/            architecture / api / decisions / agent-tasks / validation
-tests/           self_check.py（HTTP + MCP） suite_check.py（逐个跑 56 项 *_check.py） media_check.py（真实媒体） editing_check.py（编辑/动画/字幕/变速/像素） matrix_check.py（52 种命令的可靠性扫面）
+tests/           self_check.py（HTTP + MCP） suite_check.py（逐个跑 57 项 *_check.py） media_check.py（真实媒体） editing_check.py（编辑/动画/字幕/变速/像素） matrix_check.py（52 种命令的可靠性扫面）
 scripts/         build_engine.py（打包引擎） build_icon.py（生成图标）
 ```
 

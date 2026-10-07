@@ -2020,3 +2020,33 @@ box_opacity 0.45`，所以老工程一字不改仍逐像素相同——`filter_s
   **56/56**（新 `textstyle_check.py` 在列；构建与界面改动全部落定后单独串行复跑）、`npm run typecheck`
   与 9 项桌面 TS 检查全绿。`tests/patch_check.py` 因样式长了 10 个字段而红过一次——它断言的是旧的 5 字段
   存储形状，改断言时把「未被 patch 的新旋钮停在默认值」写进期望里，而不是把断言删掉。
+
+## 组合片段会不会吞掉逐片段滤镜（2026-10-07，新增门禁 `tests/nestfx_check.py`）
+
+1.62 的 LUT 节点与 1.63 的文字样式都是「逐片段滤镜」，而嵌套合成的内部片段不在 `project.clips` 里，
+它们在 `project.sequences[s].clips`——这正是滤镜最容易丢的一层。`nest_check.py` 早已证明 effect、轨道
+混合、源入点、变速在组合里逐像素不变，但新加的两类滤镜没有走那条断言。
+
+做法是差分而不是绝对值：同一条纯色画面 + 同一条字幕，一份写在根时间线上，一份 `sequence.nest` 之后
+在 `sequence_id=inner` 的作用域里写同样的 `clip.grade` 与同样的样式，三帧逐像素比。**实测 0 级差**，
+编译图里 `lutrgb`/`drawtext`/`borderw`/`shadowx` 四项俱在且 `drawtext` 恰好一段——因为
+`clip_input()` 对 `kind == sequence` 的条目直接 `compile_render_plan(sequence_view(...))` 递归，
+内部片段与根片段共用同一个构建器，没有第二条实现可以走偏。
+
+两道反向断言防它量空气：
+- 对照组（同样的画面与文字，去掉全部 1.62/1.63 旋钮）相差 **241 级**——滤镜确实在画面上生效；
+- 只把组合内部那张 LUT 表的红通道中间 knot 从 0.4 挪到 0.9，成片动 **85 级**——内部的表是活的。
+
+第二条差点把我自己的探针骗过去：初版把改动放在蓝通道第一个 knot 上，而测试画面蓝值 160/255=0.63
+落在 [0.5,1] 段，两段端点没变，于是三帧**逐位相同**，探针当场报「内部 LUT 没生效」。这不怪引擎——
+纯色样片每个通道只探测一个点，差分必须扰动那个点真正所属的那一段。门禁的注释里写明了这件事，
+免得下一个人再拿一张纯色图去猜段。
+
+变异验证两次都做在真实代码路径上（做完 `git checkout` 还原，`git diff` 为空）：把组合内部片段的
+`color.grade` 清空 → 红在 `nested: the LUT node never reached the exporter`；把 `text` 清空 → 红在
+`nested: the caption never reached the exporter`。第一版变异写的是 `color = None`，结果崩在
+`grade.py` 的 `_polylines` 上（`Clip.color` 并非可空），那是无效变异——它证明的是我改错了形状，
+不是门禁有效，因此换成保持形状的 `grade = []` 重做。
+
+`suite_check.py` 靠 `*_check.py` 通配自动收新门禁，无需注册；README 的「嵌套合成」一行补了这三组数字，
+门禁计数从 56 项改为 57 项。本轮不改 `APP_VERSION`：没有新能力上线，只是把一条已交付的链路钉住。
