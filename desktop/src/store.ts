@@ -1476,6 +1476,21 @@ export function setClipMask(clipId: string, mask: ShapeMask | null, projectId = 
   editAtRevision([{ op: "clip.mask", clip_id: clipId, mask }], projectId, revision, "调整遮罩");
 }
 
+/**
+ * 整条路径拖到新位置：已经打了中心曲线的遮罩，把这次搬动记成**当前时刻**的关键帧（AE 里拖动控制点
+ * 就是这个语义——动画留在轨迹上，只是这一帧换了位置）；没有曲线的直接搬轮廓。
+ */
+export function moveMaskCentre(clipId: string, atTicks: number, centre: { x: number; y: number }, projectId = state.project?.id, revision = state.project?.revision) {
+  if (projectId === undefined || revision === undefined) return;
+  const clamp = (value: number) => Math.min(1, Math.max(0, value));
+  const commands: Command[] = (["mask_x", "mask_y"] as const).map((property, index) => ({
+    op: "keyframe.set", clip_id: clipId, keyframe: {
+      property, at_ticks: atTicks, value: clamp(index === 0 ? centre.x : centre.y), interpolation: "linear",
+    },
+  }));
+  editAtRevision(commands, projectId, revision, "搬动遮罩到此刻");
+}
+
 const MASK_BOX_FIELDS: [Property, "center_x" | "center_y" | "width" | "height"][] = [
   ["mask_x", "center_x"], ["mask_y", "center_y"], ["mask_width", "width"], ["mask_height", "height"],
 ];

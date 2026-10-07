@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from "react";
 import type { Clip, Curve, MaskProperty, MaskVertex, ShapeMask } from "../engine";
 import { TIMEBASE } from "../time";
-import { appInfo, commitMaskEdit, playhead, setClipMask, setMaskEditing, useApp, usePlay } from "../store";
+import { appInfo, commitMaskEdit, moveMaskCentre, playhead, setClipMask, setMaskEditing, useApp, usePlay } from "../store";
 
 const CORNERS = [[-1,-1,"左上"],[1,-1,"右上"],[-1,1,"左下"],[1,1,"右下"]] as const;
 const MASK_VARIABLE: Record<MaskProperty, string> = { mask_x: "x", mask_y: "y", mask_width: "w", mask_height: "h" };
@@ -11,7 +11,7 @@ const MAX_VERTICES = 64;
 type Gesture = {
   mask: ShapeMask; x: number; y: number;
   corner: readonly [number, number] | null;
-  vertex?: number; handle?: "in" | "out";
+  vertex?: number; handle?: "in" | "out"; outline?: boolean;
   projectId: string; revision: number; pointerId: number; element: SVGElement; moved: boolean;
   captured: boolean;
 };
@@ -154,6 +154,19 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
     const gesture = drag.current!; const point = locate(event); if (!point) return gesture.mask;
     const dx = point.x - gesture.x, dy = point.y - gesture.y;
     if (Math.abs(dx) + Math.abs(dy) > .005) gesture.moved = true;
+    if (gesture.outline) {
+      const list = gesture.mask.vertices ?? [];
+      if (!list.length) return gesture.mask;
+      // 整条轮廓只能在这 0..1 的画框里搬：可动的范围是 [−最小顶点, 1−最大顶点]，两侧不对称。
+      const xs = list.map((entry) => entry.x), ys = list.map((entry) => entry.y);
+      const clampDelta = (delta: number, low: number, high: number) => Math.min(high, Math.max(low, delta));
+      const mx = clampDelta(dx, -Math.min(...xs), 1 - Math.max(...xs));
+      const my = clampDelta(dy, -Math.min(...ys), 1 - Math.max(...ys));
+      return {
+        ...gesture.mask,
+        vertices: list.map((entry) => ({ ...entry, x: entry.x + mx, y: entry.y + my })),
+      };
+    }
     if (gesture.vertex !== undefined) {
       const list = gesture.mask.vertices ?? [];
       const current = list[gesture.vertex];
@@ -229,8 +242,10 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
         const step = e.shiftKey ? .1 : .01; svg.current?.focus();
         write({ ...mask, center_x: clamp(mask.center_x + (e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0),0,1), center_y: clamp(mask.center_y + (e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0),0,1) });
       }} onPointerMove={(e) => { if (owns(e)) setDraft(proposed(e)); }}
-      onPointerUp={(e) => { const gesture = drag.current; if (!gesture) return; const next = proposed(e); const moved = gesture.moved; cancel(); if (moved) { svg.current?.focus(); commitMaskEdit(clip.id,next,Math.max(0,Math.min(clip.duration_ticks,play.ticks - clip.position_ticks)),gesture.projectId,gesture.revision); } }} onPointerCancel={cancel} onLostPointerCapture={() => { if (drag.current) cancel(); }}>
+      onPointerUp={(e) => { const gesture = drag.current; if (!gesture) return; const next = proposed(e); const moved = gesture.moved; cancel(); if (moved) { svg.current?.focus(); const at = Math.max(0, Math.min(clip.duration_ticks, play.ticks - clip.position_ticks)); if (gesture.outline && (clip.keyframes ?? []).some((key) => key.property === "mask_x" || key.property === "mask_y")) { moveMaskCentre(clip.id, at, { x: mask.center_x + shift.tx + (next.center_x - mask.center_x), y: mask.center_y + shift.ty + (next.center_y - mask.center_y) }, gesture.projectId, gesture.revision); } else commitMaskEdit(clip.id,next,at,gesture.projectId,gesture.revision); } }} onPointerCancel={cancel} onLostPointerCapture={() => { if (drag.current) cancel(); }}>
       {mask.shape === "path" ? <>
+        <path className="mask-hit" d={outline(vertices)} role="button" tabIndex={0} aria-label="移动整条路径" aria-disabled={disabled}
+          onPointerDown={(e) => begin(e, { outline: true })} />
         <path className="mask-outline" d={outline(vertices)} />
         {vertices.map((vertex, index) => <>
           <line key={`out-${index}`} className="mask-tangent" x1={vertex.x*100} y1={vertex.y*100} x2={(vertex.x+vertex.handle_out[0])*100} y2={(vertex.y+vertex.handle_out[1])*100} />
