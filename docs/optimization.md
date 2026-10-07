@@ -1681,3 +1681,22 @@ WebM 第一次真跑就崩：FFmpeg 的进度行对 WebM/Opus 的第一拍报 `o
 
 仍未做：推移/滑动类（整层位移，需要给转场窗口内的层加时间相关的 overlay 偏移，另开一轮）、
 动态 resize 与路径动画的转场组合、以及既有的路径遮罩顶点动画等项。
+
+### 1.59.0 发布验收
+
+- `scripts/build_engine.py --verify`：冻结引擎 `app_version=1.59.0`、`frozen=true`。
+- `package_check_159.py`（包内引擎，实例 `3d2344ce078b`）：capabilities 报 9 种转场与中文标签
+  （`wipe_from_top` → 「从上擦除」）与 `wipe_transitions`/`zoom_transitions`；包内导出后用**另一种**量法
+  （一行里读作蓝主导的列占比，源码层用的是边界中点）实测：`wipe_from_left` 0.263 / 0.500 / 0.769
+  对斜坡 0.255 / 0.510 / 0.765，`wipe_from_bottom` 0.256 / 0.500 / 0.767（竖向取第 60 列，避开白方块），
+  `zoom_in` 的 40 px 方块读回 56 / 52 / 40 px；`app.asar` 5,521,954 B 里**没有**「从上擦除」「放大进入」
+  这两个新标签（它们只从引擎来），而有兜底的「交叉溶解」与 `.transition-badge` 类名。
+- `asar_compare.py`：包内 5 个 renderer/shell 文件与本地构建逐字节一致，ASAR 版本 1.59.0。
+- 界面（构建产物点包内引擎）：选中第二个镜头后「方式」下拉列出**九项**且文字与引擎表逐字一致；
+  选「从上擦除」→「添加转场」，时间线徽标显示「从上擦除」、aria 写「编辑从上擦除转场」；
+  引擎侧存回 `kind=wipe_from_top, duration_ticks=35,280,000`（0.5 秒）、r2→r3、入点滑到 1.5 秒。
+- 原生窗口：1480×900 一帧（`AgentCut-1.59-原生窗口.png`，127,137 B，MD5 `61dc5eba084a3510bc398eb44ffc0558`，
+  与 1.58 的 `6a8b5c52…`、1.57 的 `bcbd4f49…` 各不相同），标题栏读作「导出 · 引擎在线 v1.59.0」；关闭无残留。
+- 产物：便携版 SHA256 `C0FB4987BF9EC27B6785B3111D06EB9E1EEF5429FA8B2EE01697D310F4245022`
+  （根目录 `AgentCut.exe` 与便携版逐字节一致）；安装版 SHA256
+  `AC24E9E15D60421FFE426E00119E06C365737A89486AADC8F211349D27876175`。未签名，NSIS 向导未点击验收。
