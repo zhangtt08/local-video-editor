@@ -1388,3 +1388,42 @@ out = clip(source + sharpen * (source - gaussian(source)), 0, 255)
 把 `clip(` 去掉红在「lost its clamp」、把 `sharpenLimits` 的像素带项删掉则
 `tests/desktop_blur_check.ts` 当场红。**没有做**的：锐化关键帧（与柔焦同理，导出只有开关窗）、
 边缘相关锐化（`guided`/`boxblur` 那条核函数在浏览器没有对应实现）。
+
+## 1.66 画面稳定：把相机的位移量出来，再反向写成关键帧（工程 schema 仍是 v13）
+
+入口是 `POST /v1/projects/{id}/clips/{clip}/stabilize`，载荷 `ClipStabilizeRequest`：
+`request_id`、`expected_revision`、`strength`（`0..1`）、`max_crop`（`0..0.25`，
+`capabilities.limits.stabilize_max_crop`）、`dry_run`。MCP 的对应工具是 `clip_stabilize`。
+它和 `/track`、`/reframe` 同一类：**分析需要读媒体，所以只有引擎能做；写入仍然是一条普通的
+`EditBatch`**（`keyframes.replace` 的 `x`/`y`/`scale`），于是一个 revision、一份回执、一步撤销，
+跟手打关键帧没有区别。回复里的 `stabilization` 是决策依据：量到的行程、抵消后还剩多少、放大多少倍
+盖边、多少个轴被 `max_crop` 夹住。
+
+测量复用 1.65 之前就在的归一化互相关跟踪器（`tracking.track_box`，`scale=False`），但锚点放在
+画面自身的四角内缩处（0.27/0.73），取四个锚点位移的**中位数**：一个走过主体的锚点会被主体带跑，
+而相机是四个锚点共同的那个运动。 offsets 相对第一帧，符号与画面位移一致（窗口往右裁 = 画面往左走）。
+
+抵消的是「测到的减去平滑的」，不是「测到的减去零」。把画面钉死在第一帧不是稳定，是冻屏：镜头本来
+就该走位，要摘掉的是叠在上面的抖动。平滑是居中滑动平均，窗口半径 `min(30, 片段帧数/4)`——超过
+四分之一条片段的窗口会把摄影师走过的推拉也当成抖动抹掉（第一版就是 30 帧固定窗口量到 2 秒片段上，
+把平移吃掉一大截）。`strength` 缩放**抵消多少**，不缩放窗口宽度：滑杆两端因此都是可解释的
+（0 = 原样，1 = 全抵消），而改窗口宽度等于偷偷改「什么算 intended motion」。
+
+边上不能露黑：合成器先按 `scale` 以画面中心缩放、再平移 `x`，所以层仍然铺满画面的条件是
+`|x| ≤ (scale−1)/2`，于是缩放取 `1 + 2·最大抵消`，`max_crop` 是这个比例的上限；超出就夹住并在
+`clamped_axes`/`warning` 里说明还剩多少没抵消。这条不变量由 `tests/stabilize_check.py` 直接断言
+（每个写入的 `|x|` 与 `|y|` 都不超过 `(scale−1)/2`）——先前用「左边缘有多少纯黑像素」来断言，
+把缩放改成 1.0 之后门禁仍然是绿的：稳定片段下面还压着别的片段，边黑被盖住了，那个检查根本不可能失败。
+
+**关键帧密度是能力边界**：一个每帧交替的抖动，无法用 48 个点在 59 帧上抵消掉——线性插值在跳变之间
+只会给出错的中间值。所以写入按「一帧一个点」，上限 `min(240, 片段关键帧预算/3)`；预算不够时才均匀
+抽稀。代价随之出现：59 帧 × 3 条曲线的 `if(lt(t,…))` 表达式让 `-filter_complex` 超过 Windows
+`CreateProcess` 的命令行上限（实测 WinError 206），因此 `RenderPlan.graph_argument()` 在图超过
+12 KB 时改走 `-filter_complex_script filtergraph.txt`，文件仍由 `plan.text_files` 交付
+（`ffmpeg_argv` 与 `frame_argv` 都走这条路；调用方必须先取 argv 再落盘，因为决定走文件的是 argv）。
+
+拒绝都是按名字的：不在画面轨上的片段、非视频素材、`speed_percent != 100`（抖动是一帧对一帧量的，
+速度一变对不上，与变速曲线同理）→ `STABILIZE_INVALID`；指向不存在的片段 → `NOT_FOUND`；
+`strength`/`max_crop` 越界 → 契约层 `INVALID_REQUEST`；匹配不上的帧太少 → `STABILIZE_FAILED`。
+`strength=0` 不写任何关键帧（每帧一个 0 值点是往工程里倒垃圾，不是更温和的稳定），此时回复不带
+revision 变化、只带测量结果。

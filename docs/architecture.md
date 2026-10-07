@@ -43,6 +43,8 @@ speed_percent 为整数，受控 setpts/atempo 与原生 playbackRate 实现 0.2
 
 清晰（1.65）是同一个高斯的另一半：`effects.sharpen` 给强度、`effects.sharpen_radius` 给半径（仍是画面高的比例，仍由 `spatial_radius()` 一处换算），两端跑同一条式子 `out = clip(src + a·(src − gaussian(src)), 0, 255)`。导出是 `split=2` → `gblur=sigma=R:steps=6:planes=7` → `blend=c*_expr='clip(A+a*(A-B),0,255)':c3_expr='A'`，预览是 `<filter>` 里 `feGaussianBlur` + `feComposite operator="arithmetic"`（`k2=1+a, k3=-a`）。两处都不是想当然：`blend` 实测**不钳位而是按 256 取模回绕**（255+0.8×69 读回 54），所以 `clip()` 写在式子里而不是指望滤镜兜底；`planes=7` 与 `c3_expr='A'` 是为了让锐化不碰 alpha——走到这一步的 alpha 还是均匀的，遮罩 alpha 在之后才乘上去，与预览「先 `filter` 后 `mask-image`」同序。blend 的输出不带 pad 标签、整条链保持悬空由调用方续逗号，因为 lavfi 对「pad 标签后面再接滤镜」直接报 trailing garbage。半径上限沿用 1.64 那条实测带，越界点名 `sharpen_radius` 拒绝；强度越界归契约（422，不烧 revision）。不走 FFmpeg 的 `unsharp`：那是整数窗口卷积，与预览的高斯核核对不上。
 
+画面稳定（1.66）是「引擎替用户算」这一类的第三个入口（前两个是 `/track` 与 `/reframe`）：`POST /v1/projects/{id}/clips/{clip}/stabilize` 用随包 FFmpeg 把片段解码成灰度小图，交给同一个归一化互相关跟踪器，但锚点不在主体上而在画面四角内缩处，取四个锚点位移的**中位数**——被主体挡住的那个锚点会跑偏，而相机是四个锚点共同的那个运动。测到的位移减去一条居中滑动平均，就是应该抵消掉的抖动；反向写进 `x`/`y`/`scale` 关键帧之后，写入走的仍是 `keyframes.replace`，所以一个 revision、一份回执、一步撤销，与手打关键帧无异，预览与导出也天然同一条曲线（两端都读同一份关键帧，不需要第二个近似）。两个数决定它的行为：滑动窗口半径 `min(30, 片段帧数/4)`（窗口比片段还宽就会把摄影师的推拉一起吃掉），以及 `strength` 缩放**抵消多少**而不是窗口多宽（0 = 原样、1 = 全抵消，两端都可解释）。合成器先按 `scale` 以画面中心缩放再平移 `x`，层仍铺满画面的条件是 `|x| ≤ (scale−1)/2`，所以缩放取 `1 + 2·最大抵消`，`max_crop` 是它的上限，超出就夹住并如实报告还剩多少。关键帧密度是硬边界：每帧交替的抖动不可能用 48 个点抵消，于是一帧一个点（上限 `min(240, 预算/3)`）；随之而来的是 `-filter_complex` 撑破 Windows 的命令行上限，`RenderPlan.graph_argument()` 在图超过 12 KB 时改走 `-filter_complex_script`，文件仍由 `plan.text_files` 交付——调用方必须先取 argv 再落盘，因为「要不要走文件」是 argv 决定的。
+
 ## 媒体与渲染
 
 文件导入必须在授权根内，由服务读取、探测、哈希并签发媒体记录。reference 仅是元数据，渲染不使用任意客户端路径或 FFmpeg 参数。

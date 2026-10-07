@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 13  # v13 gives a path mask a real box; older rows are fitted on load (ge=1).
-APP_VERSION = "1.65.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.66.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -190,6 +190,11 @@ GBLUR_STEPS = 6
 # defined against the frame, not a pixel count. Default ~4 px at 1080p: edge, not glow.
 SHARPEN_LIMIT = 2.0
 SHARPEN_RADIUS_DEFAULT = 0.004
+# Stabilisation: how much of the frame may be spent hiding the borders the correction exposes, and
+# how wide a window decides which part of the motion is the intended one (30 frames at 30fps = 1s).
+STABILIZE_STRENGTH_LIMIT = 1.0
+STABILIZE_MAX_CROP_LIMIT = 0.25
+STABILIZE_SMOOTHING_FRAMES = 30
 
 
 def spatial_radius(fraction: float, frame_height: int) -> float:
@@ -1297,6 +1302,21 @@ class MaskTrackRequest(Contract):
     dry_run: bool = False
 
 
+class ClipStabilizeRequest(Contract):
+    """Analyse the clip's own frames and write the inverse of the camera's jitter as keyframes.
+
+    `strength` is how wide a window decides which part of the motion counts as intended (0 keeps the
+    shot exactly as shot, 1 smooths over a second of it); `max_crop` is how much of the frame the
+    editor is willing to spend hiding the borders the correction exposes.
+    """
+
+    request_id: Identifier
+    expected_revision: Revision
+    strength: Annotated[float, Field(ge=0, le=STABILIZE_STRENGTH_LIMIT)] = 1.0
+    max_crop: Annotated[float, Field(ge=0, le=STABILIZE_MAX_CROP_LIMIT)] = 0.1
+    dry_run: bool = False
+
+
 def project_content_ticks(project) -> int:
     """Where the ruler ends: the furthest clip edge on the timeline being edited.
 
@@ -1968,6 +1988,7 @@ def capabilities(
             "text_styling": True,
             "clip_blur": True,
             "clip_sharpen": True,
+            "clip_stabilize": True,
             "grade_node_blend_modes": True,
             "grade_parallel_branches": True,
             "timeline_marks": True,
@@ -1989,6 +2010,8 @@ def capabilities(
             "sharpen_amount": SHARPEN_LIMIT,
             "sharpen_radius_fraction": BLUR_LIMIT,
             "sharpen_radius_default": SHARPEN_RADIUS_DEFAULT,
+            "stabilize_max_crop": STABILIZE_MAX_CROP_LIMIT,
+            "stabilize_smoothing_frames": STABILIZE_SMOOTHING_FRAMES,
             "sample_rates": [44_100, 48_000, 96_000],
         },
         "render_presets": render_presets(),

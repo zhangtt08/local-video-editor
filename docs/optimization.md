@@ -2230,3 +2230,56 @@ sigma；回执锚点再加两条，确认「只写默认值的新键」不会把
   `setsar=1,fps=30/1,format=yuv444p10le`；改成「只有 blur 或 sharpen 真的开着才转 rgba」，
   两个旋钮都关着时输出串与 1.64 逐字节相同。另记一次流程教训：第一次串行套件是在编辑源码的同时跑的，
   `speedramp_check` 的像素断言被读到半改状态而假红——跑套件期间不再动源码。
+
+## 1.66.0 画面稳定：量出相机在动多少，再把反过来的那点位移写回工程（2026-10-08）
+
+剪映的「平滑」是它的招牌之一，而它在这一层真正可复制的不是 warp，而是那个问题——「这一段画面里，哪些运动是相机造成的」。项目里已经有按归一化互相关跟遮罩的跟踪器（`tracking.track_box`），所以这一轮不引入新依赖：把同一个跟踪器从「跟主体」改成「跟画面」，锚点放在四角内缩处（0.27/0.73），取四个锚点位移的**中位数**。为什么不是均值也不是单点：一个走过画面的主体会把单个锚点带跑，而相机是四个锚点都同意的那个运动。
+
+写入仍是 `keyframes.replace` 的 `x`/`y`/`scale`——与手打关键帧同一条路，所以一个 revision、一份回执、一步撤销，预览与导出天然同曲线，不需要第二个近似。分析需要读媒体，因此入口和 `/track`、`/reframe` 同类（HTTP + MCP 工具 `clip_stabilize`），但**只有引擎能做分析**，写工程仍走同一条事务。
+
+四条只有实测才知道的边界：
+
+- **抵消的是「测到的 − 平滑的」，不是「测到的 − 0」**。把画面钉死在第一帧不是稳定，是冻屏。第一版把滑动窗口半径按 `strength` 缩放，2 秒片段上 30 帧的窗口直接把 20 px/s 的推拉吃掉一截；改成窗口固定为 `min(30, 片段帧数/4)`、`strength` 只缩放**抵消多少**，滑杆两端才各自可解释（0 = 原样，1 = 全抵消）。
+- **缩放必须盖住边**：合成器先以画面中心缩放再平移，层仍铺满的条件是 `|x| ≤ (scale−1)/2`，于是缩放取 `1 + 2·最大抵消`，`max_crop` 是它的上限，超出就夹住并在 `clamped_axes`/`warning` 里说还剩多少没抵消。
+- **关键帧密度是能力边界**：每帧交替的抖动不可能用 48 个点在 59 帧上抵消——线性插值在跳变之间只会给出错的中间值（实测：48 点时成片抖动 6.4 px，一帧一点后 1.4 px）。所以一帧一个点，上限 `min(240, 片段关键帧预算/3)`。
+- **图太长会撑爆命令行**：59 帧 × 3 条曲线的 `if(lt(t,…))` 让 `-filter_complex` 超过 Windows `CreateProcess` 上限（WinError 206「文件名或扩展名太长」）。`RenderPlan.graph_argument()` 在图超过 12 KB 时改走 `-filter_complex_script filtergraph.txt`，`ffmpeg_argv` 与 `frame_argv` 都走这条路；文件仍由 `plan.text_files` 交付，因此**调用方必须先取 argv 再落盘**——决定「要不要走文件」的正是取 argv 这一步（门禁里就先踩了一次：先写文件后取 argv，FFmpeg 报「Error opening file filtergraph.txt」）。
+
+验收 `tests/stabilize_check.py`：样片的裁剪窗口位置是 `t` 的闭式函数（20 px/s 平移 + 每帧 ±8 px 抖动），跟踪还原与写下来的真值最多差 **2.0 px**（分析分辨率本身就是 2.5 px/像素），逐帧符号必须相反；**成片**再量一次，抖动 **11.2 px → 1.4 px**；只有平移没有抖动的第二条样片稳定后保留 **75%** 行程；`strength=0` 一个关键帧都不写、`0.5` 的抵消量正好是一半；音频轨片段、200% 变速、`max_crop=0`、指向不存在的片段、`strength=4` 全部按名字拒绝且不动 revision；`dry_run` 一个字节都不写；同 id 同载荷命中回执、同 id 换载荷被拒。
+
+两条「门禁必须能失败」的教训，都在这轮现场抓到并重做：
+
+- 第一条按像素检查「边上有没有露黑」的写法，把 `zoom` 从 `1+2·最大抵消` 改成 `1.0` 之后**仍然是绿的**——稳定片段下面还压着别的片段，边黑被盖住了。改成直接断言合成器的覆盖不变量（`scale ≥ 1+2·residual` 且每个写入的 `|x|`、`|y|` 不超过 `(scale−1)/2`）后，同一个变异当场红。
+- 测量样片第一版是「每像素随机噪声」：H.264 把高频量化掉了，每个块回来时灰度都不一样，跟踪器忠实地把编码噪声当成画面跟——量到的偏移与真值差 0.16 画面宽。换成 24 px 方块 + 圆片的结构板之后，误差落到 2 px。样片说谎时会造出一个并不存在的引擎缺陷，这条与「样片不许说谎」是同一件事。
+
+### 发布验收（1.66.0）
+
+- 冻结引擎：`scripts/build_engine.py` 重新打包（staged 324.9 MB），`desktop/release/win-unpacked` 与两个
+  产物全部重生成（mtime 07:38，与上一轮 07:17 的产物不同尺寸，避免旧文件冒充成功）。第一次 `npm run dist`
+  以 `EPERM: unlink …/agentcut.exe` 失败——上一轮包内验收留下的三个引擎子进程还占着文件；按 PID
+  `Get-CimInstance` 查出来杀掉再重建才通过（`DIST=1` 是被日志记下来的，没有当成成功）。
+- 包内验收 `package_check_166.py`（实例 `3ae892b4faae`，`/v1/info` 报 `1.66.0`，
+  `features.clip_stabilize` + 两个 limits 下发）：样片抖动 **11.2 px**，`dry_run` 计划 59 个点而
+  工程头不动；正式写入 `{'x': 59, 'y': 59, 'scale': 2}`、residual 0.02124、zoom 1.0425；
+  **用随包的 FFmpeg 复检交付文件**，抖动降到 **1.5 px**；指向不存在的片段回 `NOT_FOUND` 而不是 500；
+  MCP stdio 40 个工具，`clip_stabilize` 的 schema 点名 `strength` 与 `max_crop`；
+  `app.asar` 5,540,884 B 带着「画面稳定」按钮、两个输入框与能力门控。
+- 界面验收 `ui_stabilize_166.py`（Playwright 驱动构建后的 renderer）：按钮在「变换与动画」里
+  （第一版误放在「遮罩」小节且被 `animatable` 门控，无遮罩的片段根本看不到——UI 走查时发现并搬了出来），
+  默认 强度 100% / 允许裁切 10%，输入框上限就是引擎下发的 `stabilize_max_crop`（25%）；
+  点一次落成**恰好一个 revision**（1 → 2），写入 59+59+2 条关键帧，最大位移 0.0212 画面宽；
+  预览清单里 `curves.x` 有 61 个点、首点与存进去的首条关键帧逐位相同。
+  （不断言 computed transform：隐藏标签页里 rAF 不跑，那样等于宣称了一个浏览器根本没画的帧。）
+- 原生窗口：`release/win-unpacked/AgentCut.exe` 用 `Start-Process` 脱离父 shell 启动，
+  `PrintWindow(flags=2)` 采到 1480×900 的「AgentCut 剪辑台」，标题栏右侧写着 **引擎在线 v1.66.0**
+  （`AgentCut-1.66-原生窗口.png`），`CloseMainWindow` 优雅关闭后 `no AgentCut/agentcut residue`。
+  该会话打开的是用户 `%APPDATA%` 里的真实工程，只截图与关闭，未编辑任何用户数据。未签名，
+  NSIS 向导未点击验收。
+- 产物：便携版 189,751,716 字节 SHA256
+  `301FD17065C67C99F2C29317C63EB3CEC601DDAB0C07FC52A109041401E52246`；安装版 189,912,432 字节
+  SHA256 `9B3779EBEC1AE4E0E80E1543A8A5778DCC296758CC0DA79973A57B719112ACA6`。
+- 门禁：`ruff check` 与 `ruff format --check` 全绿、`npm run typecheck` 干净、10 项桌面 TS 检查通过、
+  `tests/self_check.py` 通过（含 MCP 工具集里点名 `clip_stabilize`），`tests/suite_check.py` 串行
+  **59/59**（`SUITE=0`）。本轮被门禁抓到两件事：把「要不要走脚本文件」的决定放在 `ffmpeg_argv()` 里，
+  会让先写 `text_files` 的调用方拿到一个不存在的文件（`tracking_check` 当场红在
+  「Error opening file filtergraph.txt」），改到编译期决定并拆成渲染/取帧两个文件；以及嵌套合成会把
+  子合成的 `filtergraph.txt` 覆盖到父工程同名文件上，合并时按名字跳过。

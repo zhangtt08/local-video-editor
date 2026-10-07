@@ -15,6 +15,7 @@ from mcp.types import ToolAnnotations
 
 from .contracts import (
     Clip,
+    ClipStabilizeRequest,
     CreateProject,
     DuckRequest,
     EditBatch,
@@ -314,6 +315,23 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
             f"/v1/projects/{project_id}/tracks/{track_id}/duck",
             request.model_dump(mode="json"),
             timeout=600,
+        )
+
+    @server.tool(annotations=write)
+    async def clip_stabilize(
+        project_id: Identifier, clip_id: Identifier, request: ClipStabilizeRequest
+    ) -> dict[str, Any]:
+        """Take the camera's jitter off one clip by writing the inverse motion as keyframes.
+
+        The analysis reads the server-verified media; the write goes through the same transaction as
+        `timeline_edit`, so dry_run saves nothing and a repeated request_id replays. The reply's
+        `stabilization` block says how far the picture actually moved and what is left over.
+        """
+        return await call(
+            "POST",
+            f"/v1/projects/{project_id}/clips/{clip_id}/stabilize",
+            request.model_dump(mode="json"),
+            timeout=900,
         )
 
     @server.tool(annotations=write)

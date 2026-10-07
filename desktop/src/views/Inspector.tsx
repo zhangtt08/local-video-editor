@@ -54,7 +54,7 @@ import {
   nestSelection,
   openSequence,
   updateSequence,
-  reframeClip, trackMask,
+  reframeClip, stabilizeClip, trackMask,
   cutSilence,
   autoCaptions,
   normaliseLoudness,
@@ -111,6 +111,12 @@ export function Inspector() {
     </div>
   );
 
+}
+
+/** A typed percentage, kept where the engine would accept it; empty or junk reads back as 0. */
+function clampPercent(raw: string, ceiling = 100): number {
+  const value = Number(raw);
+  return Number.isFinite(value) ? Math.max(0, Math.min(ceiling, Math.round(value))) : 0;
 }
 
 function ClipFields({ clip }: { clip: Clip }) {
@@ -236,6 +242,10 @@ function EffectsFields({ clip }: { clip: Clip }) {
   const app = useApp();
   const play = usePlay();
   const [interpolation, setInterpolation] = useState<Keyframe["interpolation"]>("linear");
+  const [stabilizeStrength, setStabilizeStrength] = useState(100);
+  const [stabilizeCrop, setStabilizeCrop] = useState(10);
+  // The ceiling the contract allows, so the box can never offer what the engine would refuse.
+  const cropCeiling = Math.round((app.caps?.limits?.stabilize_max_crop ?? 0.25) * 100);
   const [sampled, setSampled] = useState<{ at: number; clip: Clip; values: SampledValues } | null>(null);
   const [fade, setFade] = useState(.5);
   const [slideFrames, setSlideFrames] = useState(1);
@@ -285,7 +295,20 @@ function EffectsFields({ clip }: { clip: Clip }) {
         <EffectInput id="fx-blur" value={(effects.blur ?? 0) * 100} min={0} max={blurMax} step={0.5} onCommit={(value) => setClipEffects(clip.id, { blur: value / 100 })} />
         <span className="dim">% 高 · ≈{(effects.blur * (project?.settings.height ?? 0)).toFixed(1)} px</span>
       </div> : null}
-      {sharpen.amount > 0 && asset?.kind !== "audio" ? <>
+          {app.caps?.features?.clip_stabilize && asset?.kind !== "audio" ? <span className="stabilize-row">
+            <button className="btn tiny" disabled={Boolean(app.busy) || Boolean(clip.speed_curve) || clip.speed_percent !== 100}
+              title={clip.speed_curve || clip.speed_percent !== 100 ? "带变速的片段还不能稳定：抖动是按「一帧对一帧」量的，播放速度变了就对不上" : "让引擎读这段画面，量出相机自己的抖动，再写入反过来的平移与缩放把它抵消；强度 0 表示不动画面，允许裁切是愿意为消抖让画面放大多少。撤销一步回到稳定前"}
+              onClick={() => void stabilizeClip(clip.id, stabilizeStrength / 100, stabilizeCrop / 100)}>画面稳定</button>
+            <label className="dim">强度
+              <input className="input tiny" type="number" min={0} max={100} step={5} value={stabilizeStrength}
+                aria-label="稳定强度" onChange={(e) => setStabilizeStrength(clampPercent(e.target.value))} />%
+            </label>
+            <label className="dim">允许裁切
+              <input className="input tiny" type="number" min={0} max={cropCeiling} step={1} value={stabilizeCrop}
+                aria-label="稳定允许裁切" onChange={(e) => setStabilizeCrop(clampPercent(e.target.value, cropCeiling))} />%
+            </label>
+          </span> : null}
+            {sharpen.amount > 0 && asset?.kind !== "audio" ? <>
         <div className="effect-row">
           <label htmlFor="fx-sharpen">清晰</label>
           <EffectInput id="fx-sharpen" value={(effects.sharpen ?? 0) * 100} min={0} max={sharpen.amount * 100} step={5} onCommit={(value) => setClipEffects(clip.id, { sharpen: value / 100 })} />

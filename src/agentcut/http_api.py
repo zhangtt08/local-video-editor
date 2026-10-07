@@ -27,6 +27,7 @@ from . import duck, silence
 from . import fourpoint as fourpoint_module
 from . import markers as marker_plan
 from . import reframe as reframe_plan
+from . import stabilize as stabilize_module
 from .animation import graph_curve, preview_manifest, sample_values
 from .bundles import MAX_BUNDLE_BYTES, export_bundle, import_bundle
 from .contracts import (
@@ -35,6 +36,7 @@ from .contracts import (
     BundleImport,
     CachePrune,
     Clip,
+    ClipStabilizeRequest,
     CreateProject,
     DuckRequest,
     EditBatch,
@@ -555,6 +557,78 @@ def create_app(
             media_type="video/mp4",
             headers={"Accept-Ranges": "bytes", "Cache-Control": "private, max-age=3600"},
         )
+
+    @app.post("/v1/projects/{project_id}/clips/{clip_id}/stabilize", dependencies=auth)
+    def clip_stabilize(
+        project_id: Identifier, clip_id: Identifier, request: ClipStabilizeRequest, projects: Store
+    ):
+        engine = require_media()
+        project = projects.get(project_id)
+        clip = project.clips.get(clip_id)
+        if clip is None:
+            raise EditorError("NOT_FOUND", "clip is not in this project", 404)
+        asset = project.assets.get(clip.asset_id)
+        if asset is None or asset.kind != "video" or asset.verified is None:
+            raise EditorError(
+                "STABILIZE_INVALID", "only verified video clips can be stabilised", 422
+            )
+        track = next((item for item in project.tracks if item.id == clip.track_id), None)
+        if track is None or track.kind != "video":
+            # A video asset parked on an audio track renders no picture, so there is nothing to hold
+            # still — and saying so beats writing keyframes the renderer never shows.
+            raise EditorError(
+                "STABILIZE_INVALID",
+                "the clip is not on a picture track, so it renders no frame to stabilise",
+                422,
+                clip_id=clip_id,
+                track_id=clip.track_id,
+            )
+        if clip.speed_percent != 100:
+            raise EditorError(
+                "STABILIZE_INVALID",
+                "the clip plays at "
+                f"{clip.speed_percent}%: the camera's motion is measured one frame per rendered "
+                "frame, so stabilise a clip that plays at its recorded speed",
+                422,
+                clip_id=clip_id,
+                speed_percent=clip.speed_percent,
+            )
+        source = Path(asset.verified.path)
+        if not source.is_file():
+            raise EditorError("MEDIA_MISSING", "source file is gone", 410)
+        settings = project.settings
+        motion = stabilize_module.measure(
+            engine.ffmpeg,
+            source,
+            asset.verified.width or settings.width,
+            asset.verified.height or settings.height,
+            asset.verified.frame_rate or settings.frame_rate,
+            clip.source_in_ticks,
+            clip.duration_ticks,
+            settings.frame_ticks,
+        )
+        commands, notes = stabilize_module.plan(
+            project,
+            motion,
+            clip_id=clip_id,
+            strength=request.strength,
+            max_crop=request.max_crop,
+        )
+        if not commands:
+            # Nothing to write (strength 0). Report the measurement without burning a revision.
+            return {
+                "project": project.model_dump(mode="json"),
+                "replayed": False,
+                "stabilization": notes,
+            }
+        batch = EditBatch(
+            request_id=request.request_id,
+            expected_revision=request.expected_revision,
+            commands=commands,  # type: ignore[arg-type]
+            dry_run=request.dry_run,
+        )
+        mutation = projects.mutate(project_id, batch).model_dump()
+        return {**mutation, "stabilization": notes}
 
     @app.post("/v1/projects/{project_id}/clips/{clip_id}/track", dependencies=auth)
     def mask_track(

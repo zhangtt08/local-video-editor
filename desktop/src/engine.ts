@@ -403,7 +403,7 @@ export type Capabilities = {
   max_commands_per_batch: number;
   commands: string[];
   features: Record<string, boolean>;
-  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number };
+  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number };
   render_presets: Preset[];
 };
 
@@ -678,6 +678,13 @@ export class Engine {
   reframe(projectId: string, clipId: string, body: Record<string, unknown>) {
     return this.request<EditPlan>(
       "POST", `/v1/projects/${projectId}/clips/${clipId}/reframe`, body, 120000
+    );
+  }
+
+  /** 画面稳定：引擎读一次随包 FFmpeg 解码的画面，把相机的抖动量出来，再写成 x/y/scale 关键帧。 */
+  stabilize(projectId: string, clipId: string, body: Record<string, unknown>) {
+    return this.request<{ stabilization?: Record<string, unknown> } & Record<string, unknown>>(
+      "POST", `/v1/projects/${projectId}/clips/${clipId}/stabilize`, body, 900000
     );
   }
 

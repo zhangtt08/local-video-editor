@@ -108,6 +108,11 @@ def _rgb(color: str) -> tuple[int, int, int]:
     return values  # type: ignore[return-value]
 
 
+# Windows' `CreateProcess` takes a command line of ~32 KB, and a keyframe-dense clip reaches it on
+# its own; below this the graph still goes inline, above it FFmpeg reads the same text from a file.
+GRAPH_SCRIPT_LIMIT = 12_000
+
+
 def focus_radius(fraction: float, knob: str, out_h: int) -> float:
     """A fraction of the frame height turned into pixels, inside the band that was measured.
 
@@ -374,6 +379,8 @@ class RenderPlan:
     summary: dict = field(default_factory=dict)
     counter: int = 0
     text_files: dict[str, str] = field(default_factory=dict)
+    graph_in_file: bool = False
+    frame_graph_in_file: bool = False
     binary_files: dict[str, bytes] = field(default_factory=dict)
 
     def tag(self, prefix: str) -> str:
@@ -405,6 +412,18 @@ class RenderPlan:
         ]
         return index
 
+    def graph_argument(self, graph: str, *, frame: bool = False) -> list[str]:
+        """The filtergraph as an argument, or as a script file when it outgrew the command line.
+
+        Windows refuses `CreateProcess` past ~32 KB, and a stabilised clip reaches that on its own:
+        one keyframe per frame turns into a chain of `if(lt(t,...))` per overlay. Which form a plan
+        uses is decided at compile time (see `GRAPH_SCRIPT_LIMIT`), so a caller that writes
+        `text_files` before building the command still gets every file it needs.
+        """
+        if not (self.frame_graph_in_file if frame else self.graph_in_file):
+            return ["-filter_complex", graph]
+        return ["-filter_complex_script", "filtergraph-frame.txt" if frame else "filtergraph.txt"]
+
     def ffmpeg_argv(self, ffmpeg: str, output_path: str) -> list[str]:
         return [
             ffmpeg,
@@ -416,8 +435,7 @@ class RenderPlan:
             "pipe:1",
             "-y",
             *self.input_args,
-            "-filter_complex",
-            ";".join(self.filters),
+            *self.graph_argument(";".join(self.filters)),
             *(["-map", self.video_label] if self.video_label else []),
             "-map",
             self.audio_label,
@@ -435,8 +453,9 @@ class RenderPlan:
             "-loglevel",
             "error",
             *self.input_args,
-            "-filter_complex",
-            ";".join([*self.filters, f"{self.audio_label}anullsink"]),
+            *self.graph_argument(
+                ";".join([*self.filters, f"{self.audio_label}anullsink"]), frame=True
+            ),
             "-map",
             self.video_label,
             "-ss",
@@ -656,7 +675,15 @@ def compile_render_plan(
 
             plan.input_args.extend(child.input_args)
             plan.filters.extend(renamed(f) for f in child.filters)
-            plan.text_files.update(child.text_files)
+            plan.text_files.update(
+                # The child's own filtergraph is inlined into the parent's, so its script file (if
+                # it had one) is both unreferenced and name-colliding here.
+                {
+                    name: body
+                    for name, body in child.text_files.items()
+                    if not name.startswith("filtergraph")
+                }
+            )
             plan.binary_files.update(child.binary_files)
             nested_sources.update(child.summary["sources"])
             video, audio = plan.tag("nestedv"), plan.tag("nesteda")
@@ -1203,6 +1230,17 @@ def compile_render_plan(
             ),
         }
     )
+    # Decided here, not when the command line is built: callers hand `text_files` to disk before
+    # they ask for argv, and a file that only appears once argv exists is a file nobody writes.
+    # The render graph and the single-frame graph differ by their audio sink, so they are two files.
+    render_graph = ";".join(plan.filters)
+    frame_graph = ";".join([*plan.filters, f"{plan.audio_label}anullsink"])
+    if len(render_graph) > GRAPH_SCRIPT_LIMIT:
+        plan.graph_in_file = True
+        plan.text_files["filtergraph.txt"] = render_graph
+    if len(frame_graph) > GRAPH_SCRIPT_LIMIT:
+        plan.frame_graph_in_file = True
+        plan.text_files["filtergraph-frame.txt"] = frame_graph
     return plan
 
 

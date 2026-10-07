@@ -586,6 +586,47 @@ export async function reframeClip(clipId: string, maxScale = 4) {
   }
 }
 
+/** 画面稳定：让引擎量出相机自己的抖动，再把反过来的那点位移写成关键帧。
+ * 与「主体跟随」同一类：分析在引擎里做（只有它能读验证过的媒体），写入仍走同一条 revision。 */
+export async function stabilizeClip(clipId: string, strength = 1, maxCrop = 0.1) {
+  const project = state.project;
+  if (!engine || !project) return;
+  set({ busy: "分析画面抖动…" });
+  try {
+    const done = await engine.stabilize(project.id, clipId, {
+      request_id: newId("stabilize-"), expected_revision: project.revision,
+      strength, max_crop: maxCrop, dry_run: false,
+    });
+    const stats = done.stabilization as {
+      written_points?: number; measured_travel?: number[]; residual_after?: number;
+      zoom_to_hide_borders?: number; clamped_axes?: number; dropped_frames?: number;
+      warning?: string; note?: string;
+    } | undefined;
+    const next = (done as { project?: Project }).project;
+    if (!stats || !next) return;
+    if (!stats.written_points) {
+      toast("info", "不需要稳定", stats.note ?? "这条片段的画面本来就是稳的。");
+      return;
+    }
+    pushUndo(project.revision, "画面稳定");
+    set({ project: next });
+    await refreshProjects();
+    const travel = stats.measured_travel ?? [];
+    const detail = [
+      `量出画面最多走过 ${Math.max(...travel, 0).toFixed(3)} 画面宽`,
+      `写入 ${stats.written_points} 个关键点，抵消后还剩 ${stats.residual_after?.toFixed(3) ?? "?"}`,
+      `放大 ${stats.zoom_to_hide_borders?.toFixed(3) ?? "?"} 倍盖住边上`,
+      stats.warning ?? (stats.dropped_frames ? `${stats.dropped_frames} 帧没跟上，已按前后插值` : ""),
+    ].filter(Boolean).join(" · ");
+    toast("ok", "画面稳定已写入", `${detail}。撤销一步回到稳定前。`);
+  } catch (error) {
+    const { title, detail } = describe(error);
+    toast("error", title, detail);
+  } finally {
+    set({ busy: "" });
+  }
+}
+
 export async function trackMask(clipId: string, fromTicks: number, frames: number) {
   const project = state.project;
   if (!engine || !project) return;
