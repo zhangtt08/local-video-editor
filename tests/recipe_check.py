@@ -10,8 +10,14 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from agentcut.contracts import (
+    SCHEMA_VERSION,
+    DeliveryRecipe,
+    EditBatch,
+    Project,
+    RenderBatchItem,
+)
 from agentcut.contracts import TIMEBASE as T
-from agentcut.contracts import DeliveryRecipe, EditBatch, Project, RenderBatchItem
 from agentcut.http_api import create_app
 from agentcut.jobs import JobRuntime
 from agentcut.media import MediaService
@@ -158,7 +164,7 @@ def http_suite(folder: Path) -> None:
         app, base_url="http://127.0.0.1", headers={"Authorization": f"Bearer {token}"}
     ) as client:
         caps = client.get("/v1/capabilities").json()
-        assert caps["project_schema_version"] == 12, caps["project_schema_version"]
+        assert caps["project_schema_version"] == SCHEMA_VERSION, caps["project_schema_version"]
         assert caps["features"]["delivery_recipes"] is True, caps["features"]
         assert "recipe.set" in caps["commands"] and "recipe.remove" in caps["commands"], caps[
             "commands"
@@ -170,7 +176,8 @@ def http_suite(folder: Path) -> None:
             "project"
         ]
         path = f"/v1/projects/{created['id']}"
-        assert created["schema_version"] == 12 and created["recipes"] == [], created
+        assert created["schema_version"] == SCHEMA_VERSION
+        assert created["recipes"] == [], created
         seeded = client.post(
             path + "/edits",
             json={

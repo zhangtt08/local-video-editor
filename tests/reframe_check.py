@@ -371,12 +371,17 @@ def plan_suite() -> None:
     ]
     cases = {
         "no mask": refused(project_with(tracked_clip_with_no_mask()), max_scale=2.0),
-        "path mask": refused(project_with(tracked_clip(shape="path")), max_scale=2.0),
         "inverted mask": refused(project_with(tracked_clip(inverted=True)), max_scale=2.0),
         "no centre curves": refused(project_with(no_curves), max_scale=2.0),
         "impossible ceiling": refused(project_with(tracked_clip()), max_scale=9.0),
     }
     assert all(value == "INVALID_REFRAME" for value in cases.values()), cases
+    # A tracked free-form outline has a centre too, so the follow reads it the same way.
+    path_commands, path_notes = reframe_plan(
+        project_with(tracked_clip(shape="path")), clip_id="c", max_scale=2.0
+    )
+    assert [command["property"] for command in path_commands] == ["x", "y", "scale"], path_commands
+    assert path_notes["followed_points"] > 1, path_notes
     # Each axis is read through the render's own sampler, so one curve and a stepped curve are both
     # followable; they used to be refused because the planner paired keyframes by hand.
     half, notes = reframe_plan(project_with(only_x), clip_id="c", max_scale=4.0)
@@ -408,8 +413,8 @@ def plan_suite() -> None:
     else:
         raise AssertionError("the contract accepted a sub-1x ceiling")
     print(
-        "   reframe: no mask, a path mask, an inverted one, an unanimated mask and an"
-        " impossible ceiling are each refused by name"
+        "   reframe: no mask, an inverted one, an unanimated mask and an impossible ceiling are"
+        " each refused by name, while a tracked free-form outline is followed"
     )
 
 

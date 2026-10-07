@@ -89,7 +89,9 @@ def asset(clip_id: str, path: Path) -> dict:
     }
 
 
-def project(base: Path, top: Path, mask: dict | None) -> Project:
+def project(
+    base: Path, top: Path, mask: dict | None, keyframes: list[dict] | None = None
+) -> Project:
     return Project.model_validate(
         {
             "id": "p",
@@ -115,6 +117,7 @@ def project(base: Path, top: Path, mask: dict | None) -> Project:
                     "position_ticks": 0,
                     "duration_ticks": T,
                     **({"mask": mask} if mask else {}),
+                    **({"keyframes": keyframes} if keyframes else {}),
                 },
             },
         }
@@ -141,11 +144,11 @@ def render(project: Project, folder: Path, name: str) -> Path:
     return out
 
 
-def pixel(video: Path, x: int, y: int) -> list[int]:
+def pixel(video: Path, x: int, y: int, at: str = "0.5") -> list[int]:
     raw = run(
         [
             "-ss",
-            "0.5",
+            at,
             "-i",
             str(video),
             "-frames:v",
@@ -256,14 +259,72 @@ def media_suite(folder: Path) -> None:
     edge = pixel(soft, 120, 60)
     assert 60 < edge[0] < 220 and 40 < edge[1] < 200, edge
 
+    # The outline was drawn over the left half (x 0..160 of a 320-wide frame). Writing a path mask
+    # fits its box to the outline, so the box below is what `clip.mask` stores — and a centre curve
+    # then reads as the picture coordinate the subject sits at. Sweeping it half a frame right has
+    # to carry the cut with it: a point only the *moved* triangle covers starts green and ends red,
+    # while a point the drawn triangle covers does the opposite.
+    fitted = {**triangle, "center_x": 0.25, "center_y": 0.5, "width": 0.5, "height": 1.0}
+    still = render(project(base, top, fitted), folder, "fitted.mp4")
+    for x, y in ((40, 60), (150, 170), (250, 60), (300, 160)):
+        assert red(pixel(still, x, y)) == red(pixel(masked, x, y)), (
+            x,
+            y,
+            pixel(still, x, y),
+            pixel(masked, x, y),
+        )
+    swept = render(
+        project(
+            base,
+            top,
+            fitted,
+            [
+                {"property": "mask_x", "at_ticks": 0, "value": 0.25, "interpolation": "linear"},
+                {"property": "mask_x", "at_ticks": T, "value": 0.75, "interpolation": "linear"},
+            ],
+        ),
+        folder,
+        "swept.mp4",
+    )
+    assert not red(pixel(swept, 250, 60, "0.05")), pixel(swept, 250, 60, "0.05")
+    assert red(pixel(swept, 250, 60, "0.95")), pixel(swept, 250, 60, "0.95")
+    assert red(pixel(swept, 40, 60, "0.05")), pixel(swept, 40, 60, "0.05")
+    assert not red(pixel(swept, 40, 60, "0.95")), pixel(swept, 40, 60, "0.95")
+    held = render(
+        project(
+            base,
+            top,
+            fitted,
+            [
+                {"property": "mask_x", "at_ticks": 0, "value": 0.25, "interpolation": "linear"},
+                {"property": "mask_x", "at_ticks": T, "value": 0.25, "interpolation": "linear"},
+            ],
+        ),
+        folder,
+        "held.mp4",
+    )
+    # A curve that never moves the mask must land exactly where the static one does.
+    assert red(pixel(held, 40, 60, "0.5")) == red(pixel(still, 40, 60))
+    assert not red(pixel(held, 250, 60, "0.5"))
+    print(
+        "   pathmask: fitting the box is the identity on the drawn outline, and a keyframed centre"
+        " sweeps it — (250,60) goes green→red while (40,60) goes red→green, a flat curve reproduces"
+        " the static cut"
+    )
+
     plan = compile_render_plan(project(base, top, triangle), "h264-source-quality")
     assert len(plan.binary_files) == 1, plan.binary_files
     name = next(iter(plan.binary_files))
     assert name.startswith("mask-") and name.endswith(".png")
-    assert plan.input_args.count("-i") == 5, plan.input_args
+    # One more input than a box mask: the free-form cut is a patch over a neutral plate, and the
+    # plate has to exist for the whole clip so `overlay` can move the patch frame by frame.
+    assert plan.input_args.count("-i") == 6, plan.input_args
+    assert "color=c=black:s=320x180" in " ".join(plan.input_args), plan.input_args
     joined = "\n".join(plan.filters)
     for stage in ("alphaextract", "scale2ref", "blend=all_mode=multiply", "alphamerge"):
         assert stage in joined, stage
+    assert "overlay=x='320*(0.5)" in joined, joined
+    assert "eval=frame" in joined, "the patch has to move on the render clock"
     assert "a='alpha(X,Y)*(" not in joined, "a path mask must not add a per-pixel alpha equation"
     shape_plan = compile_render_plan(
         project(base, top, {"shape": "ellipse", "feather": 0.3}), "h264-source-quality"

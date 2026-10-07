@@ -9,7 +9,13 @@ from array import array
 from pathlib import Path
 
 from agentcut.animation import preview_manifest
-from agentcut.contracts import TIMEBASE, EditBatch, EditorError, Project
+from agentcut.contracts import (
+    SCHEMA_VERSION,
+    TIMEBASE,
+    EditBatch,
+    EditorError,
+    Project,
+)
 from agentcut.projects import ProjectStore
 from agentcut.render import compile_render_plan
 from agentcut.timeline import apply_commands, validate_timeline
@@ -75,7 +81,7 @@ def main():
     assert original.clips["right"].position_ticks == 2 * TIMEBASE
     assert dissolved.clips["right"].position_ticks == TIMEBASE
     assert dissolved.clips["right"].source_in_ticks == 0
-    assert dissolved.schema_version == 12
+    assert dissolved.schema_version == SCHEMA_VERSION
     updated = apply_commands(dissolved, edit([transition(TIMEBASE // 2, "dip_black")]).commands)
     assert updated.clips["right"].position_ticks == 3 * TIMEBASE // 2
     removed = apply_commands(

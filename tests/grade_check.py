@@ -9,8 +9,8 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from agentcut.animation import preview_manifest
+from agentcut.contracts import SCHEMA_VERSION, ClipColor, EditBatch, Project
 from agentcut.contracts import TIMEBASE as T
-from agentcut.contracts import ClipColor, EditBatch, Project
 from agentcut.grade import grade_filter, grade_tables
 from agentcut.http_api import create_app
 from agentcut.projects import ProjectStore
@@ -280,7 +280,7 @@ def http_suite(folder: Path) -> None:
         headers={"Authorization": f"Bearer {token}"},
     ) as client:
         capabilities = client.get("/v1/capabilities").json()
-        assert capabilities["project_schema_version"] == 12
+        assert capabilities["project_schema_version"] == SCHEMA_VERSION
         assert capabilities["features"]["grade_nodes"] is True
         assert "clip.grade" in capabilities["commands"]
 

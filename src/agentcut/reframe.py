@@ -95,10 +95,10 @@ def plan(
             max_scale=max_scale,
         )
     mask = clip.mask
-    if mask is None or mask.shape == "path" or mask.inverted:
+    if mask is None or mask.inverted:
         raise EditorError(
             "INVALID_REFRAME",
-            "reframing follows a rectangle or ellipse mask, not a path mask or an inverted one",
+            "reframing follows a mask centre, and an inverted mask has no subject to follow",
             422,
             clip_id=clip_id,
         )
@@ -106,8 +106,8 @@ def plan(
     if not keyed:
         raise EditorError(
             "INVALID_REFRAME",
-            "the mask has no animated centre to follow: draw a rectangle or ellipse over the "
-            "subject and press 跟踪主体 first, or keyframe 遮罩中心 yourself",
+            "the mask has no animated centre to follow: draw a mask over the subject and press "
+            "跟踪主体 first, or keyframe 遮罩中心 yourself",
             422,
             clip_id=clip_id,
         )

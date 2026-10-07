@@ -7,7 +7,14 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from agentcut.contracts import TIMEBASE, CreateProject, EditBatch, EditorError, RestoreProject
+from agentcut.contracts import (
+    SCHEMA_VERSION,
+    TIMEBASE,
+    CreateProject,
+    EditBatch,
+    EditorError,
+    RestoreProject,
+)
 from agentcut.http_api import create_app
 from agentcut.projects import ProjectStore
 from agentcut.timeline import apply_commands, link_status
@@ -213,7 +220,8 @@ def main():
         restored = store.mutate(
             p.id, RestoreProject(request_id="undo", expected_revision=p.revision, target_revision=1)
         ).project
-        assert restored.schema_version == 12 and restored.revision == p.revision + 1
+        assert restored.schema_version == SCHEMA_VERSION
+        assert restored.revision == p.revision + 1
         assert restored.clips["picture"].group_id is None
         with TestClient(
             create_app(db_path=path, token="x" * 32), base_url="http://127.0.0.1"

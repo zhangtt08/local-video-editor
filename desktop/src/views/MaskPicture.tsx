@@ -44,6 +44,8 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
   const [draft, setDraft] = useState<ShapeMask | null>(null);
   const [compiled, setCompiled] = useState<{ mask: ShapeMask; image: string } | null>(null);
   const [handleSize, setHandleSize] = useState({ x: 5, y: 9 });
+  const [stage, setStage] = useState({ w: 1, h: 1 });
+  const [shift, setShift] = useState({ x: 0, y: 0 });
   const [active, setActive] = useState<number | null>(null);
   const draftRef = useRef(draft); draftRef.current = draft;
   const svg = useRef<SVGSVGElement | null>(null);
@@ -66,6 +68,9 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
       const box = element.getBoundingClientRect();
       element.style.setProperty("--mask-lw", String(Math.max(1, box.width)));
       element.style.setProperty("--mask-lh", String(Math.max(1, box.height)));
+      setStage((old) =>
+        Math.abs(old.w - box.width) + Math.abs(old.h - box.height) < 1 ? old : { w: box.width, h: box.height }
+      );
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -83,7 +88,16 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
   useEffect(() => {
     const at = Math.max(0, (play.ticks - clip.position_ticks) / TIMEBASE * 1000);
     for (const effect of maskAnimations.current) effect.currentTime = at;
-  }, [play.ticks, clip.position_ticks, animated]);
+    // A free-form outline moves as a whole, so the editing guide has to sit where the cut actually
+    // lands. The browser's own interpolation of the engine-supplied curve is the only authority for
+    // that position, so read it back off the animated element instead of solving the curve again.
+    const element = picture.current;
+    if (!element || !animated || mask?.shape !== "path") { setShift((old) => (old.x || old.y ? { x: 0, y: 0 } : old)); return; }
+    const style = getComputedStyle(element);
+    const dx = Number(style.getPropertyValue("--mask-x")) - (mask.center_x ?? 0.5);
+    const dy = Number(style.getPropertyValue("--mask-y")) - (mask.center_y ?? 0.5);
+    setShift((old) => (Math.abs(old.x - dx) + Math.abs(old.y - dy) < 0.001 ? old : { x: dx, y: dy }));
+  }, [play.ticks, clip.position_ticks, animated, mask]);
   useEffect(() => {
     if (!visible || !svg.current) return;
     const measure = () => {
@@ -178,6 +192,7 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
   return <>
     <div ref={picture} className={`layer-transform masked-picture${animated ? " animated-mask" : ""}`} style={pictureStyle}>{children}</div>
     {visible && mask ? <svg ref={svg} className={`mask-guide${disabled ? " locked" : ""}`} viewBox="0 0 100 100" preserveAspectRatio="none" role="group" aria-label="画面遮罩编辑器" tabIndex={0}
+      style={shift.x || shift.y ? { transform: `translate(${shift.x * stage.w}px, ${shift.y * stage.h}px)` } : undefined}
       onDoubleClick={(event) => {
         if (mask.shape !== "path" || disabled || !mask.vertices || mask.vertices.length >= MAX_VERTICES) return;
         const point = locate(event); if (!point) return;

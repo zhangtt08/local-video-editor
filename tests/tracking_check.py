@@ -478,6 +478,9 @@ def http_suite(folder: Path) -> None:
         assert conflict.status_code == 409, conflict.text
         assert client.get(path).json()["revision"] == 2
 
+        # v13: a free-form outline may be tracked too, but only for translation — the engine must
+        # not hand back size curves the exporter would refuse. Both steps are dry runs so the
+        # revision sequence below stays as written.
         too_far = client.post(
             path + "/clips/c/track",
             json={"request_id": "far", "expected_revision": 2, "frames": 900},
@@ -506,6 +509,72 @@ def http_suite(folder: Path) -> None:
         assert restored.status_code == 200, restored.text
         assert restored.json()["project"]["clips"]["c"]["keyframes"] == []
         assert client.get(path + "/clips/c/track").status_code in (404, 405, 422)
+
+        # v13: a free-form outline may be tracked too, but only for translation. Written for real
+        # (not a dry run) so the reducer, the contract and the exporter all have to agree on what
+        # the endpoint produced — a size curve on a path mask would fail validation here.
+        box = client.get(path).json()["clips"]["c"]["mask"]
+        triangle = {
+            "shape": "path",
+            "feather": box["feather"],
+            "vertices": [
+                {
+                    "x": box["center_x"] - box["width"] / 2,
+                    "y": box["center_y"] - box["height"] / 2,
+                    "handle_out": [0, 0],
+                    "handle_in": [0, 0],
+                },
+                {
+                    "x": box["center_x"] + box["width"] / 2,
+                    "y": box["center_y"] - box["height"] / 2,
+                    "handle_out": [0, 0],
+                    "handle_in": [0, 0],
+                },
+                {
+                    "x": box["center_x"],
+                    "y": box["center_y"] + box["height"] / 2,
+                    "handle_out": [0, 0],
+                    "handle_in": [0, 0],
+                },
+            ],
+        }
+        revision = client.get(path).json()["revision"]
+        swap = client.post(
+            path + "/edits",
+            json={
+                "request_id": "topath",
+                "expected_revision": revision,
+                "commands": [{"op": "clip.mask", "clip_id": "c", "mask": triangle}],
+            },
+        )
+        assert swap.status_code == 200, swap.text
+        stored = swap.json()["project"]["clips"]["c"]["mask"]
+        assert stored["shape"] == "path", stored
+        # v13 fits the box to the drawn outline: for this triangle that is the rectangle it came
+        # from, so the tracked start box — and therefore the whole path — is unchanged.
+        assert abs(stored["width"] - box["width"]) < 1e-9, (stored, box)
+        assert abs(stored["center_x"] - box["center_x"]) < 1e-9, (stored, box)
+        assert abs(stored["center_y"] - box["center_y"]) < 1e-9, (stored, box)
+        followed = client.post(
+            path + "/clips/c/track",
+            json={
+                "request_id": "pathtrack",
+                "expected_revision": swap.json()["project"]["revision"],
+                "frames": 20,
+            },
+        )
+        assert followed.status_code == 200, followed.text
+        proof = followed.json()["tracking"]
+        assert proof["scale_estimated"] is False, proof
+        assert not any("width" in point for point in proof["points"]), proof["points"][0]
+        written = {
+            item["property"] for item in followed.json()["project"]["clips"]["c"]["keyframes"]
+        }
+        assert written == {"mask_x", "mask_y"}, written
+        print(
+            "   tracking: a free-form outline is tracked for translation only — the endpoint says"
+            " scale_estimated=false, and the written curves are mask_x/mask_y with no size curve"
+        )
 
 
 def media_suite(folder: Path) -> None:

@@ -20,7 +20,25 @@ from .contracts import (
     ProjectUpdate,
     RestoreProject,
 )
+from .masks import fit_box
 from .timeline import apply_commands, validate_timeline
+
+
+def _fitted(project: Project) -> Project:
+    """Give a path mask drawn before v13 the box it was actually drawn in.
+
+    Rows written earlier stored the shape's default box, which meant nothing to a free-form mask.
+    Fitting the box to the outline's bounds is the identity for how those rows rendered, and it is
+    what lets the box be animated from here on.
+    """
+    if project.schema_version >= SCHEMA_VERSION:
+        return project
+    groups = [project.clips] + [sequence.clips for sequence in project.sequences.values()]
+    for clips in groups:
+        for clip in clips.values():
+            if clip.mask is not None and clip.mask.shape == "path":
+                clip.mask = fit_box(clip.mask)
+    return project
 
 
 class ProjectStore:
@@ -82,7 +100,7 @@ class ProjectStore:
             ).fetchone()
         if row is None:
             raise EditorError("NOT_FOUND", "project or revision does not exist", 404)
-        return Project.model_validate_json(row["document"])
+        return _fitted(Project.model_validate_json(row["document"]))
 
     @staticmethod
     def _replay(

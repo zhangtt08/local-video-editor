@@ -1,14 +1,15 @@
 """Every one of the 256 input levels, against the table the browser is handed.
 
-The grade chain compiles to one authority: per-channel polylines, exported as a 256-entry browser LUT
-(`grade_tables`) and as an FFmpeg `lutrgb` expression (`grade_filter`). Existing checks compare a
-handful of levels, which is how a slip in the middle of a curve can ship unnoticed. A ramp gives 256
-input levels at once, so this compares the compiled expression with the table at **every** level.
+The grade chain compiles to one authority: per-channel polylines, exported as a 256-entry browser
+LUT (`grade_tables`) and as an FFmpeg `lutrgb` expression (`grade_filter`). Existing checks
+compare a handful of levels, which is how a slip in the middle of a curve can ship unnoticed. A ramp
+gives 256 input levels at once, so this compares the compiled expression with the table at
+**every** level.
 
 The dense comparison runs the compiled stage over raw RGB with no encoder in between: x264 moves a
-smooth gradient by several levels on its own, and measuring that would test the codec, not the grade.
-One real render is still made, to prove the stage is inside the exported picture and not merely
-available.
+smooth gradient by several levels on its own, and measuring that would test the codec, not the
+grade. One real render is still made, to prove the stage is inside the exported picture and not
+merely available.
 """
 
 import subprocess

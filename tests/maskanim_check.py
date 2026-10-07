@@ -165,23 +165,17 @@ def geometry_suite(folder: Path) -> None:
 
 def rejection_suite() -> None:
     corners = [key("mask_x", 0, 0.25), key("mask_x", 3 * T, 0.75)]
+    path_mask = {
+        **MASK,
+        "shape": "path",
+        "vertices": [
+            {"x": 0.2, "y": 0.2, "handle_out": [0, 0], "handle_in": [0, 0]},
+            {"x": 0.8, "y": 0.2, "handle_out": [0, 0], "handle_in": [0, 0]},
+            {"x": 0.2, "y": 0.8, "handle_out": [0, 0], "handle_in": [0, 0]},
+        ],
+    }
     for label, clip in (
         ("no mask", clip_payload(mask=None, keyframes=corners)),
-        (
-            "path",
-            clip_payload(
-                mask={
-                    **MASK,
-                    "shape": "path",
-                    "vertices": [
-                        {"x": 0.2, "y": 0.2, "handle_out": [0, 0], "handle_in": [0, 0]},
-                        {"x": 0.8, "y": 0.2, "handle_out": [0, 0], "handle_in": [0, 0]},
-                        {"x": 0.2, "y": 0.8, "handle_out": [0, 0], "handle_in": [0, 0]},
-                    ],
-                },
-                keyframes=corners,
-            ),
-        ),
         ("inverted", clip_payload(mask={**MASK, "inverted": True}, keyframes=corners)),
     ):
         try:
@@ -192,6 +186,25 @@ def rejection_suite() -> None:
             assert error.message, (label, error)
         else:
             raise AssertionError(f"{label} must reject mask keyframes")
+    # A free-form outline may be *moved*: its keyframed centre drives the overlay the exporter
+    # compiles, so the position curves pass validation.
+    validate_timeline(picture(clip_payload(mask=path_mask, keyframes=corners)))
+    # …but its drawn size is not keyframable yet, and saying so is the point.
+    try:
+        validate_timeline(
+            picture(
+                clip_payload(
+                    mask=path_mask,
+                    keyframes=[key("mask_width", 0, 0.4), key("mask_width", 3 * T, 0.8)],
+                )
+            )
+        )
+    except EditorError as error:
+        assert error.code == "INVALID_MASK", error.payload()
+        assert "cannot resize" in error.message, error.message
+    else:
+        raise AssertionError("a path mask accepted a size keyframe it cannot render")
+    print("   maskanim: a free-form mask animates its centre, a size keyframe is refused by name")
     # A feathered, non-inverted ellipse still animates.
     validate_timeline(
         picture(

@@ -560,10 +560,13 @@ def create_app(
             raise EditorError(
                 "INVALID_TRACK_TARGET", "only verified video clips can be tracked", 422
             )
+        # A free-form outline can be followed by position, but its drawn size is fixed for the
+        # clip, so the scale estimator is switched off rather than silently resized away.
+        follows_shape = clip.mask is not None and clip.mask.shape == "path"
         problem = clip.mask_animation_problem() or (
             None
-            if clip.mask is not None and clip.mask.shape != "path" and not clip.mask.inverted
-            else "a rectangle or ellipse mask is required before tracking"
+            if clip.mask is not None and not clip.mask.inverted
+            else "a mask is required before tracking"
         )
         if problem:
             raise EditorError("INVALID_MASK", problem, clip_id=clip_id)
@@ -591,6 +594,7 @@ def create_app(
                 422,
                 frames=request.frames,
             )
+        estimate_scale = request.estimate_scale and not follows_shape
         result = track_mask(
             engine.ffmpeg,
             source,
@@ -602,7 +606,7 @@ def create_app(
             start,
             frame_ticks,
             request.search_radius,
-            request.estimate_scale,
+            estimate_scale,
             request.max_gap_frames,
         )
         points = [
@@ -610,11 +614,7 @@ def create_app(
                 "at_ticks": request.from_ticks + point["at_ticks"],
                 "center_x": point["mask_x"],
                 "center_y": point["mask_y"],
-                **(
-                    {"width": point["width"], "height": point["height"]}
-                    if request.estimate_scale
-                    else {}
-                ),
+                **({"width": point["width"], "height": point["height"]} if estimate_scale else {}),
             }
             for point in result["points"]
         ]

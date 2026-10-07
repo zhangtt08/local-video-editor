@@ -972,3 +972,40 @@ revision、重放不涨、旧 revision 409、`restore` 后不留平移/缩放曲
 验收（`tests/renderfail_check.py`）：纯函数逐码断言，包括长日志只留尾部且不许出现「退出码 23：」后面
 空着；再真删素材跑一次导出，读回的任务消息必须是可读的一句（实测：
 `FFmpeg 退出码 4294967294：[in#0 …] Error opening input: No such file or directory …`）。
+
+## 1.50 自由路径遮罩会跟着走了（schema v13）
+
+路径遮罩从前是「一片段一张 PNG」：轮廓画在哪就裁在哪，一旦给它打关键帧，契约直接拒绝。剪映和 AE
+都能把套索圈住的主体沿轨迹搬动，这一步补上，并且只补真实的那一半。
+
+- `SCHEMA_VERSION` 12 → **13**：v13 给每条路径一个**贴合轮廓的 box**（`masks.fit_box`，宽高取轮廓
+  自身包围盒，中心取包围盒中心，含贝塞尔控制柄鼓出来的部分）。写入时 `clip.mask` 走
+  `timeline._prepared_mask` 自动贴合；旧工程在 `projects._fitted` 读取时补一次，不改写已提交的
+  历史快照。贴合是恒等变换——同一张轮廓栅格化后逐点一致，验收里直接比像素。
+- 关键帧规则（唯一权威 `Clip.mask_animation_problem`）：路径遮罩**接受** `mask_x`/`mask_y`，
+  **拒绝** `mask_width`/`mask_height`，报 `INVALID_MASK` 并说清「能搬动、还不能变形」。矩形/椭圆
+  仍是四条全开；反相遮罩照旧不能做关键帧。
+- 导出编译：轮廓烧成**一张** PNG（`unit_path` 把顶点映射到单位方块，羽化按 `box/patch` 折算，
+  并按 3σ 加边距，避免羽化斜坡被轮廓自身的包围盒切掉），再用
+  `overlay=x='…':y='…':eval=frame` 在一张中性底板上逐帧搬动；底板颜色按反转取黑或白，所以
+  反转路径遮罩依旧保留圈外。之所以是 overlay 而不是逐帧 `scale`：1.48 已经量到过，
+  `scale=…:eval=frame` 之后接 `geq` 会让 FFmpeg 不带一句 stderr 直接崩，而 overlay 的
+  输出尺寸恒定。预览端 `mask_unit` 对路径给出同一张单位轮廓 SVG，浏览器用
+  `--mask-x/--mask-y/--mask-w/--mask-h` 摆它，与导出同源。
+- 「跟踪主体」端点对路径遮罩开放，但**只跟平移**：`estimate_scale` 被强制关掉，响应里
+  `scale_estimated` 如实为 `false`，能力接口不谎报。`clip.mask_track` reducer 只在拿到尺寸点时
+  才写 `mask_width/mask_height`，因此这条路径不会写出渲染不了的曲线。
+- 主体跟随重构图（`clip_reframe` / `reframe.plan`）不再区分形状：只要遮罩有中心曲线就跟，路径
+  遮罩跟踪之后同样能一键把主体锁回画面正中。
+- 界面：Inspector 的遮罩区对路径只列「中心 X / 中心 Y」两行（宽高不再出现，免得写出被拒的曲线），
+  曲线编辑器的属性下拉同理（`maskAnimFields`）；「反转遮罩」与羽化照旧可用。
+
+验收（`tests/pathmask_check.py` 新增媒体段）：320×180、1 秒、上层红下层绿，轮廓画在左半。
+`mask_x` 从画好的位置线性搬到 0.75 之后，(250,60) 在 0.05 秒是绿、0.95 秒是红，而 (40,60) 反过来；
+把曲线写成不动（0.25→0.25）时，取到的画面与静态遮罩逐点一致。反向验证：把 overlay 的 x/y 钉死成
+存储中心（撤掉本次修复的等价突变），该检查立刻在 0.95 秒那条断言上变红。
+`tests/maskanim_check.py` 另断言路径遮罩的位置曲线通过校验、尺寸曲线被 `INVALID_MASK` 点名拒绝；
+`tests/reframe_check.py` 断言路径遮罩现在能被跟随，而无反相/无遮罩等拒绝仍逐条有名。
+
+仍未完成：路径遮罩的**顶点/形状动画**（要逐帧重栅格化）、路径遮罩的尺寸动画、多目标与长时遮挡
+跟踪、旋转估计。

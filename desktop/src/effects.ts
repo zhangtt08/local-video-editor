@@ -18,8 +18,17 @@ export const MASK_ANIM_FIELDS: { property: MaskProperty; label: string; unit: st
   { property: "mask_height", label: "遮罩高度", unit: "%", min: 1, max: 200, step: 1, factor: 100, field: "height" },
 ];
 
+/** Any non-inverted mask can be keyframed; a free-form outline only moves (see `maskAnimFields`). */
 export const canAnimateMask = (mask?: ShapeMask | null): mask is ShapeMask =>
-  Boolean(mask && mask.shape !== "path" && !mask.inverted);
+  Boolean(mask && !mask.inverted);
+
+/** The curves a mask of this shape actually has: a path has no size, only a centre. */
+export const maskAnimFields = (mask?: ShapeMask | null) =>
+  !mask
+    ? []
+    : mask.shape === "path"
+      ? MASK_ANIM_FIELDS.filter((field) => field.property === "mask_x" || field.property === "mask_y")
+      : MASK_ANIM_FIELDS;
 
 /** Label lookup for the keyframe list, which mixes effect and mask properties. */
 export const FIELD_LABEL: Record<string, string> = Object.fromEntries(

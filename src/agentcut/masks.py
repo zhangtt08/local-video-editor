@@ -103,14 +103,22 @@ def animated_mask_image(mask, width: int, height: int) -> str:
 
     The ramp is defined relative to the box in both the SVG and the FFmpeg expression, so one unit
     image serves every keyframed size; the outside of a non-inverted mask is transparent, which is
-    exactly what the alpha expression gives past the box edge.
+    exactly what the alpha expression gives past the box edge. A free-form mask's unit image is its
+    outline stretched over the box, which is the same one raster the exporter overlays.
     """
+    if mask.shape == "path":
+        return path_svg_image(unit_path(mask), *raster_size(width, height))
     unit = mask.model_copy(update={"center_x": 0.5, "center_y": 0.5, "width": 1.0, "height": 1.0})
     return svg_image(unit)
 
 
 def mask_image(mask, frame_width: int, frame_height: int) -> str:
-    """One entry point: a path needs the frame size to keep its raster isotropic."""
+    """One entry point: a path needs the frame size to keep its raster isotropic.
+
+    A static path is drawn exactly where its outline was — the box fields are only the editor's
+    handle — while a keyframed one is previewed through `animated_mask_image`, which the browser
+    moves with the same curves the exporter's overlay reads.
+    """
     if mask.shape == "path":
         return path_svg_image(mask, *raster_size(frame_width, frame_height))
     return svg_image(mask)
@@ -125,6 +133,85 @@ def raster_size(frame_width: int, frame_height: int) -> tuple[int, int]:
     width = min(RASTER_WIDTH, max(16, frame_width))
     height = max(16, round(width * frame_height / frame_width))
     return width, height
+
+
+def path_bounds(mask) -> tuple[float, float, float, float]:
+    """The polygon's own box in picture coordinates, taken from its flattened outline.
+
+    Handles bulge the shape past its nodes, so the bounds come from the flattened curve rather than
+    from the vertex list alone — otherwise a curved corner would be clipped by its own box.
+    """
+    outline = _segments(mask, 1.0, 1.0)
+    xs = [point[0] for point in outline]
+    ys = [point[1] for point in outline]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def unit_path(mask, fill_x: float = 1.0, fill_y: float = 1.0):
+    """A copy whose outline fills the unit square, so the box fields can place it.
+
+    The exporter scales this one raster and the browser scales this one SVG image; a free-form mask
+    therefore moves with the same `mask_x/mask_y` curves a rectangle already uses, instead of
+    needing a raster per frame. `fill` shrinks the outline to that fraction of the raster and keeps
+    it centred, which is how the exporter leaves room for a feather outside the shape's own bounds.
+    """
+    left, top, right, bottom = path_bounds(mask)
+    width = max(right - left, 1e-6)
+    height = max(bottom - top, 1e-6)
+    vertices = [
+        vertex.model_copy(
+            update={
+                "x": (vertex.x - left) / width * fill_x + (1 - fill_x) / 2,
+                "y": (vertex.y - top) / height * fill_y + (1 - fill_y) / 2,
+                "handle_out": [
+                    vertex.handle_out[0] / width * fill_x,
+                    vertex.handle_out[1] / height * fill_y,
+                ],
+                "handle_in": [
+                    vertex.handle_in[0] / width * fill_x,
+                    vertex.handle_in[1] / height * fill_y,
+                ],
+            }
+        )
+        for vertex in (mask.vertices or [])
+    ]
+    return mask.model_copy(
+        update={
+            "vertices": vertices,
+            "center_x": 0.5,
+            "center_y": 0.5,
+            "width": fill_x,
+            "height": fill_y,
+        }
+    )
+
+
+def fit_box(mask):
+    """A copy whose box is the outline's own bounds.
+
+    A stored path mask has to sit exactly where it was drawn before any of this was possible, so the
+    box starts life as the outline's bounds: mapping the unit outline back onto that box is the
+    identity, and every later change to the box is a deliberate move.
+    """
+    left, top, right, bottom = path_bounds(mask)
+    return mask.model_copy(
+        update={
+            "center_x": min(1.0, max(0.0, (left + right) / 2)),
+            "center_y": min(1.0, max(0.0, (top + bottom) / 2)),
+            "width": min(2.0, max(0.01, right - left)),
+            "height": min(2.0, max(0.01, bottom - top)),
+        }
+    )
+
+
+def box_of(mask) -> tuple[float, float, float, float]:
+    """Where the mask sits, as left/top/right/bottom in picture coordinates."""
+    return (
+        mask.center_x - mask.width / 2,
+        mask.center_y - mask.height / 2,
+        mask.center_x + mask.width / 2,
+        mask.center_y + mask.height / 2,
+    )
 
 
 def _segments(mask, width: int, height: int) -> list[tuple[float, float]]:

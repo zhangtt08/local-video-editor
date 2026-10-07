@@ -6,8 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
-SCHEMA_VERSION = 12  # v12 added project recipes; older rows still validate (ge=1).
-APP_VERSION = "1.49.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+SCHEMA_VERSION = 13  # v13 gives a path mask a real box; older rows are fitted on load (ge=1).
+APP_VERSION = "1.50.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -132,7 +132,8 @@ class Track(Contract):
 
 EffectProperty = Literal["x", "y", "scale", "rotation", "opacity", "gain"]
 # Rectangle and ellipse masks keyframe in the mask's own normalized space, so the exporter and the
-# browser interpolate the same numbers; path masks rasterize one image per clip and stay static.
+# browser interpolate the same numbers. A free-form (path) mask rasterizes its outline once and can
+# be moved with mask_x/mask_y, but its drawn shape and size cannot change over time yet.
 MaskProperty = Literal["mask_x", "mask_y", "mask_width", "mask_height"]
 MASK_FIELDS = {
     "mask_x": "center_x",
@@ -140,6 +141,7 @@ MASK_FIELDS = {
     "mask_width": "width",
     "mask_height": "height",
 }
+MASK_SIZE_FIELDS = {"mask_width", "mask_height"}
 Property = EffectProperty | MaskProperty
 PROPERTY_LIMITS = {
     "x": (-2, 2),
@@ -423,11 +425,16 @@ class Clip(Contract):
         if not any(key.property in MASK_FIELDS for key in self.keyframes):
             return None
         if self.mask is None:
-            return "mask keyframes need a rectangle or ellipse mask on the clip"
-        if self.mask.shape == "path":
-            return "path masks cannot be keyframed"
+            return "mask keyframes need a mask on the clip"
         if self.mask.inverted:
             return "an inverted mask keeps the outside, which a keyframed shape cannot follow"
+        if self.mask.shape == "path" and any(
+            key.property in MASK_SIZE_FIELDS for key in self.keyframes
+        ):
+            return (
+                "a free-form mask can move but cannot resize yet: keyframe 遮罩中心 only, "
+                "or redraw the outline per shot"
+            )
         return None
 
     @model_validator(mode="after")

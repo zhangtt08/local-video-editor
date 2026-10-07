@@ -27,6 +27,7 @@ from .contracts import (
     project_content_ticks,
     render_presets,
 )
+from .masks import fit_box
 from .speed import base_source_ticks, consumed_source_ticks, scale_curve, slice_curve
 from .subtitles import parse_srt
 
@@ -555,7 +556,7 @@ def apply_commands(
                             raise EditorError("INVALID_TEXT", "select a text clip")
                         clip.text = TextStyle.model_validate(clip.text.model_dump() | command.text)
                 elif command.op == "clip.mask":
-                    clip.mask = command.mask.model_copy(deep=True) if command.mask else None
+                    clip.mask = _prepared_mask(command.mask)
                 elif command.op == "clip.mask_track":
                     _apply_mask_track(clip, command.points)
                 elif command.op == "clip.color":
@@ -875,12 +876,22 @@ def apply_commands(
     return candidate
 
 
+def _prepared_mask(mask):
+    """Store a path mask with the box it was drawn in, so the box can later be animated."""
+    if mask is None:
+        return None
+    stored = mask.model_copy(deep=True)
+    return fit_box(stored) if stored.shape == "path" else stored
+
+
 def _apply_mask_track(clip, points) -> None:
-    """Rewrite a box mask's motion from a tracked path, in one clip."""
+    """Rewrite a mask's motion from a tracked path, in one clip."""
     mask = clip.mask
-    if mask is None or mask.shape == "path" or mask.inverted:
+    if mask is None or mask.inverted:
         raise EditorError(
-            "INVALID_MASK", "only a rectangle or ellipse mask can be tracked", clip_id=clip.id
+            "INVALID_MASK",
+            "an inverted mask keeps the outside, which tracking cannot follow",
+            clip_id=clip.id,
         )
     if clip.speed_curve:
         raise EditorError(
