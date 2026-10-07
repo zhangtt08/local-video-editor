@@ -1833,3 +1833,90 @@ libvosk.dll，PyInstaller 直接打包），无其它新依赖。
 - 门禁：`ruff check` / `ruff format --check`（81 文件）、`tests/self_check.py`（含 `captions_auto`
   工具断言）、`tests/suite_check.py` **53/53** 全绿（新 `asr_check.py` 在列）、`npm run typecheck`
   与 8 项桌面 TS 检查全绿。
+
+## 1.62.0 调色节点·1D LUT 查找表导入（2026-10-07）
+
+「常用成片」清单上色彩那一格还缺的最小一块：人们手里已经有 `.cube`。这一节把它接进**既有**的调色节点图——
+不新增命令、不新增 schema（仍是 v13）、不给 LUT 单开一条渲染路径，因为架构的不变量是「每个节点都是每通道
+函数，整条链塌缩成一张表，`lutrgb` 与浏览器 `feComponentTransfer` 读同一组数」。1D 查找表恰好就是这个形状：
+三个通道各一条折线。3D 查找表不是——它的输出红取决于输入的绿与蓝，是跨通道矩阵，硬压成三条独立曲线就是
+骗人，所以解析器点名拒绝它，能力接口也只声明 1D 这一件事。
+
+四条被实测逼出来的设计：
+
+1. **`.cube` 只由引擎读一次**。`grade.parse_1d_cube` 是全项目唯一的查找表读者：桌面界面把文件文本 POST 到
+   `/v1/lut/parse`，Agent 调 MCP 的 `lut_parse`，回复就是可直接写进 `clip.color.grade` 的 `GradeLUT` 载荷。
+   `desktop/` 里没有任何 `.cube` 解析代码（grep 得到），所以「人看到的表」与「Agent 算出的表」不可能不一致
+   ——这与「素材 reference 是不可信元数据」是同一条纪律。
+2. **上限只有一个主人**。`capabilities.grade_limits = {max_nodes:8, max_branches:4, max_curve_points:16,
+   max_lut_samples:1024}` 由引擎下发，界面的节点数、曲线控制点数、并联支数、LUT 采样数全部照这份表限制
+   （1.55 的同一课）。`LUT_SAMPLE_LIMIT` 定成 1024 不是随手写的：`.cube` 的 1D 表实际就是 33 / 64 / 256 / 1024
+   这几种，上限低于 256 会把人手里现成的文件拒之门外。
+3. **重采样必须说出口**。超过 1024 行的表按等距网格线性重采样到 1024（引擎自己也是按分段线性读这张表的），
+   回复里带 `resampled_from`＝原文件行数，界面的提示条把它念给人听。不改掉你的数再假装没改。
+4. **LUT 节点没有「中性值」**。曲线可以两点恒等、白平衡可以 0/0，一张表的内容只能来自文件，所以界面里
+   `newOperation` 的参数类型改成 `Exclude<GradeOperation["kind"], "lut">`：把 `"lut"` 误传进去会在编译期报错，
+   而不是像原来那样落到最后的 `else` 里悄悄建出一个 RGB 增益节点。
+
+验收 `tests/lut_check.py`（四个互不相干的角度，因为「读错文件」正是能一路绿灯交付的那种缺陷）：
+**构造即事实**——文件内容按公式自己写，读回的三个通道逐值等于那些数（不拿解析器再解析一遍当参考），越界值
+夹住、小写关键字/引号标题/注释/CRLF 都能读；**浏览器表** 768 格（256×3）对独立写出的等距线性插值最大
+**0.125 阶**；**FFmpeg 自己算的那一遍**把 256 级灰度斜坡直接喂给编译出的 `lutrgb` 串（不经编码器），红/绿/蓝
+三条对各自文件的数最大 **1.00 / 1.00 / 1.09 阶**，串长 3443 字符且只含安全字符；**成片实测**六档灰带
+[2,18,62,126,194,249] → [0,2,41,137,235,253]，18 个点全部对得住下发的表（≤4 阶，最大位移 41 阶）。
+`mix=0` / `enabled=false` 依旧一个滤镜阶段都不加；LUT 与曲线串成链仍是一张表。拒绝：3D、缺 `LUT_1D_SIZE`、
+行数比声明少、**行数比声明多**、非默认 DOMAIN、行里字段数不对、数字读不出来，各按原因 422 `INVALID_LUT`；
+七种写坏的载荷（size 与通道长度不符、采样点越过 1.0、invented 的 `spectron`、9 个节点、越界 effects、
+错类型文字、通道数不对）全部 422 `INVALID_REQUEST` 并带 `details.issues` 指出字段，revision 一动没动。
+
+**这条门禁不是一开始就能红的**：变异测试第一版漏掉一个。把 `_op_function` 里三个通道都读 `channels[0]`
+（最像人犯的通道顺序错）当场报 **55.875 阶** ✓；把 `len(samples) != size` 改成 `<`（信任表头、悄悄丢掉多余的
+行）却整条检查全绿——原来只测了「行数不够」没测「行数多了」。补上「声明 2 行给了 3 行」这一条，同一处变异
+立刻红在 `must be refused` 上；恢复后逐字比对备份一致。
+
+界面真机（构建后的渲染层 + 源码引擎，`?engine=&token=&project=` 深链，真实 HTTP）：选中片段 →「+LUT」按
+`capabilities.lut_import` 出现 → 把 `.cube` 交给隐藏的文件输入并派发 `change` → 提示条读作「导入
+Harness S-curve / 三个通道各 33 个采样点…」，卡片变成「1. LUT 查找表」写着「Harness S-curve · 33 点」，
+预览里凭空多出一个 `<filter id="g0ea8f8bfb6e05778">`（无调色时是 0 个，那是控制态）。权威回读
+（`ui_lut_readback_162.py`）：revision 1→2、库里存的正是那 3×33 个数、页面 `feFuncR` 的 256 项**就是**引擎下发的
+那张表（按文件的网格位置取样最大 **0.083 阶**），而这个工程真实导出的 H.264 里那块平灰实测 **138.0**，
+表说 **138.5**（源 128），三通道一致——LUT 在画面里，不只在请求里。`tests/desktop_graph_check.ts` 钉住卡片
+描述：`4. LUT 查找表` + `Film Look 01 · 33 点` + `强度 40%`。
+
+两处随后自己补上的边界：一是 **LUT 作为并联的一支**（契约允许，`GradeBranch` 含 `GradeLUT`）——第一版
+`lut_check.py` 只测了串行，补了一条「LUT 支与白平衡支取平均」的断言，最差 **0.247 阶**，仍是每通道一张表；
+二是界面「换一张 LUT」原本会把该节点的启用状态、强度和混合方式一起重置成默认值（导入的内容对象里带了
+`enabled: true`），改成只换 `title/size/channels` 三项，提示条也改成「第 N 个节点换成 …」，用户给这个节点
+设过的东西不该被一次导入抹掉。
+
+### 1.62.0 发布验收
+
+- `scripts/build_engine.py --verify`：冻结引擎 `app_version=1.62.0`、`frozen=true`，带媒体冷启动 722 ms、
+  裸启动 642 ms，`mcp` 模式存活；暂存 ffmpeg 79.0 MB / ffprobe 60.1 MB / 中文语音模型 65.1 MB，合计 324.9 MB。
+- 包内引擎（`package_check_162.py`，全部在冻结二进制里跑）：`/v1/capabilities` 报 `lut_import=true` 与逐键
+  相符的 `grade_limits`，`/v1/contracts` 里有 `LutParse`；`POST /v1/lut/parse` 把 33 点表逐值读回、3D 表按
+  `INVALID_LUT` 拒绝、2048 行重采样到 1024 并回报 `resampled_from`；写进 `clip.grade` 后预览表
+  `g0ea8f8bfb6e05778` 的 256 项在文件自己的网格点上偏差 **0.083 阶**（与源码引擎那次是同一个 id，哈希自同一
+  张表）；`h264-source-quality` 导出 6,159 B、`output_checked=true`，平灰块实测 **[138.0, 138.0, 138.0]**
+  对表算 138.5（源 128：既要对得上表，又要对不上原值）；包内 `agentcut.exe mcp` 经官方 stdio 客户端
+  `tools/list` **39** 个工具（新增 `lut_parse`），同一个文件内容经 MCP 拿回的 3×33 个数与经 HTTP 的逐值相同，
+  3D 那条也带同样的拒绝文本。
+- ASAR：5,528,549 字节，needles 是「换一张 LUT」「LUT 查找表」「.cube」「三个通道各」「gg-card」「grade-body」
+  与能力名 `lut_import`（都是打包器改不掉的字面量）。
+- 原生窗口：`win-unpacked/AgentCut.exe` 经 PrintWindow 抓帧 1480×900
+  （`Documents/Codex/2026-10-04/du/outputs/AgentCut-1.62-原生窗口.png`，127,138 字节），标题栏裁条放大四倍读作
+  「引擎在线 v1.62.0」，工作台完整渲染；`CloseMainWindow` 后 `tasklist` 查无 AgentCut/agentcut 残留。该次启动
+  打开的是用户自己的 `%APPDATA%` 工程，只读不回写（截图与关闭而已）。
+- 产物（客户端修好「换一张 LUT 会抹掉节点自己的启用/强度/混合」之后**重新构建并重跑整条包内验收**）：
+  便携版 189,730,081 字节 SHA256
+  `C4C4FA6D089EE8D6E60B05A3326A4FF3AE897DB508C3C7D4D80B6F5E1FDC92B8`；安装版 189,890,794 字节 SHA256
+  `779DBEF44BFE10215E210BE4AE8CA1A5FFD5B1500A8AA49CF8B8AC9BFC2FD439`；`win-unpacked/AgentCut.exe` SHA256
+  `38A5599D74AF0BDB54DAD49F78D5B9BE32E73BD7D15E4D43D3C4EA4120C0B53B`；根目录 `AgentCut.exe` 与便携版
+  `cmp` 逐字节一致。未签名（electron-builder 的 signtool 步骤是自签占位），NSIS 向导未点击验收。
+- 门禁：`ruff check` / `ruff format --check`（82 文件）、`tests/self_check.py`（含 39 工具与 `lut_parse` 注解
+  断言）、`tests/suite_check.py` **54/54**（新 `lut_check.py` 在列，构建结束后单独串行复跑）、
+  `npm run typecheck` 与 8 项桌面 TS 检查全绿。
+
+仍未完成：**3D LUT**（跨通道，需要另一条编译路径与浏览器端的三维取样，塞不进每通道表）、亮度/色度分离曲线、
+色彩节点图的分层与连线视图、完整色彩管理（ICC/ACES、色域矩阵与文件标签）、路径遮罩顶点动画、多目标与长时
+遮挡跟踪、旋转估计、字幕说话人分离与标点。

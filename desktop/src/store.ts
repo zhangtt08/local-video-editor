@@ -1478,20 +1478,16 @@ export async function applyLut(clipId: string, file: File, index: number | null)
   set({ busy: "读取 LUT…" });
   try {
     const lut = await engine.lutParse(await file.text());
-    const node = {
-      kind: "lut" as const,
-      title: lut.title,
-      size: lut.size,
-      channels: lut.channels,
-      enabled: true,
-    };
+    // 换一张表只换内容：启用状态、强度和混合方式仍是用户给这个节点设的，不能被导入重置。
+    const content = { kind: "lut" as const, title: lut.title, size: lut.size, channels: lut.channels };
     const grade = (clip.color?.grade ?? []).slice();
-    if (index === null || index >= grade.length) grade.push(node);
-    else grade[index] = { ...grade[index], ...node };
+    const at = index === null || index >= grade.length ? null : index;
+    if (at === null) grade.push({ ...content, enabled: true });
+    else grade[at] = { ...grade[at], ...content };
     setClipColor(clipId, { grade });
     toast(
       "info",
-      `导入 ${lut.title}`,
+      at === null ? `导入 ${lut.title}` : `第 ${at + 1} 个节点换成 ${lut.title}`,
       `三个通道各 ${lut.size} 个采样点，预览和导出用的都是引擎算出的同一张表。` +
         (lut.resampled_from
           ? `原文件每通道 ${lut.resampled_from} 行，超出引擎的采样上限，已按等距网格重采样到 ${lut.size} 行。`

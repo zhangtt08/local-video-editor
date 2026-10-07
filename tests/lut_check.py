@@ -327,6 +327,36 @@ def table_suite(payload: dict) -> None:
         "a LUT at zero strength must not add a stage at all"
     )
     assert grade_tables(ClipColor(grade=[{"kind": "lut", **payload, "enabled": False}])) is None
+
+    # A LUT is also a legal branch of a parallel node. Averaging it with a sibling must still be one
+    # table per channel, so this checks the composition rule, not just the node itself.
+    factors = (1 + 0.30 * 0.4, 1.0, 1 - 0.30 * 0.4)
+    merged = grade_tables(
+        ClipColor(
+            grade=[
+                {
+                    "kind": "parallel",
+                    "branches": [
+                        {"kind": "lut", **payload},
+                        {"kind": "white_balance", "temperature": 0.4, "tint": 0.0},
+                    ],
+                }
+            ]
+        )
+    )
+    worst = 0.0
+    for channel, name in enumerate(("r", "g", "b")):
+        samples = [row[channel] for row in rows]
+        for level in range(256):
+            value = level / 255
+            branch = min(1.0, max(0.0, value * factors[channel]))
+            want = (lut_at(samples, value) + branch) / 2
+            worst = max(worst, abs(merged[name][level] - want) * 255)
+    assert worst <= TOLERANCE, worst
+    print(
+        f"   parallel: a LUT branch averaged with a white-balance sibling stays one table "
+        f"(worst {worst:.3f} levels)"
+    )
     print("   chain: a LUT composes with a curve node, and mix 0 / disabled still bypass the stage")
 
 
