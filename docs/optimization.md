@@ -2906,3 +2906,41 @@ sigma；回执锚点再加两条，确认「只写默认值的新键」不会把
   便携版 189,768,122 字节 SHA256 `FDE40554586FEDF60759ED232038572F4B84BE505B554EA009DF4048B68AD108`；
   安装版 189,928,844 字节 SHA256 `6F1F38E73A5F95B9477BEEC3D6E8E77B9B7FBF0D7C07731EEE79753E2D913FB9`。
   未签名，NSIS 向导未点击验收。
+
+## 1.81.0 每一条引擎拒绝都有中文说法
+
+- 找缺陷的方法：把两个面摆在一起对表。这次是「引擎能报的码」×「界面准备好的中文说法」。
+  `EngineError.explain()` 在没有提示时 `return this.message`，也就是把引擎写给开发者看的英文原句直接
+  端给按中文按钮的人。扫出来：`src/agentcut/*.py` 能报 **116** 个码，`desktop/src/engine.ts` 的提示表
+  只有 60 个 key，**58 个码没人管**——`INVALID_SPLIT`、`NOT_ADJACENT`、`DUPLICATE_ID`、
+  `REVISION_OVERFLOW`、`OUTPUT_INVALID`、`SPEECH_NOT_FOUND`、`SUBTITLES_MODEL_MISSING`、
+  `FONT_UNAVAILABLE`、`MEDIA_PATH_INVALID` 这些点得到、报得出的路径，用户看到的全是英文。
+- 逐条补成「发生了什么 + 下一步怎么办」，并且给出路：`INVALID_SPLIT` 说切点要落在片段内部且对齐整帧，
+  `SUBTITLES_MODEL_MISSING` 说模型放哪儿（asr 目录或 `AGENTCUT_ASR_MODELS`），`OUTPUT_INVALID` 说候选
+  文件已销毁、最终名一次都没出现，`INVALID_REFRAME` 说先画遮罩再按跟踪主体。补完 116 码 / 120 提示、
+  0 条落到英文；多出的 4 个 key 是适配层与任务运行器的码，门禁按白名单承认。
+- 新门禁 `tests/error_vocabulary_check.py`（不到 1 秒，不碰媒体）把这件事变成永久约束：Python 侧扫
+  `EditorError("CODE"…` / `code="CODE"` / `"code": "CODE"`，TypeScript 侧扫提示表 key，断言前者是后者
+  子集；另要求每条提示含中文、长度 ≥ 12 字（挡住「知道了」这种废话），并断言 key 不重复。
+  `tests/desktop_error_naming_check.ts` 另抽 14 个码走 `explain()` 真跑，确认运行时确实说中文并把引擎
+  点名的素材/片段/轨道织进句子。AGENTS.md 的「必须保留的约束」加了一条：新增或改名错误码必须同时补
+  界面提示。
+- 五条变异测试逐条红：删一条提示 → 点名 `OUTPUT_INVALID`；提示写成英文 → 「not Chinese」；缩成
+  「导出失败了。」→ 「too thin」；同 key 写两遍 → 「duplicate keys」；在 Python 里新增一个没人翻译的
+  码 → 红在 `INVALID_CAPTIONS_TARGETX`。两头都钉得住：漏界面红，漏引擎也红。
+- 包内验收顺带学到一件事：`sub/dir.mp4` 与 `x.mov` 这两种坏文件名都在**契约层**就被拒（422
+  `INVALID_REQUEST`，details 里给出 `filename must end with .mp4 …`），`OUTPUT_NAME_INVALID` 是任务层
+  更晚的拒绝。所以包内改成量六条真报得出的码：`UNKNOWN_PRESET`、`INVALID_TEXT`、`INVALID_SPLIT`、
+  `DUPLICATE_ID`、`MEDIA_PATH_INVALID`、`REVISION_CONFLICT`。还有一个自己的坑：验收脚本原来会把请求体里
+  的 `expected_revision` 一律改写成当前值，于是「旧 revision 要 409」这条永远测不到——改成显式的
+  `current` / `stale` 标记之后才真的走到 `REVISION_CONFLICT`。
+- 契约、reducer、capabilities、工程 schema 与所有错误码本身一字不动——改的只是界面怎么说人话。
+- 发布验收：`build_engine.py`（`FREEZE=0`）+ `npm run dist`（`DIST=0`）。包内实例 `e6f5802e3889` 报
+  `app_version=1.81.0`；`package_check_181.py` 在打包后的引擎上真跑出六条码拒绝
+  （`UNKNOWN_PRESET`、`INVALID_TEXT`、`INVALID_SPLIT`、`DUPLICATE_ID`、`MEDIA_PATH_INVALID`、
+  `REVISION_CONFLICT`），每条都带 code、句子与非空 details；asar 里抽 5 条 1.81 新增的中文提示都在。
+  `ruff`、`npm run typecheck`、12 项桌面 TS、串行套件 **68/68** 全绿；原生窗口 1480×900 标题栏
+  「引擎在线 v1.81.0」（`AgentCut-1.81-原生窗口.png`），关闭无残留。
+  便携版 189,771,874 字节 SHA256 `7827DE9AB22889FF076EBF110166514110730DCF288E4702986FA74C01351E8C`；
+  安装版 189,932,591 字节 SHA256 `842BA630D1EF89029DAC5D1C45A30FD9F014017C833FDC0B75D4C2D10A0BCEF5`。
+  未签名，NSIS 向导未点击验收。

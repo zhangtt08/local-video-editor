@@ -17,7 +17,7 @@
 - 任何写操作需要 request_id；编辑必须检查 expected_revision。
 - 同一事务持久化项目状态、历史和去重回执；禁止成功返回后才异步保存。
 - dry-run 不产生持久化变更。恢复必须生成新 revision。
-- 新增命令需同步契约、reducer、capabilities、文档和验收；MCP 从契约生成 schema。
+- 新增命令需同步契约、reducer、capabilities、文档和验收；MCP 从契约生成 schema。新增或改名一个错误码，必须同时补 `desktop/src/engine.ts` 的中文提示——`tests/error_vocabulary_check.py` 会把两边的词表对起来，缺一条就红。
 - 不直接修改已提交的历史快照；schema 变化必须设计兼容读取或迁移。
 - 素材 reference 是不可信元数据。媒体引擎必须使用由服务验证的文件记录。
 - 不把任意 shell 命令、FFmpeg 参数、网络 URL 作为 Agent 工具暴露。

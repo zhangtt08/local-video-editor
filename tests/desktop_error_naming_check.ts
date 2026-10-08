@@ -43,6 +43,22 @@ for (const code of [
   "INVALID_SPEED",
   "PROJECT_LIMIT",
   "TIME_OVERFLOW",
+  // 1.81: a sample from every family that used to fall through to English. The vocabulary gate
+  // checks all 116 codes exist; this checks the runtime path actually speaks Chinese for them.
+  "MEDIA_NOT_FOUND",
+  "MEDIA_PATH_INVALID",
+  "PROBE_NOT_FOUND",
+  "LOUDNESS_FAILED",
+  "SPEECH_NOT_FOUND",
+  "SUBTITLES_MODEL_MISSING",
+  "INVALID_SPLIT",
+  "INVALID_MARKER_SPLIT",
+  "NOT_ADJACENT",
+  "DUPLICATE_ID",
+  "REVISION_OVERFLOW",
+  "OUTPUT_INVALID",
+  "UNKNOWN_PRESET",
+  "FONT_UNAVAILABLE",
 ]) {
   const said = new EngineError(code, "source file is gone", {}, 422).explain();
   assert.notEqual(said, "source file is gone", `${code} still shows the engine's English`);

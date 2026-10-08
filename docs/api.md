@@ -1806,3 +1806,26 @@ line / size+rows / project_id / revision / job_id 都覆盖到），九条正常
   `used_bytes_before` 相等；`dry_run=true` 之后库里的字节数不减（`>=`，因为同进程其它请求可能新增），
   真删之后 `used_bytes <= before - freed`，且随后那一帧的哈希与删之前一致——派生数据删得掉也长得回来。
 - 界面零改动（帮助新增「Agent·看得见画面」一条）。契约、reducer、capabilities、工程 schema 不动。
+
+## 1.81 每一条引擎拒绝都有中文说法（缺一条就红）
+
+- 界面上按的是中文按钮，弹出来的却是英文原句——这是交付缺陷，不是翻译问题。`EngineError.explain()`
+  在没有提示时会 `return this.message`，也就是把引擎写给开发者看的那句话直接端给用户。把两边的词表
+  对起来量：`src/agentcut/*.py` 里能报出的码 **116** 个，`desktop/src/engine.ts` 的提示表只有 60 个
+  key，**58 个码没人管**（`INVALID_SPLIT`、`NOT_ADJACENT`、`DUPLICATE_ID`、`REVISION_OVERFLOW`、
+  `OUTPUT_INVALID`、`SPEECH_NOT_FOUND`、`SUBTITLES_MODEL_MISSING`、`FONT_UNAVAILABLE`、
+  `MEDIA_PATH_INVALID`…），全是点得到、报得出的路径。
+- 逐条补成「发生了什么 + 下一步怎么办」的中文句子，并且给出路（例如 `INVALID_REFRAME` 说要先画遮罩
+  再按跟踪主体、`SUBTITLES_MODEL_MISSING` 说模型放哪儿、`OUTPUT_INVALID` 说候选文件已销毁、最终名
+  一次都没出现）。现在 116 个码 / 120 条提示、0 条落到英文；多出的 4 个 key 是适配层与任务运行器的
+  码（`FFMPEG_FAILED`/`INTERRUPTED`/`NO_OUTPUT`/`STALE_REVISION`），门禁按白名单承认它们。
+- 新门禁 `tests/error_vocabulary_check.py`（不到 1 秒，不碰媒体）把这件事变成永久约束：从 Python 侧
+  扫 `EditorError("CODE"…` / `code="CODE"` / `"code": "CODE"`，从 TypeScript 侧扫提示表的 key，断言
+  前者是后者子集；同时要求每条提示含中文、长度 ≥ 12 字（挡住「知道了」这种废话），并断言 key 不重复。
+  `tests/desktop_error_naming_check.ts` 另抽 14 个码走 `explain()` 真跑，确认运行时确实说中文、
+  并且把引擎点名的素材/片段/轨道织进句子。
+- 五条变异测试逐条红：删掉一条提示 → 「fall through to English」点名 `OUTPUT_INVALID`；把提示写成
+  英文 → 「not Chinese」；缩成「导出失败了。」→ 「too thin」；把同一条 key 写两遍 → 「duplicate
+  keys」；在 Python 里新增一个没人翻译的码 → 红在 `INVALID_CAPTIONS_TARGETX` 上。也就是说这条约束
+  两头都钉得住：漏了界面红，漏了引擎也红。
+- 契约、reducer、capabilities、工程 schema 与所有错误码本身一字不动——改的只是界面怎么说人话。
