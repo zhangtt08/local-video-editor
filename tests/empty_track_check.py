@@ -238,10 +238,20 @@ def main() -> None:
             assert single.json()["error"]["details"]["path"].endswith("silent.wav"), single.json()
 
             assert client.get(f"/v1/projects/{pid}").json()["revision"] == revision
+            # The predicate is worthless if the header does not call it: pin the wiring too, so the
+            # grey-out cannot drift from the refusal (1.82).
+            wiring = (ROOT / "desktop/src/views/Timeline.tsx").read_text(encoding="utf-8")
+            assert "const emptyTrack = trackToolBlocker(track.id, clips)" in wiring, (
+                "the track header must ask the shared predicate, not guess"
+            )
+            assert wiring.count("disabled={!!emptyTrack}") == 3, "three whole-track buttons"
+            assert wiring.count(": EMPTY_TRACK_HINT\n") == 3, "each gated button carries the reason"
+            assert "disabled={!clips.length}" not in wiring, "a second, drifting copy of the rule"
             print(
                 f"PASS: {refusals} track refusals name the track, all four routes agree on "
-                f"「{HOLDS}」, and a track with one clip is never refused that way "
-                f"(revision stays {revision})"
+                f"「{HOLDS}」, a track with one clip is never refused that way (revision stays "
+                f"{revision}); the header greys the three whole-track buttons out on an empty "
+                f"track too"
             )
 
 

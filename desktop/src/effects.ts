@@ -93,3 +93,12 @@ export const stabilizeBlocked = (clip: Clip): string | null => {
   return null;
 };
 
+
+/** 整轨分析按钮对这条轨可用吗？空轨按下去只会拿到引擎的点名拒绝（1.79 起 `NOT_FOUND`）。
+ *  按了只会弹错，就不该是可按的：按钮要么按得出东西，要么说清为什么按不了。 */
+export const EMPTY_TRACK_HINT =
+  "这条轨上还没有片段：先把素材拖上时间线；如果片段都进了预合成，从时间线上方的面包屑进去那条合成再操作。";
+
+export function trackToolBlocker(trackId: string, clips: Clip[]): string | null {
+  return clips.some((clip) => clip.track_id === trackId) ? null : EMPTY_TRACK_HINT;
+}

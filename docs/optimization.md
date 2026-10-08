@@ -2944,3 +2944,34 @@ sigma；回执锚点再加两条，确认「只写默认值的新键」不会把
   便携版 189,771,874 字节 SHA256 `7827DE9AB22889FF076EBF110166514110730DCF288E4702986FA74C01351E8C`；
   安装版 189,932,591 字节 SHA256 `842BA630D1EF89029DAC5D1C45A30FD9F014017C833FDC0B75D4C2D10A0BCEF5`。
   未签名，NSIS 向导未点击验收。
+
+## 1.82.0 空轨上的整轨按钮不再可点
+
+- 这条缺陷是我自己上一轮造出来的：1.79 把「这条轨上没有片段」统一成四条整轨路由的拒绝，答案对了，
+  但界面上那三个按钮照旧亮着——人要先按一次、看到弹错，才知道这条轨是空的。按了只会弹错的按钮不该
+  亮着，这是这一路修下来反复用的标准（1.75 的「每个拒绝都要指得出出口」的反面：出口在按之前就该给）。
+- 修法是加一处判断而不是加三份：`desktop/src/effects.ts` 里的 `trackToolBlocker(trackId, clips)`
+  返回 null 或原因句 `EMPTY_TRACK_HINT`，`Timeline.tsx` 的整轨响度 / 整轨去空白 / 自动闪避统一
+  `disabled={!!emptyTrack}`、`title` 就是那句原因。句子里给的两条出路都是真能走通的：把素材拖上时间线，
+  或者从时间线上方的面包屑进那条预合成——不是「请重试」这种话。
+- 门禁两头钉：`tests/desktop_track_gate_check.ts` 测函数（空轨挡、有一条就放行、**别轨的片段不算数**——
+  正是嵌套之后外层那条同名空轨的形状、混合时不被别轨否决、句子必须含两条出路）；
+  `tests/empty_track_check.py` 读 `Timeline.tsx` 测接线（调用谓词一次、`disabled={!!emptyTrack}` 恰好
+  三处、`: EMPTY_TRACK_HINT` 恰好三处、不许留下 `disabled={!clips.length}` 这种会漂移的第二份规则）。
+  为什么接线放在 Python 侧：`desktop_ts_check.py` 是用壳层自带的 esbuild 把 `.ts` 打成临时 `.mjs`
+  再跑，`import.meta.url` 指向那个临时目录，读不到仓库里的源文件——所以「测函数」归 TS 门禁、
+  「测接线」归 Python 门禁，两边都能红。
+- 五条变异测试逐条红：谓词恒 null、`clip.track_id` 比成 `clip.id`、`some` 改成 `every`、提示句去掉
+  「面包屑」、表头把 `emptyTrack` 写死成 null。前四条红在 TS 门禁，第五条红在 Python 门禁——也就是说
+  「函数对但没接上」和「接上了但函数错」都过不了关。
+- 引擎侧一字未动：路由、契约、reducer、capabilities 与 1.79 的拒绝完全照旧；这是纯界面诚实性修复。
+- 发布验收：`build_engine.py`（`FREEZE=0`，staged 324.9 MB）+ `npm run dist`（`DIST=0`）。包内实例
+  `bd6c11881822` 报 `app_version=1.82.0`；`package_check_182.py` 在打包后的引擎上重跑四条整轨路由对空轨的
+  拒绝（404 + `this track holds no clips` + `details.track_id`），并在 asar 里读到帮助条目
+  「时间线·空轨不给你按」与那句灰化原因（只测能活过压缩的 UI 文本，不测被改名的标识符）。
+  `ruff`、`npm run typecheck`、13 项桌面 TS、串行套件 **68/68** 全绿；原生窗口 1480×900 标题栏
+  「引擎在线 v1.82.0」（`AgentCut-1.82-原生窗口.png`），关闭无残留——截图确认的是版本与工作台完整渲染，
+  灰化本身由门禁在函数与接线两层断言。
+  便携版 189,771,146 字节 SHA256 `81DF88E1F44BAD75221CA655847AB03AEDEB7C71809A27D8BD163E1AF57B3C71`；
+  安装版 189,931,867 字节 SHA256 `4D8375BEE89FCA3765EE13DEAD217A00CF6E7A3845A77CC42A4E07A2F65B195D`。
+  未签名，NSIS 向导未点击验收。

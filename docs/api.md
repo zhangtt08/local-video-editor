@@ -1829,3 +1829,20 @@ line / size+rows / project_id / revision / job_id 都覆盖到），九条正常
   keys」；在 Python 里新增一个没人翻译的码 → 红在 `INVALID_CAPTIONS_TARGETX` 上。也就是说这条约束
   两头都钉得住：漏了界面红，漏了引擎也红。
 - 契约、reducer、capabilities、工程 schema 与所有错误码本身一字不动——改的只是界面怎么说人话。
+
+
+## 1.82 空轨上的整轨按钮不再可点
+
+- 1.79 把「这条轨上没有片段」变成了四条整轨路由统一的拒绝，这是对的；但界面上那三个按钮照旧可点，
+  于是人要先按一次、看到弹错，才知道这条轨是空的。按了只会弹错的按钮不该亮着。
+- `desktop/src/effects.ts` 里加了 `trackToolBlocker(trackId, clips)` 与它的原因句
+  `EMPTY_TRACK_HINT`（「先把素材拖上时间线；如果片段都进了预合成，从面包屑进去那条合成再操作」——
+  两条出路都是真的能走通的），`Timeline.tsx` 的整轨响度、整轨去空白、自动闪避三个按钮统一用它：
+  灰化 `disabled={!!emptyTrack}`，`title` 就是那句原因。规则只有一处，界面不另写一份判断。
+- 门禁两头都钉：`tests/desktop_track_gate_check.ts` 测函数本身（空轨挡、有一条就放行、**别轨的片段
+  不算数**——正是嵌套之后外层那条同名空轨的形状、混合情况不被别轨否决）与提示句里必须出现的两个出路；
+  `tests/empty_track_check.py` 读 `Timeline.tsx` 断言接线（调用谓词一次、`disabled={!!emptyTrack}`
+  恰好三处、`: EMPTY_TRACK_HINT` 恰好三处、不留 `disabled={!clips.length}` 这种会漂移的第二份规则）。
+- 五条变异测试逐条红：谓词恒返回 null、把 `clip.track_id` 比成 `clip.id`、`some` 改成 `every`、
+  提示句去掉「面包屑」这条出路、表头不走谓词写死成 null。前四条红在 TS 门禁，第五条红在 Python 门禁。
+- 引擎侧一字未动：路由、契约、reducer、capabilities 与 1.79 的拒绝完全照旧。

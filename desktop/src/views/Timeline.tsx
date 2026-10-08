@@ -41,6 +41,7 @@ import {
   setMarker,
   splitAtMarkers,
 } from "../store";
+import { EMPTY_TRACK_HINT, trackToolBlocker } from "../effects";
 import { selectionQuantum, timelineTracks } from "../selection";
 
 const HEAD = 112;
@@ -460,6 +461,7 @@ function TrackRow({
   const app = useApp();
   const edit = useEdit();
   const clips = Object.values(project.clips).filter((item) => item.track_id === track.id);
+  const emptyTrack = trackToolBlocker(track.id, clips);
   const selectedIds = useMemo(() => new Set(app.selectedClips), [app.selectedClips]);
   const q = quantum(project, track.kind);
 
@@ -487,9 +489,38 @@ function TrackRow({
               onClick={() => updateTrack(track.id, { muted: !track.muted }, track.muted ? "取消静音" : "静音轨道")}
             />
           )}
-          <IconBtn icon="volume" label="逐片段测量这条轨的响度，一次写入各自的增益把它们统一到 -16 LUFS（只改音量倍数，不加压缩器）" onClick={() => alignTrackLoudness(track.id)} />
-          <IconBtn icon="split" label="剪掉这条轨上所有 0.25 秒以上的停顿并把后面的内容左移：只影响本轨，其它轨保持原位" onClick={() => cutTrackSilence(track.id)} />
-          {track.kind === "audio" ? <IconBtn icon="volume" label="自动闪避：别的声音轨说话时，这条轨按 9 dB 让路，写成音量关键帧（说话结束后 0.6 秒抬回来），只改本轨" onClick={() => duckTrack(track.id)} /> : null}
+          <IconBtn
+            icon="volume"
+            label={
+              !emptyTrack
+                ? "逐片段测量这条轨的响度，一次写入各自的增益把它们统一到 -16 LUFS（只改音量倍数，不加压缩器）"
+                : EMPTY_TRACK_HINT
+            }
+            disabled={!!emptyTrack}
+            onClick={() => alignTrackLoudness(track.id)}
+          />
+          <IconBtn
+            icon="split"
+            label={
+              !emptyTrack
+                ? "剪掉这条轨上所有 0.25 秒以上的停顿并把后面的内容左移：只影响本轨，其它轨保持原位"
+                : EMPTY_TRACK_HINT
+            }
+            disabled={!!emptyTrack}
+            onClick={() => cutTrackSilence(track.id)}
+          />
+          {track.kind === "audio" ? (
+            <IconBtn
+              icon="volume"
+              label={
+                !emptyTrack
+                  ? "自动闪避：别的声音轨说话时，这条轨按 9 dB 让路，写成音量关键帧（说话结束后 0.6 秒抬回来），只改本轨"
+                  : EMPTY_TRACK_HINT
+              }
+              disabled={!!emptyTrack}
+              onClick={() => duckTrack(track.id)}
+            />
+          ) : null}
           <IconBtn icon="trash" label="删除轨道（必须先清空它上面的片段）" danger onClick={() => removeTrack(track.id)} />
         </div>
       </div>
