@@ -301,6 +301,37 @@ def reducer_suite(folder: Path) -> None:
     ], tracked.keyframes
     assert Clip.model_validate(tracked.model_dump())
 
+    # A second run over a later window has to *continue* the path, not delete the part of it that
+    # already worked: before 1.73 re-tracking a later stretch wiped every point outside it, so the
+    # mask snapped back to its drawn box over the first half of the shot.
+    # Work on a copy: `apply` hands back the mutated candidate, and the cases below this one still
+    # expect the project as it was left by the first track.
+    joined = edited.model_copy(deep=True)
+    tail = [
+        {"at_ticks": T // FPS, "center_x": 0.9, "center_y": 0.5},
+        {"at_ticks": 2 * T // FPS, "center_x": 0.95, "center_y": 0.52},
+    ]
+    merged = apply(
+        joined,
+        [{"op": "clip.mask_track", "clip_id": "c", "merge": True, "points": tail}],
+    ).clips["c"]
+    kept = [(key.property, key.at_ticks, round(key.value, 6)) for key in merged.keyframes]
+    assert ("mask_x", 0, 0.3) in kept, f"the merge deleted the segment before the window: {kept}"
+    assert ("mask_x", T // FPS, 0.9) in kept, kept
+    assert len([entry for entry in kept if entry[0] == "mask_x"]) == 3, kept
+    assert merged.mask is not None and merged.mask.center_x == 0.3, merged.mask
+    replaced = apply(
+        joined.model_copy(deep=True),
+        [{"op": "clip.mask_track", "clip_id": "c", "merge": False, "points": tail}],
+    ).clips["c"]
+    assert len([key for key in replaced.keyframes if key.property == "mask_x"]) == 2, (
+        "merge=False must still rewrite the whole path (从头重跟)"
+    )
+    print(
+        "   reducer: merge=True keeps the earlier segment and replaces only its window; "
+        "merge=False still rewrites the whole path"
+    )
+
     sized = [
         {"at_ticks": 0, "center_x": 0.3, "center_y": 0.5, "width": 0.16, "height": 0.24},
         {"at_ticks": T // FPS, "center_x": 0.4, "center_y": 0.52, "width": 0.28, "height": 0.42},
@@ -456,18 +487,98 @@ def http_suite(folder: Path) -> None:
             json={"request_id": "track", "expected_revision": 1, "frames": 40},
         )
         assert replay.json()["replayed"] is True and replay.json()["project"]["revision"] == 2
+
+        # 1.73: a run that loses the subject can be continued instead of started over. Re-tracking
+        # the last 20 frames has to leave the first 20 alone and rewrite only its own window --
+        # before this, every point outside the new window was deleted, so the mask snapped back to
+        # where it had been drawn over the first half of the shot.
+        want_x, want_y = path_at(20 / FPS)
+        anchored = client.post(
+            path + "/edits",
+            json={
+                "request_id": "anchor",
+                "expected_revision": 2,
+                "commands": [
+                    {
+                        "op": "clip.mask",
+                        "clip_id": "c",
+                        "mask": {
+                            "shape": "ellipse",
+                            "center_x": want_x,
+                            "center_y": want_y,
+                            "width": 0.16,
+                            "height": 0.24,
+                            "feather": 0.0,
+                            "inverted": False,
+                        },
+                    }
+                ],
+            },
+        )
+        assert anchored.status_code == 200, anchored.text[:300]
+        joined = client.post(
+            path + "/clips/c/track",
+            json={
+                "request_id": "join",
+                "expected_revision": anchored.json()["project"]["revision"],
+                "from_ticks": 20 * (T // FPS),
+                "frames": 20,
+            },
+        )
+        assert joined.status_code == 200, joined.text[:300]
+        body = joined.json()
+        assert body["project"]["revision"] == 4
+        clip = body["project"]["clips"]["c"]
+        marks = sorted(k["at_ticks"] for k in clip["keyframes"] if k["property"] == "mask_x")
+        assert marks == [index * (T // FPS) for index in range(40)], marks[:5] + marks[-5:]
+        tracking = body["tracking"]
+        assert tracking["merged"] is True, tracking
+        assert tracking["kept_frames"] == 20, tracking
+        assert tracking["replaced_frames"] == 20, tracking
+        assert tracking["seam_ticks"] == T // FPS, tracking
+        for key in clip["keyframes"]:
+            if key["property"] != "mask_x":
+                continue
+            want_x, _ = path_at(key["at_ticks"] / T)
+            assert abs(key["value"] - want_x) < 0.012, (key, want_x)
+        assert abs(tracking["seam_jump"]) < 0.012, tracking
+        print(
+            "   http: continuing a track keeps the first 20 points, rewrites only its window, and "
+            f"reports the seam ({tracking['seam_jump']:.4f} of a frame wide, "
+            f"{tracking['seam_ticks'] * FPS // T} frame apart)"
+        )
+        restarted = client.post(
+            path + "/clips/c/track",
+            json={
+                "request_id": "restart",
+                "expected_revision": 4,
+                "from_ticks": 20 * (T // FPS),
+                "frames": 20,
+                "merge": False,
+            },
+        )
+        assert restarted.status_code == 200, restarted.text[:300]
+        marks = sorted(
+            k["at_ticks"]
+            for k in restarted.json()["project"]["clips"]["c"]["keyframes"]
+            if k["property"] == "mask_x"
+        )
+        assert marks == [(20 + index) * (T // FPS) for index in range(20)], (
+            "merge=False must still rewrite the whole path (从头重跟)"
+        )
+        print("   http: merge=False still wipes the earlier segment, so 从头重跟 stays available")
         unsized = client.post(
             path + "/clips/c/track",
             json={
                 "request_id": "noscale",
-                "expected_revision": 2,
+                "expected_revision": 5,
                 "frames": 20,
                 "estimate_scale": False,
                 "dry_run": True,
             },
         )
         assert unsized.status_code == 200, unsized.text
-        assert client.get(path).json()["revision"] == 2, "a dry run must not write"
+        assert client.get(path).json()["revision"] == 5, "a dry run must not write"
         assert not any("width" in point for point in unsized.json()["tracking"]["points"]), (
             unsized.json()["tracking"]["points"][0]
         )
@@ -476,35 +587,35 @@ def http_suite(folder: Path) -> None:
             json={"request_id": "again", "expected_revision": 1, "frames": 20},
         )
         assert conflict.status_code == 409, conflict.text
-        assert client.get(path).json()["revision"] == 2
+        assert client.get(path).json()["revision"] == 5
 
         # v13: a free-form outline may be tracked too, but only for translation — the engine must
         # not hand back size curves the exporter would refuse. Both steps are dry runs so the
         # revision sequence below stays as written.
         too_far = client.post(
             path + "/clips/c/track",
-            json={"request_id": "far", "expected_revision": 2, "frames": 900},
+            json={"request_id": "far", "expected_revision": 5, "frames": 900},
         )
         assert too_far.json()["error"]["code"] == "SOURCE_OUT_OF_BOUNDS", too_far.text
         out_of_clip = client.post(
             path + "/clips/c/track",
-            json={"request_id": "edge", "expected_revision": 2, "from_ticks": 3 * T, "frames": 10},
+            json={"request_id": "edge", "expected_revision": 5, "from_ticks": 3 * T, "frames": 10},
         )
         assert out_of_clip.json()["error"]["code"] == "INVALID_TRACK_TARGET", out_of_clip.text
         no_mask = client.post(
             path + "/edits",
             json={
                 "request_id": "unmask",
-                "expected_revision": 2,
+                "expected_revision": 5,
                 "commands": [{"op": "clip.mask", "clip_id": "c", "mask": None}],
             },
         )
         assert no_mask.json()["error"]["code"] == "INVALID_MASK", no_mask.text
-        assert client.get(path).json()["revision"] == 2, "tracking keyframes need their mask"
+        assert client.get(path).json()["revision"] == 5, "tracking keyframes need their mask"
 
         restored = client.post(
             path + "/restore",
-            json={"request_id": "undo", "expected_revision": 2, "target_revision": 1},
+            json={"request_id": "undo", "expected_revision": 5, "target_revision": 1},
         )
         assert restored.status_code == 200, restored.text
         assert restored.json()["project"]["clips"]["c"]["keyframes"] == []

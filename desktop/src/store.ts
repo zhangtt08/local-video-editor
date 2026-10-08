@@ -639,23 +639,26 @@ export async function stabilizeClip(clipId: string, strength = 1, maxCrop = 0.1)
   }
 }
 
-export async function trackMask(clipId: string, fromTicks: number, frames: number) {
+export async function trackMask(clipId: string, fromTicks: number, frames: number, merge = true) {
   const project = state.project;
   if (!engine || !project) return;
   set({ busy: "跟踪遮罩主体…" });
   try {
     const analysed = await engine.maskTrack(project.id, clipId, {
       request_id: newId("track-"), expected_revision: project.revision,
-      from_ticks: fromTicks, frames, dry_run: true,
+      from_ticks: fromTicks, frames, merge, dry_run: true,
     });
     const points = analysed.tracking.points;
     if (points.length < 2) {
       toast("warn", "找不到可跟踪的目标", "这段画面里没有稳定的主体，遮罩保持不变。可以把遮罩先盖在主体上再试。");
       return;
     }
-    submit([{ op: "clip.mask_track", clip_id: clipId, points }], "跟踪遮罩主体");
+    submit([{ op: "clip.mask_track", clip_id: clipId, points, merge }], "跟踪遮罩主体");
     const stats = analysed.tracking;
     const detail = [
+      merge && stats.kept_frames
+        ? `保住前面 ${stats.kept_frames} 帧的路径，只重写这一段（接缝处差 ${(stats.seam_jump ?? 0).toFixed(3)} 画面宽），`
+        : "",
       stats.scale_estimated ? "遮罩盒随主体远近变大变小，" : "遮罩盒保持原大小，",
       stats.predicted_frames > 0 ? `${stats.predicted_frames} 帧被遮挡时按匀速补齐，` : "",
       stats.lost_at_ticks === null

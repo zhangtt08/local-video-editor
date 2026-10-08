@@ -6,6 +6,7 @@ the desktop client and an external Agent share exactly one command semantic.
 
 import hashlib
 import hmac
+import math
 import secrets
 import sqlite3
 import tempfile
@@ -708,7 +709,12 @@ def create_app(
             request_id=request.request_id,
             expected_revision=request.expected_revision,
             commands=[
-                {"op": "clip.mask_track", "clip_id": clip_id, "points": points}  # type: ignore[list-item]
+                {
+                    "op": "clip.mask_track",
+                    "clip_id": clip_id,
+                    "points": points,
+                    "merge": request.merge,
+                }  # type: ignore[list-item]
             ],
             dry_run=request.dry_run,
         )
@@ -729,6 +735,8 @@ def create_app(
                     }
                     for gap in result["gaps"]
                 ],
+                "merged": request.merge,
+                **({} if not request.merge else track_seam(clip, points, request)),
                 "first_at_ticks": points[0]["at_ticks"],
                 "last_at_ticks": points[-1]["at_ticks"],
                 "lost_at_ticks": (
@@ -739,6 +747,39 @@ def create_app(
                 "points": points,
             },
         }
+
+    def track_seam(clip, points: list[dict], request) -> dict:
+        """What a continued track joins onto: how much survives, and how far the seam jumps.
+
+        The new window's points are clip-local while the clip's curves live on the animation
+        clock, so the comparison shifts the window by `animation_offset_ticks`. A seam of zero
+        means the two runs meet at the same tick; anything else is a discontinuity the editor
+        should see rather than have smoothed over silently.
+        """
+        offset = clip.animation_offset_ticks
+        start = offset + points[0]["at_ticks"]
+        stop = offset + points[-1]["at_ticks"]
+        before = [key for key in clip.keyframes if key.property in {"mask_x", "mask_y"}]
+        kept = [key for key in before if key.at_ticks < start]
+        # Counted in frames, not in curves: a sized path carries two or four curves per sighting,
+        # and "the first 20 frames survived" is the sentence the editor and the interface need.
+        seam: dict[str, object] = {
+            "kept_frames": len({key.at_ticks for key in kept}),
+            "replaced_frames": len(
+                {key.at_ticks for key in before if start <= key.at_ticks <= stop}
+            ),
+        }
+        ticks = {key.at_ticks for key in kept}
+        if len(ticks) == 0:
+            return seam
+        at = max(ticks)
+        last = {key.property: key.value for key in kept if key.at_ticks == at}
+        first = points[0]
+        dx = first["center_x"] - last.get("mask_x", first["center_x"])
+        dy = first["center_y"] - last.get("mask_y", first["center_y"])
+        seam["seam_ticks"] = start - at
+        seam["seam_jump"] = round(math.hypot(dx, dy), 6)
+        return seam
 
     @app.post("/v1/projects/{project_id}/clips/{clip_id}/silence", dependencies=auth)
     def silence_scan(

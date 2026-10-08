@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 13  # v13 gives a path mask a real box; older rows are fitted on load (ge=1).
-APP_VERSION = "1.71.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.72.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -1173,6 +1173,7 @@ class ClipMaskTrack(Contract):
 
     op: Literal["clip.mask_track"]
     clip_id: Identifier
+    merge: bool = True
     points: Annotated[list[MaskTrackPoint], Field(min_length=2, max_length=2000)]
 
     @model_validator(mode="after")
@@ -1335,6 +1336,7 @@ class MaskTrackRequest(Contract):
     search_radius: Annotated[int, Field(ge=2, le=16)] = 10
     estimate_scale: bool = True
     max_gap_frames: Annotated[int, Field(ge=0, le=120)] = 30
+    merge: bool = True
     dry_run: bool = False
 
 

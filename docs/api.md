@@ -1549,3 +1549,30 @@ revision 变化、只带测量结果。
 验收（并入 `tests/stabilize_check.py`）：稳定过的片段用 `keyframes.remove` 把那四条曲线全部删空，
 回读必须 `stabilization is null`，随后同一句 `clip.speed=200` 必须通过。这条断言在收尾落地前是红的
 （`the record outlived the curves it described`），红了的那次输出就是缺陷的实证。
+
+## 1.72 遮罩跟踪可以接着跟：一次跑不完的一段，分几次跟完
+
+`POST /v1/projects/{id}/clips/{id}/track` 早就支持 `from_ticks`（从片段中间某帧起跟），但写入的
+`clip.mask_track` 会把这条遮罩的**全部**关键帧删掉再写新的那一段。于是「跟到第 40 帧跟丢了，把遮罩
+拖回主体上，从第 40 帧接着跟」这个动作，实际效果是把前 40 帧已经跟好的路径整条抹掉——遮罩在片段开头
+跳回画好的位置。这是静默删数据，不是简化。
+
+1.72 起 `MaskTrackRequest` 与 `clip.mask_track` 命令都带 `merge`（默认开）：
+- **merge=true**：只重写本次分析窗口覆盖的那些 tick，窗口之外的点原样保留。遮罩的静态盒保持**整条路径
+  最早那一帧**的位置（不是最后一次运行的起点），否则播放头之前的帧会退回一个刚被搬走的位置。
+- **merge=false**：旧语义，整条替换 —— 界面上的「从头重跟」。
+
+回复的 `tracking` 多了四个数：`kept_frames` / `replaced_frames`（保住与重写了几帧，按帧数而不是按曲线
+数，尺寸估计开着时每帧有两条到四条曲线）、`seam_ticks`（新窗口与上一段最后 sighting 隔了几帧）、
+`seam_jump`（两段在接缝处相差多少画面宽，`hypot(dx,dy)`）。接缝不为零是真实的不连续，界面把它说出来，
+而不是悄悄插一条直线过去。
+
+界面：同一个按钮在已有路径的片段上改叫「接着跟」（从播放头起，merge 开），旁边多一个「从头重跟」
+（`from_ticks=0`、merge 关）；提示语里报「保住前面 N 帧的路径，只重写这一段（接缝处差 X 画面宽）」。
+
+验收（并入 `tests/tracking_check.py`）：reducer 层——先跟 0..1 帧，再 merge 一段 1..2 帧，断言第 0 帧
+那个点还在、窗口内的点被替换、`merge=false` 仍然整条替换；HTTP 层——40 帧的路径跟到第 20 帧后，
+把遮罩盒挪到主体在第 20 帧的真实位置（这就是界面上「把遮罩盖住主体再点接着跟」），再 merge 跟 20 帧，
+断言 40 个 tick 一个不缺、`kept_frames=20`、`replaced_frames=20`、`seam_ticks` 是一帧、
+`seam_jump` 小于 0.012 画面宽，并且**全部 40 个点仍然落在解析轨迹上**（拼接没有把路径拧弯）；
+`merge=false` 的那一次则只剩后 20 帧。两条断言在 merge 落地前都是红的。

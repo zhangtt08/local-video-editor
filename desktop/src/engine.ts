@@ -711,6 +711,8 @@ export class Engine {
         points: { at_ticks: number; center_x: number; center_y: number; width?: number; height?: number }[];
         tracked_frames: number; predicted_frames: number; scale_estimated: boolean;
         gaps: { from_ticks: number; to_ticks: number }[]; lost_at_ticks: number | null;
+        merged?: boolean; kept_frames?: number; replaced_frames?: number;
+        seam_ticks?: number; seam_jump?: number;
       };
       committed: boolean;
     }>("POST", `/v1/projects/${projectId}/clips/${clipId}/track`, body, 600000);

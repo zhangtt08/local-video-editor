@@ -350,7 +350,9 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         """Follow one box mask across the picture and write the path as mask keyframes.
 
         The analysis reads the server-verified media; the write goes through the same transaction as
-        `timeline_edit`, so dry_run saves nothing and a repeated request_id replays.
+        `timeline_edit`, so dry_run saves nothing and a repeated request_id replays. `merge` (on by
+        default) keeps the points outside the analysed window, so a run that loses the subject can
+        be continued from a later frame instead of starting over and wiping the first half.
         """
         return await call(
             "POST",

@@ -558,7 +558,7 @@ def apply_commands(
                 elif command.op == "clip.mask":
                     clip.mask = command.mask.model_copy(deep=True) if command.mask else None
                 elif command.op == "clip.mask_track":
-                    _apply_mask_track(clip, command.points)
+                    _apply_mask_track(clip, command.points, command.merge)
                 elif command.op == "clip.color":
                     if candidate.assets[clip.asset_id].kind == "audio":
                         raise EditorError("INVALID_COLOR", "audio has no color properties")
@@ -922,7 +922,7 @@ def apply_commands(
     return candidate
 
 
-def _apply_mask_track(clip, points) -> None:
+def _apply_mask_track(clip, points, merge: bool = True) -> None:
     """Rewrite a mask's motion from a tracked path, in one clip."""
     mask = clip.mask
     if mask is None or mask.inverted:
@@ -944,6 +944,12 @@ def _apply_mask_track(clip, points) -> None:
     values = {"mask_x": "center_x", "mask_y": "center_y"}
     if sized:
         values |= {"mask_width": "width", "mask_height": "height"}
+    start = offset + points[0].at_ticks
+    stop = offset + points[-1].at_ticks
+    # A merge rewrites only the curves this run produced, over the ticks it was given. A sized run
+    # joined onto a centre-only path therefore keeps the earlier centres and adds sizes from where
+    # the second run starts, which is what the renderer samples anyway: a curve clamps at its ends
+    # instead of inventing a value, so no mixture here needs refusing on the user's behalf.
     tracked = [
         Keyframe(
             property=name,
@@ -954,17 +960,40 @@ def _apply_mask_track(clip, points) -> None:
         for point in points
         for name, attribute in values.items()
     ]
-    clip.keyframes = [key for key in clip.keyframes if key.property not in values]
+
+    def survives(key) -> bool:
+        if key.property not in values:
+            return True
+        if not merge:
+            return False
+        return not start <= key.at_ticks <= stop
+
+    clip.keyframes = [key for key in clip.keyframes if survives(key)]
     clip.keyframes.extend(tracked)
     clip.keyframes.sort(key=lambda key: (key.property, key.at_ticks))
+    # The drawn box describes the head of the path. A continuation joins onto an earlier segment,
+    # and then the head is still that segment's first sighting — moving the box to the new window
+    # would change what the frames before the first keyframe fall back to.
     first = points[0]
-    clip.mask = mask.model_copy(
-        update={
-            "center_x": first.center_x,
-            "center_y": first.center_y,
-            **({"width": first.width, "height": first.height} if sized else {}),
-        }
-    )
+    update: dict[str, float] = {"center_x": first.center_x, "center_y": first.center_y}
+    if sized:
+        update |= {"width": first.width, "height": first.height}
+    if merge:
+        heads = sorted(
+            {
+                key.at_ticks
+                for key in clip.keyframes
+                if key.property == "mask_x" and key.at_ticks < start
+            }
+        )
+        if heads:
+            drawn = {key.property: key.value for key in clip.keyframes if key.at_ticks == heads[0]}
+            update["center_x"] = drawn["mask_x"]
+            update["center_y"] = drawn.get("mask_y", update["center_y"])
+            if sized and "mask_width" in drawn:
+                update["width"] = drawn["mask_width"]
+                update["height"] = drawn.get("mask_height", update["height"])
+    clip.mask = mask.model_copy(update=update)
 
 
 def _remove_keyframes(clip, sources):
