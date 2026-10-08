@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 13  # v13 gives a path mask a real box; older rows are fitted on load (ge=1).
-APP_VERSION = "1.77.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.78.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -134,7 +134,7 @@ EffectProperty = Literal["x", "y", "scale", "rotation", "opacity", "gain"]
 # What `clip.patch` may write is wider than what can be keyframed: `blur`, `sharpen` and
 # `sharpen_radius` have no per-frame form (see ClipEffects), so they are patchable without being
 # animatable properties.
-EffectField = EffectProperty | Literal["blur", "sharpen", "sharpen_radius"]
+EffectField = EffectProperty | Literal["blur", "sharpen", "sharpen_radius", "denoise"]
 # Rectangle and ellipse masks keyframe in the mask's own normalized space, so the exporter and the
 # browser interpolate the same numbers. A free-form (path) mask rasterizes its outline once and can
 # be moved with mask_x/mask_y, but its drawn shape and size cannot change over time yet.
@@ -190,6 +190,13 @@ GBLUR_STEPS = 6
 # defined against the frame, not a pixel count. Default ~4 px at 1080p: edge, not glow.
 SHARPEN_LIMIT = 2.0
 SHARPEN_RADIUS_DEFAULT = 0.004
+# 音频降噪：一个旋钮，dB of broadband reduction handed straight to FFmpeg's `afftdn=nr=`.
+# 24 dB is where the filter starts eating speech on the measured fixture, so that is the ceiling.
+DENOISE_LIMIT = 24.0
+# The floor the gate is told to look for. FFmpeg's own default (-50) sits under the hiss of a
+# real room recording, which leaves the knob reducing nothing at all; measured, -30 dBFS is
+# where one knob position becomes the reduction the label promises.
+DENOISE_FLOOR_DB = -30.0
 # Stabilisation: how much of the frame may be spent hiding the borders the correction exposes, and
 # how wide a window decides which part of the motion is the intended one (30 frames at 30fps = 1s).
 STABILIZE_STRENGTH_LIMIT = 1.0
@@ -228,6 +235,9 @@ class ClipEffects(Contract):
     # keyframes (there is no per-frame radius to animate), and only inside the measured band.
     sharpen: Annotated[float, Field(ge=0, le=SHARPEN_LIMIT)] = 0.0
     sharpen_radius: Annotated[float, Field(ge=0, le=BLUR_LIMIT)] = SHARPEN_RADIUS_DEFAULT
+    # 音频降噪只在导出里生效：浏览器预览没有等价的 FFT 降噪，宁可写明「导出才有」，也不在预览里
+    # 演一个交付文件里没有的效果（母带限制器同一待遇）。0 就是不加这一级。
+    denoise: Annotated[float, Field(ge=0, le=DENOISE_LIMIT)] = 0.0
 
 
 # The grade chain's shape limits live here and nowhere else: the interface enumerates its picker and
@@ -2042,6 +2052,7 @@ def capabilities(
             "clip_blur": True,
             "clip_sharpen": True,
             "clip_stabilize": True,
+            "clip_denoise": True,
             "grade_node_blend_modes": True,
             "grade_parallel_branches": True,
             "timeline_marks": True,
@@ -2063,6 +2074,7 @@ def capabilities(
             "sharpen_amount": SHARPEN_LIMIT,
             "sharpen_radius_fraction": BLUR_LIMIT,
             "sharpen_radius_default": SHARPEN_RADIUS_DEFAULT,
+            "denoise_db": DENOISE_LIMIT,
             "stabilize_max_crop": STABILIZE_MAX_CROP_LIMIT,
             "stabilize_smoothing_frames": STABILIZE_SMOOTHING_FRAMES,
             "sample_rates": [44_100, 48_000, 96_000],

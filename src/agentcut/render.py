@@ -18,6 +18,7 @@ from .animation import expression, sound_enabled
 from .compositing import blend_track
 from .contracts import (
     BLUR_RADIUS_LIMIT_PX,
+    DENOISE_FLOOR_DB,
     GBLUR_STEPS,
     MASK_FIELDS,
     TEXT_FONTS,
@@ -1134,8 +1135,18 @@ def compile_render_plan(
                 f"{audio_source}asetpts=PTS-STARTPTS,{','.join(tempos)},"
                 f"atrim=0:{sec(clip.duration_ticks)},"
             )
+        # One `afftdn` per clip, before the gain, so the level the meter measured is applied to
+        # the signal the editor will actually hear in the delivered file.
+        # `nf` is pinned, not left at FFmpeg's -50 dB default: measured on the fixture, the
+        # knob only does what its label promises once the gate is looking at the region a room
+        # recording actually hisses in (-46.7 dBFS band with the default, -55.6 at nr=12 here).
+        denoise = (
+            f"afftdn=nr={clip.effects.denoise}:nf={DENOISE_FLOOR_DB},"
+            if clip.effects.denoise
+            else ""
+        )
         chain = (
-            f"{paced_audio}asetpts=PTS-STARTPTS,"
+            f"{paced_audio}asetpts=PTS-STARTPTS,{denoise}"
             f"volume='({gain})*{entry['track'].volume}':eval=frame,"
             f"aformat=sample_rates={settings.sample_rate}:channel_layouts=stereo,"
             f"adelay={delay}|{delay}"

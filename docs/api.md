@@ -1707,3 +1707,19 @@ asset / sequence 六种都覆盖到）；素材文件被挪走后 410 说得出�
 line / size+rows / project_id / revision / job_id 都覆盖到），九条正常调用（媒体配置、探测列表、缓存
 状态、两种 prune、导出根、ids、`.cube` 正常解析、工程打包、字幕读回）必须仍 200。变异测试四条红：
 把 `path=str(real)`、re-raise 里的 `path`+`suffix`、`line=number`、`size`/`rows` 任一个剥掉，门禁当场红。
+
+## 1.78 片段降噪：一个旋钮，只在导出里生效
+
+`ClipEffects.denoise`（0–24 dB，默认 0）是又一个「可 patch、不可打关键帧」的效果键，与
+`blur`/`sharpen` 同一族：导出侧在每条片段的音频链上、增益之前插一级
+`afftdn=nr=<db>:nf=-30.0`；`nf` 固定而不是用 FFmpeg 默认的 −50 dB——实测在「440 Hz 音 + 白噪声」
+的样片上，默认噪声底只让这个旋钮压掉 0.5 dB（等于挂个假旋钮），钉到 −30 dBFS 才做到 8.9 dB。
+`capabilities` 下发 `features.clip_denoise` 与 `limits.denoise_db = 24.0`，界面滑杆的上限就取自这里。
+
+浏览器预览不做降噪（没有等价的 FFT 降噪可跑），所以这一级与母带限制器同等待遇：**只在导出里生效，
+界面必须说出来**——滑杆后面写着「dB · 只在导出里生效，浏览器预览不降噪」，帮助里单列一条。
+
+验收 `tests/denoise_check.py` 量的就是那句承诺：同一条时间线渲染三次，只差旋钮，
+6 kHz 噪声带 −50.0 → −58.8 → −61.0 dBFS（0 / 12 / 24），440 Hz 音最多动 0.06 dB；
+旋钮回 0 时编译出的滤镜图里一个 `afftdn` 都没有；超上限 422 `INVALID_REQUEST`；
+`keyframe.set` 想给 `denoise` 打关键帧被拒。

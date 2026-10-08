@@ -261,6 +261,11 @@ function EffectsFields({ clip }: { clip: Clip }) {
   // 柔焦这一行没有 ◇ 关键帧按钮：导出侧的 gblur 没有逐帧半径，界面不能假装能给它做动画。
   // 上限完全由引擎下发的两个数决定（见 effects.ts 的 blurMaxPercent），界面不自己另写一套。
   const blurMax = blurMaxPercent(app.caps, project?.settings.height ?? 0);
+  // 降噪只有一条真实的路：导出。浏览器预览没有等价的 FFT 降噪，所以这一行必须自己说明白，
+  // 上限由引擎下发（capabilities.limits.denoise_db），界面不另写一套数。
+  const carriesAudio = asset?.kind === "audio"
+    || (asset?.kind === "video" && asset.verified?.has_audio === true && clip.embedded_audio !== false);
+  const denoiseCeiling = app.caps?.limits.denoise_db ?? 0;
   const sharpen = sharpenLimits(app.caps, project?.settings.height ?? 0);
   const stabBlock = stabilizeBlocked(clip);
   const outside = play.ticks < clip.position_ticks || play.ticks > clip.position_ticks + clip.duration_ticks;
@@ -323,6 +328,11 @@ function EffectsFields({ clip }: { clip: Clip }) {
           <span className="dim">% 高 · ≈{((effects.sharpen_radius ?? 0) * (project?.settings.height ?? 0)).toFixed(1)} px</span>
         </div>
       </> : null}
+      {carriesAudio && denoiseCeiling > 0 ? <div className="effect-row">
+        <label htmlFor="fx-denoise">降噪</label>
+        <EffectInput id="fx-denoise" value={effects.denoise ?? 0} min={0} max={denoiseCeiling} step={1} onCommit={(value) => setClipEffects(clip.id, { denoise: value })} />
+        <span className="dim">dB · 只在导出里生效，浏览器预览不降噪</span>
+      </div> : null}
     </fieldset>
     <div className="animation-head"><span className="panel-label">关键帧</span><span className="spacer" />
       <button className="btn tiny subtle" onClick={() => setGraphOpen(true)}>曲线编辑</button>

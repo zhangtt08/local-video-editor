@@ -1585,7 +1585,7 @@ export function importCaptions(srt: string) {
 export function addTextClip() {
   const project = state.project; if (!project) return;
   const trackId = newId("v-"); const assetId = newId("text-"); const clipId = newId("c-");
-  const clip: Clip = { id: clipId, track_id: trackId, asset_id: assetId, position_ticks: snapTo(project, "video", playhead.value), source_in_ticks: 0, duration_ticks: ticks(3), text: { body: "输入标题或字幕", font_size: .06, color: "#FFFFFF" }, effects: { x: 0, y: .35, scale: 1, rotation: 0, opacity: 1, gain: 1, blur: 0, sharpen: 0, sharpen_radius: .004 } };
+  const clip: Clip = { id: clipId, track_id: trackId, asset_id: assetId, position_ticks: snapTo(project, "video", playhead.value), source_in_ticks: 0, duration_ticks: ticks(3), text: { body: "输入标题或字幕", font_size: .06, color: "#FFFFFF" }, effects: { x: 0, y: .35, scale: 1, rotation: 0, opacity: 1, gain: 1, blur: 0, sharpen: 0, sharpen_radius: .004, denoise: 0 } };
   submit([trackAdd({ id: trackId, kind: "video", name: "文字" }), { op: "asset.register", asset: { id: assetId, kind: "text", label: "文字", reference: "generated:text" } }, clipAdd(clip)], "添加文字");
   set({ selectedClip: clipId, selectedAsset: null });
 }

@@ -43,11 +43,11 @@ export type Track = {
  * has no per-frame radius, so the soft focus is a static knob and `keyof Effects` is no longer the
  * same set as the animatable set. */
 export type AnimatedEffect = "x" | "y" | "scale" | "rotation" | "opacity" | "gain";
-export type Effects = { x: number; y: number; scale: number; rotation: number; opacity: number; gain: number; blur: number; sharpen: number; sharpen_radius: number };
+export type Effects = { x: number; y: number; scale: number; rotation: number; opacity: number; gain: number; blur: number; sharpen: number; sharpen_radius: number; denoise: number };
 export type MaskProperty = "mask_x" | "mask_y" | "mask_width" | "mask_height";
 export type Property = AnimatedEffect | MaskProperty;
 export type SampledValues = Record<AnimatedEffect, number> & { mask_x: number; mask_y: number; mask_width: number; mask_height: number };
-export const DEFAULT_EFFECTS: Effects = { x: 0, y: 0, scale: 1, rotation: 0, opacity: 1, gain: 1, blur: 0, sharpen: 0, sharpen_radius: 0.004 };
+export const DEFAULT_EFFECTS: Effects = { x: 0, y: 0, scale: 1, rotation: 0, opacity: 1, gain: 1, blur: 0, sharpen: 0, sharpen_radius: 0.004, denoise: 0 };
 export type GradeChannel = "rgb" | "red" | "green" | "blue";
 export type GradeCurvePoint = { x: number; y: number };
 export type BlendMode =
@@ -415,7 +415,7 @@ export type Capabilities = {
   max_commands_per_batch: number;
   commands: string[];
   features: Record<string, boolean>;
-  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number };
+  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; denoise_db?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number };
   render_presets: Preset[];
 };
 
