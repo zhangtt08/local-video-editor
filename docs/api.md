@@ -1863,7 +1863,9 @@ FFmpeg 的 `lutrgb`，`grade_tables` 出浏览器 `feComponentTransfer` 的 256 
 一条普通批次**，于是一个 revision、一份回执、一步撤销，`dry_run` 什么都不留，`apply=false` 只把
 命令交回来看。
 
-测量在 `autograde.py`：用同一支 FFmpeg 把片段自己的源区间解成不超过 `samples` 帧、宽 256 的 rgb24，
+测量在 `autograde.py`：用同一支 FFmpeg 把**片段真正播掉的那段源**解成不超过 `samples` 帧、宽 256 的
+rgb24（区间长度取自 `speed.consumed_source_ticks(clip, frame_ticks)`，与渲染器、时间线同一个权威：
+200% 的片段读两秒源，100% 的读一秒，变速曲线也算得出来），
 按 BT.601 权重算亮度直方图，取「两端各只有 `percentile` 份额像素落在其外」的那两个级。为什么用
 百分位而不是 min/max：一个镜面高光或一个坏点就能把白点定在 255，于是整张画面被压扁——剪映、
 达芬奇和 Photoshop 的一键拉伸同样是百分位拉伸。`frames`、`pixels`、`skipped_pixels`、分析尺寸与

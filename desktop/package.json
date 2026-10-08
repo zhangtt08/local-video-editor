@@ -1,6 +1,6 @@
 {
   "name": "agentcut-desktop",
-  "version": "1.83.0",
+  "version": "1.83.1",
   "private": true,
   "description": "AgentCut 桌面剪辑台（为 Agent 而生的本地剪辑软件）",
   "author": "AgentCut",

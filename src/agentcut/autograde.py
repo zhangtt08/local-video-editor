@@ -197,6 +197,8 @@ def measure(
         "pixels": total,
         "percentile": percentile,
         "skipped_pixels": skip,
+        "source_in_ticks": start_ticks,
+        "source_ticks": duration_ticks,
         "luma": _edges(luma, skip),
         "red": _edges(red, skip),
         "green": _edges(green, skip),
@@ -310,6 +312,12 @@ def _reported(measurement: dict, mode: str) -> dict:
         "pixels": measurement["pixels"],
         "percentile": measurement["percentile"],
         "skipped_pixels": measurement["skipped_pixels"],
+        # Say which slice of the source was read: a sped-up clip plays less of it, and whoever
+        # checks these numbers has to be able to see the window they came from.
+        "window": {
+            "source_in_ticks": measurement["source_in_ticks"],
+            "source_ticks": measurement["source_ticks"],
+        },
         "analysis": f"{measurement['analysis_width']}x{measurement['analysis_height']}",
         "bounds": {name: measurement[name] for name in keys},
     }

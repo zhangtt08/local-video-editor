@@ -82,6 +82,7 @@ from .masks import mask_image
 from .media import ALLOWED_SUFFIXES, PROXY_WIDTHS, MediaService
 from .projects import ProjectStore
 from .render import compile_render_plan, text_fonts_available
+from .speed import consumed_source_ticks
 from .subtitles import export_srt
 from .timeline import sequence_view, validate_timeline
 from .tracking import track_mask
@@ -717,6 +718,10 @@ def create_app(
                 asset_label=source.name,
             )
         settings = project.settings
+        # The window is what this clip actually *plays*: a 200 % clip reads half as much source, so
+        # measuring the timeline length would grade frames nobody ever sees. `consumed_source_ticks`
+        # is the renderer's own authority for that span, and it covers speed curves too.
+        source_ticks = consumed_source_ticks(clip, settings.frame_ticks)
         measurement = autograde_module.measure(
             engine.ffmpeg,
             source,
@@ -724,7 +729,7 @@ def create_app(
             asset.verified.height or settings.height,
             asset.verified.frame_rate or settings.frame_rate,
             clip.source_in_ticks,
-            clip.duration_ticks,
+            source_ticks,
             samples=request.samples,
             percentile=request.percentile,
         )

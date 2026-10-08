@@ -378,13 +378,85 @@ def main() -> None:
             blacks = {node["channel"]: node["black"] for node in levels_nodes}
             assert max(blacks.values()) - min(blacks.values()) > 0.02, blacks
 
+            # The window has to be the source the clip *plays*, not the timeline length — 1.83
+            # shipped that confusion, and this pair is what tells the two apart: at 200 % a
+            # one-second clip consumes two seconds, so it must see the bright second the 100 %
+            # clip never reaches.
+            halves = folder / "halves.mp4"
+            ffmpeg(
+                [
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    f"nullsrc=s={WIDTH}x{HEIGHT}:d=2:r=25,format=rgb24,"
+                    "geq=r='20+40*Y/(H-1)+160*gte(T,1)'"
+                    ":g='20+40*Y/(H-1)+160*gte(T,1)'"
+                    ":b='20+40*Y/(H-1)+160*gte(T,1)'",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    str(halves),
+                ]
+            )
+            halves_probe = media.import_file(str(halves))
+            current = store.get(project.id).revision
+            seeded = edit(
+                current,
+                [
+                    {
+                        "op": "asset.import",
+                        "asset_id": "hs",
+                        "label": "halves",
+                        "probe_id": halves_probe.id,
+                        "verified": halves_probe.verified.model_dump(),
+                    },
+                    {
+                        "op": "clip.add",
+                        "clip": {
+                            "id": "slow",
+                            "asset_id": "hs",
+                            "track_id": "v",
+                            "position_ticks": 6 * T,
+                            "duration_ticks": T,
+                        },
+                    },
+                    {
+                        "op": "clip.add",
+                        "clip": {
+                            "id": "fast",
+                            "asset_id": "hs",
+                            "track_id": "v",
+                            "position_ticks": 7 * T,
+                            "duration_ticks": T,
+                            "speed_percent": 200,
+                        },
+                    },
+                ],
+                "halves-seed",
+            )
+            at = seeded.json()["project"]["revision"]
+            slow = auto("slow", at, "auto-slow", mode="luma", percentile=0.0).json()
+            fast = auto("fast", at, "auto-fast", mode="luma", percentile=0.0).json()
+            slow_bounds = slow["auto_grade"]["measured"]["bounds"]["luma"]
+            fast_bounds = fast["auto_grade"]["measured"]["bounds"]["luma"]
+            assert slow_bounds[1] <= 72, f"100 % should read only its own second: {slow_bounds}"
+            assert fast_bounds[1] >= 198, f"200 % reads twice the source: {fast_bounds}"
+            slow_window = slow["auto_grade"]["measured"]["window"]
+            fast_window = fast["auto_grade"]["measured"]["window"]
+            assert fast_window["source_ticks"] == 2 * slow_window["source_ticks"], (
+                slow_window,
+                fast_window,
+            )
+            assert slow_window["source_in_ticks"] == fast_window["source_in_ticks"] == 0
+
             # No picture to measure, on either side of the definition.
             silent = auto("snd", 3, "snd", mode="luma")
             assert silent.status_code == 422, silent.text[:300]
             assert silent.json()["error"]["code"] == "AUTO_GRADE_INVALID"
             assert silent.json()["error"]["details"]["asset_kind"] == "audio"
             moved = edit(
-                3,
+                store.get(project.id).revision,
                 [
                     {
                         "op": "clip.move",
