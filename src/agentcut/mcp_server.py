@@ -4,6 +4,8 @@ Every tool here is a thin, typed pass-through: no editing, media or scheduling r
 re-implemented on this side, so an Agent and the desktop UI cannot diverge.
 """
 
+import base64
+import hashlib
 import json
 from typing import Any
 from urllib.parse import urlsplit
@@ -14,6 +16,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from .contracts import (
+    CachePrune,
     Clip,
     ClipStabilizeRequest,
     CreateProject,
@@ -31,6 +34,7 @@ from .contracts import (
     Project,
     ProjectUpdate,
     Property,
+    ProxyPrune,
     ReframeRequest,
     RenderBatch,
     RenderFit,
@@ -71,9 +75,9 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
     headers = {"Authorization": f"Bearer {token}"}
     server = FastMCP("AgentCut", instructions=INSTRUCTIONS)
 
-    async def call(
+    async def raw(
         method: str, path: str, payload: dict | None = None, timeout: float = 60
-    ) -> dict:
+    ) -> httpx.Response:
         try:
             async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as session:
                 response = await session.request(
@@ -94,7 +98,12 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
             except (ValueError, KeyError):
                 error = {"code": "API_ERROR", "message": f"API returned {response.status_code}"}
             raise ToolError(json.dumps(error, ensure_ascii=False))
-        return response.json()
+        return response
+
+    async def call(
+        method: str, path: str, payload: dict | None = None, timeout: float = 60
+    ) -> dict:
+        return (await raw(method, path, payload, timeout)).json()
 
     read = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
     write = ToolAnnotations(
@@ -198,6 +207,48 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         if revision is not None:
             query += f"&revision={revision}"
         return await call("GET", f"/v1/projects/{project_id}/captions/{track_id}{query}")
+
+    @server.tool(annotations=read)
+    async def preview_frame(
+        project_id: Identifier,
+        at_ticks: Ticks,
+        revision: Revision | None = None,
+        sequence_id: Identifier | None = None,
+    ) -> dict[str, Any]:
+        """Look at the composited picture at one integer tick -- the frame the export will contain.
+
+        These bytes come from the same renderer the exporter drives, so this is not a browser
+        approximation: a grade, a mask, a keyframe or a transition that is missing here is missing
+        from the delivered file. `at_ticks` is on the timeline being read -- pass `sequence_id` for
+        a nested composition -- and is clamped down to the frame grid, which the answer reports
+        back as `at_ticks`. The PNG is downscaled for transport (long edge 256 px, aspect ratio
+        kept); `sha256` covers exactly those bytes, so a client that cannot see images can still
+        prove a change moved the picture.
+        """
+        query = f"?at_ticks={at_ticks}" + ("" if revision is None else f"&revision={revision}")
+        if sequence_id is not None:
+            query += f"&sequence_id={sequence_id}"
+        response = await raw("GET", f"/v1/projects/{project_id}/frame{query}", timeout=600)
+        body = response.content
+        if body[:8] != b"\x89PNG\r\n\x1a\n":
+            raise ToolError(
+                json.dumps(
+                    {
+                        "code": "MEDIA_FAILED",
+                        "message": "the media engine returned something that is not a PNG frame",
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        return {
+            "png_base64": base64.b64encode(body).decode(),
+            "at_ticks": int(response.headers["x-frame-ticks"]),
+            "revision": int(response.headers["x-project-revision"]),
+            "width": int.from_bytes(body[16:20], "big"),
+            "height": int.from_bytes(body[20:24], "big"),
+            "bytes": len(body),
+            "sha256": hashlib.sha256(body).hexdigest(),
+        }
 
     @server.tool(annotations=read)
     async def clip_sample(
@@ -475,6 +526,29 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
     async def media_config() -> dict[str, Any]:
         """Media roots, cache dir, allowed extensions and ffmpeg availability."""
         return await call("GET", "/v1/media/config")
+
+    @server.tool(annotations=read)
+    async def media_cache_read() -> dict[str, Any]:
+        """What the derived cache holds right now: entries, bytes, and the budget it is kept under.
+
+        Filmstrip tiles, waveform peaks and playback proxies are derived data — nothing here is a
+        person's edit, and anything missing is rebuilt on demand.
+        """
+        return await call("GET", "/v1/media/cache")
+
+    @server.tool(annotations=write)
+    async def media_cache_prune(request: CachePrune) -> dict[str, Any]:
+        """Bound the whole derived cache, dropping whole entries least-recently-used first.
+
+        `dry_run` returns the same plan without deleting anything, and `keep` protects the hashes
+        still being looked at. This is disk housekeeping: it cannot change a project or a revision.
+        """
+        return await call("POST", "/v1/media/cache/prune", request.model_dump(mode="json"))
+
+    @server.tool(annotations=write)
+    async def media_proxies_prune(request: ProxyPrune) -> dict[str, Any]:
+        """Drop playback proxies down to a byte budget, keeping the originals untouched."""
+        return await call("POST", "/v1/media/proxies/prune", request.model_dump(mode="json"))
 
     @server.tool(annotations=read)
     async def render_presets_read() -> dict[str, Any]:

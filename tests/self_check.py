@@ -1,6 +1,8 @@
 """One runnable acceptance check: actual HTTP process + official MCP stdio client."""
 
 import asyncio
+import base64
+import hashlib
 import json
 import os
 import shutil
@@ -407,6 +409,10 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
                 "output_root_add",
                 "output_roots_read",
                 "clip_silence",
+                "preview_frame",
+                "media_cache_read",
+                "media_cache_prune",
+                "media_proxies_prune",
                 "clip_loudness",
                 "track_loudness",
                 "track_silence",
@@ -440,6 +446,15 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
             for voiced in ("clip_loudness", "track_loudness", "track_silence"):
                 assert tools[voiced].annotations.readOnlyHint is True, voiced
                 assert "sequence_id" in json.dumps(tools[voiced].inputSchema), voiced
+            # 1.80: an Agent could not see the timeline at all -- /frame was the desktop's
+            # private view -- and could not read or bound the derived cache either.
+            assert tools["preview_frame"].annotations.readOnlyHint is True
+            assert "sequence_id" in json.dumps(tools["preview_frame"].inputSchema)
+            assert "at_ticks" in json.dumps(tools["preview_frame"].inputSchema)
+            assert tools["media_cache_read"].annotations.readOnlyHint is True
+            assert tools["media_cache_prune"].annotations.destructiveHint is True
+            assert "dry_run" in json.dumps(tools["media_cache_prune"].inputSchema)
+            assert "max_bytes" in json.dumps(tools["media_proxies_prune"].inputSchema)
             assert "target_lufs" in json.dumps(tools["clip_loudness"].inputSchema)
             assert "threshold_db" in json.dumps(tools["track_silence"].inputSchema)
             assert tools["lut_parse"].annotations.readOnlyHint is True
@@ -641,6 +656,7 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
             if ffmpeg and ffprobe:
                 await cut_through_mcp(session, media_root, ffmpeg, ffprobe)
                 await analysis_through_mcp(session, media_root, ffmpeg)
+                await frame_through_mcp(session, media_root, ffmpeg)
 
 
 async def call_ok(session, tool, arguments):
@@ -1289,6 +1305,192 @@ async def analysis_through_mcp(session, media_root, ffmpeg):
     for clip_id, wanted in moved.items():
         assert comp_clips[clip_id]["effects"]["gain"] == wanted, (clip_id, wanted)
     assert document["clips"]["mcn"]["effects"]["gain"] == 1.0, document["clips"]["mcn"]
+
+
+async def frame_through_mcp(session, media_root, ffmpeg):
+    """1.80: 让 Agent 看得见成片画面，也管得动派生缓存。
+
+    The bytes come from the exporter's own renderer, so a change that leaves this picture alone
+    leaves the delivered file alone too. The sha256 is what makes the claim checkable for a client
+    that cannot see images: "did my edit do anything?" becomes a comparison, and "did pruning the
+    cache change the cut?" becomes the same comparison after the delete.
+    """
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    source = media_root / "mcp-frame.mp4"
+    subprocess.run(
+        [
+            ffmpeg,
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=320x180:rate=30:duration=2",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-an",
+            str(source),
+        ],
+        check=True,
+        creationflags=flags,
+    )
+    probe = await call_ok(session, "media_import", {"request": {"path": str(source)}})
+    record = probe.structuredContent
+    created = await call_ok(
+        session,
+        "project_create",
+        {
+            "request": {
+                "request_id": "mcp-frame-new",
+                "name": "MCP 画面",
+                "settings": {
+                    "width": 320,
+                    "height": 180,
+                    "frame_rate": {"numerator": 30, "denominator": 1},
+                },
+            }
+        },
+    )
+    pid = created.structuredContent["project"]["id"]
+    revision = created.structuredContent["project"]["revision"]
+    verified = record["verified"]
+    verified["probe_id"] = record["id"]
+    seeded = await call_ok(
+        session,
+        "timeline_edit",
+        {
+            "project_id": pid,
+            "request": edit(
+                "mcp-frame-seed",
+                revision,
+                [
+                    {"op": "track.add", "track": {"id": "fv", "kind": "video", "name": "画面"}},
+                    {
+                        "op": "asset.import",
+                        "asset_id": "fa",
+                        "label": "fa",
+                        "probe_id": record["id"],
+                        "verified": verified,
+                    },
+                    {
+                        "op": "clip.add",
+                        "clip": {
+                            "id": "fc",
+                            "asset_id": "fa",
+                            "track_id": "fv",
+                            "position_ticks": 0,
+                            "duration_ticks": 2 * TIMEBASE,
+                        },
+                    },
+                ],
+            ),
+        },
+    )
+    revision = seeded.structuredContent["project"]["revision"]
+
+    first = await call_ok(session, "preview_frame", {"project_id": pid, "at_ticks": TIMEBASE // 2})
+    frame = first.structuredContent
+    raw = base64.b64decode(frame["png_base64"])
+    assert raw[:8] == b"\x89PNG\r\n\x1a\n", frame
+    assert frame["sha256"] == hashlib.sha256(raw).hexdigest(), frame["sha256"]
+    assert frame["bytes"] == len(raw), frame
+    assert frame["at_ticks"] == TIMEBASE // 2, frame  # 0.5 秒在 30fps 上就是一帧边界
+    # 传输上限：长边 256，宽高比保持（320x180 的工程量到 256x144）
+    assert (frame["width"], frame["height"]) == (256, 144), frame
+    assert frame["width"] * 180 == frame["height"] * 320, frame
+    assert frame["revision"] == revision, frame
+
+    # 夹到整帧网格：多给一 tick，报回来的是真正取样那一帧，像素也必须是同一帧
+    clamp = await call_ok(
+        session, "preview_frame", {"project_id": pid, "at_ticks": TIMEBASE // 2 + 1}
+    )
+    assert clamp.structuredContent["at_ticks"] == TIMEBASE // 2, clamp.structuredContent
+    assert clamp.structuredContent["sha256"] == frame["sha256"], "two samples of one frame differ"
+
+    base0 = await call_ok(session, "preview_frame", {"project_id": pid, "at_ticks": 0})
+    moved = await call_ok(
+        session,
+        "timeline_edit",
+        {
+            "project_id": pid,
+            "request": edit(
+                "mcp-frame-move",
+                revision,
+                [{"op": "clip.patch", "clip_id": "fc", "effects": {"x": 0.4}}],
+            ),
+        },
+    )
+    revision = moved.structuredContent["project"]["revision"]
+    second = await call_ok(session, "preview_frame", {"project_id": pid, "at_ticks": 0})
+    assert second.structuredContent["revision"] == revision, second.structuredContent
+    assert second.structuredContent["sha256"] != base0.structuredContent["sha256"], (
+        "a 40 % sideways shift changed nothing on the composited frame"
+    )
+
+    nested = await call_ok(
+        session,
+        "timeline_edit",
+        {
+            "project_id": pid,
+            "request": edit(
+                "mcp-frame-nest",
+                revision,
+                [
+                    {
+                        "op": "sequence.nest",
+                        "clip_ids": ["fc"],
+                        "name": "特写",
+                        "sequence_id": "fs",
+                        "asset_id": "fseq",
+                        "clip_id": "fcn",
+                    }
+                ],
+            ),
+        },
+    )
+    revision = nested.structuredContent["project"]["revision"]
+    inside = await call_ok(
+        session, "preview_frame", {"project_id": pid, "at_ticks": 0, "sequence_id": "fs"}
+    )
+    outside = await call_ok(session, "preview_frame", {"project_id": pid, "at_ticks": 0})
+    assert inside.structuredContent["revision"] == revision, inside.structuredContent
+    assert inside.structuredContent["width"] == 256, inside.structuredContent
+    # 外层看的是容器，合成里看的是那条片段：同一个 tick，两种视角，画面应当一致
+    assert inside.structuredContent["sha256"] == outside.structuredContent["sha256"], (
+        inside.structuredContent["sha256"],
+        outside.structuredContent["sha256"],
+    )
+
+    cache = (await call_ok(session, "media_cache_read", {})).structuredContent
+    assert cache["limit_bytes"] > 0 and isinstance(cache["entries"], list), cache
+    used = cache["used_bytes"]
+    plan = (
+        await call_ok(
+            session,
+            "media_cache_prune",
+            {"request": {"max_bytes": 0, "keep": [], "dry_run": True}},
+        )
+    ).structuredContent
+    assert plan["dry_run"] is True, plan
+    assert plan["used_bytes_after"] == plan["used_bytes_before"] - plan["freed_bytes"], plan
+    assert plan["used_bytes_before"] == used, (plan, used)
+    after_dry = (await call_ok(session, "media_cache_read", {})).structuredContent
+    assert after_dry["used_bytes"] >= used, "a dry run deleted cache entries"
+    if plan["removed"]:
+        done = (
+            await call_ok(session, "media_cache_prune", {"request": {"max_bytes": 0}})
+        ).structuredContent
+        assert done["dry_run"] is False and done["freed_bytes"] == plan["freed_bytes"], done
+        after = (await call_ok(session, "media_cache_read", {})).structuredContent
+        assert after["used_bytes"] <= used - plan["freed_bytes"], (after["used_bytes"], used)
+    rebuilt = await call_ok(session, "preview_frame", {"project_id": pid, "at_ticks": 0})
+    assert rebuilt.structuredContent["sha256"] == outside.structuredContent["sha256"], (
+        "pruning the derived cache changed what the timeline looks like"
+    )
+    await call_ok(session, "media_proxies_prune", {"request": {"max_bytes": 0}})
 
 
 @contextmanager

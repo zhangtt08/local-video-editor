@@ -23,6 +23,12 @@ HTTP 使用 `Authorization: Bearer <AGENTCUT_TOKEN>`。JSON 请求严格校验�
 | POST /v1/projects/{id}/speech-captions | captions_auto | 本地语音识别成字幕线索并取回 `captions.import` 计划（`apply`/`dry_run` 在该工具里固定为 false） |
 | `clip.slip` / `clip.slide`（`/edits`） | timeline_edit | 划动素材窗口 / 左右滑移，两侧相邻段各自补让 |
 | POST /v1/projects/{id}/clips/{c}/track | clip_track | 分析画面并把遮罩路径一次写成关键帧（与 `/edits` 同一事务语义） |
+| GET /v1/projects/{id}/frame | preview_frame | 取成片的一帧：导出渲染器算出的 PNG（长边压到 256 便于传输，宽高比不变），附 `sha256` 与真正取样的 tick；`sequence_id` 取合成里的画面 |
+| GET /v1/media/cache | media_cache_read | 派生缓存清单：条目、字节、上限 |
+| POST /v1/media/cache/prune | media_cache_prune | 按预算整项淘汰派生缓存（LRU），`dry_run` 先看会删什么、`keep` 保护正在看的哈希 |
+| POST /v1/media/proxies/prune | media_proxies_prune | 只清播放代理，原片与工程文件不动 |
+
+另有十条路由刻意没有 MCP 工具，因为它们是**给浏览器看的字节流或整包文件**，不是一条命令语义：`POST /v1/mask/preview`（界面用来画遮罩的位图）、`GET /v1/media/{probe_id}/stream` 与 `/file/{name}`、`GET /v1/assets/{asset_id}/stream` 与 `/proxy/stream`（`<img>`/`<video>` 直接放的流，Agent 侧由 `project_asset_urls` 给签名 URL）、`GET`/`POST /v1/projects/{id}/assets/{id}/proxy`（代理的读取与重建）、`GET /v1/projects/{id}/bundle` 与 `POST /v1/bundle`（整个工程 zip 的下载与上传）。这不是缺口：Agent 要判断画面用 `preview_frame`，要引用素材用签名 URL，要搬工程仍走界面或 CLI。
 
 MCP Resource 为 `project://{id}`，返回当前 JSON 项目。MCP 工具结果有 structuredContent 和兼容文本；工具失败设置 isError=true，文本中包含领域错误代码。edit/restore 使用 destructiveHint=true，因为可能删除或替换现有剪辑内容。
 
@@ -1778,3 +1784,25 @@ line / size+rows / project_id / revision / job_id 都覆盖到），九条正常
   `KeyError`；把路由的点名包装换成裸 `raise` → `clip_id` 消失；删掉 `SUBTITLES_MODEL_MISSING` 的新
   details → `language` 消失；把整轨的 `skipped` 分支换成裸 `raise` → 一条静音片段又能拖垮整轨，红在
   那句 `status == 200`。全部还原后 `git status src` 只剩本轮该改的文件。
+
+
+## 1.80 Agent 看得见成片画面，也管得动派生缓存
+
+- 还是那句尺子：人有按钮、Agent 够不着，就是缺陷。`GET /v1/projects/{id}/frame` 是界面预览每一帧的
+  来源，Agent 侧却一个工具都没有——它能写关键帧、遮罩、调色，却没有任何办法确认画面真的动了；
+  `/v1/media/cache` 与两个 prune 也一样，缓存配额是 1.44 就交付的能力，界面有「清理缓存」按钮，
+  Agent 连读都读不到。
+- 新增四个工具：`preview_frame`（只读）、`media_cache_read`（只读）、`media_cache_prune`、
+  `media_proxies_prune`。工具集合 43 → 47，`tests/self_check.py` 的精确相等断言继续把关。适配层
+  仍不写规则：帧字节来自 `MediaService.render_frame`，也就是导出用的那条编译链，不是第二套预览。
+- 为什么值得给 Agent 一帧：`tests/self_check.py` 的 `frame_through_mcp` 量的不是「有没有图」，
+  而是三条可判定的事实。① 同一帧取两次必须一模一样——请求 `TIMEBASE/2 + 1` 时引擎报回
+  `at_ticks = 35,280,000`（正是 0.5 秒那一帧）且 sha256 与上一张逐字节相同；② 把片段横向 `x=0.4`
+  之后，同一个 tick 的哈希必须变（没变就说明这次编辑在画面上是空的）；③ 片段进合成之后，
+  在合成里取的帧与在外层看容器的帧是同一幅画（哈希相等），清完派生缓存再取还是同一幅画。
+- 实测的形状写进 docstring，不让人猜：320×180 的工程，回的是 **256×144** PNG（长边 256 的传输上限，
+  宽高比严格保持），`bytes` 14,455，`revision` 就是渲染那一次的 revision。
+- 缓存一侧钉的是「dry run 不删、真删能回来」：`media_cache_read` 的 `used_bytes` 与 prune 报的
+  `used_bytes_before` 相等；`dry_run=true` 之后库里的字节数不减（`>=`，因为同进程其它请求可能新增），
+  真删之后 `used_bytes <= before - freed`，且随后那一帧的哈希与删之前一致——派生数据删得掉也长得回来。
+- 界面零改动（帮助新增「Agent·看得见画面」一条）。契约、reducer、capabilities、工程 schema 不动。
