@@ -179,7 +179,7 @@ desktop/         electron/（无边框窗口 + 引擎生命周期） src/（Reac
 design/          旧静态设计稿；现行深色工作台以 desktop/src/ 为准
 examples/        Agent 调用示例与 MCP 配置模板
 docs/            architecture / api / decisions / agent-tasks / validation
-tests/           self_check.py（HTTP + MCP） suite_check.py（逐个跑 59 项 *_check.py） media_check.py（真实媒体） editing_check.py（编辑/动画/字幕/变速/像素） matrix_check.py（52 种命令的可靠性扫面）
+tests/           self_check.py（HTTP + MCP） suite_check.py（逐个跑 60 项 *_check.py） media_check.py（真实媒体） editing_check.py（编辑/动画/字幕/变速/像素） matrix_check.py（53 种命令的可靠性扫面）
 scripts/         build_engine.py（打包引擎） build_icon.py（生成图标）
 ```
 

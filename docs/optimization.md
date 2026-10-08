@@ -2564,3 +2564,27 @@ sigma；回执锚点再加两条，确认「只写默认值的新键」不会把
   「引擎在线 v1.73.0」（`AgentCut-1.73-原生窗口.png`），关闭无残留。便携版 189,759,642 字节
   SHA256 `917AC9A5106719BAA4AEEA363FCD8EFF24E376B4A6ACC43B867F74817A7D5ADC`；安装版 189,920,367
   字节 SHA256 `38589F243D1197D116D360DCFA6C16D45E13B34998A0789CEFBA1B2D6C45EAD8`。
+
+## 稳定性记录恒为真：新增 record_check.py 门禁（2026-10-08，仅测试）
+
+- 1.69 起 `Clip.stabilization` 成了承重状态：它是「再按一次是替换」的依据、是变速与重构图的锁、
+  也是界面那句「已稳定 · 强度 …」的出处。一句会过期的说法比没有说法更坏，所以这轮不新增功能，
+  把「记录必须为真」这条不变量钉成永久门禁 `tests/record_check.py`（不碰媒体，0.2 秒）。
+- 四条断言族，全部走 reducer 与计划函数本体，不复制判断：① 8 条普通片段命令（移动/滑移/裁头/
+  effects/patch/淡入淡出/手动关键帧/遮罩中心关键帧）之后记录与其四条曲线都还在；② `clip.speed`
+  200% 与 50%、`clip.speed_curve`、`reframe.plan` 四条都必须以 STABILIZE_LOCKED 命名拒绝，而
+  100% 必须通过（不是改动就不该锁）；③ 用 `keyframes.remove` 清空那四条曲线，记录必须随之消失、
+  两把锁必须一起松开（变速回 200% 通过、重构图改由它自己的理由 INVALID_REFRAME 拒绝），只删一个
+  点则记录仍在，`clip.stabilize_record` 显式清空不动曲线；④ 分割与嵌套：两半都保住记录，且
+  右半在自己的局部 0..30 帧上采样到整条片段当年在同一画面帧上的值（`sample()` 逐项比对，容差
+  1e-9），合成内部的片段回答同一条拒绝。
+- 变异测试五条红：拆掉 1.71 收尾 → 「the record outlived every curve it described」；拆掉变速锁 →
+  「clip.speed 200 was accepted」；拆掉变速曲线锁 → 「clip.speed_curve was accepted」；拆掉重构图锁 →
+  「clip.reframe refused as INVALID_REFRAME」；把分割的 `animation_offset_ticks + start` 改成不推进
+  时钟 → 相位断言当场红。全部还原后 `git status src` 干净。
+- 踩到两条自己的坑，记下来：断言写成「右半最早的 x 点应在局部 0」是错的——曲线存在绝对动画时钟上，
+  整条片段前半的那个点本来就留在左半，正确的问法是采样值而不是点的位置；变异脚本用文本模式读写
+  源码，把 `reframe.py` 的 LF 换成了 CRLF，`git status` 从此一直显示 M（`git diff` 是空的），改成
+  字节读写并从索引 blob 复原。
+- 套件因此从 59 项变 60 项，README 那行同时把 matrix 的形状数按实测改成 53。仅测试与文档，不动
+  发布物，因此不涨版本号、不重打包。验收：`ruff check`/`format --check` 全绿，串行套件 **60/60**。
