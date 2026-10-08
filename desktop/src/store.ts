@@ -601,7 +601,7 @@ export async function stabilizeClip(clipId: string, strength = 1, maxCrop = 0.1)
       written_points?: number; measured_travel?: number[]; translation_correction?: number;
       roll_correction?: number; replaces_previous?: boolean; removed_points?: number;
       zoom_to_hide_borders?: number; clamped_axes?: number; dropped_frames?: number;
-      warning?: string; note?: string;
+      analysed_frames?: number; warning?: string; note?: string;
     } | undefined;
     const next = (done as { project?: Project }).project;
     if (!stats || !next) return;
@@ -628,7 +628,11 @@ export async function stabilizeClip(clipId: string, strength = 1, maxCrop = 0.1)
         : `写入 ${stats.written_points} 个关键点，抵消掉 ${stats.translation_correction?.toFixed(3) ?? "?"}`,
       `放大 ${stats.zoom_to_hide_borders?.toFixed(3) ?? "?"} 倍盖住边上`,
       stats.roll_correction ? `顺手把 ${stats.roll_correction.toFixed(2)}° 的滚动也压了回去` : "",
-      stats.warning ?? (stats.dropped_frames ? `${stats.dropped_frames} 帧没跟上，已按前后插值` : ""),
+      stats.clamped_axes ? `${stats.clamped_axes} 个方向超出了允许裁切，那部分抖动留在画面里；把裁切放宽或只稳一小段` : "",
+      stats.analysed_frames && stats.written_points && stats.written_points < stats.analysed_frames
+        ? `这段的关键帧只剩 ${stats.written_points} 个点的位置（量到 ${stats.analysed_frames} 帧），比一帧一个点粗，抖动会剩一些`
+        : "",
+      stats.dropped_frames ? `${stats.dropped_frames} 帧没跟上，已按前后插值` : "",
     ].filter(Boolean).join(" · ");
     toast("ok", "画面稳定已写入", `${detail}。撤销一步回到稳定前。`);
   } catch (error) {

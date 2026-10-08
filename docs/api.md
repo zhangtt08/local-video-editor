@@ -1576,3 +1576,28 @@ revision 变化、只带测量结果。
 断言 40 个 tick 一个不缺、`kept_frames=20`、`replaced_frames=20`、`seam_ticks` 是一帧、
 `seam_jump` 小于 0.012 画面宽，并且**全部 40 个点仍然落在解析轨迹上**（拼接没有把路径拧弯）；
 `merge=false` 的那一次则只剩后 20 帧。两条断言在 merge 落地前都是红的。
+
+## 1.73 关键帧预算按片段剩余空间算：挤满的片段也能稳，只是会说清楚
+
+每个片段的曲线总数上限是 2000（`Clip.keyframes` 的契约长度）。重构图早就按剩余空间自适应补点
+（`room = (KEYFRAME_LIMIT - len(clip.keyframes)) // 3`），稳定没有：它固定写
+`min(240, 2000 // 3)` 个点。于是跟过遮罩、压过闪避、K 过淡入淡出的片段——曲线本来就多——再点一次
+「画面稳定」，整批命令在落库时被契约拒绝，回的是 `PROJECT_LIMIT`「project exceeds the supported
+contract limits」，`details` 是空的：不说哪条片段、不说超了多少、也不说能怎么办。实测：一条已经挂着
+1950 个不透明关键帧的片段，稳定写 59+59+2 个点 → 2070 → `PROJECT_LIMIT`。
+
+1.73 起稳定的预算与重构图同源：稳定要重写的那四条曲线（`x`/`y`/`rotation`/`scale`）上的旧点会被替换，
+所以不计入占用；其余曲线计入，`scale` 那两个固定点也不参与抽稀。
+`budget = max(2, min(240, (2000 - 其他曲线数 - 2) // 3))`。上一条 1950 点的片段现在写
+16 点/曲线，总计 1984 < 2000，一次点击就成功。
+
+剩下两种情况必须说话，不能沉默：
+- **抽稀了**（`budget < 量到的帧数`）：`stabilization.warning` 说明「只剩 N 个点的位置、量到 M 帧，
+  比一帧一个点粗，抖动会剩一些」，并给出两条出路（清掉别的曲线 / 只稳一小段）。界面提示用同样的两个
+  数字自己拼中文句子，不再把英文原文塞进提示里；`clamped_axes` 那句也一并中文化。
+- **真的一点位置都没有**（`available < 6`）：`STABILIZE_FAILED`，`details` 带上
+  `kept_keyframes` 与 `keyframe_limit` 两个数，消息里说的是「这条片段已占 N 条曲线、上限 2000」。
+
+验收（并入 `tests/stabilize_check.py`）：给一条干净片段先写 1950 个 `opacity` 点，再稳定 —— 必须
+200，`written_points == keyframe_budget == (2000-1950)//3 == 16`，回读关键帧总数 1984 < 2000，
+并且回复里带着那条抽稀警告。这条断言在预算改动前是红的，红的输出就是 `PROJECT_LIMIT` 本身。

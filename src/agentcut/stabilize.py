@@ -298,6 +298,25 @@ def plan(
     roll_residual = [
         strength * (roll - base) for roll, base in zip(rolls, _smooth_series(rolls, radius))
     ]
+    # The four curves this run writes replace whatever was on them, so only the clip's *other*
+    # keyframes count against the per-clip cap. Ignoring them made a nearly-full clip fail as an
+    # opaque `PROJECT_LIMIT` with no number in it; thinning to fit is what the reframe already does.
+    kept = sum(
+        1 for point in clip.keyframes if point.property not in {"x", "y", "rotation", "scale"}
+    )
+    available = KEYFRAME_LIMIT - kept - 2  # the two static `scale` points are not thinned
+    if available < 6:
+        raise EditorError(
+            "STABILIZE_FAILED",
+            f"this clip already carries {kept} keyframes and the per-clip cap is {KEYFRAME_LIMIT}, "
+            f"so there is no room left for a correction: clear some of the clip's other curves, or "
+            "stabilise a shorter stretch",
+            422,
+            clip_id=clip_id,
+            kept_keyframes=kept,
+            keyframe_limit=KEYFRAME_LIMIT,
+        )
+    budget = max(2, min(MAX_POINTS, available // 3))
     if strength == 0.0:
         # Nothing to write: a zero-valued keyframe in every frame is noise in the project, not a
         # gentler correction. On a clip the stabiliser already owns this is the affordance for
@@ -318,7 +337,7 @@ def plan(
                 "written_points": 0,
                 "removed_points": len(removed),
                 "replaces_previous": True,
-                "keyframe_budget": min(MAX_POINTS, KEYFRAME_LIMIT // 3),
+                "keyframe_budget": budget,
                 "measured_travel": [
                     round(max(abs(point[0]) for point in offsets), 6),
                     round(max(abs(point[1]) for point in offsets), 6),
@@ -341,7 +360,7 @@ def plan(
         return [], {
             "smoothing_radius_frames": radius,
             "written_points": 0,
-            "keyframe_budget": min(MAX_POINTS, KEYFRAME_LIMIT // 3),
+            "keyframe_budget": budget,
             "measured_travel": [
                 round(max(abs(point[0]) for point in offsets), 6),
                 round(max(abs(point[1]) for point in offsets), 6),
@@ -358,7 +377,6 @@ def plan(
             "dropped_frames": motion["dropped_frames"],
             "note": "strength 0 leaves the shot exactly as it was filmed; nothing was written",
         }
-    budget = min(MAX_POINTS, KEYFRAME_LIMIT // 3)
     # Sampled evenly rather than at every extremum: the residual is smooth by construction, so a
     # uniform pick is what the renderer's linear interpolation between keyframes reproduces best.
     picks = sorted({round(index * (len(residual) - 1) / (budget - 1)) for index in range(budget)})
@@ -477,10 +495,21 @@ def plan(
         "analysed_frames": motion["analysed_frames"],
         "dropped_frames": motion["dropped_frames"],
     }
+    warnings: list[str] = []
+    if budget < len(residual):
+        # Thinning is a real loss: a per-frame jolt cannot be cancelled by 16 points, so the reply
+        # says what was given up instead of letting the number speak for itself.
+        warnings.append(
+            f"this clip only had room for {budget} of the {len(residual)} measured frames, so the "
+            "correction is sampled coarser than the shake: clear some of the clip's other curves, "
+            "or stabilise a shorter stretch to get the full rate back"
+        )
     if clamped:
-        notes["warning"] = (
+        warnings.append(
             f"{clamped} of {len(residual) * 2} measured axes wanted more than {max_crop:g} of the "
             "frame: the jitter is removed only as far as that crop allows, so some of it stays in "
             "the picture. Raise max_crop, or stabilise a shorter stretch."
         )
+    if warnings:
+        notes["warning"] = " ".join(warnings)
     return commands, notes

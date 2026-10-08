@@ -2536,3 +2536,31 @@ sigma；回执锚点再加两条，确认「只写默认值的新键」不会把
   （`AgentCut-1.72-原生窗口.png`），关闭后无残留。便携版 189,760,141 字节 SHA256
   `A41571C24ADA9E6A12C8713630A1687FECE2C0E4F25D842A7945EF5B02F1D91E`；安装版 189,920,861 字节
   SHA256 `74C745D8C8E6AF64FA9FCF25912A9DB8F66FA507C4E14B92A17A86BB5E365966`。
+
+## 1.73.0 关键帧预算按片段剩余空间算（2026-10-08）
+
+- 缺陷由「同一族功能不对称」看出：重构图 1.4x 起就按 `(KEYFRAME_LIMIT - len(clip.keyframes)) // 3`
+  自适应补点，稳定却固定写 `min(240, 2000//3)` 个/曲线。跟过遮罩、压过闪避、K 过淡入淡出的片段曲线
+  本来就多，再点「画面稳定」会在落库时被契约拒绝，回的是 `PROJECT_LIMIT`「project exceeds the
+  supported contract limits」+ 空 `details`——不说哪条片段、不说超多少、不说怎么办。实测：一条挂着
+  1950 个 opacity 点的片段，稳定写 59+59+2 → 2070 → 空壳错误。
+- 修法与重构图同源：稳定要重写的那四条曲线上的旧点会被整条替换，所以不计入占用；其余曲线计入，
+  `scale` 那两个固定点不参与抽稀。`budget = max(2, min(240, (2000 - 其他曲线数 - 2) // 3))`。
+  1950 点的片段现在写 16 点/曲线、总计 1984 < 2000，一次点击就成。
+- 两种损失必须说话：抽稀了就在 `stabilization.warning` 里写清「只剩 N 个点的位置、量到 M 帧，比一帧
+  一个点粗，抖动会剩一些」并给出路；一点位置都没有（`available < 6`）是 `STABILIZE_FAILED`，
+  `details` 带 `kept_keyframes` 与 `keyframe_limit` 两个数。界面提示不再把英文原文塞进 toast，改成用
+  同样的数字自己拼中文句子（`clamped_axes` 那句一并中文化）。
+- 门禁先红后绿：`tests/stabilize_check.py` 新增一条 `crowded` 片段（挂在所有被量窗口之后），先写
+  1950 个 opacity 点再稳定，断言 200、`written_points == keyframe_budget == 16`、回读总数 1984、
+  回复带抽稀警告。改动前红在那句 `PROJECT_LIMIT` 上。
+- 包内实测（`package_check_173.py`，实例 `4d1d0663d3d9`）：1950 曲线的片段抽稀到 16 点/曲线、1984 总
+  数、warning 里是「room for 16 of the 60 measured frames」；另一条塞到 1995 点的片段得到
+  `STABILIZE_FAILED` 且 `details` 是 `{kept_keyframes: 1995, keyframe_limit: 2000}`，head 不动。
+  夹具上的一个实话：第二例必须换一条片段——第一条已经带着自己的 36 条抵消曲线，再往里塞就先把
+  `keyframes.replace` 那一批撑爆了。
+- `ruff`、`npm run typecheck`、11 项桌面 TS、串行套件 **59/59**（`SUITE=0`）全绿；
+  `build_engine.py`（`FREEZE=0`）+ `npm run dist`（`DIST=0`）；原生窗口 1480×900 标题栏
+  「引擎在线 v1.73.0」（`AgentCut-1.73-原生窗口.png`），关闭无残留。便携版 189,759,642 字节
+  SHA256 `917AC9A5106719BAA4AEEA363FCD8EFF24E376B4A6ACC43B867F74817A7D5ADC`；安装版 189,920,367
+  字节 SHA256 `38589F243D1197D116D360DCFA6C16D45E13B34998A0789CEFBA1B2D6C45EAD8`。

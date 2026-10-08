@@ -298,6 +298,16 @@ def main() -> None:
             {
                 "op": "clip.add",
                 "clip": {
+                    "id": "crowded",
+                    "asset_id": "shake",
+                    "track_id": "h1",
+                    "position_ticks": 4 * int(SECONDS * T),
+                    "duration_ticks": int(SECONDS * T),
+                },
+            },
+            {
+                "op": "clip.add",
+                "clip": {
                     # A clip no stabiliser has ever touched: the only way to make the engine meet a
                     # hand-keyed move it cannot claim as its own. Placed after every window the
                     # render assertions measure — a picture stacked over them would be what gets
@@ -1080,6 +1090,53 @@ def main() -> None:
                 "clearing that one keyframe lets the same press through"
             )
             head = steady["project"]["revision"]
+
+            # A clip is capped at 2000 keyframes in total. The reframe accounts for what is already
+            # on the clip; the stabiliser has to do the same, or a nearly-full clip gets an opaque
+            # contract error instead of an honest thinning.
+            crowded = client.post(
+                f"/v1/projects/{project.id}/edits",
+                json={
+                    "request_id": "crowd",
+                    "expected_revision": head,
+                    "commands": [
+                        {
+                            "op": "keyframes.replace",
+                            "clip_id": "crowded",
+                            "property": "opacity",
+                            "keyframes": [
+                                {
+                                    "property": "opacity",
+                                    "at_ticks": index * 1000,
+                                    "value": 1.0,
+                                    "interpolation": "linear",
+                                }
+                                for index in range(1950)
+                            ],
+                        }
+                    ],
+                },
+            ).json()
+            assert "project" in crowded, json.dumps(crowded)[:200]
+            head = crowded["project"]["revision"]
+            assert len(crowded["project"]["clips"]["crowded"]["keyframes"]) == 1950
+            tight_room = client.post(
+                f"/v1/projects/{project.id}/clips/crowded/stabilize",
+                json={"request_id": "crowded-press", "expected_revision": head},
+            )
+            assert tight_room.status_code == 200, tight_room.text[:240]
+            written = tight_room.json()["project"]["clips"]["crowded"]["keyframes"]
+            assert len(written) < 2000, len(written)
+            notes = tight_room.json()["stabilization"]
+            assert notes["written_points"] == notes["keyframe_budget"], notes
+            assert notes["keyframe_budget"] == (2000 - 1950) // 3, notes
+            assert "warning" in notes, notes
+            print(
+                f"   a clip already holding 1950 curves still gets steadied: the run thinned "
+                f"itself to {notes['written_points']} points per curve "
+                f"({len(written)} keyframes in total, cap 2000)"
+            )
+            head = tight_room.json()["project"]["revision"]
 
             # A record is a claim about curves that exist. Wipe them with ordinary keyframe commands
             # and the claim has to go with them — otherwise the row still says 已稳定, the speed and
