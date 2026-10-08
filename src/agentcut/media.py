@@ -70,7 +70,12 @@ def kind_for_suffix(suffix: str) -> str:
         return "audio"
     if suffix in VIDEO_SUFFIXES:
         return "video"
-    raise EditorError("MEDIA_TYPE_UNSUPPORTED", f"unsupported file type: {suffix or '(none)'}")
+    raise EditorError(
+        "MEDIA_TYPE_UNSUPPORTED",
+        f"unsupported file type: {suffix or '(none)'}",
+        422,
+        suffix=suffix or None,
+    )
 
 
 def to_ticks(seconds: float) -> int:
@@ -183,16 +188,34 @@ class MediaService:
 
     def resolve_path(self, raw: str) -> tuple[Path, str]:
         if not isinstance(raw, str) or not raw.strip() or "\x00" in raw or len(raw) > 2048:
-            raise EditorError("MEDIA_PATH_INVALID", "media path must be a plain absolute path")
+            raise EditorError(
+                "MEDIA_PATH_INVALID",
+                "media path must be a plain absolute path",
+                422,
+                path=str(raw)[:200],
+            )
         candidate = Path(raw.strip().strip('"'))
         if not candidate.is_absolute():
             raise EditorError(
                 "MEDIA_PATH_INVALID",
                 "import requires an absolute path inside one of the configured media roots",
+                422,
+                path=str(candidate),
                 media_roots=self.describe_roots(),
             )
         suffix = candidate.suffix.lower()
-        kind = kind_for_suffix(suffix)
+        try:
+            kind = kind_for_suffix(suffix)
+        except EditorError as failure:
+            # The type table speaks in suffixes; the person choosing a file needs the path
+            # they typed back, so the two are answered together.
+            raise EditorError(
+                failure.code,
+                failure.message,
+                failure.status,
+                path=str(candidate),
+                suffix=suffix or None,
+            ) from None
         if not self.enabled:
             raise EditorError(
                 "MEDIA_UNAVAILABLE",
@@ -202,9 +225,11 @@ class MediaService:
         try:
             real = candidate.resolve()
         except OSError:
-            raise EditorError("MEDIA_PATH_INVALID", "path could not be resolved") from None
+            raise EditorError(
+                "MEDIA_PATH_INVALID", "path could not be resolved", 422, path=str(candidate)
+            ) from None
         if not real.is_file():
-            raise EditorError("MEDIA_NOT_FOUND", f"no file at {real}", 404)
+            raise EditorError("MEDIA_NOT_FOUND", f"no file at {real}", 404, path=str(real))
         inside = any(real == root or root in real.parents for root in self.roots)
         if not inside:
             raise EditorError(
@@ -215,7 +240,7 @@ class MediaService:
                 media_roots=self.describe_roots(),
             )
         if real.stat().st_size <= 0:
-            raise EditorError("MEDIA_EMPTY", f"file is empty: {real}", 422)
+            raise EditorError("MEDIA_EMPTY", f"file is empty: {real}", 422, path=str(real))
         return real, kind
 
     # ---------- probing ----------

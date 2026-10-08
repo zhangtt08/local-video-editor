@@ -1690,3 +1690,20 @@ reducer、回执都不动。
 asset / sequence 六种都覆盖到）；素材文件被挪走后 410 说得出是哪个 `probe_id`；七条正常读
 （工程、历史、素材清单、任务列表、字幕、探测记录、预览清单）仍然 200——补 details 不能把能用的读
 变成新的拒绝。
+
+## 1.77 操作类路由的拒绝也说清楚（工程 schema 不变）
+
+同一把尺子量剩下的面：导入素材、缓存清理、恢复历史、任务与 `.cube` 解析。实测（先把现状记下来再动手）：
+`POST /v1/media/import` 的四条失败——文件不存在、路径不是绝对路径、在允许的素材夹之外、扩展名不认识
+——`details` 全是 `{}`；`POST /v1/lut/parse` 的 `INVALID_LUT` 同样空着，句子写了「读不出这一行」却不说是
+第几行，用户手里那份 `.cube` 只能从头翻。
+
+1.77 起：`MEDIA_NOT_FOUND` / `MEDIA_EMPTY` / `MEDIA_PATH_INVALID` 带 `path`（就是调用方自己给的那串），
+`MEDIA_TYPE_UNSUPPORTED` 带 `path` 与 `suffix`，越界那条继续带 `media_roots`（配上 `path` 才知道差在哪），
+`INVALID_LUT` 带 `line`（解析循环里的行号）与 `size` / `rows`（行数对不上时给两个数）。判断一字未动，
+`EditorError` 的 `**details` 本来就在。
+
+`tests/ops_sweep_check.py`：11 条操作类拒绝每条都要有 code、句子与目标（path / suffix / media_roots /
+line / size+rows / project_id / revision / job_id 都覆盖到），九条正常调用（媒体配置、探测列表、缓存
+状态、两种 prune、导出根、ids、`.cube` 正常解析、工程打包、字幕读回）必须仍 200。变异测试四条红：
+把 `path=str(real)`、re-raise 里的 `path`+`suffix`、`line=number`、`size`/`rows` 任一个剥掉，门禁当场红。

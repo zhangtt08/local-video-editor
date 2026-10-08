@@ -2715,3 +2715,30 @@ sigma；回执锚点再加两条，确认「只写默认值的新键」不会把
   「引擎在线 v1.76.0」（`AgentCut-1.76-原生窗口.png`），关闭无残留。便携版 189,763,321 字节 SHA256
   `DA5A79343AD29CCA14B43532A0E38188485D836EBA6854C947F75CB391337DBB`；安装版 189,924,038 字节
   SHA256 `FF241C45E412553CDAB647A05BFF68D9877D68B43D96772A469A4BE0C09B2EED`。未签名，NSIS 向导未点击验收。
+
+## 1.77.0 操作类路由的拒绝也说清楚
+
+- 1.75 管分析、1.76 管读，这一轮量剩下的操作面：导入素材、缓存清理、恢复历史、任务、`.cube` 解析。
+  先把现状记下来再动手（`tests/ops_sweep_check.py` 的前身）：`POST /v1/media/import` 的四条失败
+  ——文件不存在、路径不是绝对路径、在允许的素材夹之外、扩展名不认识——`details` 全是 `{}`；
+  `POST /v1/lut/parse` 的 `INVALID_LUT` 同样空着：句子写了「读不出这一行」却不说是第几行。
+- 改法与前两轮一致：`MEDIA_NOT_FOUND` / `MEDIA_EMPTY` / `MEDIA_PATH_INVALID` 带 `path`（调用方自己给的
+  那串），`MEDIA_TYPE_UNSUPPORTED` 带 `path` 与 `suffix`（类型表只认后缀，所以由 `resolve_path` 把路径
+  补回去，两处信息一起给），越界那条继续带 `media_roots`——配上 `path` 才知道差在哪个夹子外面；
+  `INVALID_LUT` 带解析循环的行号，行数对不上时给 `size` 与 `rows` 两个数。判断一字未动。
+- 门禁钉 11 条拒绝 + 9 条正常调用（媒体配置、探测列表、缓存状态、两种 prune、导出根、ids、正常 `.cube`
+  解析、工程打包、字幕读回）——补 `details` 不许把能用的调用变成新的拒绝。
+- 两条自己踩的坑，都记下来因为它们都曾假装通过：① 第一版门禁把 `{work}` 这类占位符只替换进 URL、
+  没替换进请求体，于是引擎真的收到一条相对路径 `"{work}/missing.mp4"`，四条导入用例全部以
+  `MEDIA_PATH_INVALID` 收场——看起来"红得合理"，其实量的是自己的打错字；② 变异测试第一次改的是
+  `INVALID_LUT` 的**消息文本**而不是 `line=number`，门禁照样绿——那是个无效的变异，不是盲的门禁，
+  换成剥掉 `line=number` 之后才真的红。四条红最终为：`path=str(real)`、re-raise 的 `path`+`suffix`、
+  `line=number`、`size`/`rows`。
+- 发布验收：`build_engine.py`（`FREEZE=0`）+ `npm run dist`（`DIST=0`）。包内引擎报 `app_version=1.77.0`，
+  `package_check_177.py` 在打包后的引擎上量到：三条导入失败分别给出 `path`、`path`+`media_roots`、
+  `path`+`suffix`；`.cube` 三种被拒分别回 `{'line': 2}`（3D 表）、`{'line': 3}`（读不出的一行
+  `'0.0 0.5'`）、`{'size': 5, 'rows': 2}`（行数对不上），正常 1D 表仍解析成功。`ruff`、串行套件
+  **64/64** 全绿；原生窗口 1480×900 标题栏「引擎在线 v1.77.0」（`AgentCut-1.77-原生窗口.png`），
+  关闭无残留。便携版 189,762,599 字节 SHA256
+  `B209B6A940C2AF2E3060DB62C2D734A0E313BDE5A058349E7DA69FBD6C044D20`；安装版 189,923,322 字节
+  SHA256 `2FCF7CBC0E1E6C638D9212C9526ED1098422263765D962E579B0C48463162FDF`。未签名，NSIS 向导未点击验收。

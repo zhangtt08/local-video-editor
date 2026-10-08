@@ -363,7 +363,7 @@ def parse_1d_cube(text: str, *, title_default: str = "LUT") -> dict:
     size = 0
     domain_min, domain_max = (0.0, 0.0, 0.0), (1.0, 1.0, 1.0)
     samples: list[tuple[float, float, float]] = []
-    for line in text.splitlines():
+    for number, line in enumerate(text.splitlines(), start=1):
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
@@ -377,11 +377,13 @@ def parse_1d_cube(text: str, *, title_default: str = "LUT") -> dict:
             size = _cube_int(upper.split()[1], "LUT_1D_SIZE")
             continue
         if upper.startswith("LUT_3D_SIZE"):
-            raise _cube_error("this is a 3D LUT; cross-channel tables are not supported yet")
+            raise _cube_error(
+                "this is a 3D LUT; cross-channel tables are not supported yet", line=number
+            )
         if upper.startswith("DOMAIN_MIN") or upper.startswith("DOMAIN_MAX"):
             values = [_cube_float(item) for item in stripped.split()[1:]]
             if len(values) != 3:
-                raise _cube_error("DOMAIN needs three numbers")
+                raise _cube_error("DOMAIN needs three numbers", line=number)
             if upper.startswith("DOMAIN_MIN"):
                 domain_min = tuple(values)  # type: ignore[assignment]
             else:
@@ -389,14 +391,22 @@ def parse_1d_cube(text: str, *, title_default: str = "LUT") -> dict:
             continue
         parts = stripped.split()
         if len(parts) != 3:
-            raise _cube_error(f"cannot read the row {stripped[:40]!r}")
+            raise _cube_error(f"cannot read the row {stripped[:40]!r}", line=number)
         samples.append(tuple(_cube_float(item) for item in parts))  # type: ignore[arg-type]
     if size < 2:
-        raise _cube_error("the file needs a LUT_1D_SIZE of 2 or more")
+        raise _cube_error("the file needs a LUT_1D_SIZE of 2 or more", size=size, rows=len(samples))
     if len(samples) != size:
-        raise _cube_error(f"expected {size} rows but found {len(samples)}")
+        raise _cube_error(
+            f"expected {size} rows but found {len(samples)}",
+            size=size,
+            rows=len(samples),
+        )
     if domain_min != (0.0, 0.0, 0.0) or domain_max != (1.0, 1.0, 1.0):
-        raise _cube_error("only the default DOMAIN 0..1 is supported")
+        raise _cube_error(
+            "only the default DOMAIN 0..1 is supported",
+            domain_min=list(domain_min),
+            domain_max=list(domain_max),
+        )
     channels = [[_clamp(row[index]) for row in samples] for index in range(3)]
     size_limit = _lut_size_limit()
     if size <= size_limit:
@@ -426,10 +436,10 @@ def _sample(table: list[float], position: float) -> float:
     return table[index] + fraction * (table[index + 1] - table[index])
 
 
-def _cube_error(message: str) -> Exception:
+def _cube_error(message: str, **details) -> Exception:
     from .contracts import EditorError
 
-    return EditorError("INVALID_LUT", message, 422)
+    return EditorError("INVALID_LUT", message, 422, **details)
 
 
 def _cube_int(text: str, what: str) -> int:
