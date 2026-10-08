@@ -29,12 +29,13 @@ def assert_error(response, status, code):
     assert response.json()["error"]["code"] == code, response.text
 
 
-def edit(request_id, revision, commands, dry_run=False):
+def edit(request_id, revision, commands, dry_run=False, sequence_id=None):
     return {
         "request_id": request_id,
         "expected_revision": revision,
         "commands": commands,
         "dry_run": dry_run,
+        "sequence_id": sequence_id,
     }
 
 
@@ -406,6 +407,9 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
                 "output_root_add",
                 "output_roots_read",
                 "clip_silence",
+                "clip_loudness",
+                "track_loudness",
+                "track_silence",
                 "captions_auto",
                 "clip_track",
                 "clip_stabilize",
@@ -429,6 +433,15 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
             assert "clip_stabilize" in tools, "the Agent lost the stabiliser tool"
             assert "max_crop" in json.dumps(tools["clip_stabilize"].inputSchema)
             assert tools["clip_silence"].annotations.readOnlyHint is True
+            # 1.79: 统一响度 and 整轨去空白 had HTTP routes and buttons long before they had a tool,
+            # so an Agent could align the master and one clip's pauses but nothing else in that
+            # family. They are read-only here for the same reason clip_silence is: the plan is the
+            # answer, and `timeline_edit` is the one place that writes.
+            for voiced in ("clip_loudness", "track_loudness", "track_silence"):
+                assert tools[voiced].annotations.readOnlyHint is True, voiced
+                assert "sequence_id" in json.dumps(tools[voiced].inputSchema), voiced
+            assert "target_lufs" in json.dumps(tools["clip_loudness"].inputSchema)
+            assert "threshold_db" in json.dumps(tools["track_silence"].inputSchema)
             assert tools["lut_parse"].annotations.readOnlyHint is True
             assert "content" in json.dumps(tools["lut_parse"].inputSchema)
             assert tools["clip_track"].annotations.readOnlyHint is False
@@ -627,6 +640,7 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
             await check_linked_mcp(session)
             if ffmpeg and ffprobe:
                 await cut_through_mcp(session, media_root, ffmpeg, ffprobe)
+                await analysis_through_mcp(session, media_root, ffmpeg)
 
 
 async def call_ok(session, tool, arguments):
@@ -991,6 +1005,290 @@ async def cut_through_mcp(session, media_root, ffmpeg, ffprobe):
     jobs = await call_ok(session, "job_list", {"project_id": pid})
     assert jobs.structuredContent["jobs"][0]["id"] == job_id
     return output
+
+
+async def analysis_through_mcp(session, media_root, ffmpeg):
+    """1.79: the 统一响度 / 整轨去空白 family over MCP stdio, on real audio, all the way in.
+
+    These three routes had HTTP endpoints and desktop buttons but no MCP tool, so an Agent could
+    align the master and cut the pauses of one clip, and nothing else in that family. Everything
+    below is what an Agent can now do: measure, read the plan, land the returned commands with
+    `timeline_edit`, and reach a clip that lives inside a nested composition.
+    """
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
+    def tone(name: str, af: str) -> Path:
+        target = media_root / name
+        subprocess.run(
+            [
+                ffmpeg,
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=4:sample_rate=48000",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=0x202020:s=320x180:r=30:d=4",
+                "-af",
+                af,
+                "-c:a",
+                "aac",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-shortest",
+                str(target),
+            ],
+            check=True,
+            creationflags=flags,
+        )
+        return target
+
+    gated = await call_ok(
+        session,
+        "media_import",
+        {
+            "request": {
+                "path": str(tone("mcp-gated.mp4", "volume=enable='between(t,1,2)':volume=0"))
+            }
+        },
+    )
+    quiet = await call_ok(
+        session, "media_import", {"request": {"path": str(tone("mcp-quiet.mp4", "volume=0.05"))}}
+    )
+    created = await call_ok(
+        session,
+        "project_create",
+        {"request": {"request_id": "mcp-analysis", "name": "MCP 音量"}},
+    )
+    pid = created.structuredContent["project"]["id"]
+    revision = created.structuredContent["project"]["revision"]
+    seeds = []
+    for asset_id, track_id, kind, record in (
+        ("mgate", "mvt", "video", gated.structuredContent),
+        ("mquiet", "mat", "audio", quiet.structuredContent),
+    ):
+        verified = record["verified"]
+        verified["probe_id"] = record["id"]
+        seeds += [
+            {"op": "track.add", "track": {"id": track_id, "kind": kind, "name": asset_id}},
+            {
+                "op": "asset.import",
+                "asset_id": asset_id,
+                "label": asset_id,
+                "probe_id": record["id"],
+                "verified": verified,
+            },
+            {
+                "op": "clip.add",
+                "clip": {
+                    "id": f"c-{asset_id}",
+                    "asset_id": asset_id,
+                    "track_id": track_id,
+                    "position_ticks": 0,
+                    "duration_ticks": 4 * TIMEBASE,
+                },
+            },
+        ]
+    seeded = await call_ok(
+        session,
+        "timeline_edit",
+        {"project_id": pid, "request": edit("mcp-analysis-seed", revision, seeds)},
+    )
+    revision = seeded.structuredContent["project"]["revision"]
+
+    loud = await call_ok(
+        session,
+        "clip_loudness",
+        {
+            "project_id": pid,
+            "clip_id": "c-mquiet",
+            "request": {"request_id": "mcp-q", "expected_revision": revision},
+        },
+    )
+    read = loud.structuredContent["loudness"]
+    assert loud.structuredContent["committed"] is False
+    # FFmpeg's own ebur128 puts a 5 % tone at -47.8 LUFS, so the one honest answer is the clamp at
+    # MAX_GAIN: the tool reports which limit bound it instead of pretending the target was reached.
+    assert abs(read["integrated_lufs"] - -47.8) <= 0.3, read
+    assert read["gain"] == 4.0 and read["limited_by"] == "gain_range", read
+    assert read["reaches_target"] is False, read
+    assert read["predicted_lufs"] < read["target_lufs"], read
+
+    # The gated clip is a full-level 440 Hz sine (-22.2 LUFS): that one lifts onto the target.
+    lifted = await call_ok(
+        session,
+        "clip_loudness",
+        {
+            "project_id": pid,
+            "clip_id": "c-mgate",
+            "request": {"request_id": "mcp-g", "expected_revision": revision},
+        },
+    )
+    plan = lifted.structuredContent["loudness"]
+    assert abs(plan["integrated_lufs"] - -22.2) <= 0.3, plan
+    assert plan["limited_by"] == "" and plan["reaches_target"] is True, plan
+    assert abs(plan["predicted_lufs"] - plan["target_lufs"]) <= 0.2, plan
+    assert 1.0 < plan["gain"] < 4.0, plan
+    assert plan["lra_lu"] is None or plan["lra_lu"] >= 0.0, plan
+
+    # The tool is read-only by construction: asking for `apply` cannot make it write.
+    forced = await call_ok(
+        session,
+        "clip_loudness",
+        {
+            "project_id": pid,
+            "clip_id": "c-mquiet",
+            "request": {
+                "request_id": "mcp-q-apply",
+                "expected_revision": revision,
+                "apply": True,
+                "dry_run": True,
+            },
+        },
+    )
+    assert forced.structuredContent["committed"] is False
+    assert forced.structuredContent["project"]["revision"] == revision
+
+    track = await call_ok(
+        session,
+        "track_loudness",
+        {
+            "project_id": pid,
+            "track_id": "mat",
+            "request": {"request_id": "mcp-track-q", "expected_revision": revision},
+        },
+    )
+    body = track.structuredContent["loudness"]
+    assert body["measured"] == 1 and body["changed"] == 1, body
+    assert [c["clip_id"] for c in body["commands"]] == ["c-mquiet"], body
+    landed = await call_ok(
+        session,
+        "timeline_edit",
+        {
+            "project_id": pid,
+            "request": edit("mcp-track-q-land", revision, body["commands"]),
+        },
+    )
+    revision = landed.structuredContent["project"]["revision"]
+    gain = landed.structuredContent["project"]["clips"]["c-mquiet"]["effects"]["gain"]
+    assert gain == body["commands"][0]["effects"]["gain"], (gain, body)
+
+    again = await call_ok(
+        session,
+        "track_loudness",
+        {
+            "project_id": pid,
+            "track_id": "mat",
+            "request": {"request_id": "mcp-track-again", "expected_revision": revision},
+        },
+    )
+    assert again.structuredContent["loudness"]["changed"] == 0, again.structuredContent
+
+    quieted = await call_ok(
+        session,
+        "track_silence",
+        {
+            "project_id": pid,
+            "track_id": "mvt",
+            "request": {
+                "request_id": "mcp-silence",
+                "expected_revision": revision,
+                "threshold_db": -35.0,
+                "min_silence_ms": 300,
+            },
+        },
+    )
+    scan = quieted.structuredContent["silence"]
+    assert scan["clips"][0]["clip_id"] == "c-mgate", scan
+    # One second gated to silence in the middle: edges are the clip ends, the gap is the cut.
+    removed = scan["removed_ticks"]
+    assert 0.7 * TIMEBASE <= removed <= 1.3 * TIMEBASE, removed / TIMEBASE
+    cut = await call_ok(
+        session,
+        "timeline_edit",
+        {"project_id": pid, "request": edit("mcp-silence-land", revision, scan["commands"])},
+    )
+    revision = cut.structuredContent["project"]["revision"]
+    pieces = [
+        c for c in cut.structuredContent["project"]["clips"].values() if c["track_id"] == "mvt"
+    ]
+    assert len(pieces) >= 2, sorted(c["id"] for c in pieces)
+    span = sum(c["duration_ticks"] for c in pieces)
+    assert 2.7 * TIMEBASE <= span <= 3.3 * TIMEBASE, span / TIMEBASE
+
+    # Inside a comp: the same track id on the root is honestly empty, and the tool reads the comp.
+    nested = await call_ok(
+        session,
+        "timeline_edit",
+        {
+            "project_id": pid,
+            "request": edit(
+                "mcp-nest",
+                revision,
+                [
+                    {
+                        "op": "sequence.nest",
+                        "clip_ids": sorted(c["id"] for c in pieces),
+                        "name": "口播",
+                        "sequence_id": "mcomp",
+                        "asset_id": "mseq",
+                        "clip_id": "mcn",
+                    }
+                ],
+            ),
+        },
+    )
+    revision = nested.structuredContent["project"]["revision"]
+    empty = await session.call_tool(
+        "track_loudness",
+        {
+            "project_id": pid,
+            "track_id": "mvt",
+            "request": {"request_id": "mcp-root-blind", "expected_revision": revision},
+        },
+    )
+    assert empty.isError and "NOT_FOUND" in empty.content[0].text, empty.content[0].text
+    # 1.79: an existing track with nothing on it refuses the same way in all four track routes.
+    # Before this it answered "measured 0", and with `apply` it claimed the clips were aligned.
+    assert "this track holds no clips" in empty.content[0].text, empty.content[0].text
+    assert "mvt" in empty.content[0].text, empty.content[0].text
+    inside = await call_ok(
+        session,
+        "track_loudness",
+        {
+            "project_id": pid,
+            "track_id": "mvt",
+            "request": {
+                "request_id": "mcp-comp-loud",
+                "expected_revision": revision,
+                "sequence_id": "mcomp",
+                "target_lufs": -10.0,
+            },
+        },
+    )
+    plan = inside.structuredContent["loudness"]
+    assert plan["measured"] == len(pieces), plan
+    assert plan["changed"] >= 1 and plan["target_lufs"] == -10.0, plan
+    wrote = await call_ok(
+        session,
+        "timeline_edit",
+        {
+            "project_id": pid,
+            "request": edit("mcp-comp-loud-land", revision, plan["commands"], sequence_id="mcomp"),
+        },
+    )
+    document = wrote.structuredContent["project"]
+    comp_clips = document["sequences"]["mcomp"]["clips"]
+    moved = {c["clip_id"]: c["effects"]["gain"] for c in plan["commands"]}
+    for clip_id, wanted in moved.items():
+        assert comp_clips[clip_id]["effects"]["gain"] == wanted, (clip_id, wanted)
+    assert document["clips"]["mcn"]["effects"]["gain"] == 1.0, document["clips"]["mcn"]
 
 
 @contextmanager

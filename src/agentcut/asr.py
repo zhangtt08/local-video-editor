@@ -116,6 +116,10 @@ def _recognizer(language: str, dirs: list[Path]):
             f"no local model for language {language!r}; put {MODEL_NAMES[language]} in one of the "
             "model directories (env AGENTCUT_ASR_MODELS or the asr folder beside the engine)",
             422,
+            language=language,
+            expected_model=MODEL_NAMES[language],
+            searched_dirs=[str(item) for item in dirs],
+            installed_languages=sorted(models),
         )
     usable = _loadable(Path(path))
     try:

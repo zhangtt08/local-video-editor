@@ -16,9 +16,9 @@ HTTP 使用 `Authorization: Bearer <AGENTCUT_TOKEN>`。JSON 请求严格校验�
 | POST /v1/projects/{id}/edits | timeline_edit | 批量命令 |
 | POST /v1/projects/{id}/restore | project_restore | 历史恢复为新版本 |
 | POST /v1/projects/{id}/clips/{c}/silence | clip_silence | 只读扫描静音并取回剪切命令（`apply`/`dry_run` 在该工具里固定为 false） |
-| POST /v1/projects/{id}/tracks/{t}/silence | — | 整轨扫描：逐片段报告跳过原因，合并成一条命令计划 |
-| POST /v1/projects/{id}/clips/{c}/loudness | — | 响度表读数与建议增益；`apply=true` 时引擎一次写入 |
-| POST /v1/projects/{id}/tracks/{t}/loudness | — | 整轨响度对齐：逐片段测量并合并成一次写入 |
+| POST /v1/projects/{id}/tracks/{t}/silence | track_silence | 整轨扫描：逐片段报告跳过原因，合并成一条命令计划（1.79 起有工具；`apply`/`dry_run` 在该工具里固定为 false，命令交回 `timeline_edit` 写入） |
+| POST /v1/projects/{id}/clips/{c}/loudness | clip_loudness | 响度表读数与建议增益；`apply=true` 时引擎一次写入（1.79 起有工具，工具侧固定只读，命令交回 `timeline_edit`） |
+| POST /v1/projects/{id}/tracks/{t}/loudness | track_loudness | 整轨响度对齐：逐片段测量并合并成一次写入（1.79 起有工具；`sequence_id` 让它在合成里量那条同名轨） |
 | POST /v1/projects/{id}/markers/split | marker_split | 按标记分割：只出普通 `clip.split` 计划，`apply` 才写入 |
 | POST /v1/projects/{id}/speech-captions | captions_auto | 本地语音识别成字幕线索并取回 `captions.import` 计划（`apply`/`dry_run` 在该工具里固定为 false） |
 | `clip.slip` / `clip.slide`（`/edits`） | timeline_edit | 划动素材窗口 / 左右滑移，两侧相邻段各自补让 |
@@ -1732,3 +1732,49 @@ line / size+rows / project_id / revision / job_id 都覆盖到），九条正常
 6 kHz 噪声带 −50.0 → −58.8 → −61.0 dBFS（0 / 12 / 24），440 Hz 音最多动 0.06 dB；
 旋钮回 0 时编译出的滤镜图里一个 `afftdn` 都没有；超上限 422 `INVALID_REQUEST`；
 `keyframe.set` 想给 `denoise` 打关键帧被拒。
+
+## 1.79 Agent 补齐三条音量入口，空轨道与静音片段改为点名拒绝
+
+- 一条真正的入口不对称（不是新能力）：`/clips/{c}/loudness`、`/tracks/{t}/loudness`、
+  `/tracks/{t}/silence` 有 HTTP 路由、有界面按钮、capabilities 也声明可用，MCP 里却没有工具——
+  Agent 能对齐母带（`master_loudness`）、能扫一条片段的停顿（`clip_silence`），就是不能量片段响度、
+  不能整轨对齐、不能整轨去空白。AGENTS.md 要求「所有入口使用同一命令语义」，所以工具是薄封装：
+  `clip_loudness` / `track_loudness` / `track_silence` 三个新工具与 `clip_silence` 同规格，
+  `apply`/`dry_run` 在工具侧固定 false，把计划里的普通命令交回 `timeline_edit` 写入；schema 由
+  契约生成（`LoudnessRequest`/`SilenceRequest` 已带 `sequence_id`），适配层没有第二条规则。
+  工具集合 40 → 43，`tests/self_check.py` 那句 `assert set(tools) == expected` 是唯一权威清单。
+- Agent 路径实测（真实音频、只走 MCP stdio）：5 % 的 440 Hz 音量到 **−47.8 LUFS**，计划给
+  `gain=4.0` + `limited_by="gain_range"`——撞到 `MAX_GAIN` 就说撞到上限，不假装到了 −16；
+  满幅那条量到 **−22.2 LUFS**，`gain≈2.04`、`reaches_target=true`、预测 −16.0。整轨对齐回
+  `measured=1 / changed=1`，把返回命令经 `timeline_edit` 提交正好一个 revision，落库 `gain` 与计划
+  逐字相等；再扫一次 `changed=0`。整轨去空白对 1 秒门控静音回 `removed_ticks`≈1.0 秒，剪后同轨
+  片段合起来 3.0 秒。工具侧强制只读：请求里写 `apply=true` 也拿不到写入（`committed=false`、
+  revision 不动）。带 `sequence_id` 的整轨对齐把增益写进合成里的片段，外层容器片段一条不动。
+- 拒绝一致性（`tests/empty_track_check.py`，1.1 秒，不渲染）：四条整轨路由（含自动字幕）现在对
+  「存在但没有片段的轨道」一律 404 `this track holds no clips` + `track_id`，对「根本不存在的轨道」
+  一律 404 `track is not in this project` + `track_id`。此前只有自动字幕有这句（它还没有存在性检查，
+  把两种情况混成一句），另外三条对空轨回 200 `measured=0`，`apply=true` 时更糟——回
+  「已经对齐了」，而那条轨上一个片段都没有。片段进合成之后，外层那条同名空轨就是这个场景。
+- 一条被控件自己掩住的 5xx：纯静音片段点「统一响度」以前回 **502 `LOUDNESS_FAILED`** 且
+  `details={}`。原因在 FFmpeg 对数字静音打印 `Peak: -inf dBFS`，`loudness.py` 的浮点正则匹配不了
+  `-inf`，于是「读不出」被当成引擎故障。现在 `-inf` 可解析，且积分响度不高于 `SILENCE_FLOOR = -70.0`
+  （ebur128 对静音的门限值）时按 422 点名拒绝：`this audio is digital silence, so there is no loudness
+  to match`，`details` 带 `path`，路由再把 `clip_id` / `asset_id` / `asset_label` 补上——
+  一处测量、一处点名，不在路由里重写判断。`-inf` 不进 JSON，所以拒绝负载里只给文件与片段，不给
+  那个无穷大读数。
+- 顺带点名：模型目录缺失时 `SUBTITLES_MODEL_MISSING` 现在带 `language`、`expected_model`、
+  `searched_dirs`（真正搜过的那几个目录）、`installed_languages`。
+- 界面不需要新代码：1.75 起的中文提示里 `NOT_FOUND` 那句话本来就写着「片段或轨道可能在另一个合成里
+  （从时间线上方的面包屑进去再操作）」，而 `explain()` 会把 `track_id` 织到句子后面；帮助新增
+  「Agent·音量与去空白」一条。契约、reducer、capabilities、工程 schema 都不动（没有新命令、没有新字段）。
+- 整轨的一侧还有一个真实的连带缺陷：路由的 docstring 早就写着「量不了的片段会被记成 skipped 并说明
+  原因」，但实现里测量一失败就整批拒绝——一条纯静音的片段能让整条轨的对齐按钮报错。现在测量返回的 422
+  按 `skipped` 记录并继续，其余片段照样拿到建议增益（5xx 与素材丢失仍照原样上抛，那是另一回事）；单片段
+  路由点名拒绝不变，因为用户问的就是那一段。实测：一条轨上并排放「能量的」与「纯静音的」两个片段，
+  `measured=1 / changed=1`，命令里只有前者，`clips` 里那条带着「digital silence」的原因。
+- 变异测试十条红，且每条红在该红的断言上：三条路由的空轨守卫逐个删掉 → 各自的空轨用例回到
+  200 `measured=0`；删掉自动字幕的存在性检查 → 「不存在的轨道」被说成「没有片段」；只删那条拒绝里的
+  `track_id` → `details == {}`；把峰值正则的 `-inf` 分支去掉 → 502 重现；从静音拒绝里删掉 `path` →
+  `KeyError`；把路由的点名包装换成裸 `raise` → `clip_id` 消失；删掉 `SUBTITLES_MODEL_MISSING` 的新
+  details → `language` 消失；把整轨的 `skipped` 分支换成裸 `raise` → 一条静音片段又能拖垮整轨，红在
+  那句 `status == 200`。全部还原后 `git status src` 只剩本轮该改的文件。

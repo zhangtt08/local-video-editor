@@ -22,6 +22,7 @@ from .contracts import (
     FourPointRequest,
     Identifier,
     ImportRequest,
+    LoudnessRequest,
     LutParse,
     MarkerSplitRequest,
     MaskTrackRequest,
@@ -238,6 +239,66 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         return await call(
             "POST",
             f"/v1/projects/{project_id}/clips/{clip_id}/silence",
+            body,
+            timeout=600,
+        )
+
+    @server.tool(annotations=read)
+    async def clip_loudness(
+        project_id: Identifier, clip_id: Identifier, request: LoudnessRequest
+    ) -> dict[str, Any]:
+        """Measure one clip's loudness and get the ordinary `clip.effects` command that fixes it.
+
+        Read-only here: `apply` and `dry_run` are forced off, so nothing is written. The answer
+        carries the measured LUFS, the true peak, the suggested gain and whether the gain can reach
+        the target without clipping. Submit the returned command with `timeline_edit` to land it.
+        `sequence_id` measures the clip inside that nested composition, and the command then has to
+        be submitted with the same `sequence_id`.
+        """
+        body = request.model_dump(mode="json") | {"apply": False, "dry_run": False}
+        return await call(
+            "POST",
+            f"/v1/projects/{project_id}/clips/{clip_id}/loudness",
+            body,
+            timeout=600,
+        )
+
+    @server.tool(annotations=read)
+    async def track_loudness(
+        project_id: Identifier, track_id: Identifier, request: LoudnessRequest
+    ) -> dict[str, Any]:
+        """Measure every clip on one track and get the commands that align them to a target.
+
+        Read-only here: `apply` and `dry_run` are forced off. Each clip is measured over its own
+        source window, the same window the exporter reads it from; fades and overlaps in the mix are
+        only accounted for by `master_loudness`, which probes the real audio graph. `changed` says
+        how many clips actually move and `off_target` how many cannot reach the target under the
+        ceiling. With `sequence_id` the track is the one inside that nested composition — the root's
+        same-named track is not read.
+        """
+        body = request.model_dump(mode="json") | {"apply": False, "dry_run": False}
+        return await call(
+            "POST",
+            f"/v1/projects/{project_id}/tracks/{track_id}/loudness",
+            body,
+            timeout=600,
+        )
+
+    @server.tool(annotations=read)
+    async def track_silence(
+        project_id: Identifier, track_id: Identifier, request: SilenceRequest
+    ) -> dict[str, Any]:
+        """Scan every clip on one track for pauses and get the cut commands that remove them.
+
+        Read-only here: `apply` and `dry_run` are forced off, so nothing is written. Clips that
+        cannot carry audio are skipped with the reason instead of failing the whole track. With
+        `sequence_id` the track is read inside that nested composition; the commands then have to be
+        submitted with the same `sequence_id`, or they will name clips the root does not have.
+        """
+        body = request.model_dump(mode="json") | {"apply": False, "dry_run": False}
+        return await call(
+            "POST",
+            f"/v1/projects/{project_id}/tracks/{track_id}/silence",
             body,
             timeout=600,
         )

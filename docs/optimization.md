@@ -2806,3 +2806,60 @@ sigma；回执锚点再加两条，确认「只写默认值的新键」不会把
   `y` 写成 2.4，被契约的 `le=2` 拦在模型层，红是红了但不是那条断言红的，换成 2.0（合法极值）才算数。
 - 范围就此收住：这是验收缺口的补齐，不动契约、不动界面（Help 里「合成·分析工具」那条本来就写着自动字幕，
   现在它有证据了），因此不涨版本号、不重打包，发布物仍是 1.78.0。串行套件 **66/66**。
+
+## 1.79.0 Agent 补齐三条音量入口，空轨与静音改为点名拒绝
+
+- 找缺陷的方法还是把两个入口摆在一起对表：拿 capabilities 声明的「分析类」路由去数 MCP 工具，
+  `/clips/{c}/loudness`、`/tracks/{t}/loudness`、`/tracks/{t}/silence` 三条在 docs/api.md 那张
+  「路由 → 工具」表里明写着 `—`。也就是说人有按钮、Agent 只有母带对齐——1.75/1.76/1.77 三轮都在
+  补「拒绝说清楚」，这一轮补的是「入口根本够不着」。修法照 `clip_silence` 的既有形状：三个只读薄
+  工具，`apply`/`dry_run` 在工具侧固定 false，命令交回 `timeline_edit`；schema 由契约生成，
+  `sequence_id` 自动可见。适配层不写第二条规则。
+- 门禁不是「工具存在」而是 Agent 真走一遍：`tests/self_check.py` 新增 `analysis_through_mcp`，
+  官方 stdio 客户端 + 真实音频，量到 5 % 的 440 Hz 是 **−47.8 LUFS**、计划 `gain=4.0` +
+  `limited_by="gain_range"`，满幅那条是 **−22.2 LUFS**、`gain≈2.04`、`reaches_target=true`；
+  整轨 `measured=1/changed=1` 的命令经 `timeline_edit` 落库恰好一个 revision 且 `gain` 与计划逐字
+  相等、再扫 `changed=0`；请求里写 `apply=true` 也不写库（读侧工具的承诺）；门控 1 秒静音的整轨扫描
+  回 `removed_ticks`≈1.0 秒，剪后同轨合起来 3.0 秒；进合成之后外层那条同名空轨被诚实拒绝，带
+  `sequence_id` 的写入只动合成里的片段。
+- 顺手抓到两条真缺陷（都来自「把读不到当成没有」这一族）：四条整轨路由里只有自动字幕会说
+  「this track holds no clips」，另外三条对空轨回 200 `measured=0`，`apply=true` 时响度那条还会说
+  「已经对齐了」——一个片段都没有的轨道被说成对齐了，正是 1.74 修过的毛病在空轨上的残余；改成四条
+  同句、同 `track_id`。另一条更硬：纯静音片段点「统一响度」回 **502** 且 `details={}`，根因是 FFmpeg
+  对数字静音打印 `Peak: -inf dBFS`，而 `loudness.py` 的正则只认 `-?[\d.]+`，「读不出」被当成引擎故障。
+  现在 `-inf` 可解析、且按 ebur128 的静音门限（`SILENCE_FLOOR = -70.0`）把纯静音按 422 点名拒绝，
+  `path` 由测量处给、`clip_id`/`asset_id`/`asset_label` 由路由的 `_meter_clip` 补上。
+- 自己写出来的两个坑，都记下来因为都属于「假装通过」：① 拒绝负载里塞 `-inf`（我第一版把读数原样
+  放进 details）会让 JSON 序列化当场炸——无穷大不可表示，读数只用于判断，不进负载；② 断言里我按
+  直觉假设 5 % 的音能抬到 −16，实测被 `MAX_GAIN=4` 夹住，红的那次是断言错而不是引擎错，于是把这条
+  改成量真正的产品事实（`gain == 4.0` 且 `limited_by == "gain_range"`）。另外探针脚本里 request_id
+  带 `%` 会被 Identifier 拒成 422，也是先怀疑量具才对。
+- 界面零改动：`NOT_FOUND` 的中文提示本来就写着「片段或轨道可能在另一个合成里（从面包屑进去）」，
+  `explain()` 又把 `track_id` 织进句子；帮助加「Agent·音量与去空白」一条把上面这些数字写进去。
+  契约、reducer、capabilities、工程 schema 一字不动（没有新命令、没有新字段），旧回执不受影响。
+- 打包验收时又抓到一条同族的：整轨响度路由的 docstring 早就写着「量不了的片段记成 skipped 并说明
+  原因」，实现却是测量一失败就整批拒绝——一条纯静音片段能让整条轨的对齐按钮报错。包内第一次跑到
+  「一条轨上既有有声片段又有静音片段」才暴露它。现在 422 记成 `skipped` 继续走，5xx 与素材丢失照旧
+  上抛；包内实测 `measured=2 / changed=2 / off_target=1`，被跳过那条带着「digital silence」的原因，
+  两条有声片段的命令经 `timeline_edit` 落库到 revision 2。单片段路由仍然点名拒绝，因为用户问的就是那一段。
+- 新门禁 `tests/empty_track_check.py`（1.1 秒、不渲染，只用 stdlib 写的真 WAV）钉 12 条整轨
+  拒绝 + 空/缺失两种句子的分工 + 「有片段的轨绝不被这么说」，外加静音片段的响度拒绝点名（单片段
+  路由 422 + `path`/`clip_id`/`asset_label`；整轨路由 200 + `skipped`）与 `SUBTITLES_MODEL_MISSING`
+  的新 details。十条变异测试逐条红：三条路由守卫各删一次（各自回 200 `measured=0`）、删自动字幕
+  存在性检查（「不存在」被说成「没有片段」）、只删那句的 `track_id`、删 `-inf` 正则分支（502 重现）、
+  删静音拒绝的 `path`、把点名包装换成裸 `raise`、删模型缺失的 details、把整轨的 `skipped` 分支换成
+  裸 `raise`（红在 `status == 200`）。其中两条是第二轮才补上的：第一轮跑到「删掉 `path`」时门禁居然
+  绿了——我把那条断言从片段路由挪到整轨路由时，`path` 就没人检查了。断言跟着代码搬家之后要重新问一遍
+  「它还钉得住吗」。
+- 发布验收：`build_engine.py`（`FREEZE=0`，staged 324.9 MB）+ `npm run dist`（`DIST=0`）。包内实例
+  `0cf86b326fee` 报 `app_version=1.79.0`；`package_check_179.py` 走**打包后的 MCP stdio**（Agent 真正
+  用的那条传输）量到：工具 43 个、三条新工具都在且 schema 含 `sequence_id`、`readOnlyHint=true`；
+  `clip_loudness` 对 5 % 的 440 Hz 音报 **−47.8 LUFS → gain 4.0（`gain_range`）**、预测 −35.76，与源码树
+  里 `tests/self_check.py` 的量值一字不差（同一处权威）；纯静音片段回「this audio is digital silence」
+  并点名 `c-silent` 与 `silence.wav`；`track_loudness` 量 2 改 2、跳过那条静音的，命令经 `timeline_edit`
+  落到 revision 2；四条整轨路由在包内对空轨/缺轨口径一致（404 + 点名）；asar 里帮助条目
+  「Agent·音量与去空白」在。`ruff`、`npm run typecheck`、桌面 TS 检查、串行套件 **67/67** 全绿；
+  原生窗口 1480×900 标题栏「引擎在线 v1.79.0」（`AgentCut-1.79-原生窗口.png`），关闭无残留。
+  便携版 189,765,714 字节 SHA256 `129756C267DAB0157CAC6B65756E84A0418848F82217F8E6403C4D9CE256F500`；
+  安装版 189,926,426 字节 SHA256 `0BB9365C17C5B7C41F7E60A12E1FD041363A779CFA8D9F25E6AC22A3FE0D4F79`。
+  未签名，NSIS 向导未点击验收。

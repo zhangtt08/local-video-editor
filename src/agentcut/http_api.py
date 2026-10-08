@@ -108,6 +108,30 @@ def signature(token: str, resource: str) -> str:
     return hmac.new(token.encode(), resource.encode(), hashlib.sha256).hexdigest()[:32]
 
 
+def _meter_clip(engine: MediaService, project, clip, request) -> tuple[dict, dict]:
+    """Measure one clip's window and plan its gain, naming the clip if the meter refuses.
+
+    A silent or unmeasurable window is a property of this clip, so the refusal has to say which
+    clip it means -- the meter itself only ever sees a file path.
+    """
+    source = Path(project.assets[clip.asset_id].verified.path)
+    try:
+        measured = measure_loudness(
+            engine.ffmpeg,
+            source,
+            clip.source_in_ticks / TIMEBASE,
+            clip.duration_ticks * (clip.speed_percent / 100) / TIMEBASE,
+        )
+        plan = normalize_gain(
+            measured, target_lufs=request.target_lufs, ceiling_dbtp=request.ceiling_dbtp
+        )
+    except EditorError as failure:
+        details = dict(failure.details)
+        details.update(clip_id=clip.id, asset_id=clip.asset_id, asset_label=source.name)
+        raise EditorError(failure.code, failure.message, failure.status, **details) from None
+    return measured, plan
+
+
 def create_app(
     db_path: Path,
     token: str,
@@ -887,16 +911,7 @@ def create_app(
                 asset_id=clip.asset_id,
                 asset_label=source.name,
             )
-        speed = clip.speed_percent / 100
-        measured = measure_loudness(
-            engine.ffmpeg,
-            source,
-            clip.source_in_ticks / TIMEBASE,
-            clip.duration_ticks * speed / TIMEBASE,
-        )
-        plan = normalize_gain(
-            measured, target_lufs=request.target_lufs, ceiling_dbtp=request.ceiling_dbtp
-        )
+        measured, plan = _meter_clip(engine, project, clip, request)
         read = {
             **measured,
             **plan,
@@ -930,6 +945,8 @@ def create_app(
         project = sequence_view(root, request.sequence_id)
         if next((track for track in project.tracks if track.id == track_id), None) is None:
             raise EditorError("NOT_FOUND", "track is not in this project", 404, track_id=track_id)
+        if not any(item.track_id == track_id for item in project.clips.values()):
+            raise EditorError("NOT_FOUND", "this track holds no clips", 404, track_id=track_id)
         commands: list[dict] = []
         clips: list[dict] = []
         for clip in sorted(
@@ -950,16 +967,15 @@ def create_app(
                     asset_id=clip.asset_id,
                     asset_label=source.name,
                 )
-            speed = clip.speed_percent / 100
-            measured = measure_loudness(
-                engine.ffmpeg,
-                source,
-                clip.source_in_ticks / TIMEBASE,
-                clip.duration_ticks * speed / TIMEBASE,
-            )
-            plan = normalize_gain(
-                measured, target_lufs=request.target_lufs, ceiling_dbtp=request.ceiling_dbtp
-            )
+            try:
+                measured, plan = _meter_clip(engine, project, clip, request)
+            except EditorError as failure:
+                # One clip the meter cannot read must not stop the rest of the track from being
+                # aligned: this is the whole-track button, and its promise is to report the reason.
+                if failure.status != 422:
+                    raise
+                clips.append({"clip_id": clip.id, "skipped": failure.message})
+                continue
             clips.append({"clip_id": clip.id, **measured, **plan})
             if abs(plan["gain"] - clip.effects.gain) > 0.01:
                 effects = clip.effects.model_copy(update={"gain": plan["gain"]})
@@ -1108,6 +1124,8 @@ def create_app(
         project = sequence_view(root, request.sequence_id)
         if next((track for track in project.tracks if track.id == track_id), None) is None:
             raise EditorError("NOT_FOUND", "track is not in this project", 404, track_id=track_id)
+        if not any(item.track_id == track_id for item in project.clips.values()):
+            raise EditorError("NOT_FOUND", "this track holds no clips", 404, track_id=track_id)
         frame_ticks = project.settings.frame_ticks
         commands: list[dict] = []
         scanned: list[dict] = []
@@ -1211,6 +1229,13 @@ def create_app(
                 )
             clips = [chosen]
         else:
+            if (
+                next((track for track in project.tracks if track.id == request.track_id), None)
+                is None
+            ):
+                raise EditorError(
+                    "NOT_FOUND", "track is not in this project", 404, track_id=request.track_id
+                )
             clips = sorted(
                 (c for c in project.clips.values() if c.track_id == request.track_id),
                 key=lambda c: c.position_ticks,
@@ -1320,6 +1345,8 @@ def create_app(
         project = sequence_view(root, request.sequence_id)
         if next((track for track in project.tracks if track.id == track_id), None) is None:
             raise EditorError("NOT_FOUND", "track is not in this project", 404, track_id=track_id)
+        if not any(item.track_id == track_id for item in project.clips.values()):
+            raise EditorError("NOT_FOUND", "this track holds no clips", 404, track_id=track_id)
         frame_ticks = project.settings.frame_ticks
         driver_ids = request.driver_track_ids
         if driver_ids is None:

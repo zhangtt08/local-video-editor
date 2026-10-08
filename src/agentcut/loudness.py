@@ -19,9 +19,16 @@ DEFAULT_TARGET_LUFS = -16.0
 CEILING_DBTP = -1.0
 MAX_GAIN = 4.0
 _MIN_GAIN = 1e-4
-_INTEGRATED = re.compile(r"I:\s*(-?[\d.]+)\s*LUFS")
-_PEAK = re.compile(r"Peak:\s*(-?[\d.]+)\s*dBFS")
+# What ebur128 prints for a window with nothing in it: it gates at −70 LUFS rather than reporting
+# −inf, and the true peak line becomes `-inf dBFS`, which no float regex would have matched.
+SILENCE_FLOOR = -70.0
+_INTEGRATED = re.compile(r"I:\s*(-?[\d.]+|-inf)\s*LUFS")
+_PEAK = re.compile(r"Peak:\s*(-?[\d.]+|-inf)\s*dBFS")
 _LRA = re.compile(r"LRA:\s*(-?[\d.]+)\s*LU")
+
+
+def _level(text: str) -> float:
+    return -math.inf if text == "-inf" else float(text)
 
 
 def volume_problem(clip) -> str | None:
@@ -54,13 +61,24 @@ def measure(
             "LOUDNESS_FAILED",
             f"the media engine could not measure this audio: {text[-600:]}",
             502,
+            path=str(source),
         )
     range_ = _LRA.search(summary)
-    return {
-        "integrated_lufs": float(integrated.group(1)),
-        "true_peak_dbtp": float(peak.group(1)),
+    readings = {
+        "integrated_lufs": _level(integrated.group(1)),
+        "true_peak_dbtp": _level(peak.group(1)),
         "lra_lu": None if range_ is None else float(range_.group(1)),
     }
+    if readings["integrated_lufs"] <= SILENCE_FLOOR or readings["true_peak_dbtp"] == -math.inf:
+        # `-inf` is not JSON-representable, so the refusal carries the file and the clip (added by
+        # the route), never the raw reading that triggered it.
+        raise EditorError(
+            "LOUDNESS_FAILED",
+            "this audio is digital silence, so there is no loudness to match",
+            422,
+            path=str(source),
+        )
+    return readings
 
 
 def normalize_gain(
@@ -68,9 +86,11 @@ def normalize_gain(
 ) -> dict:
     """The one linear gain that lands the clip on target without crossing the true-peak ceiling."""
     integrated = measured["integrated_lufs"]
-    if integrated <= -99.0:
+    if integrated <= SILENCE_FLOOR:
         raise EditorError(
-            "LOUDNESS_FAILED", "this audio is silent, so there is no loudness to match", 422
+            "LOUDNESS_FAILED",
+            "this audio is digital silence, so there is no loudness to match",
+            422,
         )
     wanted = 10 ** ((target_lufs - integrated) / 20)
     headroom = 10 ** ((ceiling_dbtp - measured["true_peak_dbtp"]) / 20)
