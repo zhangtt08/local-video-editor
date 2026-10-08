@@ -2588,3 +2588,52 @@ sigma；回执锚点再加两条，确认「只写默认值的新键」不会把
   字节读写并从索引 blob 复原。
 - 套件因此从 59 项变 60 项，README 那行同时把 matrix 的形状数按实测改成 53。仅测试与文档，不动
   发布物，因此不涨版本号、不重打包。验收：`ruff check`/`format --check` 全绿，串行套件 **60/60**。
+
+## 1.74.0 分析入口进得了嵌套合成（九条路由，工程 schema 不变）
+
+- 缺陷是这样浮出来的：合成在界面里就是「另一条时间线」——客户端用 `sequence_view` 投影，普通
+  `timeline_edit` 也早带 `sequence_id`。但九个分析入口（去空白、整轨去空白、统一响度、整轨响度、
+  自动闪避、画面稳定、遮罩跟踪、主体跟随、自动字幕）只读根工程的 `clips`/`tracks`。实测（夹具
+  与包内各量一次）：片段进了合成之后，`/clips/{id}/silence`、`/loudness`、`/reframe`、
+  `/stabilize`、`/track` 一律 404「clip is not in this project」——可它就在这条工程里；
+  `/tracks/{id}/silence`、`/loudness`、`/duck` 更坏：根上那条同名轨是空的，于是 200 回一句
+  「没什么可切 / 已经对齐」，把读不到当成没有；任何请求带 `sequence_id` 都是 422
+  `INVALID_REQUEST`（契约 `extra=forbid`，字段根本不存在）。界面没做任何灰化，所以这六是用户
+  每天点得到、每次都不通的按钮。
+- 修法不新写一套读取规则：七个请求契约加 `sequence_id: Identifier | None = None`，九条路由改用
+  reducer 已有的 `sequence_view(root, request.sequence_id)` 解析 clip/track id，派生批次同样盖上
+  `sequence_id`，于是「分析 → 写入」依旧是一条事务、一个 revision；回复里的 `project` 仍是根工程，
+  跟其它路由一致。可选字段带默认值，旧请求与旧回执一字不改（`_fingerprint` 本来就剥掉 `None` 的
+  `sequence_id`），SCHEMA_VERSION 不动。
+- 门禁 `tests/sequence_plan_check.py`（真实媒体）量的不是 200 而是同一件事：同一条遮罩路径先在根
+  时间线出计划（39 点），嵌套之后在合成里执行，落库的 `x`/`y`/`scale` 与那批计划**逐点相同**，而外面
+  那条容器片段一条关键帧都没多；合成里的 1 秒抖动样片被写上 **29 点/曲线**（量到 30 帧）、遮罩跟踪
+  写 10 个点、去空白切掉 **0.77 秒**（片段 4→5）、统一响度落 **2.2387** 倍增益、整轨去空白读到合成
+  轨里那 1 条片段（根上同名轨确实是空的）、自动闪避按合成里的 2 段语音在配乐上写 8 个音量关键帧、
+  整轨响度量到 2 条改了 1 条；嵌套之后在根上问同一条片段仍然诚实回 404。
+- 两条顺手量出来的实话，写下来免得下次当断言用：`dry_run` **不产生回执**，同一个 request_id 再问
+  一次就再计划一次（第一次跑门禁就是按「dry run 会命中回执」写的，当场红）；真实提交的那次要按
+  客户端重放的方式重发——带着它读过的那个 revision，而不是当前 revision——才命中回执，否则是
+  `IDEMPOTENCY_CONFLICT`（指纹里本来就有 `expected_revision`）。
+- 变异测试六条红：把 `reframe`/`silence_scan`/`clip_stabilize` 任一路由改回只读根工程 → 对应那步
+  404；把 `duck_track`/`silence_track` 的批次戳删掉 → 计划正确但写入找不着片段
+  （404 `clip_id: bed, command_index: 0`）；把 `MaskTrackRequest.sequence_id` 从契约里摘掉 → 请求
+  422 `INVALID_REQUEST`。全部还原后 `git status src` 只剩本轮该改的三个文件。
+- 界面：`store.ts` 九处分析请求自动带上当前合成（`sequence_id: state.sequenceId`，与 `submit` 早就
+  在用的同一个值），帮助里新增「合成·分析工具」一条，把「以前是按不动、现在是量的就是你看到的那条
+  轨」写清楚。MCP 的 schema 由契约生成，`tests/self_check.py` 另外断言六个工具的 schema 都含
+  `sequence_id`——Agent 读的就是这份。
+- 本轮没单独端到端量过的一条：自动字幕在合成里的实际听写（改动与其它八条逐字相同、字段在契约里
+  可见，但没为它写媒体夹具）。
+
+- 发布验收：`build_engine.py`（`FREEZE=0`，staged 324.9 MB）+ `npm run dist`（`DIST=0`）。包内实例
+  `ab9074e6d336` 报 `app_version=1.74.0`，`package_check_174.py` 在**打包后的引擎**上重跑同一序列：
+  合成里的跟随写入与根时间线的计划逐点相同（9 个点）、被跟随过的片段再稳定点名拒
+  `STABILIZE_CONFLICT`、画面稳定写 59 点/曲线（量到 60 帧）、遮罩跟踪 22 个点、去空白切掉 0.767 秒、
+  统一响度 2.2387、整轨去空白同样 0.767 秒、自动闪避 8 个音量关键帧对 2 段语音；dry run 回的是
+  预期 revision 10 而库里仍是 9；包内 MCP `tools/list` 的 schema 含 `sequence_id`；asar 里
+  `sequence_id:….sequenceId` 出现 10 处，帮助页含「合成·分析工具」。`ruff`、`npm run typecheck`、
+  11 项桌面 TS、串行套件 **61/61** 全绿。原生窗口 1480×900 标题栏「引擎在线 v1.74.0」
+  （`AgentCut-1.74-原生窗口.png`），关闭无残留。便携版 189,762,223 字节
+  SHA256 `FB4FDF5544DAAA2D7547AE700FAD43D2DE5F528319D028C4193DB9DFFC46BA51`；安装版 189,922,939 字节
+  SHA256 `759464BD8D3B124C69B3D5A0D4806E881BF63D89BE5B08E9E41C525094B79C65`。未签名，NSIS 向导未点击验收。

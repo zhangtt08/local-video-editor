@@ -559,6 +559,7 @@ export async function reframeClip(clipId: string, maxScale = 4) {
   try {
     const planned = await engine.reframe(project.id, clipId, {
       request_id: newId("reframe-"), expected_revision: project.revision,
+      sequence_id: state.sequenceId,
       max_scale: maxScale, apply: false, dry_run: false,
     });
     const stats = planned["reframe"] as {
@@ -595,6 +596,7 @@ export async function stabilizeClip(clipId: string, strength = 1, maxCrop = 0.1)
   try {
     const done = await engine.stabilize(project.id, clipId, {
       request_id: newId("stabilize-"), expected_revision: project.revision,
+      sequence_id: state.sequenceId,
       strength, max_crop: maxCrop, dry_run: false,
     });
     const stats = done.stabilization as {
@@ -650,6 +652,7 @@ export async function trackMask(clipId: string, fromTicks: number, frames: numbe
   try {
     const analysed = await engine.maskTrack(project.id, clipId, {
       request_id: newId("track-"), expected_revision: project.revision,
+      sequence_id: state.sequenceId,
       from_ticks: fromTicks, frames, merge, dry_run: true,
     });
     const points = analysed.tracking.points;
@@ -686,6 +689,7 @@ export async function cutSilence(clipId: string) {
   try {
     const scanned = await engine.silenceScan(project.id, clipId, {
       request_id: newId("silence-"), expected_revision: project.revision,
+      sequence_id: state.sequenceId,
     });
     const commands = scanned.silence.commands;
     if (!commands.length) {
@@ -720,6 +724,7 @@ export async function autoCaptions(clipId: string) {
     const known = previous && project.tracks.some((track) => track.id === previous) ? previous : null;
     const result = await engine.speechCaptions(project.id, {
       request_id: newId("speech-"), expected_revision: project.revision,
+      sequence_id: state.sequenceId,
       clip_id: clipId, language: "zh", replace_track_id: known,
     });
     const speech = result.speech;
@@ -748,6 +753,7 @@ export async function normaliseLoudness(clipId: string) {
   try {
     const scanned = await engine.loudnessScan(project.id, clipId, {
       request_id: newId("loudness-"), expected_revision: project.revision,
+      sequence_id: state.sequenceId,
     });
     const found = scanned.loudness;
     const effects = { ...clip.effects, gain: found.gain };
@@ -772,6 +778,7 @@ export async function alignTrackLoudness(trackId: string) {
   try {
     const scanned = await engine.loudnessTrack(project.id, trackId, {
       request_id: newId("loudness-"), expected_revision: project.revision,
+      sequence_id: state.sequenceId,
     });
     const report = scanned.loudness;
     const skipped = report.clips.length - report.measured;
@@ -907,7 +914,8 @@ export async function cutTrackSilence(trackId: string) {
   set({ busy: "扫描整轨静音…" });
   try {
     const scanned = await engine.silenceTrack(project.id, trackId, {
-      request_id: newId("silence-"), expected_revision: project.revision, trim_edges: true,
+      request_id: newId("silence-"), expected_revision: project.revision,
+      sequence_id: state.sequenceId, trim_edges: true,
     });
     const commands = scanned.silence.commands;
     const skipped = scanned.silence.clips.filter((item) => item.skipped).length;
@@ -937,7 +945,8 @@ export async function duckTrack(trackId: string, depthDb = 9) {
   set({ busy: "扫描说话区间…" });
   try {
     const scanned = await engine.duckTrack(project.id, trackId, {
-      request_id: newId("duck-"), expected_revision: project.revision, depth_db: depthDb,
+      request_id: newId("duck-"), expected_revision: project.revision,
+      sequence_id: state.sequenceId, depth_db: depthDb,
     });
     const plan = scanned.duck;
     const skipped = plan.clips.filter((item) => item.skipped).length + plan.skipped.length;

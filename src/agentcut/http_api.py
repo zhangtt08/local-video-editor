@@ -564,7 +564,8 @@ def create_app(
         project_id: Identifier, clip_id: Identifier, request: ClipStabilizeRequest, projects: Store
     ):
         engine = require_media()
-        project = projects.get(project_id)
+        root = projects.get(project_id)
+        project = sequence_view(root, request.sequence_id)
         clip = project.clips.get(clip_id)
         if clip is None:
             raise EditorError("NOT_FOUND", "clip is not in this project", 404)
@@ -618,13 +619,14 @@ def create_app(
         if not commands:
             # Nothing to write (strength 0). Report the measurement without burning a revision.
             return {
-                "project": project.model_dump(mode="json"),
+                "project": root.model_dump(mode="json"),
                 "replayed": False,
                 "stabilization": notes,
             }
         batch = EditBatch(
             request_id=request.request_id,
             expected_revision=request.expected_revision,
+            sequence_id=request.sequence_id,
             commands=commands,  # type: ignore[arg-type]
             dry_run=request.dry_run,
         )
@@ -636,7 +638,8 @@ def create_app(
         project_id: Identifier, clip_id: Identifier, request: MaskTrackRequest, projects: Store
     ):
         engine = require_media()
-        project = projects.get(project_id)
+        root = projects.get(project_id)
+        project = sequence_view(root, request.sequence_id)
         clip = project.clips.get(clip_id)
         if clip is None:
             raise EditorError("NOT_FOUND", "clip is not in this project", 404)
@@ -708,6 +711,7 @@ def create_app(
         batch = EditBatch(
             request_id=request.request_id,
             expected_revision=request.expected_revision,
+            sequence_id=request.sequence_id,
             commands=[
                 {
                     "op": "clip.mask_track",
@@ -786,7 +790,8 @@ def create_app(
         project_id: Identifier, clip_id: Identifier, request: SilenceRequest, projects: Store
     ):
         engine = require_media()
-        project = projects.get(project_id)
+        root = projects.get(project_id)
+        project = sequence_view(root, request.sequence_id)
         clip = project.clips.get(clip_id)
         if clip is None:
             raise EditorError("NOT_FOUND", "clip is not in this project", 404)
@@ -818,12 +823,13 @@ def create_app(
         if not request.apply:
             return {
                 "committed": False,
-                "project": project.model_dump(),
+                "project": root.model_dump(),
                 "silence": {**result, "commands": commands},
             }
         batch = EditBatch(
             request_id=request.request_id,
             expected_revision=request.expected_revision,
+            sequence_id=request.sequence_id,
             commands=commands,  # type: ignore[arg-type]
             dry_run=request.dry_run,
         )
@@ -835,7 +841,8 @@ def create_app(
         project_id: Identifier, clip_id: Identifier, request: LoudnessRequest, projects: Store
     ):
         engine = require_media()
-        project = projects.get(project_id)
+        root = projects.get(project_id)
+        project = sequence_view(root, request.sequence_id)
         clip = project.clips.get(clip_id)
         if clip is None:
             raise EditorError("NOT_FOUND", "clip is not in this project", 404)
@@ -862,11 +869,12 @@ def create_app(
             "ceiling_dbtp": request.ceiling_dbtp,
         }
         if not request.apply:
-            return {"committed": False, "project": project.model_dump(), "loudness": read}
+            return {"committed": False, "project": root.model_dump(), "loudness": read}
         effects = clip.effects.model_copy(update={"gain": plan["gain"]})
         batch = EditBatch(
             request_id=request.request_id,
             expected_revision=request.expected_revision,
+            sequence_id=request.sequence_id,
             commands=[{"op": "clip.effects", "clip_id": clip_id, "effects": effects}],
             dry_run=request.dry_run,
         )
@@ -883,7 +891,8 @@ def create_app(
         skipped with the reason rather than silently left at a different level.
         """
         engine = require_media()
-        project = projects.get(project_id)
+        root = projects.get(project_id)
+        project = sequence_view(root, request.sequence_id)
         if next((track for track in project.tracks if track.id == track_id), None) is None:
             raise EditorError("NOT_FOUND", "track is not in this project", 404)
         commands: list[dict] = []
@@ -932,10 +941,11 @@ def create_app(
                 track_id=track_id,
             )
         if not request.apply:
-            return {"committed": False, "project": project.model_dump(), "loudness": body}
+            return {"committed": False, "project": root.model_dump(), "loudness": body}
         batch = EditBatch(
             request_id=request.request_id,
             expected_revision=request.expected_revision,
+            sequence_id=request.sequence_id,
             commands=commands,  # type: ignore[arg-type]
             dry_run=request.dry_run,
         )
@@ -982,7 +992,8 @@ def create_app(
         `keyframes.replace` commands. The reducer stays the only place that decides what a legal
         keyframe write is. `tolerance` trades keyframe count for how tightly the subject is held.
         """
-        project = projects.get(project_id)
+        root = projects.get(project_id)
+        project = sequence_view(root, request.sequence_id)
         commands, notes = reframe_plan.plan(
             project,
             clip_id=clip_id,
@@ -991,10 +1002,11 @@ def create_app(
         )
         body = {"reframe": notes, "commands": commands}
         if not request.apply:
-            return {"committed": False, "project": project.model_dump(), **body}
+            return {"committed": False, "project": root.model_dump(), **body}
         batch = EditBatch(
             request_id=request.request_id,
             expected_revision=request.expected_revision,
+            sequence_id=request.sequence_id,
             commands=commands,
             dry_run=request.dry_run,
         )
@@ -1050,7 +1062,8 @@ def create_app(
         so other tracks keep their positions and stay aligned through groups or links.
         """
         engine = require_media()
-        project = projects.get(project_id)
+        root = projects.get(project_id)
+        project = sequence_view(root, request.sequence_id)
         if next((track for track in project.tracks if track.id == track_id), None) is None:
             raise EditorError("NOT_FOUND", "track is not in this project", 404)
         frame_ticks = project.settings.frame_ticks
@@ -1102,10 +1115,11 @@ def create_app(
                 track_id=track_id,
             )
         if not request.apply:
-            return {"committed": False, "project": project.model_dump(), "silence": body}
+            return {"committed": False, "project": root.model_dump(), "silence": body}
         batch = EditBatch(
             request_id=request.request_id,
             expected_revision=request.expected_revision,
+            sequence_id=request.sequence_id,
             commands=commands,  # type: ignore[arg-type]
             dry_run=request.dry_run,
         )
@@ -1128,7 +1142,8 @@ def create_app(
             raise EditorError(
                 "INVALID_REQUEST", "name either a clip_id or a track_id, not both", 422
             )
-        project = projects.get(project_id)
+        root = projects.get(project_id)
+        project = sequence_view(root, request.sequence_id)
         if request.clip_id is not None:
             chosen = project.clips.get(request.clip_id)
             if chosen is None:
@@ -1208,10 +1223,11 @@ def create_app(
             "clips": scanned,
         }
         if not request.apply:
-            return {"committed": False, "project": project.model_dump(), "speech": body}
+            return {"committed": False, "project": root.model_dump(), "speech": body}
         batch = EditBatch(
             request_id=request.request_id,
             expected_revision=request.expected_revision,
+            sequence_id=request.sequence_id,
             commands=commands,  # type: ignore[arg-type]
             dry_run=request.dry_run,
         )
@@ -1230,7 +1246,8 @@ def create_app(
         the whole duck.
         """
         engine = require_media()
-        project = projects.get(project_id)
+        root = projects.get(project_id)
+        project = sequence_view(root, request.sequence_id)
         if next((track for track in project.tracks if track.id == track_id), None) is None:
             raise EditorError("NOT_FOUND", "track is not in this project", 404)
         frame_ticks = project.settings.frame_ticks
@@ -1350,10 +1367,11 @@ def create_app(
                 track_id=track_id,
             )
         if not request.apply:
-            return {"committed": False, "project": project.model_dump(), "duck": body}
+            return {"committed": False, "project": root.model_dump(), "duck": body}
         batch = EditBatch(
             request_id=request.request_id,
             expected_revision=request.expected_revision,
+            sequence_id=request.sequence_id,
             commands=commands,  # type: ignore[arg-type]
             dry_run=request.dry_run,
         )

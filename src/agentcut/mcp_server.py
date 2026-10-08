@@ -214,7 +214,11 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
 
     @server.tool(annotations=write)
     async def timeline_edit(project_id: Identifier, request: EditBatch) -> MutationResult:
-        """Atomically edit a timeline; dry_run returns a prospective snapshot without saving."""
+        """Atomically edit a timeline; dry_run returns a prospective snapshot without saving.
+
+        `sequence_id` makes the clip and track ids of this batch mean the clips inside one nested
+        composition, which is how a plan from `clip_silence`/`clip_reframe` is applied back.
+        """
         return MutationResult.model_validate(
             await call("POST", f"/v1/projects/{project_id}/edits", request.model_dump(mode="json"))
         )
@@ -227,6 +231,8 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
 
         Read-only here: `apply` and `dry_run` are forced off, so nothing is written. Review or edit
         the returned `commands`, then submit them with `timeline_edit` to keep one atomic revision.
+        `sequence_id` reads the clip from inside that nested composition; the commands then have to
+        be submitted with the same `sequence_id`.
         """
         body = request.model_dump(mode="json") | {"apply": False, "dry_run": False}
         return await call(
@@ -244,7 +250,8 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
 
         Read-only here: `apply` and `dry_run` are forced off, so nothing is written. The answer
         carries the cues, their SubRip text and the one `captions.import` command — submit it with
-        `timeline_edit` to land the whole subtitle track as a single undoable revision.
+        `timeline_edit` to land the whole subtitle track as a single undoable revision. With
+        `sequence_id` the clip is read from that nested composition and the track lands inside it.
         """
         body = request.model_dump(mode="json") | {"apply": False, "dry_run": False}
         return await call(
@@ -276,7 +283,8 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
 
         Read-only here: `apply` and `dry_run` are forced off. The answer says how many points it
         follows, how far it has to zoom, and whether the framing had to stop short; submit the
-        returned `commands` with `timeline_edit` for one atomic revision.
+        returned `commands` with `timeline_edit` for one atomic revision. `sequence_id` reads the
+        mask path from a clip inside that nested composition.
         """
         return await call(
             "POST",
@@ -309,6 +317,8 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         The listening is the same silence detector the cut tools use; the write lands as `gain`
         keyframes through the same transaction as `timeline_edit`, so `dry_run` saves nothing, a
         repeated request_id replays, and `apply=false` only hands the commands back to review.
+        `sequence_id` ducks one track of a nested composition, listening to the driver tracks that
+        sit beside it in the same composition.
         """
         return await call(
             "POST",
@@ -334,7 +344,8 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         and a stabilised clip refuses `clip.speed`/`clip.speed_curve` and `clip.reframe` as
         `STABILIZE_LOCKED`: the correction is one keyframe per source frame and lives in the same
         `x`/`y`/`scale` curves the follow writes, so a speed change would play it at the wrong rate
-        and a reframe would delete it while the record still claimed it.
+        and a reframe would delete it while the record still claimed it. `sequence_id` measures and
+        writes a clip that lives inside a nested composition.
         """
         return await call(
             "POST",
@@ -353,6 +364,7 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         `timeline_edit`, so dry_run saves nothing and a repeated request_id replays. `merge` (on by
         default) keeps the points outside the analysed window, so a run that loses the subject can
         be continued from a later frame instead of starting over and wiping the first half.
+        `sequence_id` follows a mask on a clip inside a nested composition.
         """
         return await call(
             "POST",

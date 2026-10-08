@@ -1601,3 +1601,39 @@ contract limits」，`details` 是空的：不说哪条片段、不说超了多�
 验收（并入 `tests/stabilize_check.py`）：给一条干净片段先写 1950 个 `opacity` 点，再稳定 —— 必须
 200，`written_points == keyframe_budget == (2000-1950)//3 == 16`，回读关键帧总数 1984 < 2000，
 并且回复里带着那条抽稀警告。这条断言在预算改动前是红的，红的输出就是 `PROJECT_LIMIT` 本身。
+
+## 1.74 九个分析入口进得了嵌套合成（工程 schema 不变）
+
+预合成把片段搬进 `Project.sequences`，界面却把合成当时间线来显示：客户端用 `sequence_view` 投影，
+普通的 `timeline_edit` 早就带着 `sequence_id`。分析类入口没有这个参数，于是合成里的片段一按就撞墙——
+实测（`tests/sequence_plan_check.py` 的夹具，包内再量一次）：
+
+| 入口 | 修之前（片段已在合成里） |
+| --- | --- |
+| `POST /clips/{id}/silence`、`/loudness`、`/reframe` | 404 `NOT_FOUND`「clip is not in this project」——可它就在这条工程里 |
+| `POST /clips/{id}/stabilize`、`/track` | 404 `NOT_FOUND` |
+| `POST /tracks/{id}/silence`、`/loudness`、`/duck` | 200 且 commands 为空：读的是根时间线上那条同名的空轨，回一句「没什么可切/可闪」 |
+| 任何请求带上 `sequence_id` | 422 `INVALID_REQUEST`（契约 `extra=forbid`，字段根本不存在） |
+
+1.74 起七个请求契约（`ReframeRequest`/`SilenceRequest`/`LoudnessRequest`/`DuckRequest`/
+`MaskTrackRequest`/`ClipStabilizeRequest`/`SpeechCaptionsRequest`，共九条路由）都带
+`sequence_id: Identifier | None = None`：路由用 reducer 已有的同一个 `sequence_view` 投影来解析
+clip/track id（不另写一套读取规则），派生的批次也一并盖上 `sequence_id`，所以「分析 → 写入」仍是一条
+事务、一个 revision；回复里的 `project` 依旧是根工程，客户端自己按当前视图投影。可选字段带默认值，
+旧请求与旧回执一字不改（`_fingerprint` 早就把 `None` 的 `sequence_id` 剥掉）。
+
+验收量的是「同一个片段在两头得到同一个答案」，而不只是 200：
+- 同一条遮罩路径，先在根时间线上出计划（39 个点），嵌套之后再在合成里执行，落库的 `x`/`y`/`scale`
+  与那批计划**逐点相同**，而合成外面那条容器片段一条关键帧都没多；
+- 合成里那条 1 秒抖动样片被稳定写上 **29 点/曲线**（量到 30 帧），遮罩跟踪写进合成内部的片段
+  （10 个点），去空白从合成自己的片段里切掉 **0.77 秒**、片段数从 4 变 5，统一响度把 **2.2387** 倍增益
+  落在里面的片段上，整轨去空白读到合成轨上那 1 条片段同样切掉 0.77 秒（根上这条轨是空的），
+  自动闪避按合成里的口播给出 **2** 段语音、在配乐上写 **8** 个音量关键帧；
+- 拒绝仍然诚实：嵌套之后在根时间线上问同一条片段，回的还是 404；
+- `dry_run` 不留痕（revision 不动），而且**不产生回执**——同一个 request_id 再问一次就再计划一次；
+  真实提交的那次按客户端重放的方式（带着它读过的那个 revision）再发一次，命中回执、revision 不变，
+  不会把合成的响度压两遍；
+- `tests/self_check.py` 另外断言 MCP 的六个工具 schema 里都有 `sequence_id`——Agent 读的就是这份 schema。
+
+没单独端到端量过的一条：自动字幕（`/speech-captions`）在合成里的实际听写。改动与其他八条逐字相同
+（同一段 `sequence_view` + 同一个批次戳），字段在契约里可见，但本轮没有为它写媒体夹具。

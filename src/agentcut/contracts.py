@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 13  # v13 gives a path mask a real box; older rows are fitted on load (ge=1).
-APP_VERSION = "1.73.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.74.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -704,6 +704,8 @@ class ReframeRequest(Contract):
 
     request_id: Identifier
     expected_revision: Revision
+    # Read the ids below -- and apply the batch -- inside one nested composition.
+    sequence_id: Identifier | None = None
     max_scale: Annotated[float, Field(ge=1.0, le=4.0)] = 2.0
     tolerance: Annotated[float, Field(gt=0.0, le=0.25)] = REFRAME_TOLERANCE
     apply: bool = False
@@ -1331,6 +1333,8 @@ class MaskTrackRequest(Contract):
 
     request_id: Identifier
     expected_revision: Revision
+    # Read the ids below -- and apply the batch -- inside one nested composition.
+    sequence_id: Identifier | None = None
     from_ticks: Ticks = 0
     frames: Annotated[int, Field(ge=2, le=900)] = 120
     search_radius: Annotated[int, Field(ge=2, le=16)] = 10
@@ -1350,6 +1354,8 @@ class ClipStabilizeRequest(Contract):
 
     request_id: Identifier
     expected_revision: Revision
+    # Read the ids below -- and apply the batch -- inside one nested composition.
+    sequence_id: Identifier | None = None
     strength: Annotated[float, Field(ge=0, le=STABILIZE_STRENGTH_LIMIT)] = 1.0
     max_crop: Annotated[float, Field(ge=0, le=STABILIZE_MAX_CROP_LIMIT)] = 0.1
     dry_run: bool = False
@@ -1398,6 +1404,8 @@ class LoudnessRequest(Contract):
 
     request_id: Identifier
     expected_revision: Revision
+    # Read the ids below -- and apply the batch -- inside one nested composition.
+    sequence_id: Identifier | None = None
     target_lufs: Annotated[float, Field(ge=-30.0, le=-6.0)] = -16.0
     ceiling_dbtp: Annotated[float, Field(ge=-9.0, le=0.0)] = -1.0
     apply: bool = False
@@ -1455,6 +1463,8 @@ class SilenceRequest(Contract):
 
     request_id: Identifier
     expected_revision: Revision
+    # Read the ids below -- and apply the batch -- inside one nested composition.
+    sequence_id: Identifier | None = None
     threshold_db: Annotated[float, Field(ge=-80.0, le=-6.0)] = -35.0
     min_silence_ms: Annotated[int, Field(ge=80, le=5000)] = 250
     from_ticks: Ticks = 0
@@ -1474,6 +1484,8 @@ class SpeechCaptionsRequest(Contract):
 
     request_id: Identifier
     expected_revision: Revision
+    # Read the ids below -- and apply the batch -- inside one nested composition.
+    sequence_id: Identifier | None = None
     clip_id: Identifier | None = None
     track_id: Identifier | None = None
     language: Literal["zh", "en"] = "zh"
@@ -1495,6 +1507,8 @@ class DuckRequest(Contract):
 
     request_id: Identifier
     expected_revision: Revision
+    # Read the ids below -- and apply the batch -- inside one nested composition.
+    sequence_id: Identifier | None = None
     driver_track_ids: Annotated[list[Identifier] | None, Field(max_length=32)] = None
     depth_db: Annotated[float, Field(ge=1.0, le=36.0)] = 9.0
     attack_ms: Annotated[int, Field(ge=0, le=3000)] = 150
