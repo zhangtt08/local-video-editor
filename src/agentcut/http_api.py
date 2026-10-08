@@ -1587,7 +1587,9 @@ def create_app(
         project = sequence_view(projects.get(project_id, revision), sequence_id)
         clip = project.clips.get(clip_id)
         if clip is None:
-            raise EditorError("NOT_FOUND", "clip does not exist", 404)
+            raise EditorError(
+                "NOT_FOUND", "clip does not exist", 404, clip_id=clip_id, revision=revision
+            )
         return {
             "revision": project.revision,
             "values": sample_values(clip, at_ticks),
@@ -1707,7 +1709,14 @@ def create_app(
         return {"job": data, "plan": plan}
 
     @app.get("/v1/projects/{project_id}/jobs", dependencies=auth)
-    def list_jobs(project_id: Identifier, limit: Annotated[int, Query(ge=1, le=100)] = 20):
+    def list_jobs(
+        project_id: Identifier,
+        projects: Store,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    ):
+        # An unknown project answers 404 like every other read of it, not an empty list that
+        # looks like a timeline with no renders.
+        projects.get(project_id)
         runtime = require_jobs()
         return {"jobs": runtime.list_for_project(project_id, limit)}
 

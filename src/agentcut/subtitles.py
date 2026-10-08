@@ -40,7 +40,7 @@ def parse_srt(body: str, frame_ticks: int, offset_ticks: int = 0) -> list[tuple[
 
 def export_srt(project: Project, track_id: str) -> str:
     if not any(track.id == track_id for track in project.tracks):
-        raise EditorError("NOT_FOUND", "subtitle track does not exist", 404)
+        raise EditorError("NOT_FOUND", "subtitle track does not exist", 404, track_id=track_id)
     clips = sorted(
         (c for c in project.clips.values() if c.track_id == track_id and c.text),
         key=lambda c: c.position_ticks,

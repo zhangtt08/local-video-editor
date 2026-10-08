@@ -813,12 +813,22 @@ class MediaService:
         with self.connection() as db:
             row = db.execute("SELECT document FROM media_probes WHERE id=?", (probe_id,)).fetchone()
         if row is None:
-            raise EditorError("PROBE_NOT_FOUND", "unknown probe_id; import the file again", 404)
+            raise EditorError(
+                "PROBE_NOT_FOUND",
+                "unknown probe_id; import the file again",
+                404,
+                probe_id=probe_id,
+            )
         probe = MediaProbe.model_validate_json(row["document"])
         # A probe is only trustworthy while the bytes it hashed are still there.
         path = Path(probe.verified.path)
         if not path.is_file():
-            raise EditorError("MEDIA_MISSING", f"source file no longer exists: {path}", 410)
+            raise EditorError(
+                "MEDIA_MISSING",
+                f"source file no longer exists: {path}",
+                410,
+                probe_id=probe_id,
+            )
         if path.stat().st_size != probe.verified.size_bytes:
             raise EditorError(
                 "MEDIA_STALE",

@@ -2687,3 +2687,31 @@ sigma；回执锚点再加两条，确认「只写默认值的新键」不会把
   关闭无残留。便携版 189,763,030 字节 SHA256
   `270E6BF13208933EE3077C7C900328C905100163719BAF63C2E3AFE723C53CC8`；安装版 189,923,746 字节
   SHA256 `A9B75C75EA17F67135D46C6564653F182CC6C3B3B7747C4FFF5140037653887B`。未签名，NSIS 向导未点击验收。
+
+## 1.76.0 读不存在的 id 也要说清楚是哪个
+
+- 顺着 1.75 的同一把尺子量 `GET` 一侧，先记录现状再动手：13 条读路由对不存在的 id 回
+  `{"code":"NOT_FOUND","message":"…","details":{}}`；`GET /v1/projects/{unknown}/jobs` 更糟——回
+  200 + 空列表，打错一个字的工程 id 与「这个工程还没导出过」在界面上无法区分，而紧挨着的
+  `history` 回的是 404。两条路由对同一个输入给两种答案，本身就是缺陷。
+- 修法集中在三个真正说话的地方，不在路由里重复判断：`ProjectStore._load`（工程、历史、字幕、素材
+  清单、预览清单、渲染计划、取帧都经它）带上 `project_id` 与 `revision`；`MediaService.get_probe`
+  的两条（探测记录、代理流）带上 `probe_id`；字幕导出与片段取样带上 `track_id` / `clip_id`。
+  `/projects/{id}/jobs` 改成先读工程，未知工程与其它读路由一致回 404。判断一字未动。
+- 门禁 `tests/read_sweep_check.py`：15 条「读不存在的东西」覆盖 project / probe / clip / track /
+  asset / sequence 六种 id，每条都必须把它收到的那个值放回 `details`；素材被挪走后 410 点名
+  `probe_id`；再加七条正常读（工程、历史、素材清单、任务列表、字幕、探测记录、预览清单）必须仍是
+  200——补 `details` 不能把能用的读变成新的拒绝。
+- 门禁自己先红在两条上，而且红得对：`/frame` 与 `/assets/{id}/proxy` 我按猜的查询名去问
+  （`t=`、少一个 `width`），回来的 422 是契约层的缺字段拒绝、`details` 里是 `issues`——那是正确答案，
+  不是缺陷。断言要照接口的真实形状写，于是把两条 ask 改成合法查询串后它们才真的走到 404。
+- 变异测试四条红：剥掉 `_load` 的 `project_id` → 一批读路由当场红；剥掉 `get_probe` 的 `probe_id` →
+  探测记录与 410 两条红；剥掉字幕导出的 `track_id` → 那条 ask 红；把 `/jobs` 的 `projects.get` 去掉 →
+  「未知工程回 200」这条红。
+- 发布验收：`build_engine.py`（`FREEZE=0`）+ `npm run dist`（`DIST=0`）。包内实例 `40afe2ceb86f` 报
+  `app_version=1.76.0`；`package_check_176.py` 在打包后的引擎上量到七条正常读仍 200、七条失败读各点名
+  它收到的 id（project / track / clip / probe / sequence，含那条曾经回空 200 的 `/projects/ghost/jobs`）、
+  样片被删后 410 点名 `probe_id`。`ruff`、串行套件 **63/63** 全绿；原生窗口 1480×900 标题栏
+  「引擎在线 v1.76.0」（`AgentCut-1.76-原生窗口.png`），关闭无残留。便携版 189,763,321 字节 SHA256
+  `DA5A79343AD29CCA14B43532A0E38188485D836EBA6854C947F75CB391337DBB`；安装版 189,924,038 字节
+  SHA256 `FF241C45E412553CDAB647A05BFF68D9877D68B43D96772A469A4BE0C09B2EED`。未签名，NSIS 向导未点击验收。

@@ -1672,3 +1672,21 @@ reducer、回执都不动。
 `INVALID_TRACK_TARGET`、`TRACK_FAILED`、`INVALID_SPEED`、`PROJECT_LIMIT`、`TIME_OVERFLOW`）各补一句
 能照着做的中文——在此之前按「去空白」「自动闪避」「主体跟随」被拒时，提示里就是引擎那句英文。
 `tests/desktop_error_naming_check.ts` 逐条钉住。
+
+## 1.76 读不存在的 id 也要说清楚是哪个（工程 schema 不变）
+
+1.75 把「拒绝点名」做到了九个分析入口，`GET` 一侧还是老样子。实测（`tests/read_sweep_check.py`
+先记录现状）：13 条读路由对不存在的 id 回 `{"code":"NOT_FOUND","message":"...","details":{}}`——
+调用方刚把 id 传进去，日志里却看不出是哪一次查找失败；更不一致的是
+`GET /v1/projects/{unknown}/jobs` 回 **200 + 空列表**，一个打错字的工程 id 看起来就跟「这个工程还
+没导出过」一模一样，而旁边的 `history` 回的是 404。
+
+1.76 起三处集中修：`ProjectStore._load` 的 404 带 `project_id` 与 `revision`（覆盖工程、历史、字幕、
+素材清单、预览清单、渲染计划、取帧这一整批路由），`MediaService.get_probe` 的两条带 `probe_id`，
+字幕导出与片段取样的 404 带 `track_id` / `clip_id`；`/projects/{id}/jobs` 改为先读工程，未知工程与
+其它读路由一样回 404。判断没有变化，只是把已经传进来的 id 放回 `details`。
+
+门禁钉三件事：15 条「读不存在的东西」每条都点名它给的那个 id（project / probe / clip / track /
+asset / sequence 六种都覆盖到）；素材文件被挪走后 410 说得出是哪个 `probe_id`；七条正常读
+（工程、历史、素材清单、任务列表、字幕、探测记录、预览清单）仍然 200——补 details 不能把能用的读
+变成新的拒绝。

@@ -99,7 +99,13 @@ class ProjectStore:
                 (project_id, revision),
             ).fetchone()
         if row is None:
-            raise EditorError("NOT_FOUND", "project or revision does not exist", 404)
+            raise EditorError(
+                "NOT_FOUND",
+                "project or revision does not exist",
+                404,
+                project_id=project_id,
+                revision=revision,
+            )
         return _fitted(Project.model_validate_json(row["document"]))
 
     @staticmethod
