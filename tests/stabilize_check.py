@@ -261,6 +261,28 @@ def main() -> None:
                 "probe_id": jolt_probe.id,
                 "verified": jolt_probe.verified.model_dump(),
             },
+            {"op": "track.add", "track": {"id": "h1", "kind": "video", "name": "h1"}},
+            {"op": "track.add", "track": {"id": "h2", "kind": "video", "name": "h2"}},
+            {
+                "op": "clip.add",
+                "clip": {
+                    "id": "again",
+                    "asset_id": "shake",
+                    "track_id": "h1",
+                    "position_ticks": 0,
+                    "duration_ticks": int(SECONDS * T),
+                },
+            },
+            {
+                "op": "clip.add",
+                "clip": {
+                    "id": "tightclip",
+                    "asset_id": "shake",
+                    "track_id": "h2",
+                    "position_ticks": 0,
+                    "duration_ticks": int(SECONDS * T),
+                },
+            },
             {
                 "op": "clip.add",
                 "clip": {
@@ -496,8 +518,25 @@ def main() -> None:
                     "max_crop": 0.1,
                 },
             ).json()
-            half = client.post(
+            # A second run on a clip that already carries the correction has to refuse, not
+            # subtract the same motion twice.
+            twice = client.post(
                 f"/v1/projects/{project.id}/clips/c/stabilize",
+                json={"request_id": "twice", "expected_revision": whole["project"]["revision"]},
+            )
+            assert twice.status_code == 422, twice.text[:200]
+            assert twice.json()["error"]["code"] == "STABILIZE_CONFLICT", twice.text[:200]
+            assert set(twice.json()["error"]["details"]["properties"]) >= {"x", "y"}, twice.text
+            assert (
+                client.get(f"/v1/projects/{project.id}").json()["revision"]
+                == whole["project"]["revision"]
+            ), "a refused second run still moved the head"
+            print(
+                "stabilising a clip that already animates x/y/rotation/scale is refused as "
+                "STABILIZE_CONFLICT instead of correcting twice"
+            )
+            half = client.post(
+                f"/v1/projects/{project.id}/clips/again/stabilize",
                 json={
                     "request_id": "half",
                     "expected_revision": whole["project"]["revision"],
@@ -744,7 +783,7 @@ def main() -> None:
 
             # A crop budget of 0 cannot hide anything: the plan has to say so rather than lie.
             tight = client.post(
-                f"/v1/projects/{project.id}/clips/c/stabilize",
+                f"/v1/projects/{project.id}/clips/tightclip/stabilize",
                 json={
                     "request_id": "tight",
                     "expected_revision": audio,
@@ -759,27 +798,43 @@ def main() -> None:
                 f"{tight['stabilization']['clamped_axes']} clamped axes and says why"
             )
 
-            # The same request_id with the same payload replays; a different payload is a different
-            # request, which the store refuses rather than silently re-writing.
-            replay = client.post(
-                f"/v1/projects/{project.id}/clips/c/stabilize",
-                json={
-                    "request_id": "tight",
-                    "expected_revision": audio,
-                    "strength": 1.0,
-                    "max_crop": 0.0,
-                },
-            ).json()
-            assert replay["project"]["revision"] == tight["project"]["revision"], replay
-            assert replay.get("replayed") is True, replay
-            changed = client.post(
-                f"/v1/projects/{project.id}/clips/c/stabilize",
-                json={"request_id": "tight", "expected_revision": audio, "strength": 0.5},
-            ).json()
-            assert changed["error"]["code"] == "IDEMPOTENCY_CONFLICT", changed
+            # A retry — the same request_id, with the same payload or another one — must not write a
+            # second correction. The guard on the clip's own keyframes answers before the receipt
+            # layer does, so both doors close with the reason named, and the document is left
+            # exactly as the first run put it.
+            written = tight["project"]["clips"]["tightclip"]["keyframes"]
+            head = tight["project"]["revision"]
+            for label, body in (
+                (
+                    "same payload",
+                    {
+                        "request_id": "tight",
+                        "expected_revision": head,
+                        "strength": 1.0,
+                        "max_crop": 0.0,
+                    },
+                ),
+                (
+                    "other strength",
+                    {"request_id": "tight", "expected_revision": head, "strength": 0.5},
+                ),
+            ):
+                again = client.post(
+                    f"/v1/projects/{project.id}/clips/tightclip/stabilize", json=body
+                )
+                assert again.status_code == 422, (label, again.text[:200])
+                assert again.json()["error"]["code"] == "STABILIZE_CONFLICT", (
+                    label,
+                    again.text[:200],
+                )
+            current = client.get(f"/v1/projects/{project.id}").json()
+            assert current["revision"] == head, "a retried stabilisation moved the head"
+            assert current["clips"]["tightclip"]["keyframes"] == written, (
+                "a retried stabilisation changed the keyframes"
+            )
             print(
-                "a repeated request_id replays the same revision, and the same id with another "
-                "payload is refused instead of writing twice"
+                "a retried request_id is refused by name whichever way it arrives, head and "
+                "keyframes untouched"
             )
 
             # Every way an Agent can point this at nothing has to answer by name, not with a 500.

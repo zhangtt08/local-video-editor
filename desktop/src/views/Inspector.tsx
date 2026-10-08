@@ -6,7 +6,7 @@ import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionCh
 import { Icon, Modal } from "../ui";
 import { GradeFields } from "./GradeFields";
 import { SpeedFields } from "./SpeedFields";
-import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, sharpenLimits } from "../effects";
+import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, sharpenLimits, stabilizeBlocked } from "../effects";
 import { frameTicks, TIMEBASE, align, humanDuration, seconds, ticks } from "../time";
 import {
   clearBatch,
@@ -262,6 +262,7 @@ function EffectsFields({ clip }: { clip: Clip }) {
   // 上限完全由引擎下发的两个数决定（见 effects.ts 的 blurMaxPercent），界面不自己另写一套。
   const blurMax = blurMaxPercent(app.caps, project?.settings.height ?? 0);
   const sharpen = sharpenLimits(app.caps, project?.settings.height ?? 0);
+  const stabBlock = stabilizeBlocked(clip);
   const outside = play.ticks < clip.position_ticks || play.ticks > clip.position_ticks + clip.duration_ticks;
   useEffect(() => {
     if (!project || play.playing || !clip.keyframes?.length) return;
@@ -296,8 +297,8 @@ function EffectsFields({ clip }: { clip: Clip }) {
         <span className="dim">% 高 · ≈{(effects.blur * (project?.settings.height ?? 0)).toFixed(1)} px</span>
       </div> : null}
           {app.caps?.features?.clip_stabilize && asset?.kind !== "audio" ? <span className="stabilize-row">
-            <button className="btn tiny" disabled={Boolean(app.busy) || Boolean(clip.speed_curve) || clip.speed_percent !== 100}
-              title={clip.speed_curve || clip.speed_percent !== 100 ? "带变速的片段还不能稳定：抖动是按「一帧对一帧」量的，播放速度变了就对不上" : "让引擎读这段画面，量出相机自己的抖动，再写入反过来的平移与缩放把它抵消；强度 0 表示不动画面，允许裁切是愿意为消抖让画面放大多少。撤销一步回到稳定前"}
+            <button className="btn tiny" disabled={Boolean(app.busy) || stabBlock !== null}
+              title={stabBlock ?? "让引擎读这段画面，量出相机自己的抖动，再写入反过来的平移与缩放把它抵消；强度 0 表示不动画面，允许裁切是愿意为消抖让画面放大多少。撤销一步回到稳定前"}
               onClick={() => void stabilizeClip(clip.id, stabilizeStrength / 100, stabilizeCrop / 100)}>画面稳定</button>
             <label className="dim">强度
               <input className="input tiny" type="number" min={0} max={100} step={5} value={stabilizeStrength}

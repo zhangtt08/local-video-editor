@@ -1,4 +1,4 @@
-import type { AnimatedEffect, Capabilities, MaskProperty, ShapeMask } from "./engine";
+import type { AnimatedEffect, Capabilities, Clip, MaskProperty, ShapeMask } from "./engine";
 
 /**
  * 柔焦滑杆的上限（占画面高的百分比）。两个数都由引擎下发：`limits.blur_fraction` 是契约里
@@ -67,3 +67,25 @@ export const maskAnimFields = (mask?: ShapeMask | null) =>
 export const FIELD_LABEL: Record<string, string> = Object.fromEntries(
   [...EFFECT_FIELDS, ...MASK_ANIM_FIELDS].map((field) => [field.property, field.label]),
 );
+
+/** The three curves the stabiliser writes, plus rotation — the same set the engine guards. */
+const STABILIZED = ["x", "y", "rotation", "scale"] as const;
+
+/**
+ * 「画面稳定」按不下去的原因，`null` 表示可以按。界面和引擎守同一条判断，所以点下去不会拿到
+ * 另一套说法：变速片段量不准，已经K过位移/缩放/旋转的片段会被再抵消一遍——稳定是把纠偏叠加在
+ * 片段已有的动画上，而引擎认不出哪一条是它上一次写的，只能让人先把它清掉。
+ */
+export const stabilizeBlocked = (clip: Clip): string | null => {
+  if (clip.speed_curve?.length || (clip.speed_percent ?? 100) !== 100) {
+    return "带变速的片段还不能稳定：抖动是按「一帧对一帧」量的，播放速度变了就对不上。把这段的速度改回 100% 再稳定。";
+  }
+  const keyed = STABILIZED.filter((property) =>
+    (clip.keyframes ?? []).some((point) => point.property === property),
+  ).map((property) => FIELD_LABEL[property]);
+  if (keyed.length) {
+    return `这段画面已经K了${keyed.join("、")}：稳定会把同一段抖动再抵消一遍，画面会朝反方向偏。撤销这一步，或在曲线编辑器里清掉这几条，再按一次。`;
+  }
+  return null;
+};
+

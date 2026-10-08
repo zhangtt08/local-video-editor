@@ -2326,3 +2326,63 @@ sigma；回执锚点再加两条，确认「只写默认值的新键」不会把
   SHA256 `188E3D5A0FA4AA7688BBF830682E6B2CEFE729FC28512CD4C8F1A6E0D3FA4613`。
 - 门禁：`ruff check` / `ruff format --check`、`npm run typecheck`、10 项桌面 TS、`tests/self_check.py`
   全绿，`tests/suite_check.py` 串行 **59/59**（`SUITE=0`）。
+
+## 1.68.0 二次稳定点名拒绝：把静默出错变成命名的拒绝（2026-10-08）
+
+- 触发方式是组合测试而不是单功能测试：把 1.66 与 1.67 的命令对同一片段连着跑两遍，第二次仍返回
+  200、revision 照涨（把守卫摘掉的变异跑出实测：revision 3 → 4，回包里的关键帧数量与第一次一样正常），
+  而工程里这时叠着两份同一次测量的抵消——同一份抖动被减了两遍，画面朝反方向偏。单功能的门禁看不见
+  这件事，因为每条门禁只按一次。
+- 根因是这条命令的语义：抵消**叠在片段已有的 `x`/`y`/`rotation`/`scale` 上**（这样手打运镜不会被
+  稳定吃掉），而第二次读的还是同一段源画面。落到工程里，引擎上一次写的曲线和用户手打的完全一样，
+  历史快照不能当命令的状态用，所以没有「认出自己是上次写的」这条路。
+- 选拒绝而不是选「替换」：替换会把手打的曲线静默清掉，那是另一种丢数据；把输入变成
+  `STABILIZE_CONFLICT`（422，`details.properties` 点名曲线，消息给出撤销 / `project_restore` /
+  清掉那三条三条走得通的出路）代价只是一次重试，收益是不会再产出错的画面。载荷、命令、
+  `capabilities` 都没长（`features.clip_stabilize` 仍是一个开关），MCP 工具描述同步改成
+  「按一次；再按会被点名拒绝，出路是……」。
+- 界面守同一条判断：`desktop/src/effects.ts` 里新增 `stabilizeBlocked(clip)`，Inspector 用它把
+  「画面稳定」按钮灰掉并把同一句话放进 `title`——人点下去不会拿到另一套说法。顺带把这四个拒绝补成
+  中文提示（`STABILIZE_INVALID`/`STABILIZE_FAILED`/`STABILIZE_CONFLICT`/`BLUR_OUT_OF_RANGE`）：
+  此前弹的是引擎英文原文，在人眼里像程序内部错误；`describe()`/`explain()` 这套映射本来就是
+  「拒绝必须给出走得通的出路」的地方。
+- 门禁：`tests/stabilize_check.py` 用同一 `request_id` 以同载荷与换载荷两种方式各撞一次，两次都要
+  422 `STABILIZE_CONFLICT` 且 revision 与该片段关键帧列表一字不差（1.67 之前这里断的是「同载荷命中
+  回执」，那次改动让这条断言变成了假话——回执键的是**派生出来的命令**，二次运行的命令与第一次并不
+  相同，所以真正的行为是拒绝；改断言就是改文档）。变异（守卫里 `keyed = []`）红在新增的 422 断言上，
+  且回包显示第二次运行确实把 revision 从 3 抬到了 4。
+- 新增 `tests/desktop_stabilize_check.ts`（不依赖浏览器，直接驱动 `stabilizeBlocked`）：干净片段
+  放行；变速曲线与 200% 速度给同一句带「100%」的说法；已经K过 `scale` 必须点名「缩放」并给出路；
+  `mask_x` 与 `opacity` **不许**挡路（稳定不碰这两条）。变异（`STABILIZED` 里删掉 `scale`）红在
+  「必须点名曲线」上。桌面 TS 检查从 10 项变 11 项，`tests/desktop_ts_check.py` 按
+  `desktop_*_check.ts` 通配自动发现，无需登记。
+
+### 发布验收（1.68.0）
+
+- 先 `scripts/build_engine.py` 重新冻结（改了 `stabilize.py`/`mcp_server.py`/`contracts.py`），再
+  `npm run dist`；`DIST=0`。包内引擎实例 `3996f7a80c3b` 的 `/v1/info` 报 `app_version=1.68.0`。
+- 包内 HTTP 实测（`package_check_168.py`，只用包里的 FFmpeg 现做样片，不 import 仓库源码）：第一次
+  按写 59 点/曲线（`x`/`y`/`scale`）、zoom 1.042；随后三种二次运行——新 request_id 同载荷、同 id
+  同载荷、同 id 换 `strength=0.5`——全部 422 `STABILIZE_CONFLICT`，`details.properties` 点名
+  `x`/`y`/`scale`，回读的工程 revision 与关键帧列表与第一次写完时一字不差。
+- 拒绝消息里给的出路在同一个包里走得通：`POST /restore` 回到稳定前的 revision 生成新 revision、
+  关键帧清空，再按一次成功写入（r4，59 点）。
+- 包内 MCP `tools/list` 的 `clip_stabilize` 文本含 `STABILIZE_CONFLICT`（Agent 读到的就是这句话），
+  包内 `app.asar` 里能搜到 `画面稳定`、`再抵消一遍`、`撤销这一步`、`stabilize-row`（按类名与界面
+  文字断言，不按会被打包改名的标识符断言）。
+- 构建后的渲染器界面走查（`ui_stabilize_168.py`，引擎实例 `3438bfa07eef`）：干净片段上按钮实测
+  62×22 px、可点、title 说明这次按下去会发生什么；写完之后同一个按钮 `disabled`，title 是中文的
+  「这段画面已经K了位置 X、位置 Y、缩放：稳定会把同一段抖动再抵消一遍……撤销这一步，或在曲线编辑器
+  里清掉这几条，再按一次。」；按 Ctrl+Z 撤销清掉 120 个点（r2 → r3）后按钮恢复可点，把强度改成 50
+  再按，落地的最大位移 0.01062 对 100% 的 0.02124——正好一半，拒绝只花一次撤销，没有把功能一起拿掉。
+- 截图里发现并修掉的交付缺陷：`.stabilize-row` 原本没有任何样式，「强度 50」后面的 `%` 被挤到下一行，
+  读起来像「%允许裁切」这个不存在的字段。补上 `display:flex` + 标签 `white-space:nowrap` 后同一行
+  不再断开；这条断言按实时矩形量（单位与数字框在同一行、且落在数字框右侧），把三条规则删掉重新构建
+  后界面走查当场失败（`the unit fell onto its own line`），装上规则才通过。
+- 门禁：`ruff check` / `ruff format --check`、`npm run typecheck`、11 项桌面 TS、`tests/self_check.py`
+  全绿，`tests/suite_check.py` 串行 **59/59**（`SUITE=0`）。
+- `release/win-unpacked/AgentCut.exe` 启动到「AgentCut 剪辑台」1480×900，标题栏「引擎在线 v1.68.0」
+  （`AgentCut-1.68-原生窗口.png`），关闭后 `Get-Process` 查不到 AgentCut/agentcut 残留。便携版
+  189,754,039 字节 SHA256 `1BC22F0DB3B0FA8BEADD0271030736AE823AB465D1980A9E76ED16A77C1DC847`；
+  安装版 189,914,753 字节 SHA256 `90C65B049EBF1F370F14FA2AAE52E666E5A64146189A21D538D9AF8C349AB9E2`。
+  没有自有代码签名证书（打包器只对随包 exe 走默认流程），NSIS 向导未做点击验收。

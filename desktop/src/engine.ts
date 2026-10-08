@@ -466,6 +466,10 @@ export class EngineError extends Error {
       STORAGE_UNAVAILABLE: "本地数据库被占用，稍等一秒重试；写入是原子的，不会丢数据。",
       API_UNAVAILABLE: "剪辑引擎没在运行。点右上角状态灯重启引擎。",
       INVALID_REQUEST: "请求字段不符合契约。界面已把这一步的错误原因显示在这里。",
+      STABILIZE_INVALID: "这段还不能稳定：只有放在画面轨、按 100% 原速播放、且真正导入进来的视频素材能量出抖动。先把它放回画面轨或把速度改回 100%。",
+      STABILIZE_FAILED: "画面对不上第一帧的帧太少，量不出相机怎么动——片段太短、太暗或切得比跟踪还快。这段保持原样，换一段更稳的参照。",
+      STABILIZE_CONFLICT: "这段画面已经K过位移/缩放/旋转，再稳定一次会把同一段抖动抵消两遍、画面朝反方向偏。撤销这一步，或在曲线编辑器里清掉那几条，再按一次。",
+      BLUR_OUT_OF_RANGE: "柔焦/清晰的半径超出了导出与预览验证过一致的范围。把数值调小；滑杆的上限就是引擎在当前画幅下允许的最大值。",
     };
     const hint = hints[this.code];
     return hint ? hint : this.message;

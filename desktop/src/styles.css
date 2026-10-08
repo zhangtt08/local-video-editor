@@ -306,6 +306,10 @@ textarea.input { resize: vertical; line-height: 1.5; }
 .effects-fields { border: 0; min-width: 0; }
 .effect-row { display: grid; grid-template-columns: 76px minmax(64px,1fr) 20px 26px; gap: 5px; align-items: center; margin-bottom: 9px; font-size: 12px; }
 .effect-row input { width: 100%; padding: 5px 7px; text-align: right; }
+/* 画面稳定：按钮 + 两个数字格挤在一行里，标签和它自己的 % 不能被拆开——拆开后「% 允许裁切」会被读成一个字段。 */
+.stabilize-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 2px 0 9px; font-size: 12px; }
+.stabilize-row label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.stabilize-row input { width: 46px; padding: 4px 6px; text-align: right; }
 .keyframe-btn { font-size: 21px; color: var(--ink-2); line-height: 24px; border-radius: 3px; }
 .keyframe-btn:hover, .keyframe-btn.active { background: var(--accent-soft); color: var(--accent); }
 .animation-head { display: flex; align-items: center; margin-top: 14px; }

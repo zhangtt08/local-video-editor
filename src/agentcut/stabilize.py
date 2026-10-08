@@ -211,6 +211,25 @@ def plan(
         raise EditorError(
             "STABILIZE_INVALID", "only a video clip can be stabilised", 422, clip_id=clip_id
         )
+    keyed = sorted({point.property for point in clip.keyframes} & {"x", "y", "rotation", "scale"})
+    if keyed:
+        # The correction is composed onto whatever the clip already animates, so running this twice
+        # would subtract the same motion twice and leave the picture leaning the other way. The
+        # engine cannot tell its own previous correction from a hand-keyed move, so it refuses and
+        # names the way out.
+        raise EditorError(
+            "STABILIZE_CONFLICT",
+            "this clip already animates "
+            + "、".join(keyed)
+            + ": the correction is composed onto what is already there, so a second run would "
+            "subtract the same camera motion twice and lean the picture the other way. The engine "
+            "cannot tell its own previous correction from a hand-keyed move, so clear those "
+            "keyframes (or undo / restore the revision from before the first stabilisation) and "
+            "run it once.",
+            422,
+            clip_id=clip_id,
+            properties=keyed,
+        )
     if clip.speed_curve:
         raise EditorError(
             "STABILIZE_INVALID",

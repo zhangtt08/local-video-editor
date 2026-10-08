@@ -1424,7 +1424,8 @@ out = clip(source + sharpen * (source - gaussian(source)), 0, 255)
 
 拒绝都是按名字的：不在画面轨上的片段、非视频素材、`speed_percent != 100`（抖动是一帧对一帧量的，
 速度一变对不上，与变速曲线同理）→ `STABILIZE_INVALID`；指向不存在的片段 → `NOT_FOUND`；
-`strength`/`max_crop` 越界 → 契约层 `INVALID_REQUEST`；匹配不上的帧太少 → `STABILIZE_FAILED`。
+`strength`/`max_crop` 越界 → 契约层 `INVALID_REQUEST`；匹配不上的帧太少 → `STABILIZE_FAILED`；
+片段已经带 `x`/`y`/`rotation`/`scale` 关键帧 → `STABILIZE_CONFLICT`（1.68，见下）。
 `strength=0` 不写任何关键帧（每帧一个 0 值点是往工程里倒垃圾，不是更温和的稳定），此时回复不带
 revision 变化、只带测量结果。
 
@@ -1454,3 +1455,29 @@ revision 变化、只带测量结果。
 黑角送进裁剪窗口——这是把图版放大到 900×560 的原因，否则量到的是黑边噪声）；写进去的
 `rotation` 在最大偏转那一帧与测量反向；**导出成片再量一次，旋转抖动 1.58° → 0.17°**；
 平移那条样片的行程保留率回到 75%；把旋转符号翻过来的变异红在反向断言上。
+
+## 1.68 二次稳定点名拒绝：抵消只算一次，出路写在回复里
+
+发现的经过是把 1.66/1.67 的两条命令串起来跑：对同一片段按两次「画面稳定」，第二次仍然 200，
+工程涨一个 revision，读回来看上去一切正常——但画面向反方向偏。原因是这条命令的语义：
+抵消是**叠在片段已有的 `x`/`y`/`rotation`/`scale` 上的**（这样手打的运镜不会被稳定吃掉），
+而第二次测量读的还是同一段源画面，于是同一份抖动被减了两遍。
+
+引擎没法区分「我上一次写的」和「用户手打的」——落到工程里它们就是同一种东西（关键帧），
+历史快照也不是给命令当状态用的。所以 1.68 起这种输入直接 422 `STABILIZE_CONFLICT`，
+`details.properties` 点名是哪几条曲线，消息里给出真正走得通的出路：撤销这一步（界面）、
+`project_restore` 回到稳定前的 revision（Agent）、或在曲线编辑器里清掉那几条，然后按一次。
+`STABILIZE_CONFLICT` 不是新的载荷、也不是新的开关，它只是把一个原本会静默出错的输入变成一次
+命名的拒绝——功能接口 `features.clip_stabilize` 因此仍然只有一个开关。
+
+界面按同一条判断（`desktop/src/effects.ts` 的 `stabilizeBlocked`）：曲线还没动、按钮就先灰掉，
+`title` 说的是引擎会给的那句话，而不是另一套说法。同一次改动把稳定与柔焦的四种拒绝补成中文提示
+（`STABILIZE_INVALID`/`STABILIZE_FAILED`/`STABILIZE_CONFLICT`/`BLUR_OUT_OF_RANGE`），
+之前它们弹的是引擎原文（英文），人看着像程序内部错误。
+
+验收分两层：`tests/stabilize_check.py` 用同一个 `request_id` 以同载荷、换载荷两种方式各撞一次，
+两次都必须 422 `STABILIZE_CONFLICT`，且 revision 与该片段的关键帧列表一字不差；把守卫摘掉
+（`keyed = []`）的门禁变异红在这两条断言上。`tests/desktop_stabilize_check.ts` 不问浏览器，
+直接驱动 `stabilizeBlocked`：干净片段放行、变速与曲线片段各给一条带出路的说法，
+而 `mask_x`/`opacity` 这类稳定根本不碰的曲线**不许**挡路（把 `STABILIZED` 里的 `scale` 删掉的
+变异红在「必须点名曲线」那条断言上）。

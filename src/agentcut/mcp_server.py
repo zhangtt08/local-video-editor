@@ -323,9 +323,14 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
     ) -> dict[str, Any]:
         """Take the camera's jitter off one clip by writing the inverse motion as keyframes.
 
-        The analysis reads the server-verified media; the write goes through the same transaction as
-        `timeline_edit`, so dry_run saves nothing and a repeated request_id replays. The reply's
-        `stabilization` block says how far the picture actually moved and what is left over.
+        The analysis reads the server-verified media; the write goes through the same transaction
+        as `timeline_edit`, so dry_run saves nothing. The reply's `stabilization` block says how far
+        the picture actually moved and what is left over.
+
+        Run it once per clip: the correction composes onto the clip's existing
+        `x`/`y`/`rotation`/`scale`, so a second call on a clip that already carries one is refused
+        as `STABILIZE_CONFLICT` instead of subtracting the same motion twice. Undo or restore the
+        revision from before the first run, clear those keyframes, then run it once.
         """
         return await call(
             "POST",
