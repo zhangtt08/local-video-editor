@@ -950,6 +950,74 @@ def http_suite(folder: Path) -> None:
             "a contract refusal must not write"
         )
 
+        # A split tail carries `animation_offset_ticks`, so the source window it is analysed, the
+        # ticks its keyframes are stored at, and the clock the renderer samples are three different
+        # numbers for the same frame. Nothing above sets an offset, so this is where that seam is
+        # measured: split the moving clip at 1 s, put the mask on the object the *tail* shows first,
+        # and require both the ticks and the values to land where the picture says they should.
+        revision = client.get(path).json()["revision"]
+        split = client.post(
+            path + "/edits",
+            json={
+                "request_id": "split",
+                "expected_revision": revision,
+                "commands": [
+                    {"op": "clip.split", "clip_id": "c", "at_ticks": T, "right_clip_id": "c4"}
+                ],
+            },
+        )
+        assert split.status_code == 200, split.text[:300]
+        tail = split.json()["project"]["clips"]["c4"]
+        assert (tail["position_ticks"], tail["source_in_ticks"]) == (T, T), tail
+        assert tail["animation_offset_ticks"] == T, tail
+        want_x, want_y = path_at(1.0)
+        moved = client.post(
+            path + "/edits",
+            json={
+                "request_id": "move-tail",
+                "expected_revision": split.json()["project"]["revision"],
+                "commands": [
+                    {
+                        "op": "clip.mask",
+                        "clip_id": "c4",
+                        "mask": mask_box(center_x=want_x, center_y=want_y),
+                    }
+                ],
+            },
+        )
+        assert moved.status_code == 200, moved.text[:300]
+        offset_run = client.post(
+            path + "/clips/c4/track",
+            json={
+                "request_id": "offset",
+                "expected_revision": moved.json()["project"]["revision"],
+                "frames": 45,
+            },
+        )
+        assert offset_run.status_code == 200, offset_run.text[:400]
+        ran = offset_run.json()
+        assert ran["tracking"]["tracked_frames"] == 45, ran["tracking"]
+        curve = sorted(
+            (key["at_ticks"], key["value"])
+            for key in ran["project"]["clips"]["c4"]["keyframes"]
+            if key["property"] == "mask_x"
+        )
+        step = T // FPS
+        # The split copies the head's earlier curves onto the tail, so only the ticks this run was
+        # given are compared; the inherited ones sit before the tail's own window and clamp there.
+        window = [(at, value) for at, value in curve if T <= at <= T + 44 * step]
+        assert [at for at, _ in window] == [T + index * step for index in range(45)], window[:3]
+        worst_offset = 0.0
+        for at, value in window:
+            want, _ = path_at(1.0 + (at - T) / T)
+            worst_offset = max(worst_offset, abs(value - want))
+        assert worst_offset < 0.012, worst_offset
+        print(
+            f"   offset: a split tail (offset 1s) tracked 45 frames, its keyframes sit on "
+            f"the original clock and every one of them is within {worst_offset * WIDTH:.2f} px of "
+            "the object at that source frame"
+        )
+
 
 def media_suite(folder: Path) -> None:
     """The tracked keyframes must move the exported mask, not just the preview."""
