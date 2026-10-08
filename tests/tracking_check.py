@@ -1,5 +1,7 @@
 """Mask tracking against synthetic ground truth: a known trajectory must come back out of the
-tracker, a vanished target must be reported as lost, and the exported mask must follow the object.
+tracker, a vanished target must be reported as lost, a target that comes back after a long
+occlusion — somewhere the motion model never predicted it — must be re-found and reported as
+re-found, and the exported mask must follow the object.
 
 The source is generated here, pixel by pixel, so the analytic centre of the moving square is exact.
 """
@@ -8,6 +10,7 @@ import hashlib
 import math
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -15,6 +18,8 @@ from pydantic import ValidationError
 
 from agentcut.contracts import TIMEBASE as T
 from agentcut.contracts import (
+    TRACK_GAP_DEFAULT,
+    TRACK_GAP_MAX,
     Clip,
     EditBatch,
     EditorError,
@@ -35,6 +40,10 @@ WIDTH, HEIGHT = 320, 180
 FPS = 30
 SIZE = 22
 BOX = (0.16, 0.24)
+# The long-occlusion fixture: the subject is under a flat bar from 1.0s to 2.4s (42 frames at 30fps,
+# longer than one glide window) and steps 0.15 of the frame width sideways at 1.7s, while hidden.
+HIDDEN = (1.0, 2.4)
+SHIFT = (1.7, 0.15, 0.0)
 
 
 def path_at(seconds: float) -> tuple[float, float]:
@@ -46,6 +55,18 @@ def analytic_size(seconds: float) -> float:
     return SIZE * (1 + 2 * seconds / 3)
 
 
+def truth_at(seconds: float, shift: tuple[float, float, float] | None) -> tuple[float, float]:
+    """Where the fixture's target actually is: the sine path, stepped by `shift` from its tick.
+
+    The generator draws from this one function, so a test that asks "did the tracker follow the
+    object" is comparing against the same arithmetic that put the object there.
+    """
+    cx, cy = path_at(seconds)
+    if shift is not None and seconds >= shift[0]:
+        cx, cy = cx + shift[1], cy + shift[2]
+    return cx, cy
+
+
 def render_source(
     target: Path,
     vanish_after: float | None = None,
@@ -53,8 +74,15 @@ def render_source(
     grow: bool = False,
     occlusion: tuple[float, float] | None = None,
     flat: bool = False,
+    shift: tuple[float, float, float] | None = None,
+    decoy: tuple[float, float, float, int] | None = None,
 ) -> None:
-    """A dark noise field with a bright square walking a sine path; optional mid-clip vanish."""
+    """A dark noise field with a bright square walking a sine path; optional mid-clip vanish.
+
+    `shift` steps the target by a fraction of the frame at a given second (a re-entry the motion
+    model cannot predict), `decoy` switches on another square of `size` px from a given second, and
+    `occlusion` paints a flat grey bar over whatever the target is standing on.
+    """
     frame_bytes = WIDTH * HEIGHT * 3
     process = subprocess.Popen(
         [
@@ -86,7 +114,7 @@ def render_source(
     assert process.stdin is not None
     for index in range(FPS * 3):
         seconds = index / FPS
-        cx, cy = path_at(seconds) if motion else (0.5, 0.5)
+        cx, cy = truth_at(seconds, shift) if motion else (0.5, 0.5)
         size = analytic_size(seconds) if grow else SIZE
         hidden = vanish_after is not None and seconds >= vanish_after
         bar = occlusion is not None and occlusion[0] <= seconds < occlusion[1]
@@ -102,6 +130,12 @@ def render_source(
                 )
                 behind = bar and abs(x - cx * WIDTH) <= 60 and abs(y - cy * HEIGHT) <= 60
                 level = 200 if flat else 4 if behind else (245 if inside else value)
+                if decoy is not None and seconds >= decoy[0]:
+                    _, decoy_x, decoy_y, decoy_size = decoy
+                    if abs(x - decoy_x * WIDTH) <= decoy_size / 2 and (
+                        abs(y - decoy_y * HEIGHT) <= decoy_size / 2
+                    ):
+                        level = 250
                 offset = base + x * 3
                 rows[offset] = level
                 rows[offset + 1] = level
@@ -113,7 +147,14 @@ def render_source(
 
 
 def analyse(
-    source: Path, frames: int = 90, search: int = 10, start: int = 0, scale: bool = True
+    source: Path,
+    frames: int = 90,
+    search: int = 10,
+    start: int = 0,
+    scale: bool = True,
+    shift: tuple[float, float, float] | None = None,
+    reacquire: bool = True,
+    max_gap: int = TRACK_GAP_DEFAULT,
 ) -> dict:
     return track_mask(
         FFMPEG,
@@ -121,12 +162,14 @@ def analyse(
         WIDTH,
         HEIGHT,
         FrameRate(),
-        (path_at(start / T)[0], path_at(start / T)[1], BOX[0], BOX[1]),
+        (truth_at(start / T, shift)[0], truth_at(start / T, shift)[1], BOX[0], BOX[1]),
         frames,
         start,
         T // FPS,
         search,
         scale,
+        max_gap,
+        reacquire,
     )
 
 
@@ -168,6 +211,9 @@ def ground_truth_suite(folder: Path) -> None:
     through = analyse(hidden)
     assert through["lost_at_ticks"] is None, through
     assert through["predicted_frames"] >= 10, through
+    # A target found again inside the local search radius is not a global re-acquisition: the reply
+    # may only claim one when the whole-picture sweep is what actually located it.
+    assert through["reacquire"] is True and not through["reacquired_at"], through
     assert len(through["gaps"]) == 1, through["gaps"]
     gap = through["gaps"][0]
     assert abs(gap["from_ticks"] / T - 1.0) < 0.25 and abs(gap["to_ticks"] / T - 1.6) < 0.25, gap
@@ -210,6 +256,124 @@ def ground_truth_suite(folder: Path) -> None:
         f"   with scale off the box stays {BOX[0]} wide but the centre drifts to "
         f"{centre_drift(fixed):.1f} px, against {centre_drift(sized):.1f} px when it follows growth"
     )
+
+
+def reacquisition_suite(folder: Path) -> None:
+    """A target hidden for longer than one glide window, and stepping sideways while it is out of
+    view, has to come back as a measured path. The control run turns only the whole-picture search
+    off, so the difference between the two runs is the search itself and not a wider guess window.
+    """
+    shift = SHIFT
+    source = folder / "long-hidden.mp4"
+    render_source(source, occlusion=HIDDEN, shift=shift)
+    started = time.perf_counter()
+    found = analyse(source, shift=shift)
+    took = time.perf_counter() - started
+    frame = T // FPS
+    assert found["reacquire"] is True and found["lost_at_ticks"] is None, found["lost_at_ticks"]
+    assert found["reacquired_frames"] == 1, found["reacquired_frames"]
+    back_at = found["reacquired_at"][0]
+    assert abs(back_at / T - 2.4) < 0.1, back_at / T
+    assert len(found["gaps"]) == 1, found["gaps"]
+    start, stop = (
+        found["gaps"][0]["from_ticks"] // frame,
+        found["gaps"][0]["to_ticks"] // frame,
+    )
+    assert found["predicted_frames"] == stop - start, (found["predicted_frames"], found["gaps"])
+    assert found["tracked_frames"] == 90, found["tracked_frames"]
+    after = [point for point in found["points"] if point["at_ticks"] / T > 2.5]
+    worst = max(abs(point["mask_x"] - truth_at(point["at_ticks"] / T, shift)[0]) for point in after)
+    assert worst * WIDTH < 4.0, worst
+    assert found["gap_closure"] > 0.02, found["gap_closure"]
+    # The guesses inside the gap are re-anchored to the sightings that bound them, so not one of
+    # them may leave the interval between the last real position and the re-found one.
+    span = sorted((found["points"][start - 1]["mask_x"], found["points"][stop]["mask_x"]))
+    strayed = [
+        point["mask_x"]
+        for point in found["points"][start:stop]
+        if not span[0] - 1e-9 <= point["mask_x"] <= span[1] + 1e-9
+    ]
+    assert not strayed, strayed
+
+    local = analyse(source, shift=shift, reacquire=False)
+    assert local["lost_at_ticks"] is not None and local["reacquired_frames"] == 0, local
+    assert local["tracked_frames"] == start, (local["tracked_frames"], start)
+    assert (
+        max(
+            abs(point["mask_x"] - truth_at(point["at_ticks"] / T, shift)[0])
+            for point in local["points"]
+        )
+        * WIDTH
+        < 4.0
+    ), "the frames before the gap must still be tracked exactly"
+    print(
+        f"   re-acquired a target hidden for {stop - start} frames ({(stop - start) / FPS:.2f}s) "
+        f"that stepped {(shift[1] * WIDTH):.0f} px sideways while out of view: "
+        f"{found['tracked_frames']}/{90} frames measured, back at {back_at / T:.2f}s, "
+        f"glide had to be shifted by {found['gap_closure']:.3f} of the frame width, {took:.1f}s"
+    )
+    print(
+        f"   control (same window, whole-picture search off): lost at "
+        f"{local['lost_at_ticks'] / T:.2f}s after only {local['tracked_frames']} frames"
+    )
+    assert took < 120.0, f"re-acquisition took {took:.1f}s for a 90-frame clip"
+
+
+def decoy_suite(folder: Path) -> None:
+    """The sweep looks for the *template*, not for anything bright: an identical square coming back
+    somewhere else is a legitimate re-find and has to be reported as one, while a square of a
+    different build must not be followed at all.
+    """
+    twin = folder / "decoy-twin.mp4"
+    render_source(twin, vanish_after=1.5, decoy=(1.6, 0.72, 0.72, SIZE))
+    moved = analyse(twin)
+    assert moved["reacquired_frames"] >= 1 and moved["lost_at_ticks"] is None, moved
+    last = moved["points"][-1]
+    drift = max(abs(last["mask_x"] - 0.72) * WIDTH, abs(last["mask_y"] - 0.72) * HEIGHT)
+    assert drift < 4.0, drift
+    assert moved["gap_closure"] > 0.05, moved["gap_closure"]
+    print(
+        f"   a same-build square at another place is re-found and reported: closure "
+        f"{moved['gap_closure']:.3f} of the frame width, {moved['reacquired_frames']} re-find, "
+        f"ending {drift:.2f} px off it"
+    )
+
+    blob = folder / "decoy-blob.mp4"
+    render_source(blob, vanish_after=1.5, decoy=(1.6, 0.72, 0.72, 3 * SIZE))
+    honest = analyse(blob)
+    assert honest["reacquired_frames"] == 0, honest
+    assert honest["lost_at_ticks"] is not None, honest
+    print(
+        f"   a three-times-bigger flat square is not followed: still lost at "
+        f"{honest['lost_at_ticks'] / T:.2f}s with {honest['tracked_frames']} measured frames"
+    )
+
+    wiring = (ROOT / "src" / "agentcut" / "stabilize.py").read_text(encoding="utf-8")
+    assert "reacquire=False" in wiring, (
+        "stabilization anchors must not be allowed to jump the picture"
+    )
+
+
+def interface_suite() -> None:
+    """The numbers the reply added have to reach the person who pressed the button, not only the
+    Agent reading JSON: the client type declares them, the toast speaks them, and the tooltip and
+    help page describe the re-find instead of the old glide-only story.
+    """
+    engine = (ROOT / "desktop" / "src" / "engine.ts").read_text(encoding="utf-8")
+    store = (ROOT / "desktop" / "src" / "store.ts").read_text(encoding="utf-8")
+    inspector = (ROOT / "desktop" / "src" / "views" / "Inspector.tsx").read_text(encoding="utf-8")
+    help_page = (ROOT / "desktop" / "src" / "views" / "Help.tsx").read_text(encoding="utf-8")
+    declaration = engine[engine.index("maskTrack(") : engine.index("silenceScan(")]
+    for field in ("reacquire", "reacquired_frames", "reacquired_at_ticks", "gap_closure"):
+        assert field in declaration, f"the tracking reply type does not declare {field}"
+    assert "stats.reacquired_frames > 0" in store, "the toast never says the target was re-found"
+    assert "stats.reacquired_at_ticks[0]" in store, "the toast does not say when it was re-found"
+    assert "stats.gap_closure" in store, "the toast does not say how far the guesses had to move"
+    assert "重新找" in inspector, "the button still promises the glide-only behaviour"
+    assert "重新找" in help_page and "补的那一段随后按找回的真实位置校正" in help_page, help_page[
+        :80
+    ]
+    print("   interface: the reply's re-find fields are declared, toasted and explained")
 
 
 def track_box_frames(source: Path, frames: int) -> list[tuple[float, float]]:
@@ -687,6 +851,105 @@ def http_suite(folder: Path) -> None:
             " scale_estimated=false, and the written curves are mask_x/mask_y with no size curve"
         )
 
+        # 1.85 over the real seam: a clip whose subject is hidden for longer than one glide window
+        # and steps sideways while out of view. The two runs differ only in `reacquire`, so the
+        # reply that comes back measured tells the story the one that does not cannot.
+        limits = client.get("/v1/capabilities").json()["limits"]
+        assert limits["track_max_gap_frames"] == TRACK_GAP_MAX, limits
+        assert limits["track_gap_default"] == TRACK_GAP_DEFAULT, limits
+        hidden_source = folder / "media" / "api-long-hidden.mp4"
+        render_source(hidden_source, occlusion=HIDDEN, shift=SHIFT)
+        hidden_probe = client.post("/v1/media/import", json={"path": str(hidden_source)}).json()
+        assert "verified" in hidden_probe, hidden_probe
+        revision = client.get(path).json()["revision"]
+        seeded = client.post(
+            path + "/edits",
+            json={
+                "request_id": "seed-hidden",
+                "expected_revision": revision,
+                "commands": [
+                    {
+                        "op": "asset.import",
+                        "asset_id": "b",
+                        "label": "long-hidden",
+                        "probe_id": hidden_probe["id"],
+                        "verified": hidden_probe["verified"],
+                    },
+                    {
+                        "op": "clip.add",
+                        "clip": {
+                            "id": "c2",
+                            "asset_id": "b",
+                            "track_id": "v",
+                            "position_ticks": 3 * T,
+                            "duration_ticks": 3 * T,
+                            "mask": mask_box(),
+                        },
+                    },
+                ],
+            },
+        )
+        assert seeded.status_code == 200, seeded.text[:300]
+        revision = seeded.json()["project"]["revision"]
+
+        off = client.post(
+            path + "/clips/c2/track",
+            json={
+                "request_id": "no-sweep",
+                "expected_revision": revision,
+                "frames": 90,
+                "reacquire": False,
+                "dry_run": True,
+            },
+        )
+        assert off.status_code == 200, off.text[:300]
+        assert client.get(path).json()["revision"] == revision, "a dry run must not write"
+        blind = off.json()["tracking"]
+        assert blind["reacquire"] is False and blind["reacquired_frames"] == 0, blind
+        assert blind["lost_at_ticks"] is not None and blind["tracked_frames"] < 45, blind
+
+        swept = client.post(
+            path + "/clips/c2/track",
+            json={"request_id": "sweep", "expected_revision": revision, "frames": 90},
+        )
+        assert swept.status_code == 200, swept.text[:300]
+        body = swept.json()
+        assert body["project"]["revision"] == revision + 1, body["project"]["revision"]
+        proof = body["tracking"]
+        assert proof["reacquired_frames"] == 1 and proof["lost_at_ticks"] is None, proof
+        assert proof["tracked_frames"] == 90 == len(proof["points"]), proof
+        assert abs(proof["reacquired_at_ticks"][0] / T - HIDDEN[1]) < 0.1, proof
+        assert proof["gap_closure"] > 0.02, proof
+        back = proof["reacquired_at_ticks"][0]
+        written = [
+            key
+            for key in body["project"]["clips"]["c2"]["keyframes"]
+            if key["property"] == "mask_x" and key["at_ticks"] >= back + 2 * (T // FPS)
+        ]
+        assert written, proof
+        for key in written:
+            want_x, _ = truth_at(key["at_ticks"] / T, SHIFT)
+            assert abs(key["value"] - want_x) < 0.02, (key, want_x)
+        print(
+            f"   http: reacquire=false stops after {blind['tracked_frames']} frames, the sweep on"
+            f" measures all {proof['tracked_frames']} and re-finds at "
+            f"{proof['reacquired_at_ticks'][0] / T:.2f}s on the stepped path"
+        )
+
+        beyond = client.post(
+            path + "/clips/c2/track",
+            json={
+                "request_id": "beyond",
+                "expected_revision": body["project"]["revision"],
+                "frames": 90,
+                "max_gap_frames": TRACK_GAP_MAX + 1,
+            },
+        )
+        assert beyond.status_code == 422, beyond.text[:200]
+        assert client.get(path).json()["revision"] == body["project"]["revision"], (
+            "a contract refusal must not write"
+        )
+
 
 def media_suite(folder: Path) -> None:
     """The tracked keyframes must move the exported mask, not just the preview."""
@@ -900,14 +1163,18 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="agentcut-tracking-") as scratch:
         folder = Path(scratch)
         ground_truth_suite(folder)
+        reacquisition_suite(folder)
+        decoy_suite(folder)
+        interface_suite()
         reducer_suite(folder)
         http_suite(folder)
         media_suite(folder)
         sized_export_suite(folder)
     print(
         "PASS: the tracker recovers a known trajectory, reports a vanished target instead of",
-        "guessing, writes mask motion atomically through the reducer, and moves and resizes the",
-        "exported mask",
+        "guessing, re-finds a target that comes back after a long occlusion out of view (and does",
+        "not follow a square that merely looks bright), writes mask motion atomically through the",
+        "reducer, and moves and resizes the exported mask",
     )
 
 

@@ -823,6 +823,7 @@ def create_app(
             request.search_radius,
             estimate_scale,
             request.max_gap_frames,
+            request.reacquire,
         )
         points = [
             {
@@ -865,6 +866,10 @@ def create_app(
                 "sampled_frames": result["sampled_frames"],
                 "tracked_frames": len(points),
                 "predicted_frames": result["predicted_frames"],
+                "reacquire": result["reacquire"],
+                "reacquired_frames": result["reacquired_frames"],
+                "reacquired_at_ticks": [request.from_ticks + at for at in result["reacquired_at"]],
+                "gap_closure": result["gap_closure"],
                 "scale_estimated": result["scale"],
                 "gaps": [
                     {

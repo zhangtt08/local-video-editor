@@ -724,7 +724,12 @@ export async function trackMask(clipId: string, fromTicks: number, frames: numbe
         ? `保住前面 ${stats.kept_frames} 帧的路径，只重写这一段（接缝处差 ${(stats.seam_jump ?? 0).toFixed(3)} 画面宽），`
         : "",
       stats.scale_estimated ? "遮罩盒随主体远近变大变小，" : "遮罩盒保持原大小，",
-      stats.predicted_frames > 0 ? `${stats.predicted_frames} 帧被遮挡时按匀速补齐，` : "",
+      stats.predicted_frames > 0
+        ? `${stats.predicted_frames} 帧被挡住时按匀速补了一段，找回后整段按真实位置校正（最多挪了 ${(stats.gap_closure * 100).toFixed(0)}% 画面宽）；`
+        : "",
+      stats.reacquired_frames > 0
+        ? `在 ${(stats.reacquired_at_ticks[0] / TIMEBASE).toFixed(2)} 秒处重新找到了目标，之后是量出来的位置；`
+        : "",
       stats.lost_at_ticks === null
         ? "导出使用同一份关键帧。"
         : `在 ${(stats.lost_at_ticks / TIMEBASE).toFixed(2)} 秒处跟丢目标，之后遮罩停在最后找到的位置。`,

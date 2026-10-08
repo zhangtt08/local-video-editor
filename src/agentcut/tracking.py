@@ -1,13 +1,15 @@
 """Mask tracking by normalized cross-correlation on a downscaled luma plane: stdlib and FFmpeg only.
 
-The tracker follows one box by translation and scale, matched against the template cut from frame 0,
-so a target that hides and returns is re-found rather than mutated into the occluder. Correlation
-replaces the pixel difference because a difference always prefers the window whose area equals the
-template: it cannot tell a target that has grown from one that has left. Normalized correlation
-measures shape, so the box can follow a target walking toward the camera, which a difference metric
-cannot do. Frames where nothing scores high enough are predicted from recent motion, and an open gap
-is truncated at the last sighting. What comes back are ordinary mask keyframes, so `apply_edits`
-stays the only writer of project state.
+The tracker follows one box by translation and scale, matched against the template cut from frame 0.
+Correlation replaces the pixel difference because a difference always prefers the window whose area
+equals the template: it cannot tell a target that has grown from one that has left. Normalized
+correlation measures shape, so the box can follow a target walking toward the camera, which a
+difference metric cannot do. While the target is hidden its centre is predicted from recent motion,
+and every frame of that window is also searched again over the whole picture on a quarter-size copy,
+so a target that comes back somewhere else — or after a long occlusion — is re-found rather than
+guessed past. When a sighting ends such a window the guesses are re-anchored to it, and the shift
+they needed is reported. What comes back are ordinary mask keyframes, so `apply_edits` stays the
+only writer of project state.
 """
 
 import math
@@ -16,7 +18,13 @@ from pathlib import Path
 from statistics import median
 from subprocess import Popen
 
-from .contracts import TIMEBASE, EditorError, FrameRate
+from .contracts import (
+    TIMEBASE,
+    TRACK_GAP_DEFAULT,
+    TRACK_REAQUIRE_SCALE,
+    EditorError,
+    FrameRate,
+)
 
 ANALYSIS_WIDTH = 256
 MAX_TEMPLATE = 96 * 54
@@ -188,9 +196,46 @@ def _match(
 
 SCALES = (0.85, 0.92, 1.0, 1.09, 1.18)
 SCALE_RADIUS = 4
-GAP_LIMIT = 30
+GAP_LIMIT = TRACK_GAP_DEFAULT
 MIN_SCORE = 0.35
 RELAX = 0.8
+REAQUIRE_SCALE = TRACK_REAQUIRE_SCALE
+# The arithmetic that makes a whole-frame sweep affordable. With the gate's 34x34 template on a
+# 256x144 analysis picture, scanning every window is (256-34+1)x(144-34+1) = 223x111 windows of
+# 1156 pixels = 28.6M pixel multiplies; on the quarter-size picture it is (64-8+1)x(36-8+1) =
+# 57x29 windows of 64 pixels = 0.11M — 270 times less work, and it only runs on hidden frames.
+
+
+def _shrink(frame: bytes, width: int, height: int, factor: int) -> tuple[int, int, bytes]:
+    """Box-average a bitmap down by an integer factor, so a coarse sweep sees whole regions."""
+    out_width, out_height = max(1, width // factor), max(1, height // factor)
+    out = bytearray(out_width * out_height)
+    area = factor * factor
+    for y in range(out_height):
+        base = y * out_width
+        origin = y * factor * width
+        for x in range(out_width):
+            left = origin + x * factor
+            total = sum(
+                sum(frame[row + left : row + left + factor])
+                for row in range(0, factor * width, width)
+            )
+            out[base + x] = total // area
+    return out_width, out_height, bytes(out)
+
+
+def _sweep(
+    frame: bytes, width: int, height: int, zero: list[float], side: int, tsqrt: float
+) -> tuple[float, int, int]:
+    """Best score and window origin over *every* position, for re-finding a target that is not where
+    the motion model expects it."""
+    best = (-2.0, 0, 0)
+    for y0 in range(height - side + 1):
+        for x0 in range(width - side + 1):
+            score = _ncc(frame, width, x0, y0, zero, side, tsqrt)
+            if score > best[0]:
+                best = (score, x0, y0)
+    return best
 
 
 def track_box(
@@ -201,13 +246,20 @@ def track_box(
     scale: bool = True,
     max_gap: int = GAP_LIMIT,
     min_score: float = MIN_SCORE,
+    reacquire: bool = True,
 ) -> dict:
-    """Follow one box: translation, optional scale, and a constant-velocity glide through occlusion.
+    """Follow one box: translation, optional scale, a constant-velocity glide through occlusion,
+    and a whole-picture search that looks for the target again while it is hidden.
 
     A frame is accepted when its best window correlates with the frame-0 template at least `RELAX`
     of the confidence the last few frames reached, and never below `min_score`. Below that the
-    centre is extrapolated and marked; a gap open when the media ends is dropped and reported as
-    `lost_at`, because gliding past the last sighting would be a guess the editor cannot check.
+    centre is extrapolated and marked, and — when `reacquire` is on — every hidden frame is also
+    swept at a quarter size and the winner is re-scored at full resolution, so a target that comes
+    back anywhere in the picture ends the gap on a real sighting rather than on a guess. The guesses
+    inside a closed gap are then shifted so the window lands on that sighting; how far the largest
+    one had to move is reported as `closure`. A gap still open when the media ends is dropped and
+    reported as `lost_at`, because gliding past the last sighting would be a guess the editor cannot
+    check.
     """
     height = len(frames[0]) // width
     cx = box[0] * width
@@ -224,41 +276,37 @@ def track_box(
             templates[probe] = found
         return found
 
-    side = side0
+    # The sweep runs on a fixed-size copy, so the template it needs is decided once here: the anchor
+    # shrunk by the same factor, clamped to fit the copy so `_sweep` never slices a template wider
+    # than the patch it was zeroed from.
+    sweep_w, sweep_h = max(1, width // REAQUIRE_SCALE), max(1, height // REAQUIRE_SCALE)
+    coarse_side = min(sweep_w - 1, sweep_h - 1, max(1, side0 // REAQUIRE_SCALE))
+    coarse: tuple[list[float], float] | None = None
 
-    boxes: list[tuple[float, float, float]] = [(cx / width, cy / height, 1.0)]
-    scores: list[float] = []
-    velocity = (0.0, 0.0)
-    predicted: list[int] = []
-    gaps: list[tuple[int, int]] = []
-    gap_start: int | None = None
-    lost_at: int | None = None
+    def coarse_template() -> tuple[list[float], float]:
+        """The frame-0 anchor shrunk the same way the picture is, kept as a sweep template."""
+        nonlocal coarse
+        if coarse is None:
+            shrunk_side, _, patch = _shrink(anchor, side0, side0, REAQUIRE_SCALE)
+            zero, energy = _zeroed(_resample(patch, shrunk_side, coarse_side))
+            coarse = (zero, energy)
+        return coarse
 
-    for index, frame in enumerate(frames[1:], start=1):
-        glide_x, glide_y = cx + velocity[0], cy + velocity[1]
-        hidden = gap_start is not None
-        centre_x, centre_y = (glide_x, glide_y) if hidden else (cx, cy)
+    def locate(
+        frame: bytes, centre_x: float, centre_y: float, radius: int, sized: bool, side: int
+    ) -> tuple[float, float, float, int]:
+        """Score the best window near a centre, testing the scale probes around it when allowed."""
         zero, tsqrt = probe_template(side)
-        score, x0, y0 = _match(
-            frame,
-            width,
-            height,
-            zero,
-            side,
-            tsqrt,
-            centre_x,
-            centre_y,
-            search * 2 if hidden else search,
-        )
-        best: tuple[float, float, float, int] = (score, x0 + side / 2, y0 + side / 2, side)
-        if scale and not hidden:
+        score, x0, y0 = _match(frame, width, height, zero, side, tsqrt, centre_x, centre_y, radius)
+        best = (score, x0 + side / 2, y0 + side / 2, side)
+        if sized:
             # A new size only needs testing near the centre the translation pass settled on.
             for factor in SCALES:
                 probe = max(6, min(width - 2, height - 2, round(side * factor)))
                 if probe == side:
                     continue
                 probe_zero, probe_tsqrt = probe_template(probe)
-                sized, sx, sy = _search(
+                sized_score, sx, sy = _search(
                     frame,
                     width,
                     height,
@@ -270,12 +318,57 @@ def track_box(
                     SCALE_RADIUS,
                     2,
                 )
-                if sized > best[0]:
-                    best = (sized, sx + probe / 2, sy + probe / 2, probe)
-        score, found_x, found_y, probe = best
+                if sized_score > best[0]:
+                    best = (sized_score, sx + probe / 2, sy + probe / 2, probe)
+        return best
+
+    side = side0
+
+    boxes: list[tuple[float, float, float]] = [(cx / width, cy / height, 1.0)]
+    scores: list[float] = []
+    velocity = (0.0, 0.0)
+    predicted: list[int] = []
+    gaps: list[tuple[int, int]] = []
+    reacquired: list[int] = []
+    gap_start: int | None = None
+    lost_at: int | None = None
+    closure = 0.0
+
+    for index, frame in enumerate(frames[1:], start=1):
+        glide_x, glide_y = cx + velocity[0], cy + velocity[1]
+        hidden = gap_start is not None
+        centre_x, centre_y = (glide_x, glide_y) if hidden else (cx, cy)
+        best = locate(
+            frame,
+            centre_x,
+            centre_y,
+            search * 2 if hidden else search,
+            scale and not hidden,
+            side,
+        )
         floor = min_score
         if len(scores) >= 8:
             floor = max(min_score, min(RELAX * median(scores[-8:]), 0.75))
+        jumped = False
+        if best[0] < floor and hidden and reacquire and coarse_side >= 3:
+            # The target is not where the motion model left it: look for it in the whole picture.
+            probe_zero, probe_tsqrt = coarse_template()
+            _, _, small = _shrink(frame, width, height, REAQUIRE_SCALE)
+            _, origin_x, origin_y = _sweep(
+                small, sweep_w, sweep_h, probe_zero, coarse_side, probe_tsqrt
+            )
+            candidate = locate(
+                frame,
+                (origin_x + coarse_side / 2) * REAQUIRE_SCALE,
+                (origin_y + coarse_side / 2) * REAQUIRE_SCALE,
+                max(search, 2 * REAQUIRE_SCALE),
+                scale,
+                side,
+            )
+            if candidate[0] >= floor:
+                best = candidate
+                jumped = True
+        score, found_x, found_y, probe = best
         if score < floor:
             if gap_start is None:
                 gap_start = index
@@ -287,15 +380,34 @@ def track_box(
             continue
         if gap_start is not None:
             gaps.append((gap_start, index))
-            gap_start = None
         velocity = (
             0.6 * velocity[0] + 0.4 * (found_x - cx),
             0.6 * velocity[1] + 0.4 * (found_y - cy),
         )
+        if jumped:
+            # A re-acquired target may have moved by more than the glide can carry: start fresh.
+            velocity = (0.0, 0.0)
+            reacquired.append(index)
         cx, cy = found_x, found_y
         side = probe
         scores.append(score)
         boxes.append((cx / width, cy / height, side / side0))
+        if gap_start is not None:
+            # Land the guessed window on the sighting that ended it, spread evenly across the gap.
+            target = boxes[index]
+            span = index - gap_start + 1
+            for offset in range(gap_start, index):
+                share = (offset - gap_start + 1) / span
+                before = boxes[offset]
+                boxes[offset] = tuple(
+                    before[axis] + share * (target[axis] - before[axis]) for axis in range(3)
+                )
+                closure = max(
+                    closure,
+                    share * abs(target[0] - before[0]),
+                    share * abs(target[1] - before[1]),
+                )
+            gap_start = None
 
     if gap_start is not None:
         # The target never came back: stop at the last confident sighting rather than glide on.
@@ -306,6 +418,8 @@ def track_box(
         "boxes": boxes,
         "predicted": predicted,
         "gaps": gaps,
+        "reacquired": reacquired,
+        "closure": closure,
         "lost_at": lost_at,
         "template_side": side0,
         "analysis_height": height,
@@ -325,6 +439,7 @@ def track_mask(
     search: int,
     scale: bool = True,
     max_gap: int = GAP_LIMIT,
+    reacquire: bool = True,
 ) -> dict:
     """Track the mask box for `frames` frames and return mask keyframes in clip-local ticks."""
     duration = frames * frame_ticks / TIMEBASE
@@ -333,7 +448,9 @@ def track_mask(
     )
     if len(decoded) < 2:
         raise EditorError("TRACK_FAILED", "too few frames to track", 422)
-    result = track_box(decoded, width, box, search, scale=scale, max_gap=max_gap)
+    result = track_box(
+        decoded, width, box, search, scale=scale, max_gap=max_gap, reacquire=reacquire
+    )
     points = [
         {
             "at_ticks": index * frame_ticks,
@@ -350,6 +467,10 @@ def track_mask(
         "sampled_frames": len(decoded),
         "tracked_frames": len(points),
         "predicted_frames": len(result["predicted"]),
+        "reacquire": reacquire,
+        "reacquired_frames": len(result["reacquired"]),
+        "reacquired_at": [position * frame_ticks for position in result["reacquired"]],
+        "gap_closure": round(result["closure"], 6),
         "gaps": [
             {"from_ticks": start * frame_ticks, "to_ticks": end * frame_ticks}
             for start, end in result["gaps"]

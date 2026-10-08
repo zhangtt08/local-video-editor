@@ -856,6 +856,8 @@ export class Engine {
       tracking: {
         points: { at_ticks: number; center_x: number; center_y: number; width?: number; height?: number }[];
         tracked_frames: number; predicted_frames: number; scale_estimated: boolean;
+        reacquire: boolean; reacquired_frames: number; reacquired_at_ticks: number[];
+        gap_closure: number;
         gaps: { from_ticks: number; to_ticks: number }[]; lost_at_ticks: number | null;
         merged?: boolean; kept_frames?: number; replaced_frames?: number;
         seam_ticks?: number; seam_jump?: number;

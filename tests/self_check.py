@@ -461,6 +461,10 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
             assert tools["lut_parse"].annotations.readOnlyHint is True
             assert "content" in json.dumps(tools["lut_parse"].inputSchema)
             assert tools["clip_track"].annotations.readOnlyHint is False
+            # 1.85: `reacquire` is a knob the Agent must be able to reach, not an interface-only
+            # behaviour; the gap ceiling travels with it so neither side invents its own number.
+            for knob in ("reacquire", "max_gap_frames", "estimate_scale", "search_radius"):
+                assert knob in json.dumps(tools["clip_track"].inputSchema), knob
             assert tools["marker_split"].annotations.readOnlyHint is True
             assert tools["clip_four_point"].annotations.readOnlyHint is True
             assert "source_out_ticks" in json.dumps(tools["clip_four_point"].inputSchema)

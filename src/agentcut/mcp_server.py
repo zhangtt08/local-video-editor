@@ -503,7 +503,10 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         `timeline_edit`, so dry_run saves nothing and a repeated request_id replays. `merge` (on by
         default) keeps the points outside the analysed window, so a run that loses the subject can
         be continued from a later frame instead of starting over and wiping the first half.
-        `sequence_id` follows a mask on a clip inside a nested composition.
+        `sequence_id` follows a mask on a clip inside a nested composition. While the subject is
+        hidden `reacquire` searches the whole picture once more per frame, so a target that comes
+        back somewhere else — or after a long occlusion — is found again instead of reported lost;
+        the reply lists the ticks it was re-found at and how far the guesses had to be shifted.
         """
         return await call(
             "POST",

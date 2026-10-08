@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 13  # v13 gives a path mask a real box; older rows are fitted on load (ge=1).
-APP_VERSION = "1.84.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.85.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -202,6 +202,13 @@ DENOISE_FLOOR_DB = -30.0
 STABILIZE_STRENGTH_LIMIT = 1.0
 STABILIZE_MAX_CROP_LIMIT = 0.25
 STABILIZE_SMOOTHING_FRAMES = 30
+# Mask tracking: how long a lost target keeps being guessed (and searched for again) before the path
+# is said to be lost, and how far the picture is shrunk for the sweep that looks for it everywhere.
+# 60 frames is two seconds at 30fps — long enough for a person to walk behind a column, short enough
+# that the guesses stay near the last real sighting.
+TRACK_GAP_DEFAULT = 60
+TRACK_GAP_MAX = 240
+TRACK_REAQUIRE_SCALE = 4
 
 
 def spatial_radius(fraction: float, frame_height: int) -> float:
@@ -1422,7 +1429,12 @@ class ProxyRequest(Contract):
 
 
 class MaskTrackRequest(Contract):
-    """Analyse the clip's media and move its box mask along with the picture."""
+    """Analyse the clip's media and move its box mask along with the picture.
+
+    While the target is hidden the centre is guessed from recent motion for at most
+    `max_gap_frames` frames, and every one of those frames is searched again over the whole picture
+    when `reacquire` is on, so a subject that comes back somewhere else is found rather than lost.
+    """
 
     request_id: Identifier
     expected_revision: Revision
@@ -1432,7 +1444,8 @@ class MaskTrackRequest(Contract):
     frames: Annotated[int, Field(ge=2, le=900)] = 120
     search_radius: Annotated[int, Field(ge=2, le=16)] = 10
     estimate_scale: bool = True
-    max_gap_frames: Annotated[int, Field(ge=0, le=120)] = 30
+    max_gap_frames: Annotated[int, Field(ge=0, le=TRACK_GAP_MAX)] = TRACK_GAP_DEFAULT
+    reacquire: bool = True
     merge: bool = True
     dry_run: bool = False
 
@@ -2195,6 +2208,8 @@ def capabilities(
             "auto_grade_percentile_max": AUTO_PERCENTILE_MAX,
             "stabilize_max_crop": STABILIZE_MAX_CROP_LIMIT,
             "stabilize_smoothing_frames": STABILIZE_SMOOTHING_FRAMES,
+            "track_max_gap_frames": TRACK_GAP_MAX,
+            "track_gap_default": TRACK_GAP_DEFAULT,
             "sample_rates": [44_100, 48_000, 96_000],
         },
         "render_presets": render_presets(),

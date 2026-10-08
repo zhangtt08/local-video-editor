@@ -42,6 +42,9 @@ ANCHORS = (
 )
 ANCHOR_SIZE = 0.22
 SEARCH_RADIUS = 12
+# How long an anchor may fail to match before the anchor's track stops. Frames inside the window are
+# dropped rather than trusted; the window only decides how long the measurement keeps going.
+ANCHOR_GAP = 30
 # One pixel of anchor quantisation across the ~300 px between anchors is 0.19 degrees; anything the
 # roll estimate finds below that is the measurement's own grain, not the camera.
 ROLL_DEADBAND_DEGREES = 0.25
@@ -95,7 +98,13 @@ def measure(
     tracks = []
     for centre_x, centre_y in ANCHORS:
         box = (centre_x, centre_y, ANCHOR_SIZE, ANCHOR_SIZE)
-        tracks.append(track_box(frames, width, box, SEARCH_RADIUS, scale=False))
+        # An anchor is a fixed patch of the frame, not an object: it must never jump to wherever the
+        # picture happens to look alike, because a shot change would then be read as camera motion.
+        tracks.append(
+            track_box(
+                frames, width, box, SEARCH_RADIUS, scale=False, reacquire=False, max_gap=ANCHOR_GAP
+            )
+        )
     count = min(len(track["boxes"]) for track in tracks)
     if count < 3:
         raise EditorError(
