@@ -474,6 +474,10 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
             for knob in ("percentile", "samples", "mode", "replace", "sequence_id"):
                 assert knob in json.dumps(tools["clip_auto_grade"].inputSchema), knob
             assert '"levels"' in json.dumps(tools["timeline_edit"].inputSchema)
+            # 1.84: the first cross-channel node is written through the same command, so the Agent's
+            # schema has to name it too — otherwise a mixer is only reachable from the interface.
+            assert '"matrix"' in json.dumps(tools["timeline_edit"].inputSchema)
+            assert "coefficients" in json.dumps(tools["timeline_edit"].inputSchema)
             # 1.74: an Agent has to be able to ask for a clip inside a nested composition. The tool
             # schema is generated from the request model, so the field being there is the promise.
             for steadied in (

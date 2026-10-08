@@ -1,8 +1,11 @@
-"""Serial grade nodes: one per-channel polyline is the authority for FFmpeg and the browser LUT.
+"""Grade nodes compiled into an ordered stage list that both FFmpeg and the browser walk.
 
-Every node is a per-channel function, so a whole chain collapses to one transfer table. The FFmpeg
-``lutrgb`` expression and the browser ``feComponentTransfer`` table are both sampled from the same
-simplified polyline, which keeps native preview and render identical rather than merely similar.
+Per-channel nodes — curves, levels, white balance, wheels, transfer functions, imported 1D tables —
+still collapse: a run of them is one transfer curve per channel, exported as an FFmpeg ``lutrgb``
+expression and as a browser ``feComponentTransfer`` table sampled from the same simplified polyline.
+A cross-channel node (the channel mixer) breaks the run, because a matrix sandwiched between two
+per-channel curves is not itself a per-channel curve. Order is preserved and both renderers read the
+same list, so preview and render stay one authority rather than merely similar.
 """
 
 import hashlib
@@ -348,37 +351,123 @@ def _expression(points: list[tuple[float, float]]) -> str:
     return f"clip({expression},0,255)"
 
 
-def _polylines(color) -> dict[str, list[tuple[float, float]]] | None:
-    channels = {}
-    for index, name in enumerate(CHANNEL_NAMES):
-        channels[name] = _channel_points(color.grade, index) or [(0.0, 0.0), (255.0, 255.0)]
-    return channels if any(node.enabled and node.mix for node in color.grade) else None
+def _matrix_of(node):
+    """The node's 3x3 with its own strength folded in, or None when it leaves the picture alone.
 
-
-def grade_tables(color) -> dict | None:
-    """Per-channel 256-entry browser LUT with a stable filter id, or None for a no-op chain."""
-    channels = _polylines(color)
-    if channels is None:
+    Strength is a linear blend toward the input, and a blend of a matrix with the identity is still
+    a matrix — so `mix` costs nothing here. A *blend mode* would not be linear in the inputs
+    (`in × matrix(in)` is quadratic), which is why the node has no `blend` field to send at all.
+    """
+    if not node.enabled or not node.mix:
         return None
-    tables = {name: _lookup(points) for name, points in channels.items()}
+    mix = node.mix
+    folded = [
+        (1.0 if row == column else 0.0)
+        + mix * (node.coefficients[row * 3 + column] - (1.0 if row == column else 0.0))
+        for row in range(3)
+        for column in range(3)
+    ]
+    identity = [1.0 if row == column else 0.0 for row in range(3) for column in range(3)]
+    if all(abs(value - neutral) < 1e-12 for value, neutral in zip(folded, identity)):
+        return None
+    return folded
+
+
+def grade_stages(color) -> list[dict] | None:
+    """The compiled chain as an ordered list of stages, or None when nothing would change.
+
+    Consecutive per-channel nodes still collapse into one table per channel. A cross-channel node
+    breaks the run, because a matrix sandwiched between two per-channel curves is not itself a
+    per-channel curve — and the order is kept, so `curve → matrix` and `matrix → curve` compile to
+    different graphs. Both renderers walk this one list.
+    """
+    stages: list[dict] = []
+    group: list = []
+
+    def flush() -> None:
+        if not group:
+            return
+        if any(node.enabled and node.mix for node in group):
+            channels = {
+                name: _channel_points(group, index) or [(0.0, 0.0), (255.0, 255.0)]
+                for index, name in enumerate(CHANNEL_NAMES)
+            }
+            stages.append({"type": "lut", **channels})
+        del group[:]
+
+    for node in color.grade:
+        if node.kind == "matrix":
+            flush()
+            matrix = _matrix_of(node)
+            if matrix is not None:
+                stages.append({"type": "matrix", "m": matrix})
+            continue
+        group.append(node)
+    flush()
+    return stages or None
+
+
+def _lut_stage(points: dict) -> dict | None:
+    """A browser table for one LUT stage, or None when every channel is the identity."""
+    tables = {name: _lookup(points[name]) for name in CHANNEL_NAMES}
     if all(
         all(abs(value - index / 255) < 1e-9 for index, value in enumerate(table))
         for table in tables.values()
     ):
         return None
-    payload = repr([(name, tables[name]) for name in CHANNEL_NAMES]).encode()
-    return {"id": f"g{hashlib.sha1(payload).hexdigest()[:16]}", **tables}
+    return {"type": "lut", **tables}
+
+
+def _stage_id(payload) -> str:
+    return hashlib.sha1(repr(payload).encode()).hexdigest()[:12]
+
+
+def grade_tables(color) -> dict | None:
+    """The ordered stage list the browser builds primitives from, or None for a no-op chain.
+
+    The chain's id covers every stage, so one `filter: url(#id)` still references the whole grade
+    and two clips with the same look still share one filter definition.
+    """
+    stages = grade_stages(color)
+    if not stages:
+        return None
+    built = []
+    for stage in stages:
+        if stage["type"] == "lut":
+            table = _lut_stage(stage)
+            if table is None:
+                continue
+            built.append(dict(table, id=f"l{_stage_id(table['r'] + table['g'] + table['b'])}"))
+        else:
+            built.append({"type": "matrix", "m": stage["m"], "id": f"m{_stage_id(stage['m'])}"})
+    if not built:
+        return None
+    payload = repr(built).encode()
+    return {"id": f"g{hashlib.sha1(payload).hexdigest()[:16]}", "stages": built}
 
 
 def grade_filter(color) -> str:
-    """FFmpeg stage compiled from the same polylines; empty when the chain is a no-op."""
-    channels = _polylines(color)
-    if channels is None:
+    """The FFmpeg stage list compiled from the same stages; empty when the chain is a no-op."""
+    stages = grade_stages(color)
+    if not stages:
         return ""
-    stages = {name: _expression(points) for name, points in channels.items()}
-    if all(value == "val" for value in stages.values()):
-        return ""
-    return "lutrgb=" + ":".join(f"{name}='{value}'" for name, value in stages.items())
+    parts = []
+    for stage in stages:
+        if stage["type"] == "lut":
+            expressions = {name: _expression(stage[name]) for name in CHANNEL_NAMES}
+            if all(value == "val" for value in expressions.values()):
+                continue
+            parts.append(
+                "lutrgb=" + ":".join(f"{name}='{value}'" for name, value in expressions.items())
+            )
+        else:
+            names = ("rr", "rg", "rb", "gr", "gg", "gb", "br", "bg", "bb")
+            parts.append(
+                "colorchannelmixer="
+                + ":".join(f"{name}={value:.10g}" for name, value in zip(names, stage["m"]))
+                + ":aa=1"
+            )
+    return ",".join(parts)
 
 
 def parse_1d_cube(text: str, *, title_default: str = "LUT") -> dict:

@@ -13,6 +13,7 @@ export const NODE_NAMES: Record<GradeNode["kind"], string> = {
   white_balance: "白平衡",
   wheels: "RGB 增益",
   levels: "色阶",
+  matrix: "通道混合",
   transfer: "色彩空间",
   lut: "LUT 查找表",
   parallel: "并联",
@@ -50,7 +51,8 @@ function operationText(node: GradeNode): string {
   if (node.kind === "levels") {
     parts.push(`${CHANNEL_SHORT[node.channel] ?? node.channel} ${Math.round(node.black * 255)}→${Math.round(node.white * 255)}`);
   }
-  if (node.blend && node.blend !== "normal") parts.push(blendLabel(node.blend));
+  if (node.kind === "matrix") parts.push("跨通道 3×3");
+  if ("blend" in node && node.blend && node.blend !== "normal") parts.push(blendLabel(node.blend));
   return parts.filter(Boolean).join(" · ");
 }
 
@@ -74,7 +76,7 @@ export function cardsFor(nodes: GradeNode[]): GraphCard[] {
         ? [`${parallel.branches.length} 支`, operationText(node)].filter(Boolean).join(" · ")
         : operationText(node),
       mix: node.mix === undefined ? 1 : node.mix,
-      blend: node.blend ?? "normal",
+      blend: "blend" in node ? (node.blend ?? "normal") : "normal",
       enabled: node.enabled !== false,
       lanes: parallel ? parallel.branches.map(laneFor) : [],
     };

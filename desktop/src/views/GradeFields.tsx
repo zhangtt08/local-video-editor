@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 
-import {DEFAULT_TRANSFER, COLOR_SPACES, DEFAULT_CURVE_POINTS, DEFAULT_WHEELS, type GradeChannel, type GradeCurvePoint, type GradeNode, type GradeOperation, type GradeParallel, type ColorSpace, BLEND_MODES, type BlendMode} from "../engine";
+import {DEFAULT_TRANSFER, COLOR_SPACES, DEFAULT_CURVE_POINTS, DEFAULT_WHEELS, type GradeBranch, type GradeChannel, type GradeCurvePoint, type GradeNode, type GradeOperation, type GradeParallel, type ColorSpace, BLEND_MODES, type BlendMode} from "../engine";
 import { editableProject, setClipColor, useApp, applyLut, autoGradeClip } from "../store";
 import { autoGradeBlocker } from "../effects";
 import { NODE_NAMES, cardsFor, moveWithin } from "../gradeGraph";
@@ -13,6 +13,15 @@ const FALLBACK_NODES = 8;
 const FALLBACK_POINTS = 16;
 const FALLBACK_BRANCHES = 4;
 const FALLBACK_LEVELS = { blackMax: 0.9, whiteMin: 0.1, gammaMin: 0.1, gammaMax: 10 };
+const FALLBACK_MATRIX_LIMIT = 4;
+/** 通道混合的三行三列与几个起手式：预设只是把九个框填成一组常用数，改完仍然是普通节点。 */
+const MATRIX_ROWS = ["输出红", "输出绿", "输出蓝"];
+const MATRIX_COLUMNS = ["来自红", "来自绿", "来自蓝"];
+const MATRIX_PRESETS: [string, number[]][] = [
+  ["恒等", [1, 0, 0, 0, 1, 0, 0, 0, 1]],
+  ["灰度 BT.709", [0.2126, 0.7152, 0.0722, 0.2126, 0.7152, 0.0722, 0.2126, 0.7152, 0.0722]],
+  ["青橙", [1.05, 0.18, -0.08, -0.06, 1.02, 0.04, -0.12, -0.06, 1.06]],
+];
 
 export type GradeLimits = {
   nodes: number;
@@ -22,6 +31,7 @@ export type GradeLimits = {
   whiteMin?: number;
   gammaMin?: number;
   gammaMax?: number;
+  matrixLimit?: number;
 };
 
 function clamp(value: number, lo: number, hi: number) {
@@ -209,6 +219,24 @@ function OpFields({ node, idPrefix, limits, onReplace, onCommit }: { node: Grade
       <p className="hint">正值偏暖，色调正值偏绿；按通道增益实现，不做色彩管理转换。</p>
     </div>;
   }
+  if (node.kind === "matrix") {
+    const limit = limits.matrixLimit ?? FALLBACK_MATRIX_LIMIT;
+    const set = (index: number, value: number) => {
+      const next = node.coefficients.slice();
+      next[index] = round(value);
+      onCommit({ ...node, coefficients: next });
+    };
+    return <div className="grade-body matrix-body">
+      <div className="batch-actions">
+        {MATRIX_PRESETS.map(([label, coefficients]) => <button key={label} className="btn tiny" onClick={() => onCommit({ ...node, coefficients: coefficients.map((value) => round(value)) })}>{label}</button>)}
+      </div>
+      {MATRIX_ROWS.map((rowName, row) => <div className="matrix-row" key={rowName}>
+        <span className="panel-label">{rowName}</span>
+        {[0, 1, 2].map((column) => <Num key={column} id={`${idPrefix}-matrix-${row}-${column}`} label={MATRIX_COLUMNS[column]} value={node.coefficients[row * 3 + column] ?? 0} min={-limit} max={limit} step={0.01} onCommit={(value) => set(row * 3 + column, value)} />)}
+      </div>)}
+      <p className="hint">每一行说「这个输出通道由多少红、多少绿、多少蓝组成」，九个数直接乘在画面的存储值上，不做线性光换算——所以它是通道混合与风格化偏色的工具，不是色彩管理。导出走 FFmpeg 的 colorchannelmixer，预览走同一组数的 SVG feColorMatrix（滤镜已声明 sRGB 插值），两端读同一份矩阵。想整体去色就点「灰度 BT.709」，想只动一个通道就把别的行留成 0。</p>
+    </div>;
+  }
   if (node.kind === "levels") {
     const blackMax = Math.round((limits.blackMax ?? FALLBACK_LEVELS.blackMax) * 255);
     const whiteMin = Math.round((limits.whiteMin ?? FALLBACK_LEVELS.whiteMin) * 255);
@@ -250,11 +278,11 @@ function OpFields({ node, idPrefix, limits, onReplace, onCommit }: { node: Grade
 /** 强度与混合方式：节点有自己的一对，并联分支也有，语义相同——都只与该支/该节点的输入比较。 */
 function MixFields({ node, idPrefix, label, onCommit }: { node: GradeNode; idPrefix: string; label: string; onCommit: (next: GradeNode) => void }) {
   return <div className="grade-body">
-    <label className="mask-shape">混合方式
+    {node.kind === "matrix" ? <p className="hint">通道混合没有「混合方式」可选：把矩阵用非线性模式（正片叠底之类）与它的输入混合，结果不再是矩阵，两端就没有同一份数可读了。要减弱效果请用下面的强度。</p> : <label className="mask-shape">混合方式
       <select className="input" aria-label={`${label}混合方式`} value={node.blend ?? "normal"} onChange={(e) => onCommit({ ...node, blend: e.target.value as BlendMode })}>
         {BLEND_MODES.map(([value, name]) => <option key={value} value={value}>{name}</option>)}
       </select>
-    </label>
+    </label>}
     <Num id={`${idPrefix}-mix`} label={`${label}强度`} value={(node.mix ?? 1) * 100} min={0} max={100} step={5} unit="%"
       onCommit={(value) => onCommit({ ...node, mix: round(value / 100) })} />
     <p className="hint">强度把该{label === "节点" ? "节点" : "支"}的结果与它的输入按比例混合，0% 等于跳过；达芬奇的 Mix 语义，预览与导出仍共用同一张每通道表。</p>
@@ -271,6 +299,8 @@ function newOperation(kind: Exclude<GradeOperation["kind"], "lut">): GradeOperat
       ? { kind: "white_balance", temperature: 0, tint: 0, enabled: true }
       : kind === "transfer"
         ? { kind: "transfer", ...DEFAULT_TRANSFER, enabled: true }
+        : kind === "matrix"
+        ? { kind: "matrix", coefficients: [1, 0, 0, 0, 1, 0, 0, 0, 1], enabled: true }
         : kind === "levels"
           ? { kind: "levels", channel: "rgb", black: 0, white: 1, gamma: 1, enabled: true }
           : { kind: "wheels", lift: [...DEFAULT_WHEELS.lift], gamma: [...DEFAULT_WHEELS.gamma], gain: [...DEFAULT_WHEELS.gain], enabled: true };
@@ -296,6 +326,7 @@ export function GradeFields({ clipId }: { clipId: string }) {
     whiteMin: app.caps?.grade_limits?.levels_white_min ?? FALLBACK_LEVELS.whiteMin,
     gammaMin: app.caps?.grade_limits?.levels_gamma_min ?? FALLBACK_LEVELS.gammaMin,
     gammaMax: app.caps?.grade_limits?.levels_gamma_max ?? FALLBACK_LEVELS.gammaMax,
+    matrixLimit: app.caps?.grade_limits?.matrix_limit ?? FALLBACK_MATRIX_LIMIT,
   };
   const lutFile = useRef<HTMLInputElement>(null);
   const lutTarget = useRef<number | null>(null);
@@ -331,10 +362,10 @@ export function GradeFields({ clipId }: { clipId: string }) {
     write(next);
     setActive(Math.min(Math.max(0, target), next.length - 1));
   };
-  const add = (kind: "curve" | "white_balance" | "wheels" | "levels" | "transfer" | "parallel") => {
+  const add = (kind: "curve" | "white_balance" | "wheels" | "levels" | "matrix" | "transfer" | "parallel") => {
     if (nodes.length >= limits.nodes) return;
     const node: GradeNode = kind === "parallel"
-      ? { kind: "parallel", branches: [newOperation("white_balance"), newOperation("white_balance")], enabled: true }
+      ? { kind: "parallel", branches: [newOperation("white_balance"), newOperation("white_balance")] as GradeBranch[], enabled: true }
       : newOperation(kind);
     write([...nodes, node]);
     pending.current = nodes.length;
@@ -352,12 +383,15 @@ export function GradeFields({ clipId }: { clipId: string }) {
   // Clamped here instead of in an effect, so a stale slot from another node can never edit the wrong branch.
   const slot = Math.min(branchSlot, Math.max(0, branches.length - 1));
   const shown = branches[slot] ?? null;
+  // 分支只能装每通道操作：并联取各支平均，跨通道的矩阵混进去就没有一张表可塌，契约也拒。
   const replaceBranch = (node: GradeParallel, index: number, next: GradeNode) => replace(active, {
     ...node,
-    branches: node.branches.map((entry, position) => position === index && next.kind !== "parallel" ? next : entry),
+    branches: node.branches.map((entry, position) => (
+      position === index && next.kind !== "parallel" && next.kind !== "matrix" ? next : entry
+    )),
   });
   const addBranch = (node: GradeParallel) => {
-    replace(active, { ...node, branches: [...node.branches, newOperation("white_balance")] });
+    replace(active, { ...node, branches: [...node.branches, newOperation("white_balance") as GradeBranch] });
     setSlot(node.branches.length);
   };
   const removeBranch = (node: GradeParallel) => {
@@ -370,7 +404,7 @@ export function GradeFields({ clipId }: { clipId: string }) {
     <summary className="panel-label">调色节点{nodes.length ? ` · ${nodes.length} 个` : ""}</summary>
     <fieldset className="effects-fields" disabled={locked}>
       <div className="batch-actions">
-        {(["curve", "white_balance", "wheels", "levels", "transfer", "parallel"] as const).map((kind) => <button key={kind} className="btn tiny" disabled={nodes.length >= limits.nodes} onClick={() => add(kind)}>+{NODE_NAMES[kind]}</button>)}
+        {(["curve", "white_balance", "wheels", "levels", "matrix", "transfer", "parallel"] as const).map((kind) => <button key={kind} className="btn tiny" disabled={nodes.length >= limits.nodes} onClick={() => add(kind)}>+{NODE_NAMES[kind]}</button>)}
         {app.caps?.features.lut_import ? <button className="btn tiny" disabled={nodes.length >= limits.nodes} title="选择 .cube 文件（1D 逐通道查找表），由引擎解析" onClick={() => pickLut(null)}>+LUT</button> : null}
         <input ref={lutFile} type="file" accept=".cube,text/plain" hidden onChange={(event) => {
           const file = event.target.files?.[0];

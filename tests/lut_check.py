@@ -279,7 +279,10 @@ def table_suite(payload: dict) -> None:
     """The compiled per-channel table is the file's own curve, within a level and a half."""
     rows = cube_rows(payload["size"])
     color = ClipColor(grade=[{"kind": "lut", **payload}])
-    tables = grade_tables(color)
+    compiled = grade_tables(color)
+    assert compiled is not None and len(compiled["stages"]) == 1, compiled
+    tables = compiled["stages"][0]
+    assert tables["type"] == "lut", tables
     assert tables is not None and len(tables["r"]) == 256
     worst = 0.0
     for channel, name in enumerate(("r", "g", "b")):
@@ -317,8 +320,10 @@ def table_suite(payload: dict) -> None:
             },
         ]
     )
-    chained = grade_tables(chain)
-    assert chained is not None and chained["id"] != tables["id"]
+    chained_chain = grade_tables(chain)
+    assert chained_chain is not None and len(chained_chain["stages"]) == 1, chained_chain
+    chained = chained_chain["stages"][0]
+    assert chained["id"] != tables["id"]
     half = max(
         abs(chained["r"][level] * 255 - (tables["r"][level] + level) / 2) for level in range(256)
     )
@@ -331,7 +336,7 @@ def table_suite(payload: dict) -> None:
     # A LUT is also a legal branch of a parallel node. Averaging it with a sibling must still be one
     # table per channel, so this checks the composition rule, not just the node itself.
     factors = (1 + 0.30 * 0.4, 1.0, 1 - 0.30 * 0.4)
-    merged = grade_tables(
+    merged_chain = grade_tables(
         ClipColor(
             grade=[
                 {
@@ -344,6 +349,8 @@ def table_suite(payload: dict) -> None:
             ]
         )
     )
+    assert merged_chain is not None and len(merged_chain["stages"]) == 1, merged_chain
+    merged = merged_chain["stages"][0]
     worst = 0.0
     for channel, name in enumerate(("r", "g", "b")):
         samples = [row[channel] for row in rows]
@@ -367,7 +374,7 @@ def media_suite(folder: Path) -> None:
     graded = band_levels(
         render(project_with(source, [{"kind": "lut", **payload}]), folder, "lut-on.mp4")
     )
-    tables = grade_tables(ClipColor(grade=[{"kind": "lut", **payload}]))
+    tables = grade_tables(ClipColor(grade=[{"kind": "lut", **payload}]))["stages"][0]
     # The bands are measured after they arrive on disk, so the comparison is against what the
     # encoder actually wrote: near-black costs a level or two of its own.
     for band, levels in enumerate(plain):
@@ -551,7 +558,9 @@ def http_suite(folder: Path) -> None:
 
         preview = client.post("/v1/preview-manifest", json=client.get(path).json()).json()
         grade = preview["clips"]["c"]["grade"]
-        assert grade is not None and len(grade["r"]) == 256 and grade["id"].startswith("g")
+        assert grade is not None and len(grade["stages"]) == 1, grade
+        stage = grade["stages"][0]
+        assert len(stage["r"]) == 256 and stage["id"].startswith("l")
         assert f"url(#{grade['id']})" in preview["clips"]["c"]["color_filter"]
         print(
             "   http: parse -> clip.grade round-trips 17x3 samples, seven bad payloads answer 422 "

@@ -145,8 +145,10 @@ def main() -> None:
         for black, white, gamma in SETTINGS:
             color = ClipColor(grade=[GradeLevels(black=black, white=white, gamma=gamma)])
             stage = grade_filter(color)
-            tables = grade_tables(color)
-            assert stage and tables, f"levels {black}/{white}/{gamma} compiled to nothing"
+            compiled = grade_tables(color)
+            assert stage and compiled, f"levels {black}/{white}/{gamma} compiled to nothing"
+            assert len(compiled["stages"]) == 1 and compiled["stages"][0]["type"] == "lut", compiled
+            tables = compiled["stages"][0]
             got = exported_levels(stage, ramp)
             for level in range(256):
                 want = round(255 * reference(level / 255, black, white, gamma))
@@ -164,7 +166,8 @@ def main() -> None:
         for level in (8, 64, 200):
             want = round(255 * reference(level / 255, 0.2, 0.8, 1.0))
             assert abs(pulled[level] - want) <= 1, f"red level {level}: {pulled[level]} != {want}"
-        tables = grade_tables(red_only)
+        tables = grade_tables(red_only)["stages"][0]
+        assert tables["type"] == "lut" and len(grade_tables(red_only)["stages"]) == 1
         assert tables["g"] == [round(index / 255, 9) for index in range(256)], "green moved"
 
         # 2. A neutral node adds no stage; the contract refuses an impossible one.
@@ -516,8 +519,8 @@ def main() -> None:
             graph = "\n".join(compile_render_plan(stored, "h264-source-quality").filters)
             assert "lutrgb=" in graph, graph[:200]
             manifest = client.get(f"/v1/projects/{project.id}/preview-manifest").json()
-            handed = manifest["clips"]["wide"]["grade"]
-            assert handed and handed["id"].startswith("g")
+            handed = manifest["clips"]["wide"]["grade"]["stages"][0]
+            assert handed["type"] == "lut" and handed["id"].startswith("l")
             exported = exported_levels(stage, ramp)
             for level in range(256):
                 assert abs(round(255 * handed["r"][level]) - exported[level]) <= 1, level

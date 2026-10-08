@@ -4,6 +4,7 @@ import { Icon, IconBtn } from "../ui";
 import { MaskPicture } from "./MaskPicture";
 import { TIMEBASE, frameTicks, humanDuration, pacing, rateLabel, timecode } from "../time";
 import type { AnimatedEffect, Clip, GradeTables, PreviewManifest, Project, Track } from "../engine";
+import { feColorMatrixValues } from "../engine";
 import { appInfo, clearProxyCache, clearDerivedCache, cycleSafeArea, editSource, fourPoint, jumpEditPoint, markSource, playhead, PROXY_WIDTHS, selectClip, selectedSource, setMonitorMode, setProxyWidth, setSourceCursor, setSourcePlaying, setSourceRipple, setSourceTarget, timelineEnd, useApp, usePlay } from "../store";
 
 let audioContext: AudioContext | undefined;
@@ -44,11 +45,11 @@ function FilterDefs({ plan }: { plan: PreviewManifest | null }) {
   if (!found.tables.length && !found.sharpens.length) return null;
   return <svg className="grade-defs" aria-hidden="true" focusable="false">
     <defs>{found.tables.map((table) => <filter key={table.id} id={table.id} colorInterpolationFilters="sRGB" x="0" y="0" width="100%" height="100%">
-      <feComponentTransfer>
-        <feFuncR type="table" tableValues={table.r.join(" ")} />
-        <feFuncG type="table" tableValues={table.g.join(" ")} />
-        <feFuncB type="table" tableValues={table.b.join(" ")} />
-      </feComponentTransfer>
+      {table.stages.map((stage) => stage.type === "lut" ? <feComponentTransfer key={stage.id}>
+        <feFuncR type="table" tableValues={stage.r.join(" ")} />
+        <feFuncG type="table" tableValues={stage.g.join(" ")} />
+        <feFuncB type="table" tableValues={stage.b.join(" ")} />
+      </feComponentTransfer> : <feColorMatrix key={stage.id} type="matrix" values={feColorMatrixValues(stage.m).join(" ")} />)}
     </filter>)}
       {found.sharpens.map((spec) => <filter key={spec.id} id={spec.id} colorInterpolationFilters="sRGB" primitiveUnits="objectBoundingBox" x="-2%" y="-2%" width="104%" height="104%">
         {/* Same formula the exporter compiles: 源 + 量×(源 − 高斯(源)). The arithmetic composite

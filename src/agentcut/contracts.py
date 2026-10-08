@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 13  # v13 gives a path mask a real box; older rows are fitted on load (ge=1).
-APP_VERSION = "1.83.1"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.84.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -253,6 +253,9 @@ LEVELS_BLACK_MAX = 0.9
 LEVELS_WHITE_MIN = 0.1
 LEVELS_GAMMA_MIN = 0.1
 LEVELS_GAMMA_MAX = 10.0
+# The channel mixer's coefficients: wide enough to swap and amplify channels (a hue-rotate needs
+# values past 1), narrow enough that a mistyped matrix cannot multiply a channel by a thousand.
+MATRIX_LIMIT = 4.0
 # Auto levels decodes the clip's own frames: how many, and how much of the picture may be clipped
 # at each end. Half a percent is the broadcast convention, and the ceiling is generous enough that
 # an editor can ask for a hard clip on a noisy source.
@@ -355,6 +358,34 @@ class GradeLevels(Contract):
         return self
 
 
+class GradeMatrix(Contract):
+    """Channel mixer: one 3x3 applied to the stored picture values, row-major red/green/blue out.
+
+    The first cross-channel node in this chain, and the reason the chain compiles to an ordered
+    stage list instead of a single table: a matrix sandwiched between two per-channel curves is not
+    itself a per-channel curve. Both renderers walk that list, and they walk the *same* math —
+    FFmpeg's ``colorchannelmixer`` and SVG's ``feColorMatrix`` (with
+    ``color-interpolation-filters="sRGB"``) are the same affine map on the same stored 8-bit values,
+    so a hue shift or a BT.709 luma mix looks identical in the monitor and in the file.
+
+    It is deliberately *not* a colour-management transform: those happen in linear light, which an
+    8-bit stage on either side of the matrix cannot hold without banding in the shadows. And it has
+    no ``blend`` field on purpose: blending a matrix with its input through a non-linear mode
+    (``in × matrix(in)``) is no longer a matrix at all, so the contract cannot offer it.
+    """
+
+    kind: Literal["matrix"] = "matrix"
+    coefficients: Annotated[list[float], Field(min_length=9, max_length=9)]
+    enabled: bool = True
+    mix: GradeMix = 1.0
+
+    @model_validator(mode="after")
+    def in_range(self):
+        if any(not -MATRIX_LIMIT <= value <= MATRIX_LIMIT for value in self.coefficients):
+            raise ValueError(f"coefficients must be within [-{MATRIX_LIMIT}, {MATRIX_LIMIT}]")
+        return self
+
+
 class GradeTransfer(Contract):
     """Colour-space conversion: one published EOTF in, one OETF out, applied to every channel.
 
@@ -406,6 +437,9 @@ class GradeLUT(Contract):
         return self
 
 
+# A parallel branch stays per-channel on purpose: the node outputs the mean of its branches, and the
+# mean of a cross-channel map with anything else is not something the chain can still compile to a
+# table. Refusing it here is what keeps the compiler from ever meeting a matrix inside a branch.
 GradeBranch = GradeCurve | GradeWhiteBalance | GradeWheels | GradeLevels | GradeTransfer | GradeLUT
 
 GRADE_NODE_LIMIT = 8
@@ -435,6 +469,7 @@ GradeNode = (
     | GradeWhiteBalance
     | GradeWheels
     | GradeLevels
+    | GradeMatrix
     | GradeTransfer
     | GradeLUT
     | GradeParallel
@@ -1994,6 +2029,7 @@ def capabilities(
             "levels_white_min": LEVELS_WHITE_MIN,
             "levels_gamma_min": LEVELS_GAMMA_MIN,
             "levels_gamma_max": LEVELS_GAMMA_MAX,
+            "matrix_limit": MATRIX_LIMIT,
         },
         # The transition picker enumerates this list rather than carrying its own copy, so a kind
         # the exporter cannot honour can never appear in the interface.
@@ -2130,6 +2166,7 @@ def capabilities(
             "clip_stabilize": True,
             "clip_denoise": True,
             "grade_levels": True,
+            "grade_matrix": True,
             # Measuring a clip's own frames needs the media engine, like every other analysis here.
             "clip_auto_grade": media_ready,
             "grade_node_blend_modes": True,

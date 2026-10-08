@@ -73,13 +73,18 @@ export type GradeOperation =
   | { kind: "wheels"; lift: number[]; gamma: number[]; gain: number[]; enabled: boolean; mix?: number; blend?: BlendMode }
   /** 色阶：输入黑场、白场与中间调 gamma。仍然是每通道一条函数，所以整条链照样塌成一张表。 */
   | { kind: "levels"; channel: GradeChannel; black: number; white: number; gamma: number; enabled: boolean; mix?: number; blend?: BlendMode }
+  /** 通道混合器：3x3 作用在存储值上。没有 blend 字段是刻意的——矩阵与非线性混合模式的复合不再是矩阵。 */
+  | { kind: "matrix"; coefficients: number[]; enabled: boolean; mix?: number }
   | { kind: "transfer"; input_space: ColorSpace; output_space: ColorSpace; enabled: boolean; mix?: number; blend?: BlendMode }
   /** 导入的 1D 查找表：三个通道各一条折线，采样点由引擎解析 `.cube` 文件得到，界面不自己读文件。 */
   | { kind: "lut"; title: string; size: number; channels: number[][]; enabled: boolean; mix?: number; blend?: BlendMode };
 /** 引擎 `/v1/lut/parse` 的回复：可直接放进调色链的节点内容（不含启用、强度等每节点默认值）。 */
 export type LutPayload = { title: string; size: number; channels: number[][]; resampled_from?: number };
-/** A parallel node's branch is always a single operation, so the graph never nests. */
-export type GradeBranch = GradeOperation;
+/** A parallel branch is always a single per-channel operation, so the graph never nests -- and the
+ *  mixer is excluded here exactly as the contract excludes it: averaging a cross-channel map into a
+ *  table is not something either end can compile. */
+export type GradeMixer = { kind: "matrix"; coefficients: number[]; enabled: boolean; mix?: number };
+export type GradeBranch = Exclude<GradeOperation, GradeMixer>;
 export type GradeParallel = { kind: "parallel"; branches: GradeBranch[]; enabled: boolean; mix?: number; blend?: BlendMode };
 export type GradeNode = GradeOperation | GradeParallel;
 export type ColorSpace =
@@ -94,7 +99,20 @@ export const COLOR_SPACES: [ColorSpace, string][] = [
   ["linear", "线性（场景光）"],
 ];
 export const DEFAULT_TRANSFER = { input_space: "srgb", output_space: "rec709" } as const;
-export type GradeTables = { id: string; r: number[]; g: number[]; b: number[] };
+export type GradeTables = { id: string; stages: GradeStage[] };
+/** 引擎把一条调色链编译成有序阶段：每通道一张表，或一个 3x3 通道混合。顺序有意义 ——
+ *  「曲线→通道混合」与「通道混合→曲线」是两张不同的图，两端都按这份列表走。 */
+export type GradeStage =
+  | { id: string; type: "lut"; r: number[]; g: number[]; b: number[] }
+  | { id: string; type: "matrix"; m: number[] };
+/** feColorMatrix 要 20 个数：把 3x3 摆成 RGBA 行，alpha 原样通过。滤镜上已写
+ *  color-interpolation-filters="sRGB"，所以矩阵作用在和导出一样的存储值上，不是线性光。 */
+export const feColorMatrixValues = (m: number[]): number[] => [
+  m[0], m[1], m[2], 0, 0,
+  m[3], m[4], m[5], 0, 0,
+  m[6], m[7], m[8], 0, 0,
+  0, 0, 0, 1, 0,
+];
 export type ClipColor = { exposure: number; contrast: number; saturation: number; grade?: GradeNode[] };
 /** 文字层：所有比例值都以「字号的几分之几」表达，与导出侧 drawtext 读同一组数（见 textStyle.ts）。 */
 export type TextStyle = {
@@ -414,6 +432,7 @@ export type Capabilities = {
     levels_white_min?: number;
     levels_gamma_min?: number;
     levels_gamma_max?: number;
+    matrix_limit?: number;
   };
   /** 可选的转场种类与中文名：界面列的是这份表，不是自己写死的三个。 */
   transition_kinds?: TransitionChoice[];

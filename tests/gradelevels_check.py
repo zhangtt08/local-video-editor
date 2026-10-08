@@ -274,7 +274,10 @@ def main() -> None:
     folder = Path(tempfile.mkdtemp(prefix="agentcut-levels-"))
     clip_source = source(folder)
     color = ClipColor(grade=chain())
-    tables = grade_tables(color)
+    compiled = grade_tables(color)
+    assert compiled is not None and len(compiled["stages"]) == 1, compiled
+    tables = compiled["stages"][0]
+    assert tables["type"] == "lut", tables
     assert tables, "the chain has to be a real grade, not a no-op"
     stage = grade_filter(color)
     assert stage.startswith("lutrgb="), stage[:40]

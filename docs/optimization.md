@@ -3069,6 +3069,63 @@ sigma；回执锚点再加两条，确认「只写默认值的新键」不会把
 - 顺带把「谁该拒绝变速」对齐清楚：`/stabilize` 与 `/track` 拒绝变速曲线，是因为它们的抵消按「一帧源画面
   对一个关键帧」算；自动调色不是——它只要求「读片段真正播的那段源」，而这件事 `consumed_source_ticks`
   已经算得准，所以这里不需要新增一条拒绝，只需要一个正确的窗口。
+
+## 1.84.0 通道混合：调色链第一次允许跨通道，权威从一张表变成一份有序阶段列表
+
+- 从 1.8 起「色彩节点图的分层与连线」后面一直挂着三样东西：3D LUT、色域矩阵、色彩管理。逐条读代码后
+  确认它们卡在同一个前提上——这条链的**不变量**是「每个节点都是每通道一条函数，所以整条链塌成每通道
+  一张表」，而这三样都是跨通道的：输出的红依赖输入的绿和蓝。要往前提一步，必须先让编译器会说「多阶段」。
+- 本版做这个前提，并做一个能两端严格对齐的跨通道节点：`matrix` 通道混合（3×3 作用在存储值上）。
+  `grade_stages(color)` 把链子编译成有序阶段列表——**连续**的每通道节点仍然合并成一张表（老行为一点不
+  少），遇到跨通道节点就断开这一组，把矩阵作为独立阶段插入；`grade_filter` 依次拼出
+  `lutrgb=…,colorchannelmixer=…,lutrgb=…`，`grade_tables` 返回 `{"id", "stages":[…]}`，浏览器在同一个
+  `<filter>` 里按同一顺序摆出 `feComponentTransfer` / `feColorMatrix` 原语。`color_filter` 里引用的还是
+  一个 id（整条链的 id），所以界面侧的引用方式没变。
+- 两端为什么能声称一致而不是「差不多」：FFmpeg 的 `colorchannelmixer` 与 SVG 的
+  `feColorMatrix type="matrix"` 都是对**存储的 8 位值**做同一个仿射映射，而滤镜上已经写了
+  `color-interpolation-filters="sRGB"`，浏览器就不会先做线性化。矩阵只有九个系数，没有常量偏移——
+  `colorchannelmixer` 也表达不了偏移，所以契约里就没有偏移这个字段。
+- 强度是免费的：`out = in + mix·(M·in − in)` 仍然是矩阵（`I + mix·(M − I)`），所以 `mix` 折进同一份九个数，
+  两端继续读同一份。混合方式则**故意不给**：`in × M·in` 这类非线性复合不再是矩阵，一旦允许，两端就没有
+  同一份数可读了。契约里 `GradeMatrix` 没有 `blend` 字段，`extra="forbid"` 会当场拒掉带 `blend` 的请求；
+  界面上那行说明写在强度上方，而不是把选择器灰在那里让人猜。
+- 这不是色彩管理，也不假装是：真正的基色转换发生在线性光里，8 位阶段会在暗部留下断层。这一点写在节点
+  卡片的说明、契约的 docstring 和 Help 里，`features.color_space_transform` 的含义不变（只换传递函数）。
+- 门禁 `tests/matrix_check.py` 的关键是**不能用灰度板测跨通道**：一条 256 级灰阶上 R=G=B，把绿列和蓝列
+  对调也照样通过。所以三组矩阵（BT.709 灰度、列对调、暖调）各驱动三张单基色板（一张只让红从 0 走到 255，
+  另两个通道钉在 0），256 级 × 3 输出通道 × 3 板 × 3 矩阵 = 6912 个数与独立写出的参考乘法比对，实测
+  ≤1 级。另外断言：`mix=0` 与恒等矩阵编译成空、`mix=0.5` 折进矩阵、曲线与矩阵换序编译成两条不同的链并
+  渲染出不同画面（红通道最大差 >8 级）、`blend`／越界／长度不对被契约拒、HTTP 写入后浏览器拿到同一份
+  九个系数、导出图里确实带 `colorchannelmixer`。`tests/desktop_matrix_check.ts` 钉住 3×3 → 20 槽的摆法
+  （行主序、每行补两个 0、alpha 原样通过）。
+- 消费者跟着改的是形状不是语义：`grade_tables` 的返回从 `{id,r,g,b}` 变成 `{id,stages:[…]}`，
+  `grade_check.py` / `gradelevels_check.py` / `lut_check.py` / `autograde_check.py` 里读表的地方改为取
+  那唯一一段，并把「只有一段」本身写成断言——纯每通道的链子要是被编译器拆成两段，门禁就该红。
+- 用老办法又抓到一个自己造出来的洞：把新的 `GradeMatrix` 加进 `GradeBranch`（并联分支的联合）之后，
+  **并联里放一个矩阵**就能把引擎打穿——`node_function` 对分支求值时落到 wheels 那条兜底分支，
+  `AttributeError: 'GradeMatrix' object has no attribute 'gamma'`，一条 Agent 发得出的 `clip.grade`
+  变成 500。修在契约而不是补在编译器里：`GradeBranch` 不含 `matrix`（并联取各支平均，跨通道映射平摊进
+  不了任何一张表），请求当场 422 并点名 `branches`；TS 侧 `GradeBranch = Exclude<GradeOperation, GradeMixer>`
+  同步跟上，`replaceBranch` 用「既不是并联也不是矩阵」收窄而不是硬转。`tests/matrix_check.py` 把这两种
+  形状都断下来——这是「新增一个联合成员」必须连带检查的地方，光看新节点自己跑得通是看不见的。
+- 五条变异测试逐条红（每条跑完原文件字节级还原）：`_matrix_of` 折强度时丢掉恒等项 → 红在折数比对；
+  矩阵不再断开每通道那一组 → 红在阶段顺序；`colorchannelmixer` 里把 `rg`/`rb` 两个名字对调 →
+  红在三张单基色板的逐点比对；`feColorMatrixValues` 的 alpha 行挪一格 → 红在 TS 门禁；
+  契约改成允许矩阵带 `blend` → 红在那条「契约必须拒」的断言。
+- 验收：`ruff check` 与 `ruff format --check` 干净（99 文件）、`npm run typecheck` 干净、
+  **15 项桌面 TS** 全过（新增 `tests/desktop_matrix_check.ts`）、串行套件 **69/69**
+  （新增 `tests/matrix_check.py`，`self_check.py` 另断 Agent 的 schema 里能看到 `matrix` 与
+  `coefficients`）。`build_engine.py --verify` 冻结引擎 ready；**包内实例**（打进安装包的那一个二进制）
+  报 `app_version=1.84.0`，capabilities 有 `grade_matrix` 与 `grade_limits.matrix_limit`，
+  写一条 `[curve, matrix]` 后 `preview-manifest` 交回的阶段序列是 `["lut","matrix"]` 且九个系数一字不差，
+  带 `blend` 的请求 422 点名 `blend`，真渲染一条灰板后测得 **[143,132,120]**、按参考乘法算的是
+  **[143,131,119]**（一路过 H.264，差 ≤1 级）。`app.asar`（5.6 MB）里读到「通道混合」「输出红」
+  「来自红」「灰度 BT.709」「跨通道 3×3」「调色节点·通道混合」与那句「不是色彩管理」。
+  便携版从 ASCII 路径双击启动实测 1 个窗口、标题「AgentCut 剪辑台」，关闭后残留 0。
+- 便携版 189,788,629 字节 SHA256 `B3BCD81DAD6725CEF13CF2EC25075CFBA32867359FCDB1E3AE2ACCC5F6244D8A`；
+  安装版 189,949,348 字节 SHA256 `05D6C6A3145058B35973E7C2BF862DFFF3CB805B8D91C7CCF58073E034740C6B`。
+  根目录 `AgentCut.exe` 已同步。未签名，NSIS 向导未点击验收；本轮没有在原生窗口里逐控件点击新的通道混合
+  卡片（界面侧由 TS 门禁、HTTP 断言与 asar 文本三处钉住）。
 - 发布验收：`build_engine.py --verify`（冻结引擎冷启后 ready、`tools`/`--help`/`mcp` 三种模式都活着）
   + `npm run dist`；**包内实例**单独量过一次——同一个二进制、同一条按时间分色的素材，100% 的 1 秒片段
   量到 [18,58]，200% 的 1 秒片段量到 [18,217]，回复里的 `window.source_ticks` 正好差一倍，

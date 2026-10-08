@@ -42,6 +42,20 @@ BANDS = (32, 128, 224)
 SAFE = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,()-+*/=':")
 
 
+def lut_stage(color) -> dict | None:
+    """The single LUT stage a per-channel-only chain compiles to, or None for a no-op chain.
+
+    Asserting there is exactly one stage is part of the claim: these chains hold no cross-channel
+    node, so a second stage would mean the compiler split a run it should have collapsed.
+    """
+    compiled = grade_tables(color)
+    if compiled is None:
+        return None
+    assert len(compiled["stages"]) == 1, compiled
+    assert compiled["stages"][0]["type"] == "lut", compiled
+    return compiled["stages"][0]
+
+
 def clamp(value: float) -> float:
     return 0.0 if value < 0 else 1.0 if value > 1 else value
 
@@ -429,9 +443,9 @@ def http_suite(folder: Path) -> None:
         tables = client.post("/v1/preview-manifest", json=written.json()["project"]).json()[
             "clips"
         ]["c"]
-        grade = tables["grade"]
-        assert grade["id"].startswith("g") and len(grade["r"]) == 256
-        assert f"url(#{grade['id']})" in tables["color_filter"]
+        grade = tables["grade"]["stages"][0]
+        assert grade["id"].startswith("l") and len(grade["r"]) == 256
+        assert f"url(#{tables['grade']['id']})" in tables["color_filter"]
         for index, channel in enumerate(("r", "g", "b")):
             expected = predict([WHEELS, GREEN_CURVE], index)
             for sample in (0, 40, 128, 200, 255):
@@ -462,7 +476,7 @@ def http_suite(folder: Path) -> None:
         assert stored["mix"] == 0.5, stored
         tables = client.post("/v1/preview-manifest", json=mixed.json()["project"]).json()["clips"][
             "c"
-        ]["grade"]
+        ]["grade"]["stages"][0]
         reference = predict([RGB_CURVE], 0)
         for sample in (0, 40, 128, 200, 255):
             assert abs(tables["r"][sample] - (reference[sample] + sample / 255) / 2) < 1e-6, (
@@ -520,7 +534,7 @@ def media_suite(folder: Path) -> None:
 
     nodes = [GREEN_CURVE, WHEELS]
     measured = band_levels(render(make_project(source, nodes), folder, "graded.mp4"))
-    tables = grade_tables(make_project(source, nodes).clips["c"].color)
+    tables = lut_stage(make_project(source, nodes).clips["c"].color)
     for channel in range(3):
         expected = predict(nodes, channel)
         for band, input_level in enumerate(BANDS):
@@ -538,7 +552,7 @@ def media_suite(folder: Path) -> None:
 
     half_nodes = [{**GREEN_CURVE, "mix": 0.5}, {**WHEELS, "mix": 0.5}]
     half = band_levels(render(make_project(source, half_nodes), folder, "halfmix.mp4"))
-    half_tables = grade_tables(make_project(source, half_nodes).clips["c"].color)
+    half_tables = lut_stage(make_project(source, half_nodes).clips["c"].color)
     for channel in range(3):
         reference = predict(half_nodes, channel)
         for band, input_level in enumerate(BANDS):
@@ -632,7 +646,7 @@ def parallel_math_suite(folder: Path) -> None:
     cool = {"kind": "white_balance", "temperature": -0.3, "tint": 0.0}
 
     def tables(nodes: list[dict]) -> dict | None:
-        return grade_tables(make_project(source, nodes).clips["c"].color)
+        return lut_stage(make_project(source, nodes).clips["c"].color)
 
     def drift(left: dict, right: dict, name: str) -> float:
         return max(abs(left[name][key] - right[name][key]) * 255 for key in range(256))
@@ -855,9 +869,9 @@ def parallel_http_suite(folder: Path) -> None:
         manifest = client.post("/v1/preview-manifest", json=written.json()["project"]).json()[
             "clips"
         ]["c"]
-        grade = manifest["grade"]
+        grade = manifest["grade"]["stages"][0]
         assert grade is not None and len(grade["r"]) == 256
-        assert f"url(#{grade['id']})" in manifest["color_filter"]
+        assert f"url(#{manifest['grade']['id']})" in manifest["color_filter"]
         drift = max(
             abs(grade[name][key] - predict([graph], index)[key]) * 255
             for index, name in enumerate(CHANNELS)
@@ -880,7 +894,7 @@ def parallel_http_suite(folder: Path) -> None:
         assert len(muted.json()["project"]["clips"]["c"]["color"]["grade"][0]["branches"]) == 3
         quieter = client.post("/v1/preview-manifest", json=muted.json()["project"]).json()["clips"][
             "c"
-        ]["grade"]
+        ]["grade"]["stages"][0]
         moved = max(
             abs(quieter[name][key] - grade[name][key]) * 255
             for name in CHANNELS
@@ -1019,7 +1033,7 @@ def transfer_suite(folder: Path) -> None:
     )
     for source_space, target_space in pairs:
         nodes = [{"kind": "transfer", "input_space": source_space, "output_space": target_space}]
-        tables = grade_tables(make_project(source, nodes).clips["c"].color)
+        tables = lut_stage(make_project(source, nodes).clips["c"].color)
         reference = predict(nodes, 0)
         worst = max(abs(tables["r"][value] - reference[value]) for value in range(256))
         assert worst * 255 <= 0.5, (source_space, target_space, worst * 255)
@@ -1032,7 +1046,7 @@ def transfer_suite(folder: Path) -> None:
     nodes = [{"kind": "transfer", "input_space": "srgb", "output_space": "rec709"}]
     graded = toe_levels(render(make_project(source, nodes), folder, "toe-srgb-rec709.mp4"))
     reference = predict(nodes, 0)
-    tables = grade_tables(make_project(source, nodes).clips["c"].color)
+    tables = lut_stage(make_project(source, nodes).clips["c"].color)
     # Compare against the levels that actually arrived on disk (the source encode itself shifts
     # near-black by a level or two), so this measures the grade stage and not the codec.
     arrived = [round(value) for value in plain]
@@ -1099,7 +1113,7 @@ def blend_suite(folder: Path) -> None:
 
     for mode in BLEND_MODES:
         nodes = [{**lift, "blend": mode}]
-        tables = grade_tables(make_project(source, nodes).clips["c"].color)
+        tables = lut_stage(make_project(source, nodes).clips["c"].color)
         worst = 0.0
         for index in range(256):
             backdrop = index / 255

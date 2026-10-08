@@ -1882,3 +1882,34 @@ luma 只占一个节点）。画面本来就占满所测量程时**不写节点*
 单帧素材（一张图片）在这里是个真坑：`fps` 滤镜喂给它会把那唯一一帧直接丢掉，量到 0 帧。
 `decode_rgb` 因此带一个 `spread` 开关，取不到帧时按「不做时间铺开」再解一次；
 `tests/autograde_check.py` 用真实的 FFmpeg 把这条路钉住。
+
+## 1.84 通道混合节点：链子的权威从「每通道一张表」变成「有序阶段列表」（工程 schema 仍是 v13）
+
+新增节点 `matrix`：`coefficients` 是九个系数、行主序（输出红/绿/蓝各一行，每行「来自红、来自绿、来自蓝」），
+范围 `[-capabilities.grade_limits.matrix_limit, +limit]`（默认 4），外加 `enabled` 与 `mix`。**没有**
+`blend` 字段，也**没有**常量偏移：前者是因为矩阵与非线性混合模式的复合不再是矩阵（两端就没有同一份数可
+读），后者是因为 FFmpeg 那一侧的 `colorchannelmixer` 表达不了偏移。`extra="forbid"` 会把带 `blend` 的请求
+当场拒掉，界面把这句话写在强度上方而不是给一个灰掉的选择器。
+
+写入仍然只用既有的 `clip.grade`，所以 reducer、历史、幂等回执、撤销照旧；能力开关是
+`features.grade_matrix`，系数范围由 `capabilities.grade_limits.matrix_limit` 下发。
+
+编译的产物形状变了：`grade_stages(color)` 返回有序阶段列表——**连续**的每通道节点合并成一段
+`{"type":"lut", r/g/b 折线}`，跨通道节点断开这一组并插入 `{"type":"matrix","m":[九个系数]}`。
+`grade_filter` 依次拼成 `lutrgb=…,colorchannelmixer=…,lutrgb=…`；`grade_tables` 返回
+`{"id": "g<hash>", "stages": [{"type":"lut","id":"l…","r","g","b"} | {"type":"matrix","id":"m…","m"}]}`，
+`preview_manifest` 的 `clips[*]["grade"]` 就是这份列表，`color_filter` 引用的仍是整条链的一个 id。
+浏览器在同一个 `<filter color-interpolation-filters="sRGB">` 里按同一顺序摆 `feComponentTransfer` 与
+`feColorMatrix`（后者要 20 个数，由 `feColorMatrixValues` 把 3×3 行主序摆成每行补两个 0、alpha 原样通过）。
+
+两端可比的原因是它们做的是同一件事：`colorchannelmixer` 与 `feColorMatrix type="matrix"` 都是对存储的
+8 位值做同一个仿射映射，且 sRGB 插值声明挡住了浏览器的线性化。强度不额外花钱：
+`out = in + mix·(M·in − in)` 仍是矩阵（`I + mix·(M − I)`），所以 `mix` 折进同一份九个数。
+
+它**不是**色彩管理：基色转换发生在线性光里，8 位阶段会在暗部留下断层。`features.color_space_transform`
+的含义不变（`transfer` 节点仍然只换传递函数）。仍缺的是 3D LUT（浏览器没有对应的跨通道原语）与线性光的
+高位深阶段对。
+
+并联分支**不能**装这个节点：`GradeBranch` 里没有 `matrix`。并联的输出是各支的平均，把跨通道映射平摊进
+一张每通道的表里就是骗人，而让编译器在分支求值路上撞见一个没有映射的节点更是 500 —— 所以这条路在契约
+上就不存在，请求会 422 并点名 `branches`。

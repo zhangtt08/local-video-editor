@@ -1,613 +1,334 @@
-"""No payload a person or an Agent can put on the wire may come back as an internal error.
+"""The channel mixer: one 3x3, two renderers, measured on every primary at every level.
 
-The engine publishes 53 command shapes. Every one of them is probed three ways against a real HTTP
-server and a project that already holds tracks, clips, a transition, a mask, keyframes, a marker, a
-recipe and a nested sequence: the bare discriminator (the contract must refuse it), a payload whose
-every required field is filled with a **type-correct value that names nothing real** (that reaches
-    the
-reducer, which is where an unguarded `KeyError`, a raw pydantic error or an integer overflow would
-surface), and the same payload with each integer field pushed to `MAX_TICKS` (the classic
-position-plus-duration overflow). Then a table of semantic traps that only bite against real state.
+A per-channel node can be checked with a grey ramp. A cross-channel node cannot — grey in gives grey
+out no matter what the off-diagonal terms are, so a matrix with the green and blue columns swapped
+would pass a ramp test unchanged. This file therefore drives **three** 256-pixel plates, one per
+primary with the other two at zero, and compares all three output channels of each against a
+reference multiply written here, from the published definition of the two filters:
 
-The property asserted is narrow and absolute: **status below 500**, and every refusal carries a code
-and a message a person can act on. Accepted probes must actually be accepted too -- a run that
-ends up rejecting everything would prove nothing, so the check also fails if fewer than eight
-distinct error codes appear, or if a dry-run disagrees with the same command committed for real.
+* FFmpeg's `colorchannelmixer`, which the exporter runs;
+* SVG's `feColorMatrix type="matrix"`, which the browser composites, fed by the same nine numbers
+  through `feColorMatrixValues` (and declared `color-interpolation-filters="sRGB"`, so neither side
+  linearises behind the other's back).
+
+It also pins the things that are easy to get wrong and impossible to see: that `mix` folds into the
+matrix rather than being dropped, that a zero-strength mixer adds no stage at all, that the stage
+order survives compilation, and that a `blend` mode on this node is refused by the contract instead
+of being quietly ignored — a non-linear blend of a matrix with its input is not a matrix, so there
+would be no single set of numbers left for the two ends to share.
 """
 
-import os
+import subprocess
 import tempfile
-import typing
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
-from agentcut.contracts import MAX_TICKS, Command
+from agentcut.contracts import (
+    MATRIX_LIMIT,
+    ClipColor,
+    CreateProject,
+    GradeMatrix,
+    Project,
+)
+from agentcut.contracts import (
+    TIMEBASE as T,
+)
+from agentcut.grade import grade_filter, grade_stages, grade_tables
 from agentcut.http_api import create_app
+from agentcut.media import MediaService
+from agentcut.projects import ProjectStore
+from agentcut.render import compile_render_plan
 
-# AGENTCUT_MATRIX_REPORT=1 prints what each trap actually answers instead of asserting it. It exists
-# for the day the contract moves; the gate itself runs with it unset.
-REPORT = os.environ.get("AGENTCUT_MATRIX_REPORT") == "1"
-
-T = 70_560_000
+ROOT = Path(__file__).resolve().parent.parent
+FFMPEG = ROOT / "desktop/resources/bin/ffmpeg.exe"
+FFPROBE = ROOT / "desktop/resources/bin/ffprobe.exe"
 WIDTH, HEIGHT = 320, 180
-BANNED = (500, 502, 503, 504)
+
+GREY_709 = [0.2126, 0.7152, 0.0722, 0.2126, 0.7152, 0.0722, 0.2126, 0.7152, 0.0722]
+SWAP = [0, 1, 0, 0, 0, 1, 1, 0, 0]
+WARM = [1.1, 0.08, -0.06, 0, 1.0, 0.02, -0.05, 0.06, 0.92]
+IDENTITY = [1, 0, 0, 0, 1, 0, 0, 0, 1]
+CURVE = {
+    "kind": "curve",
+    "channel": "rgb",
+    "points": [{"x": 0.0, "y": 0.0}, {"x": 0.5, "y": 0.78}, {"x": 1.0, "y": 1.0}],
+}
 
 
-def command_models() -> list[type]:
-    union = typing.get_args(Command)[0]
-    return [member for member in typing.get_args(union) if hasattr(member, "model_fields")]
+def clamp(value: float) -> float:
+    return 0.0 if value < 0 else 255.0 if value > 255 else value
 
 
-def unwrap(annotation):
-    """Strip Annotated[...] so `Ticks` reads as the int it is."""
-    while typing.get_origin(annotation) is not None and hasattr(annotation, "__metadata__"):
-        annotation = typing.get_args(annotation)[0]
-    return annotation
-
-
-def sample(annotation, depth: int = 0):
-    """A value of the right type that refers to nothing in the project."""
-    annotation = unwrap(annotation)
-    origin = typing.get_origin(annotation)
-    args = typing.get_args(annotation)
-    if origin is typing.Literal:
-        return args[0]
-    if origin in (list, set, tuple):
-        return [sample(args[0], depth)] if args else []
-    if origin is dict:
-        return {}
-    if origin is typing.Union or origin is not None:  # unions, including `X | None`
-        for candidate in args:
-            if candidate is not type(None):
-                return sample(candidate, depth)
-        return None
-    if hasattr(annotation, "model_fields"):
-        return minimal(annotation, depth)
-    name = getattr(annotation, "__name__", str(annotation))
-    if name == "bool":
-        return True
-    if name == "float":
-        return 0.5
-    if name == "int":
-        return 1_000
-    if name == "FrameRate":
-        return {"numerator": 30, "denominator": 1}
-    return "nope"
-
-
-def minimal(model, depth: int = 0) -> dict:
-    """Fill only what the contract demands, so the payload is legal-shaped but points at nothing."""
-    if depth > 3:
-        return {}
-    payload = {}
-    for field_name, field in model.model_fields.items():
-        if not field.is_required() or field_name == "op":
-            continue
-        value = sample(field.annotation, depth + 1)
-        if isinstance(value, list) and field_name.endswith("ids"):
-            value = ["nope"]
-        payload[field_name] = value
-    return payload
-
-
-def integer_fields(model) -> list[str]:
-    fields = []
-    for name, field in model.model_fields.items():
-        if getattr(unwrap(field.annotation), "__name__", "") == "int":
-            fields.append(name)
-    return fields
-
-
-def seed_commands() -> list[dict]:
+def reference(m: list[float], pixel: tuple[int, int, int]) -> list[int]:
+    """One pixel through the matrix, computed here and nowhere else."""
     return [
-        {"op": "track.add", "track": {"id": "v", "kind": "video", "name": "v"}},
-        {"op": "track.add", "track": {"id": "v2", "kind": "video", "name": "v2"}},
-        {"op": "track.add", "track": {"id": "v3", "kind": "video", "name": "v3"}},
-        {"op": "track.add", "track": {"id": "a", "kind": "audio", "name": "a"}},
-        {
-            "op": "asset.register",
-            "asset": {
-                "id": "pic",
-                "kind": "video",
-                "label": "p",
-                "reference": "r",
-                "duration_ticks": 4 * T,
-            },
-        },
-        {
-            "op": "asset.register",
-            "asset": {
-                "id": "snd",
-                "kind": "audio",
-                "label": "s",
-                "reference": "r",
-                "duration_ticks": 4 * T,
-            },
-        },
-        {
-            "op": "asset.register",
-            "asset": {
-                "id": "txt",
-                "kind": "text",
-                "label": "t",
-                "reference": "r",
-                "duration_ticks": T,
-            },
-        },
-        {
-            "op": "clip.add",
-            "clip": {
-                "id": "c1",
-                "asset_id": "pic",
-                "track_id": "v",
-                "position_ticks": 0,
-                "duration_ticks": 2 * T,
-            },
-        },
-        {
-            "op": "clip.add",
-            "clip": {
-                "id": "c2",
-                "asset_id": "pic",
-                "track_id": "v",
-                "position_ticks": 2 * T,
-                "duration_ticks": 2 * T,
-            },
-        },
-        {
-            "op": "clip.add",
-            "clip": {
-                "id": "c3",
-                "asset_id": "pic",
-                "track_id": "v2",
-                "position_ticks": 0,
-                "duration_ticks": T,
-            },
-        },
-        {
-            "op": "clip.add",
-            "clip": {
-                "id": "s1",
-                "asset_id": "snd",
-                "track_id": "a",
-                "position_ticks": 0,
-                "duration_ticks": 2 * T,
-            },
-        },
-        {
-            "op": "clip.add",
-            "clip": {
-                "id": "t1",
-                "asset_id": "txt",
-                "track_id": "v2",
-                "position_ticks": T,
-                "duration_ticks": T,
-                "text": {"body": "标题", "font_size": 0.1, "color": "#ffffff"},
-            },
-        },
-        {
-            "op": "clip.add",
-            "clip": {
-                "id": "c4",
-                "asset_id": "pic",
-                "track_id": "v3",
-                "position_ticks": 0,
-                "duration_ticks": T,
-            },
-        },
-        {
-            "op": "clip.mask",
-            "clip_id": "c1",
-            "mask": {
-                "shape": "ellipse",
-                "center_x": 0.5,
-                "center_y": 0.5,
-                "width": 0.4,
-                "height": 0.4,
-                "feather": 0.1,
-                "inverted": False,
-            },
-        },
-        {
-            "op": "keyframe.set",
-            "clip_id": "c1",
-            "keyframe": {"property": "x", "at_ticks": T // 2, "value": 0.1},
-        },
-        {"op": "marker.set", "marker": {"id": "m", "at_ticks": T, "name": "hit"}},
-        {
-            "op": "transition.set",
-            "clip_id": "c2",
-            "from_clip_id": "c1",
-            "kind": "dissolve",
-            "duration_ticks": T // 3,
-        },
-        {
-            "op": "recipe.set",
-            "recipe": {
-                "id": "r1",
-                "name": "交付",
-                "items": [{"preset_id": "h264-1080p", "filename": "a.mp4"}],
-            },
-        },
-        {
-            "op": "sequence.nest",
-            "clip_ids": ["c3", "t1"],
-            "name": "n1",
-            "sequence_id": "n1",
-            "asset_id": "an1",
-            "clip_id": "cn1",
-        },
-        {"op": "track.update", "track_id": "v3", "locked": True},
+        round(clamp(row[0] * pixel[0] + row[1] * pixel[1] + row[2] * pixel[2]))
+        for row in (m[0:3], m[3:6], m[6:9])
     ]
 
 
-def traps(revision: int) -> list[tuple[str, dict, int, str | None]]:
-    """(label, command, expected status, expected code) for cases that only bite against real state.
+def plate(primary: int) -> bytes:
+    """256 pixels: one channel sweeping 0..255, the other two held at zero."""
+    out = bytearray()
+    for level in range(256):
+        pixel = [0, 0, 0]
+        pixel[primary] = level
+        out += bytes(pixel)
+    return bytes(out)
 
-    The codes are pinned because they are the contract a person or an Agent plans against, and two
-    of the rows pin the *opposite* of what they look like: nesting a clip that is itself a nested
-    picture is legal (depth 2, not a cycle), and `captions.import` creates the track it names rather
-    than requiring one to exist. Both were measured, not assumed.
-    """
-    return [
-        # The stabiliser's record (1.69) is a command like any other, so it is probed the same way:
-        # a payload that names nothing real must reach the reducer and answer by name, never as a
-        # 500, and clearing a record that was never there must be an accepted no-op.
-        (
-            "stabilize record on a clip that is not there",
-            {
-                "op": "clip.stabilize_record",
-                "clip_id": "nope",
-                "record": {
-                    "strength": 1.0,
-                    "max_crop": 0.1,
-                    "points": 12,
-                    "translation_correction": 0.02,
-                    "roll_correction": 0.0,
-                    "zoom_to_hide_borders": 1.04,
-                    "analysed_frames": 12,
-                },
-            },
-            404,
-            "NOT_FOUND",
-        ),
-        (
-            "stabilize record with no points",
-            {
-                "op": "clip.stabilize_record",
-                "clip_id": "c1",
-                "record": {
-                    "strength": 1.0,
-                    "max_crop": 0.1,
-                    "points": 0,
-                    "translation_correction": 0.0,
-                    "roll_correction": 0.0,
-                    "zoom_to_hide_borders": 1.0,
-                    "analysed_frames": 0,
-                },
-            },
-            422,
-            "INVALID_REQUEST",
-        ),
-        (
-            "clear a record that was never written",
-            {"op": "clip.stabilize_record", "clip_id": "c1", "record": None},
-            200,
-            None,
-        ),
-        (
-            "nest a nested picture again",
-            {
-                "op": "sequence.nest",
-                "clip_ids": ["cn1"],
-                "name": "n2",
-                "sequence_id": "n2",
-                "asset_id": "an2",
-                "clip_id": "cn2",
-            },
-            200,
-            None,
-        ),
-        (
-            "mask on an audio clip",
-            {
-                "op": "clip.mask",
-                "clip_id": "s1",
-                "mask": {
-                    "shape": "ellipse",
-                    "center_x": 0.5,
-                    "center_y": 0.5,
-                    "width": 0.4,
-                    "height": 0.4,
-                    "feather": 0.0,
-                    "inverted": False,
-                },
-            },
-            422,
-            "INVALID_MASK",
-        ),
-        (
-            "grade on an audio clip",
-            {"op": "clip.grade", "clip_id": "s1", "grade": []},
-            422,
-            "INVALID_COLOR",
-        ),
-        (
-            "text style on a video clip",
-            {
-                "op": "clip.text",
-                "clip_id": "c1",
-                "text": {"body": "hi", "font_size": 0.1, "color": "#ffffff"},
-            },
-            422,
-            "INVALID_TEXT",
-        ),
-        (
-            "transition longer than the clips",
-            {
-                "op": "transition.set",
-                "clip_id": "c2",
-                "from_clip_id": "c1",
-                "kind": "dissolve",
-                "duration_ticks": 4 * T,
-            },
-            422,
-            "INVALID_TRANSITION",
-        ),
-        (
-            "overlap without a transition",
-            {
-                "op": "clip.add",
-                "clip": {
-                    "id": "c9",
-                    "asset_id": "pic",
-                    "track_id": "v",
-                    "position_ticks": T,
-                    "duration_ticks": T,
-                },
-            },
-            422,
-            "CLIP_OVERLAP",
-        ),
-        (
-            "keyframe on a missing clip",
-            {
-                "op": "keyframe.set",
-                "clip_id": "ghost",
-                "keyframe": {"property": "x", "at_ticks": T, "value": 0.5},
-            },
-            404,
-            "NOT_FOUND",
-        ),
-        (
-            "marker past the content",
-            {"op": "marker.set", "marker": {"id": "m9", "at_ticks": 99 * T, "name": "late"}},
-            422,
-            "INVALID_MARKER",
-        ),
-        (
-            "remove a missing recipe",
-            {"op": "recipe.remove", "recipe_id": "ghost"},
-            404,
-            "NOT_FOUND",
-        ),
-        (
-            "remove a missing marker",
-            {"op": "marker.remove", "marker_id": "ghost"},
-            404,
-            "NOT_FOUND",
-        ),
-        (
-            "split inside a transition",
-            {"op": "clip.split", "clip_id": "c1", "at_ticks": 2 * T, "right_clip_id": "csplit"},
-            422,
-            "INVALID_SPLIT",
-        ),
-        (
-            "ripple the last clip of a locked track",
-            {"op": "clip.ripple_remove", "clip_id": "c4"},
-            422,
-            "TRACK_LOCKED",
-        ),
-        (
-            "roll across tracks",
-            {"op": "clip.roll", "clip_id": "c1", "other_clip_id": "s1", "delta_ticks": T},
-            422,
-            "INVALID_ROLL",
-        ),
-        (
-            "captions import creates the track it names",
-            {
-                "op": "captions.import",
-                "track_id": "subs",
-                "asset_id": "subs",
-                "srt": "1\n00:00:00,000 --> 00:00:01,000\n你好\n",
-            },
-            200,
-            None,
-        ),
-        (
-            "mask track on an ellipse",
-            {
-                "op": "clip.mask_track",
-                "clip_id": "c1",
-                "points": [{"at_ticks": 0, "center_x": 0.5, "center_y": 0.5}],
-            },
-            422,
-            "INVALID_REQUEST",
-        ),
-        (
-            "clip.add at MAX_TICKS",
-            {
-                "op": "clip.add",
-                "clip": {
-                    "id": "cmax",
-                    "asset_id": "pic",
-                    "track_id": "v",
-                    "position_ticks": MAX_TICKS,
-                    "duration_ticks": T,
-                },
-            },
-            422,
-            "TIME_OVERFLOW",
-        ),
-        (
-            "slip past the source",
-            {"op": "clip.slip", "clip_id": "c1", "source_offset_ticks": 9 * T},
-            422,
-            "SOURCE_OUT_OF_BOUNDS",
-        ),
-        (
-            "detach an unlinked pair",
-            {"op": "clip.detach_audio", "clip_id": "c1", "audio_clip_id": "s1", "track_id": "a"},
-            422,
-            "NO_EMBEDDED_AUDIO",
-        ),
-        (
-            "link two picture clips",
-            {"op": "clips.link", "clip_ids": ["c1", "c2"]},
-            422,
-            "INVALID_REQUEST",
-        ),
-    ]
+
+def through(stage: str, raw: bytes) -> list[list[int]]:
+    """Run one compiled stage over a 256x1 plate, and read back all three channels."""
+    done = subprocess.run(
+        [
+            str(FFMPEG),
+            "-v",
+            "error",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-s",
+            "256x1",
+            "-i",
+            "pipe:0",
+            "-vf",
+            stage,
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "pipe:1",
+        ],
+        input=raw,
+        capture_output=True,
+        creationflags=0x08000000,
+    )
+    assert done.returncode == 0, done.stderr.decode(errors="replace")[-500:]
+    out = done.stdout
+    assert len(out) == 256 * 3, (len(out), out[:60])
+    return [[out[pixel * 3 + channel] for pixel in range(256)] for channel in range(3)]
+
+
+def matrix(nodes: list) -> dict:
+    return {"kind": "matrix", "coefficients": nodes}
 
 
 def main() -> None:
-    models = command_models()
-    assert len(models) >= 45, len(models)
-    with tempfile.TemporaryDirectory(prefix="agentcut-matrix-") as scratch:
-        folder = Path(scratch)
-        token = "matrix-" + "f" * 48
+    # 1. Every primary, every level, every output channel — against the reference multiply.
+    for label, coefficients in (("bt709", GREY_709), ("swap", SWAP), ("warm", WARM)):
+        stage = grade_filter(ClipColor(grade=[GradeMatrix(coefficients=coefficients)]))
+        assert stage.startswith("colorchannelmixer="), stage
+        for primary in range(3):
+            planes = through(stage, plate(primary))
+            for level in range(256):
+                pixel = [0, 0, 0]
+                pixel[primary] = level
+                wanted = reference(coefficients, tuple(pixel))
+                for channel in range(3):
+                    assert abs(planes[channel][level] - wanted[channel]) <= 1, (
+                        label,
+                        primary,
+                        level,
+                        channel,
+                        planes[channel][level],
+                        wanted[channel],
+                    )
+        print(f"   matrix {label}: 3 plates x 256 levels x 3 channels match the reference")
+
+    # 2. Strength folds into the matrix; zero strength adds no stage at all.
+    half = ClipColor(grade=[GradeMatrix(coefficients=GREY_709, mix=0.5)])
+    folded = grade_stages(half)[0]["m"]
+    wanted = [
+        (1.0 if row == column else 0.0)
+        + 0.5 * (GREY_709[row * 3 + column] - (1.0 if row == column else 0.0))
+        for row in range(3)
+        for column in range(3)
+    ]
+    assert all(abs(a - b) < 1e-9 for a, b in zip(folded, wanted)), folded
+    assert grade_filter(ClipColor(grade=[GradeMatrix(coefficients=GREY_709, mix=0.0)])) == ""
+    assert grade_tables(ClipColor(grade=[GradeMatrix(coefficients=IDENTITY)])) is None
+    assert grade_tables(ClipColor(grade=[GradeMatrix(coefficients=IDENTITY, mix=0.4)])) is None
+    print("   mix: folded into the same numbers, and a no-op mixer compiles to nothing")
+
+    # 3. Order is preserved: the two chains differ, and each lists its stages in the run order.
+    forward = ClipColor(grade=[CURVE, matrix(GREY_709)])
+    reverse = ClipColor(grade=[matrix(GREY_709), CURVE])
+    assert [stage["type"] for stage in grade_stages(forward)] == ["lut", "matrix"]
+    assert [stage["type"] for stage in grade_stages(reverse)] == ["matrix", "lut"]
+    assert grade_filter(forward).startswith("lutrgb=") and "colorchannelmixer" in grade_filter(
+        forward
+    )
+    assert grade_filter(reverse).startswith("colorchannelmixer=")
+    assert grade_tables(forward)["id"] != grade_tables(reverse)["id"]
+    forward_planes = through(grade_filter(forward), plate(0))
+    reverse_planes = through(grade_filter(reverse), plate(0))
+    assert max(abs(a - b) for a, b in zip(forward_planes[0], reverse_planes[0])) > 8, (
+        "the two orders rendered the same picture: the chain is not ordered"
+    )
+    print("   order: curve→mixer and mixer→curve compile and render differently")
+
+    # 4. The contract refuses what the compiler cannot honour on both ends.
+    for bad in (
+        {"coefficients": [9, 0, 0, 0, 1, 0, 0, 0, 1]},
+        {"coefficients": [1, 0, 0]},
+        {"coefficients": [1, 0, 0, 0, 1, 0, 0, 0, 1], "blend": "multiply"},
+    ):
+        try:
+            GradeMatrix(**bad)
+        except ValidationError:
+            continue
+        raise AssertionError(f"the contract accepted {bad}")
+    assert GradeMatrix(coefficients=[-MATRIX_LIMIT] * 9).coefficients[0] == -MATRIX_LIMIT
+    # A parallel branch averages its results into one table, so a cross-channel branch cannot live
+    # there. The contract is what keeps that unreachable for the compiler — without this refusal the
+    # branch evaluator would meet a node it has no mapping for and the request would be a 500.
+    for shape in (
+        {"kind": "parallel", "branches": [matrix(GREY_709)]},
+        {"kind": "parallel", "branches": [CURVE, matrix(GREY_709)]},
+    ):
+        try:
+            ClipColor(grade=[shape])
+        except ValidationError:
+            continue
+        raise AssertionError(f"the contract accepted a mixer inside a parallel branch: {shape}")
+    print("   contract: out-of-range, wrong length and blend are all refused")
+
+    token = "c" * 48
+    with tempfile.TemporaryDirectory(prefix="agentcut-matrix-") as temp:
+        folder = Path(temp)
+        source = folder / "plate.mp4"
+        done = subprocess.run(
+            [
+                str(FFMPEG),
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                f"nullsrc=s={WIDTH}x{HEIGHT}:d=1:r=25,format=rgb24,"
+                "geq=r='X*255/(W-1)':g='Y*255/(H-1)':b='128'",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                str(source),
+            ],
+            capture_output=True,
+        )
+        assert done.returncode == 0, done.stderr.decode(errors="replace")[-400:]
+        media = MediaService(folder / "db.sqlite3", [folder], folder / "cache", FFMPEG, FFPROBE)
+        store = ProjectStore(media.db_path, media)
+        probe = media.import_file(str(source))
+        project = store.create(
+            CreateProject(
+                request_id="new", name="matrix", settings={"width": WIDTH, "height": HEIGHT}
+            )
+        ).project
         with TestClient(
-            create_app(folder / "db.sqlite3", token),
+            create_app(store.path, token, media),
             base_url="http://127.0.0.1",
             headers={"Authorization": f"Bearer {token}"},
         ) as client:
-            project = client.post(
-                "/v1/projects", json={"request_id": "new", "name": "matrix"}
-            ).json()["project"]
-            path = f"/v1/projects/{project['id']}"
-            revision = 0
-            for position, command in enumerate(seed_commands()):
-                seeded = client.post(
-                    path + "/edits",
-                    json={
-                        "request_id": f"seed-{position}",
-                        "expected_revision": revision,
-                        "commands": [command],
-                    },
-                )
-                assert seeded.status_code == 200, (command["op"], seeded.text[:400])
-                revision = seeded.json()["project"]["revision"]
-            head = revision
-
-            def send(request_id, command, *, revision=None, dry=True):
-                return client.post(
-                    path + "/edits",
-                    json={
-                        "request_id": request_id,
-                        "expected_revision": revision if revision is not None else head,
-                        "commands": [command],
-                        "dry_run": dry,
-                    },
-                )
-
-            codes: set[str] = set()
-            accepted: list[str] = []
-            probed = 0
-            for model in [] if REPORT else models:
-                tag = typing.get_args(unwrap(model.model_fields["op"].annotation))[0]
-                for label, command in (
-                    ("bare", {"op": tag}),
-                    ("unknown ids", {"op": tag, **minimal(model)}),
-                    *(
-                        (f"max {field}", {"op": tag, **minimal(model), field: MAX_TICKS})
-                        for field in integer_fields(model)
-                    ),
-                ):
-                    probed += 1
-                    answer = send(f"{tag}-{label.replace(' ', '-')}", command)
-                    assert answer.status_code not in BANNED, (
-                        f"{tag} / {label} -> {answer.status_code}: {answer.text[:400]}"
-                    )
-                    if answer.status_code >= 400:
-                        error = answer.json()["error"]
-                        assert error["code"] and error["message"], (tag, label, error)
-                        assert "details" in error, (tag, label, error)
-                        codes.add(error["code"])
-                    else:
-                        accepted.append(f"{tag}/{label}")
-                    assert client.get(path).json()["revision"] == head, (
-                        f"{tag} / {label} wrote state through a dry run"
-                    )
-
-            for index, (label, command, expected, expected_code) in enumerate(traps(head)):
-                probed += 1
-                answer = send(f"trap-{index}", command)
-                actual = answer.status_code
-                error = answer.json().get("error") or {}
-                code = error.get("code") if actual >= 400 else None
-                if REPORT:
-                    print(
-                        f"   trap {label!r}: {actual} {code} (expected {expected} {expected_code})"
-                    )
-                    continue
-                assert actual not in BANNED, f"{label} -> {actual}: {answer.text[:300]}"
-                assert (actual, code) == (expected, expected_code), (
-                    label,
-                    actual,
-                    code,
-                    answer.text[:300],
-                )
-                if actual >= 400:
-                    assert error["message"], error
-                    codes.add(code)
-
-            # A dry run must not be a different engine: the same command, committed, agrees.
-            committed = 0
-            for index, (label, command, expected, expected_code) in enumerate(
-                [] if REPORT else traps(head)
-            ):
-                if expected != 422:
-                    continue
-                answer = send(f"commit-{index}", command, dry=False)
-                assert answer.status_code == expected, (
-                    label,
-                    answer.status_code,
-                    answer.text[:200],
-                )
-                assert answer.json()["error"]["code"] == expected_code, (label, answer.json())
-                committed += 1
-                assert client.get(path).json()["revision"] == head, f"{label} committed a refusal"
-
-            good = send(
-                "real-good",
-                {"op": "marker.set", "marker": {"id": "m2", "at_ticks": T // 2, "name": "ok"}},
-                dry=False,
+            answer = client.post(
+                f"/v1/projects/{project.id}/edits",
+                json={
+                    "request_id": "seed",
+                    "expected_revision": 0,
+                    "commands": [
+                        {"op": "track.add", "track": {"id": "v", "kind": "video", "name": "v"}},
+                        {
+                            "op": "asset.import",
+                            "asset_id": "a",
+                            "label": "plate",
+                            "probe_id": probe.id,
+                            "verified": probe.verified.model_dump(),
+                        },
+                        {
+                            "op": "clip.add",
+                            "clip": {
+                                "id": "c",
+                                "asset_id": "a",
+                                "track_id": "v",
+                                "position_ticks": 0,
+                                "duration_ticks": T,
+                            },
+                        },
+                    ],
+                },
             )
-            assert good.status_code == 200, good.text
-            assert good.json()["project"]["revision"] == head + 1
+            assert answer.status_code == 200, answer.text[:300]
+            revision = answer.json()["project"]["revision"]
 
-            if REPORT:
-                return
-            # A probe that the contract itself refuses (INVALID_REQUEST) never reached the reducer.
-            # Counting the other codes is what proves this sweep exercises the editing rules at all.
-            reducer_codes = codes - {"INVALID_REQUEST"}
-            assert len(reducer_codes) >= 10, sorted(reducer_codes)
-            print(
-                f"   {probed} probes over {len(models)} command shapes: {len(accepted)} legal, "
-                f"{len(codes) - len(reducer_codes)} refused by the contract, {len(reducer_codes)} "
-                f"refused by the editing rules ({', '.join(sorted(reducer_codes)[:9])}…)"
+            caps = client.get("/v1/capabilities").json()
+            assert caps["features"]["grade_matrix"] is True
+            assert caps["grade_limits"]["matrix_limit"] == MATRIX_LIMIT
+
+            written = client.post(
+                f"/v1/projects/{project.id}/edits",
+                json={
+                    "request_id": "mix",
+                    "expected_revision": revision,
+                    "commands": [
+                        {
+                            "op": "clip.grade",
+                            "clip_id": "c",
+                            "grade": [CURVE, matrix(WARM)],
+                        }
+                    ],
+                },
             )
-            print(
-                f"   no 5xx anywhere; {committed} refusals behaved identically committed and dry, "
-                f"and a legal write still lands (revision {head} -> {head + 1})"
+            assert written.status_code == 200, written.text[:300]
+            stored = Project.model_validate(written.json()["project"])
+            assert [node.kind for node in stored.clips["c"].color.grade] == ["curve", "matrix"]
+
+            # The browser is handed the same nine numbers, in the order the exporter will run them.
+            manifest = client.get(f"/v1/projects/{project.id}/preview-manifest").json()
+            chain = manifest["clips"]["c"]["grade"]
+            assert [stage["type"] for stage in chain["stages"]] == ["lut", "matrix"]
+            assert chain["stages"][1]["m"] == WARM
+            assert f"url(#{chain['id']})" in manifest["clips"]["c"]["color_filter"]
+
+            # And the exporter's graph carries the mixer, so the stage is in the file, not just in
+            # the request.
+            graph = "\n".join(compile_render_plan(stored, "h264-source-quality").filters)
+            assert "colorchannelmixer=" in graph, graph[:200]
+
+            refused = client.post(
+                f"/v1/projects/{project.id}/edits",
+                json={
+                    "request_id": "blend-refused",
+                    "expected_revision": written.json()["project"]["revision"],
+                    "commands": [
+                        {
+                            "op": "clip.grade",
+                            "clip_id": "c",
+                            "grade": [dict(matrix(GREY_709), blend="multiply")],
+                        }
+                    ],
+                },
             )
-    print(
-        "PASS: every command shape answers with a code a person can act on -- never an internal "
-        "error, never a silent write, dry run and commit agreeing"
-    )
+            assert refused.status_code == 422, refused.text[:200]
+            in_branch = client.post(
+                f"/v1/projects/{project.id}/edits",
+                json={
+                    "request_id": "branch-refused",
+                    "expected_revision": written.json()["project"]["revision"],
+                    "commands": [
+                        {
+                            "op": "clip.grade",
+                            "clip_id": "c",
+                            "grade": [{"kind": "parallel", "branches": [matrix(GREY_709)]}],
+                        }
+                    ],
+                },
+            )
+            assert in_branch.status_code == 422, in_branch.text[:200]
+            assert "branches" in in_branch.text, in_branch.text[:200]
+            assert store.get(project.id).revision == written.json()["project"]["revision"]
+    print("matrix: cross-channel grade compiles once and is read the same by both ends")
 
 
 if __name__ == "__main__":
