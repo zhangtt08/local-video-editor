@@ -1,6 +1,6 @@
 """No payload a person or an Agent can put on the wire may come back as an internal error.
 
-The engine publishes 52 command shapes. Every one of them is probed three ways against a real HTTP
+The engine publishes 53 command shapes. Every one of them is probed three ways against a real HTTP
 server and a project that already holds tracks, clips, a transition, a mask, keyframes, a marker, a
 recipe and a nested sequence: the bare discriminator (the contract must refuse it), a payload whose
 every required field is filled with a **type-correct value that names nothing real** (that reaches
@@ -10,10 +10,9 @@ surface), and the same payload with each integer field pushed to `MAX_TICKS` (th
 position-plus-duration overflow). Then a table of semantic traps that only bite against real state.
 
 The property asserted is narrow and absolute: **status below 500**, and every refusal carries a code
-and a message a person can act on. Accepted probes must actually be accepted too -- a run that ends
-    up
-rejecting everything would prove nothing, so the check also fails if fewer than eight distinct error
-codes appear, or if a dry-run disagrees with the same command committed for real.
+and a message a person can act on. Accepted probes must actually be accepted too -- a run that
+ends up rejecting everything would prove nothing, so the check also fails if fewer than eight
+distinct error codes appear, or if a dry-run disagrees with the same command committed for real.
 """
 
 import os
@@ -247,13 +246,56 @@ def traps(revision: int) -> list[tuple[str, dict, int, str | None]]:
     """(label, command, expected status, expected code) for cases that only bite against real state.
 
     The codes are pinned because they are the contract a person or an Agent plans against, and two
-        of
-    the rows pin the *opposite* of what they look like: nesting a clip that is itself a nested
-        picture
-    is legal (depth 2, not a cycle), and `captions.import` creates the track it names rather than
-    requiring one to exist. Both were measured, not assumed.
+    of the rows pin the *opposite* of what they look like: nesting a clip that is itself a nested
+    picture is legal (depth 2, not a cycle), and `captions.import` creates the track it names rather
+    than requiring one to exist. Both were measured, not assumed.
     """
     return [
+        # The stabiliser's record (1.69) is a command like any other, so it is probed the same way:
+        # a payload that names nothing real must reach the reducer and answer by name, never as a
+        # 500, and clearing a record that was never there must be an accepted no-op.
+        (
+            "stabilize record on a clip that is not there",
+            {
+                "op": "clip.stabilize_record",
+                "clip_id": "nope",
+                "record": {
+                    "strength": 1.0,
+                    "max_crop": 0.1,
+                    "points": 12,
+                    "translation_correction": 0.02,
+                    "roll_correction": 0.0,
+                    "zoom_to_hide_borders": 1.04,
+                    "analysed_frames": 12,
+                },
+            },
+            404,
+            "NOT_FOUND",
+        ),
+        (
+            "stabilize record with no points",
+            {
+                "op": "clip.stabilize_record",
+                "clip_id": "c1",
+                "record": {
+                    "strength": 1.0,
+                    "max_crop": 0.1,
+                    "points": 0,
+                    "translation_correction": 0.0,
+                    "roll_correction": 0.0,
+                    "zoom_to_hide_borders": 1.0,
+                    "analysed_frames": 0,
+                },
+            },
+            422,
+            "INVALID_REQUEST",
+        ),
+        (
+            "clear a record that was never written",
+            {"op": "clip.stabilize_record", "clip_id": "c1", "record": None},
+            200,
+            None,
+        ),
         (
             "nest a nested picture again",
             {
