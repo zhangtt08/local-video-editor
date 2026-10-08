@@ -607,6 +607,20 @@ def apply_commands(
                 elif command.op == "clip.speed":
                     if candidate.assets[clip.asset_id].kind in {"image", "text"}:
                         raise EditorError("INVALID_SPEED", "images have no playback speed")
+                    if clip.stabilization is not None and command.speed_percent != 100:
+                        # Same reason as the speed-curve guard above: the correction was measured
+                        # against this clip's source frames one-for-one, so a new rate plays an
+                        # existing correction at the wrong speed instead of removing it.
+                        raise EditorError(
+                            "STABILIZE_LOCKED",
+                            "this clip is stabilised: the correction is one keyframe per source "
+                            "frame, so a new speed would play it at the wrong rate. Clear the "
+                            "stabilisation (`clip.stabilize_record` with no record, or 画面稳定 at "
+                            "strength 0) and change the speed before stabilising again.",
+                            422,
+                            clip_id=clip.id,
+                            speed_percent=command.speed_percent,
+                        )
                     track = next(t for t in candidate.tracks if t.id == clip.track_id)
                     quantum = (
                         candidate.settings.frame_ticks
@@ -655,6 +669,17 @@ def apply_commands(
                         raise EditorError(
                             "INVALID_SPEED", "only media clips can carry a speed curve"
                         )
+                    if clip.stabilization is not None and command.points:
+                        raise EditorError(
+                            "STABILIZE_LOCKED",
+                            "this clip is stabilised: the correction is one keyframe per source "
+                            "frame, and a changing rate would play it at the wrong speed. Clear "
+                            "the "
+                            "stabilisation (`clip.stabilize_record` with no record, or 画面稳定 at "
+                            "strength 0) before ramping the speed.",
+                            422,
+                            clip_id=clip.id,
+                        )
                     if command.points is None:
                         clip.speed_curve = None
                     else:
@@ -682,6 +707,10 @@ def apply_commands(
                 elif command.op == "keyframes.remove":
                     sources = [(k.property, k.at_ticks) for k in command.keyframes]
                     _remove_keyframes(clip, sources)
+                elif command.op == "clip.stabilize_record":
+                    # The record is the only state this feature has; the curves it describes are
+                    # written by the same batch, so a half-applied stabilisation cannot exist.
+                    clip.stabilization = command.record
                 elif command.op == "keyframes.replace":
                     offset = clip.animation_offset_ticks
                     written = [

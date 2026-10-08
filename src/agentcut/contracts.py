@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 13  # v13 gives a path mask a real box; older rows are fitted on load (ge=1).
-APP_VERSION = "1.68.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.69.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -550,6 +550,26 @@ class Transition(Contract):
     duration_ticks: Duration
 
 
+class Stabilization(Contract):
+    """One stabilisation run's decision, stored on the clip it was written for.
+
+    The correction itself is ordinary `x`/`y`/`rotation`/`scale` keyframes, indistinguishable from a
+    hand-keyed move once it is in the document. This record is what lets the engine know that those
+    four curves belong to the stabiliser, so a second press can *replace* them (change the strength,
+    pay one click) instead of stacking a second copy of the same measurement, and a speed change can
+    refuse by name instead of quietly mis-aligning a correction that was measured one point per
+    source frame.
+    """
+
+    strength: Annotated[float, Field(ge=0, le=STABILIZE_STRENGTH_LIMIT)]
+    max_crop: Annotated[float, Field(ge=0, le=STABILIZE_MAX_CROP_LIMIT)]
+    points: Annotated[int, Field(ge=1, le=240)]
+    translation_correction: Annotated[float, Field(ge=0)]
+    roll_correction: Annotated[float, Field(ge=0)]
+    zoom_to_hide_borders: Annotated[float, Field(ge=1)]
+    analysed_frames: Annotated[int, Field(ge=1)]
+
+
 class Clip(Contract):
     id: Identifier
     asset_id: Identifier
@@ -563,6 +583,7 @@ class Clip(Contract):
     color: ClipColor = Field(default_factory=ClipColor)
     mask: ShapeMask | None = None
     speed_curve: SpeedCurve | None = None
+    stabilization: Stabilization | None = None
     keyframes: Annotated[list[Keyframe], Field(max_length=2000)] = Field(default_factory=list)
     animation_offset_ticks: Ticks = 0
     transition_in: Transition | None = None
@@ -966,6 +987,20 @@ class ClipSpeedCurveSet(Contract):
     points: SpeedCurve | None = None
 
 
+class ClipStabilizeRecord(Contract):
+    """Attach or clear the record of a stabilisation run.
+
+    The engine's own analysis is the only thing that writes one in normal use, because the record
+    claims *why* those four curves exist. It needs no separate authority: an Agent that hand-wrote
+    the same numbers could already have written the keyframes themselves, and what the record buys
+    is a re-press that replaces rather than stacks.
+    """
+
+    op: Literal["clip.stabilize_record"]
+    clip_id: Identifier
+    record: Stabilization | None = None
+
+
 class ClipSpeedSet(Contract):
     op: Literal["clip.speed"]
     clip_id: Identifier
@@ -1210,6 +1245,7 @@ Command = Annotated[
     | ClipMaskTrack
     | ClipSpeedSet
     | ClipSpeedCurveSet
+    | ClipStabilizeRecord
     | ClipColorSet
     | ClipGradeSet
     | ClipTextSet
@@ -1902,6 +1938,7 @@ def capabilities(
             "clip.mask_track",
             "clip.speed",
             "clip.speed_curve",
+            "clip.stabilize_record",
             "clip.color",
             "clip.grade",
             "clip.text",

@@ -40,7 +40,24 @@ assert.ok(moved.includes("再抵消一遍"), `the reason must say what would go 
 const opacity = stabilizeBlocked(clip({ keyframes: [{ property: "opacity", at_ticks: 0, value: 0.5 }] }));
 assert.equal(opacity, null, `a fade curve is not the stabiliser's, so it must not block: ${opacity}`);
 
+/** The record is what tells a re-press from a double-correction: with it, the same curves are ours. */
+const record = {
+  strength: 1, max_crop: 0.1, points: 59, translation_correction: 0.02, roll_correction: 0,
+  zoom_to_hide_borders: 1.04, analysed_frames: 59,
+};
+const owned = stabilizeBlocked(clip({
+  stabilization: record,
+  keyframes: [
+    { property: "x", at_ticks: 0, value: 0.1 },
+    { property: "scale", at_ticks: 0, value: 1 },
+  ],
+}));
+assert.equal(owned, null, `a clip carrying its own stabilisation must be re-pressable, got: ${owned}`);
+const ownedRamp = stabilizeBlocked(clip({ stabilization: record, speed_percent: 200 }));
+assert.ok(ownedRamp?.includes("100%"), `ownership must not outvote the speed rule, got: ${ownedRamp}`);
+
 console.log(
   "PASS: 画面稳定 is offered exactly when the engine would accept it — speed cases and the four "
-  + "transform curves block with a named exit, mask and opacity curves do not",
+  + "transform curves block with a named exit, mask and opacity curves do not, and the clip's own "
+  + "stabilisation record re-opens the button without overruling the speed rule",
 );

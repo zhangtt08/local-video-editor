@@ -200,8 +200,13 @@ def plan(
 ) -> tuple[list[dict], dict]:
     """Return the commands that hold one clip steady, and the numbers behind the decision.
 
-    The correction is composed onto whatever `x`/`y`/`scale` the clip already animates, so a
-    stabilised clip keeps its hand-keyed move rather than losing it to a rewrite.
+    On a clip with no stabilisation record the correction is composed onto whatever `x`/`y`/
+    `rotation`/`scale` the clip already animates, so a stabilised clip keeps its hand-keyed move
+    rather than losing it to a rewrite — and a clip that animates them is refused outright, because
+    composing a second copy of the same measurement over the first is how the picture ends up
+    leaning the other way. On a clip that does carry the record those curves are this feature's own,
+    so the run recomputes from the clip's static transform: pressing again at another strength costs
+    one click, not an undo.
     """
     clip = project.clips.get(clip_id)
     if clip is None:
@@ -212,11 +217,11 @@ def plan(
             "STABILIZE_INVALID", "only a video clip can be stabilised", 422, clip_id=clip_id
         )
     keyed = sorted({point.property for point in clip.keyframes} & {"x", "y", "rotation", "scale"})
-    if keyed:
+    if keyed and clip.stabilization is None:
         # The correction is composed onto whatever the clip already animates, so running this twice
         # would subtract the same motion twice and leave the picture leaning the other way. The
-        # engine cannot tell its own previous correction from a hand-keyed move, so it refuses and
-        # names the way out.
+        # engine cannot tell its own previous correction from a hand-keyed move — unless this clip
+        # carries the record of one, which is the only case where re-running replaces instead.
         raise EditorError(
             "STABILIZE_CONFLICT",
             "this clip already animates "
@@ -255,6 +260,9 @@ def plan(
             max_crop=max_crop,
         )
     offsets: list[list[float]] = motion["offsets"]
+    # Whether these four curves belong to the stabiliser decides everything downstream: an owned
+    # clip recomputes from its static transform, an unowned one composes onto what it animates.
+    owned = clip.stabilization is not None
     if len(offsets) < 3:
         raise EditorError(
             "STABILIZE_FAILED", "too few frames measured to stabilise", 422, clip_id=clip_id
@@ -292,7 +300,44 @@ def plan(
     ]
     if strength == 0.0:
         # Nothing to write: a zero-valued keyframe in every frame is noise in the project, not a
-        # gentler correction.
+        # gentler correction. On a clip the stabiliser already owns this is the affordance for
+        # taking the correction off — the curves it wrote go, and the record with them.
+        if owned:
+            removed = [
+                {"property": point.property, "at_ticks": point.at_ticks}
+                for point in clip.keyframes
+                if point.property in {"x", "y", "rotation", "scale"}
+            ]
+            commands = (
+                [{"op": "keyframes.remove", "clip_id": clip_id, "keyframes": removed}]
+                if removed
+                else []
+            ) + [{"op": "clip.stabilize_record", "clip_id": clip_id, "record": None}]
+            return commands, {
+                "smoothing_radius_frames": radius,
+                "written_points": 0,
+                "removed_points": len(removed),
+                "replaces_previous": True,
+                "keyframe_budget": min(MAX_POINTS, KEYFRAME_LIMIT // 3),
+                "measured_travel": [
+                    round(max(abs(point[0]) for point in offsets), 6),
+                    round(max(abs(point[1]) for point in offsets), 6),
+                ],
+                "measured_roll": round(
+                    max([abs(roll) for roll in motion.get("rolls", [])], default=0.0), 6
+                ),
+                "translation_correction": 0.0,
+                "roll_correction": 0.0,
+                "zoom_to_hide_borders": 1.0,
+                "max_crop": max_crop,
+                "clamped_axes": 0,
+                "analysed_frames": motion["analysed_frames"],
+                "dropped_frames": motion["dropped_frames"],
+                "note": (
+                    f"strength 0 took the previous stabilisation off this clip: {len(removed)} "
+                    "keyframes and its record are cleared in the same revision"
+                ),
+            }
         return [], {
             "smoothing_radius_frames": radius,
             "written_points": 0,
@@ -328,12 +373,22 @@ def plan(
 
     commands: list[dict] = []
     written: dict[str, list[Keyframe]] = {}
+
+    def starting_at(name: str, local: int) -> float:
+        """What the correction is composed onto.
+
+        A clip the stabiliser already owns recomputes from its static transform, so a second press
+        replaces the previous one (change the strength, pay one click) instead of stacking a second
+        copy of the same measurement. Anything else keeps whatever the editor animated by hand.
+        """
+        return getattr(clip.effects, name) if owned else sample(clip, name, local)
+
     for name, axis in (("x", 0), ("y", 1)):
         frames = []
         for index in picks:
             # `offsets` starts at the second analysed frame, so frame `index + 1` of the clip.
             local = min(clip.duration_ticks - 1, frame_ticks * (index + 1))
-            current = sample(clip, name, local)
+            current = starting_at(name, local)
             frames.append(
                 Keyframe(
                     property=name,  # type: ignore[arg-type]
@@ -349,9 +404,7 @@ def plan(
                 property="rotation",
                 at_ticks=min(clip.duration_ticks - 1, frame_ticks * (index + 1)),
                 value=round(
-                    sample(
-                        clip, "rotation", min(clip.duration_ticks - 1, frame_ticks * (index + 1))
-                    )
+                    starting_at("rotation", min(clip.duration_ticks - 1, frame_ticks * (index + 1)))
                     - roll_residual[index],
                     6,
                 ),
@@ -368,13 +421,13 @@ def plan(
         Keyframe(
             property="scale",
             at_ticks=0,
-            value=round(sample(clip, "scale", 0) * zoom, 6),
+            value=round(starting_at("scale", 0) * zoom, 6),
             interpolation="linear",
         ),
         Keyframe(
             property="scale",
             at_ticks=clip.duration_ticks - 1,
-            value=round(sample(clip, "scale", clip.duration_ticks - 1) * zoom, 6),
+            value=round(starting_at("scale", clip.duration_ticks - 1) * zoom, 6),
             interpolation="linear",
         ),
     ]
@@ -389,9 +442,27 @@ def plan(
                 "keyframes": [point.model_dump() for point in written[name]],
             }
         )
+    # The record rides in the same batch as the curves it describes: one revision either has both
+    # or has neither, so a clip can never claim a stabilisation whose curves were thrown away.
+    commands.append(
+        {
+            "op": "clip.stabilize_record",
+            "clip_id": clip.id,
+            "record": {
+                "strength": strength,
+                "max_crop": max_crop,
+                "points": len(picks),
+                "translation_correction": round(worst, 6),
+                "roll_correction": round(worst_roll, 6),
+                "zoom_to_hide_borders": round(zoom, 6),
+                "analysed_frames": motion["analysed_frames"],
+            },
+        }
+    )
     notes = {
         "smoothing_radius_frames": radius,
         "written_points": len(picks),
+        "replaces_previous": owned,
         "keyframe_budget": budget,
         "measured_travel": [
             round(max(abs(point[0]) for point in offsets), 6),

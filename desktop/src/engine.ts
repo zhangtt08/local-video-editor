@@ -141,6 +141,17 @@ export type SpeedPoint = { at_ticks: number; percent: number };
 
 export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; grade?: GradeTables | null; sharpen?: { id: string; amount: number; bbox: [number, number] } | null; speed?: RampPiece[] | null; mask_image?: string | null; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; curves: Record<AnimatedEffect, Curve>; transition: Record<"picture" | "sound" | "black" | "white", Curve> }> };
 
+/** 引擎给这条片段记下的那一次稳定：有了它，再按一次是换一档强度而不是叠第二遍。 */
+export type Stabilization = {
+  strength: number;
+  max_crop: number;
+  points: number;
+  translation_correction: number;
+  roll_correction: number;
+  zoom_to_hide_borders: number;
+  analysed_frames: number;
+};
+
 export type Clip = {
   mask?: ShapeMask | null;
   id: string;
@@ -154,6 +165,7 @@ export type Clip = {
   text?: TextStyle | null;
   speed_percent?: number;
   speed_curve?: SpeedPoint[] | null;
+  stabilization?: Stabilization | null;
   keyframes?: Keyframe[];
   animation_offset_ticks?: number;
   transition_in?: Transition | null;
@@ -469,6 +481,7 @@ export class EngineError extends Error {
       STABILIZE_INVALID: "这段还不能稳定：只有放在画面轨、按 100% 原速播放、且真正导入进来的视频素材能量出抖动。先把它放回画面轨或把速度改回 100%。",
       STABILIZE_FAILED: "画面对不上第一帧的帧太少，量不出相机怎么动——片段太短、太暗或切得比跟踪还快。这段保持原样，换一段更稳的参照。",
       STABILIZE_CONFLICT: "这段画面已经K过位移/缩放/旋转，再稳定一次会把同一段抖动抵消两遍、画面朝反方向偏。撤销这一步，或在曲线编辑器里清掉那几条，再按一次。",
+      STABILIZE_LOCKED: "这段画面还带着稳定：抵消是按「一帧源画面对一个关键帧」量的，改速度会让它按错的速率播放。先把稳定摘掉（画面稳定填 0，或「取消稳定」），改完速度再稳定一次。",
       BLUR_OUT_OF_RANGE: "柔焦/清晰的半径超出了导出与预览验证过一致的范围。把数值调小；滑杆的上限就是引擎在当前画幅下允许的最大值。",
     };
     const hint = hints[this.code];

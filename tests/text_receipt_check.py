@@ -91,6 +91,7 @@ def main():
                 "embedded_audio",
                 "mask",
                 "speed_curve",
+                "stabilization",  # 1.69: a clip that never mentions one is older
             ):
                 clip.pop(field)
             clip["color"].pop("grade", None)

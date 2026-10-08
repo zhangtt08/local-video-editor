@@ -1425,7 +1425,7 @@ out = clip(source + sharpen * (source - gaussian(source)), 0, 255)
 拒绝都是按名字的：不在画面轨上的片段、非视频素材、`speed_percent != 100`（抖动是一帧对一帧量的，
 速度一变对不上，与变速曲线同理）→ `STABILIZE_INVALID`；指向不存在的片段 → `NOT_FOUND`；
 `strength`/`max_crop` 越界 → 契约层 `INVALID_REQUEST`；匹配不上的帧太少 → `STABILIZE_FAILED`；
-片段已经带 `x`/`y`/`rotation`/`scale` 关键帧 → `STABILIZE_CONFLICT`（1.68，见下）。
+片段已经带 `x`/`y`/`rotation`/`scale` 关键帧**而且没有稳定记录** → `STABILIZE_CONFLICT`（1.68 引入，1.69 起带记录的片段改为替换，见下）；带记录的片段改速度 → `STABILIZE_LOCKED`。
 `strength=0` 不写任何关键帧（每帧一个 0 值点是往工程里倒垃圾，不是更温和的稳定），此时回复不带
 revision 变化、只带测量结果。
 
@@ -1481,3 +1481,39 @@ revision 变化、只带测量结果。
 直接驱动 `stabilizeBlocked`：干净片段放行、变速与曲线片段各给一条带出路的说法，
 而 `mask_x`/`opacity` 这类稳定根本不碰的曲线**不许**挡路（把 `STABILIZED` 里的 `scale` 删掉的
 变异红在「必须点名曲线」那条断言上）。
+
+## 1.69 稳定成为片段的状态：再按一次是换一档，不是叠一层
+
+1.68 用一次拒绝把一个静默出错的输入挡了下来，代价是「换个强度」这件事变得要先撤销。1.69 把它变成
+正常操作：`Clip.stabilization` 记下这一次运行的 `strength`/`max_crop`/`points`/
+`translation_correction`/`roll_correction`/`zoom_to_hide_borders`/`analysed_frames`，写命令与
+`keyframes.replace` 在同一条批次里，所以一个 revision 要么两条曲线和记录一起有、要么一起没有。
+
+有了这条记录，引擎才分得清「这四条曲线是我上次写的」和「是用户手打的」：
+- **带记录**：抵消从片段的**静态**变换（`effects.x`/`y`/`scale`/`rotation`）重算，写出来的就是
+  这一次测量的结果 —— 同强度再按一遍得到逐点一字不差的曲线（回执也因此重新命中：同 id 同载荷
+  命中 `replayed`，同 id 换载荷是 `IDEMPOTENCY_CONFLICT`），换强度就是换一档，强度 0 是「取消稳定」，
+  把引擎写过的点连同记录一起清掉。
+- **没有记录但已经K过这四条**：仍然 `STABILIZE_CONFLICT`，因为叠加会把同一段抖动抵消两遍，而引擎
+  没有任何依据说那不是你打的。出路还是那三条（撤销 / `project_restore` / 清掉那几条），门禁断言
+  清掉那一个手动点之后同一次按下去就成功。
+
+带记录的片段同时不再允许改速度：`clip.speed`（非 100%）与 `clip.speed_curve` 以
+`STABILIZE_LOCKED` 拒绝。理由与 1.66 拒绝给变速片段做稳定是同一条——抵消按「一帧源画面对一个关键帧」
+量，速度一变就按错的速率播放。这是 1.68 那条守卫的**镜像洞**：写入时查了速度，写完之后再改速度
+却没人管，同一件危险的事从另一扇门走了进来。
+
+契约面：新命令 `clip.stabilize_record`（`record: Stabilization | None`，null 即清除）、
+`Clip.stabilization` 可选字段（旧工程读进来就是 `None`，不需要迁移）、`SCHEMA_VERSION` 不动。
+这条命令不需要额外授权：它能声称的只是「这四条曲线属于稳定」，而手写这四条曲线本来就已经可以。
+界面：稳定过一次之后这一行写明「已稳定 · 强度 …· 抵消 …· N 个点」，按钮变成「重新稳定」，
+旁边多一个「取消稳定」；`stabilizeBlocked()` 只在**没有**记录时因曲线挡路，速度那条规则仍然优先。
+
+验收（`tests/stabilize_check.py`）：记录与曲线同 revision；1.0 再按一遍曲线逐点相同；
+1.0 → 0.5 → 1.0 回到同一批数字且 0.5 恰为一半；带记录时手动K进去的 x 点被替换掉（不是叠加）；
+强度 0 清掉全部 120 个点与记录、之后同一片段就能改速度；带记录时 `clip.speed` 与
+`clip.speed_curve` 都是 `STABILIZE_LOCKED` 且不动 head；没有记录的手动曲线是
+`STABILIZE_CONFLICT` 并点名 `x`，清掉那一个点后同一次按下去成功；同 id 同载荷命中回执。
+另加一条对所有成片断言都成立的守卫：`topmost()` 断言被量的那段窗口最上面就是被测片段——1.68 加的
+辅助片段压在上面的轨上，把成片抖动断言变成了对另一幅画面的测量（1.4 px 变 3.1 px 而门禁照绿），
+挪开并加守卫后回到 11.2 px → **1.4 px**、滚动 0.18°。

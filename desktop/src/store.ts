@@ -599,14 +599,22 @@ export async function stabilizeClip(clipId: string, strength = 1, maxCrop = 0.1)
     });
     const stats = done.stabilization as {
       written_points?: number; measured_travel?: number[]; translation_correction?: number;
-      roll_correction?: number;
+      roll_correction?: number; replaces_previous?: boolean; removed_points?: number;
       zoom_to_hide_borders?: number; clamped_axes?: number; dropped_frames?: number;
       warning?: string; note?: string;
     } | undefined;
     const next = (done as { project?: Project }).project;
     if (!stats || !next) return;
     if (!stats.written_points) {
-      toast("info", "不需要稳定", stats.note ?? "这条片段的画面本来就是稳的。");
+      if (stats.removed_points === undefined) {
+        toast("info", "不需要稳定", stats.note ?? "这条片段的画面本来就是稳的。");
+        return;
+      }
+      // 取消稳定是真的写了批次（清掉引擎自己写的曲线，连同那条记录），所以要落到工程里。
+      pushUndo(project.revision, "取消稳定");
+      set({ project: next });
+      await refreshProjects();
+      toast("ok", "已取消稳定", `清掉 ${stats.removed_points} 个关键帧和这条稳定记录，画面回到拍下来的样子。撤销一步可以再按一次。`);
       return;
     }
     pushUndo(project.revision, "画面稳定");
@@ -615,7 +623,9 @@ export async function stabilizeClip(clipId: string, strength = 1, maxCrop = 0.1)
     const travel = stats.measured_travel ?? [];
     const detail = [
       `量出画面最多走过 ${Math.max(...travel, 0).toFixed(3)} 画面宽`,
-      `写入 ${stats.written_points} 个关键点，抵消掉 ${stats.translation_correction?.toFixed(3) ?? "?"}`,
+      stats.replaces_previous
+        ? `按新强度重算，替换掉上一次的抵消（${stats.written_points} 个关键点，抵消 ${stats.translation_correction?.toFixed(3) ?? "?"}）`
+        : `写入 ${stats.written_points} 个关键点，抵消掉 ${stats.translation_correction?.toFixed(3) ?? "?"}`,
       `放大 ${stats.zoom_to_hide_borders?.toFixed(3) ?? "?"} 倍盖住边上`,
       stats.roll_correction ? `顺手把 ${stats.roll_correction.toFixed(2)}° 的滚动也压了回去` : "",
       stats.warning ?? (stats.dropped_frames ? `${stats.dropped_frames} 帧没跟上，已按前后插值` : ""),

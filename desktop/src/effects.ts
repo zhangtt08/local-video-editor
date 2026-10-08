@@ -80,6 +80,10 @@ export const stabilizeBlocked = (clip: Clip): string | null => {
   if (clip.speed_curve?.length || (clip.speed_percent ?? 100) !== 100) {
     return "带变速的片段还不能稳定：抖动是按「一帧对一帧」量的，播放速度变了就对不上。把这段的速度改回 100% 再稳定。";
   }
+  if (clip.stabilization) {
+    // 这四条曲线是稳定自己写的：再按一次会按新的强度重算一遍，不是叠第二遍，所以不挡路。
+    return null;
+  }
   const keyed = STABILIZED.filter((property) =>
     (clip.keyframes ?? []).some((point) => point.property === property),
   ).map((property) => FIELD_LABEL[property]);

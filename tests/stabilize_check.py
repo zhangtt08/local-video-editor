@@ -8,6 +8,7 @@ built as a slow pan plus two frequencies of shake, because a stabiliser that onl
 freeze a frame would pass a jitter-only test and destroy every moving shot in the library.
 """
 
+import json
 import math
 import random
 import struct
@@ -69,6 +70,25 @@ def window_x(t: float) -> float:
 
 def window_y(t: float) -> float:
     return 25.0 + SHAKE_Y * math.sin(2 * math.pi * 5 * t + 1.0)
+
+
+def topmost(document: dict, start: int, end: int) -> str:
+    """Which clip's picture the composited frame actually shows over `[start, end)`.
+
+    Track order is bottom to top, so the last overlapping clip is what a measurement of the
+    rendered file grades. A helper clip parked on a top track over a measured window makes an
+    assertion about one picture quietly become an assertion about another — and still read as a
+    pass, which is the failure this function exists to catch.
+    """
+    order = {track["id"]: index for index, track in enumerate(document["tracks"])}
+    hits = [
+        (order[entry["track_id"]], entry["id"])
+        for entry in document["clips"].values()
+        if entry["position_ticks"] < end
+        and entry["position_ticks"] + entry["duration_ticks"] > start
+    ]
+    assert hits, f"nothing is on screen over [{start}, {end})"
+    return max(hits)[1]
 
 
 def truth(index: int) -> tuple[float, float]:
@@ -269,7 +289,23 @@ def main() -> None:
                     "id": "again",
                     "asset_id": "shake",
                     "track_id": "h1",
-                    "position_ticks": 0,
+                    "position_ticks": 2 * int(SECONDS * T),
+                    # Past every window the render assertions measure: a top track paints over the
+                    # composited frame, and the measurement would grade this picture instead.
+                    "duration_ticks": int(SECONDS * T),
+                },
+            },
+            {
+                "op": "clip.add",
+                "clip": {
+                    # A clip no stabiliser has ever touched: the only way to make the engine meet a
+                    # hand-keyed move it cannot claim as its own. Placed after every window the
+                    # render assertions measure — a picture stacked over them would be what gets
+                    # measured, and it would look like a perfectly steady frame.
+                    "id": "handy",
+                    "asset_id": "shake",
+                    "track_id": "h1",
+                    "position_ticks": 3 * int(SECONDS * T),
                     "duration_ticks": int(SECONDS * T),
                 },
             },
@@ -279,7 +315,7 @@ def main() -> None:
                     "id": "tightclip",
                     "asset_id": "shake",
                     "track_id": "h2",
-                    "position_ticks": 0,
+                    "position_ticks": 2 * int(SECONDS * T),
                     "duration_ticks": int(SECONDS * T),
                 },
             },
@@ -425,6 +461,12 @@ def main() -> None:
                     capture_output=True,
                 )
                 assert done.returncode == 0, done.stderr.decode(errors="replace")[-600:]
+                # The frame this measures is the composited one, so the clip under test has to be
+                # what is on top over its own window. Adding a helper clip on a later track quietly
+                # turned this into a measurement of the helper's picture — same assertion, greener.
+                assert topmost(written["project"], 0, int(SECONDS * T)) == clip_id, (
+                    f"{clip_id} is not the picture over [0, {SECONDS}s) of the rendered file"
+                )
                 after = measure(
                     FFMPEG,
                     out,
@@ -518,28 +560,173 @@ def main() -> None:
                     "max_crop": 0.1,
                 },
             ).json()
-            # A second run on a clip that already carries the correction has to refuse, not
-            # subtract the same motion twice.
+
+            # The record is what makes a second press mean something. Those four curves are the
+            # stabiliser's own, so the run recomputes from the clip's static transform: pressing
+            # twice at the same strength has to land byte-identical numbers, not a second copy.
+            def shape(document: dict, clip_id: str) -> list:
+                return sorted(
+                    (point["property"], point["at_ticks"], point["value"])
+                    for point in document["clips"][clip_id]["keyframes"]
+                )
+
+            stored = whole["project"]["clips"]["c"]["stabilization"]
+            assert stored["strength"] == 1.0, stored
+            assert stored["points"] == whole["stabilization"]["written_points"], stored
+            assert (
+                stored["translation_correction"] == whole["stabilization"]["translation_correction"]
+            ), stored
+            assert stored["analysed_frames"] == whole["stabilization"]["analysed_frames"], stored
             twice = client.post(
                 f"/v1/projects/{project.id}/clips/c/stabilize",
                 json={"request_id": "twice", "expected_revision": whole["project"]["revision"]},
+            ).json()
+            assert twice["stabilization"]["replaces_previous"] is True, twice["stabilization"]
+            assert shape(twice["project"], "c") == shape(whole["project"], "c"), (
+                "a second press at the same strength changed the curves — it stacked a second "
+                "copy of the measurement instead of replacing it"
             )
-            assert twice.status_code == 422, twice.text[:200]
-            assert twice.json()["error"]["code"] == "STABILIZE_CONFLICT", twice.text[:200]
-            assert set(twice.json()["error"]["details"]["properties"]) >= {"x", "y"}, twice.text
+            assert twice["project"]["revision"] == whole["project"]["revision"] + 1
+            print(
+                "the stabilisation record rides in the same revision as the curves; pressing twice "
+                "at 100% lands byte-identical curves (replace, not stack)"
+            )
+
+            # Change your mind, pay one click: 0.5 over a 1.0 correction is half, and going back to
+            # 1.0 is the original numbers again — no undo in the loop.
+            softer = client.post(
+                f"/v1/projects/{project.id}/clips/c/stabilize",
+                json={
+                    "request_id": "softer",
+                    "expected_revision": twice["project"]["revision"],
+                    "strength": 0.5,
+                },
+            ).json()
+            assert (
+                abs(
+                    softer["stabilization"]["translation_correction"]
+                    - whole["stabilization"]["translation_correction"] / 2
+                )
+                < 1e-5
+            ), (softer["stabilization"], whole["stabilization"])
+            back = client.post(
+                f"/v1/projects/{project.id}/clips/c/stabilize",
+                json={"request_id": "back", "expected_revision": softer["project"]["revision"]},
+            ).json()
+            assert shape(back["project"], "c") == shape(whole["project"], "c"), (
+                "1.0 after 0.5 did not return to the original correction"
+            )
+            # Ownership is real: with the record the four curves are the stabiliser's, so a hand
+            # key dropped into them is replaced rather than composed onto.
+            nudged = client.post(
+                f"/v1/projects/{project.id}/edits",
+                json={
+                    "request_id": "nudge",
+                    "expected_revision": back["project"]["revision"],
+                    "commands": [
+                        {
+                            "op": "keyframe.set",
+                            "clip_id": "c",
+                            "keyframe": {
+                                "property": "x",
+                                "at_ticks": int(T / 2),
+                                "value": 0.4,
+                                "interpolation": "linear",
+                            },
+                        }
+                    ],
+                },
+            ).json()
+            assert "project" in nudged, json.dumps(nudged)[:200]
+            after_nudge = client.post(
+                f"/v1/projects/{project.id}/clips/c/stabilize",
+                json={
+                    "request_id": "over-nudge",
+                    "expected_revision": nudged["project"]["revision"],
+                },
+            ).json()
+            assert shape(after_nudge["project"], "c") == shape(whole["project"], "c"), (
+                "a hand key inside an owned curve was composed onto instead of replaced"
+            )
+            print(
+                "0.5 after 1.0 is exactly half and 1.0 after that is the original correction; a "
+                "hand key dropped into the owned curves is replaced, not stacked"
+            )
+
+            # Strength 0 on an owned clip is the affordance for taking it off: the curves the
+            # stabiliser wrote go, the record with them, and the speed lock goes with them.
+            locked = client.post(
+                f"/v1/projects/{project.id}/edits",
+                json={
+                    "request_id": "lock",
+                    "expected_revision": after_nudge["project"]["revision"],
+                    "commands": [
+                        {"op": "clip.speed", "clip_id": "c", "speed_percent": 200},
+                    ],
+                },
+            )
+            assert locked.status_code == 422, locked.text[:200]
+            assert locked.json()["error"]["code"] == "STABILIZE_LOCKED", locked.text[:200]
+            ramped = client.post(
+                f"/v1/projects/{project.id}/edits",
+                json={
+                    "request_id": "ramp",
+                    "expected_revision": after_nudge["project"]["revision"],
+                    "commands": [
+                        {
+                            "op": "clip.speed_curve",
+                            "clip_id": "c",
+                            "points": [
+                                {"at_ticks": 0, "percent": 100},
+                                {"at_ticks": int(T / 2), "percent": 150},
+                            ],
+                        }
+                    ],
+                },
+            )
+            assert ramped.json()["error"]["code"] == "STABILIZE_LOCKED", ramped.text[:200]
             assert (
                 client.get(f"/v1/projects/{project.id}").json()["revision"]
-                == whole["project"]["revision"]
-            ), "a refused second run still moved the head"
+                == after_nudge["project"]["revision"]
+            ), "a refused speed change still moved the head"
+            points_written = len(after_nudge["project"]["clips"]["c"]["keyframes"])
+            off = client.post(
+                f"/v1/projects/{project.id}/clips/c/stabilize",
+                json={
+                    "request_id": "off",
+                    "expected_revision": after_nudge["project"]["revision"],
+                    "strength": 0.0,
+                },
+            ).json()
+            assert off["project"]["clips"]["c"]["keyframes"] == [], off["project"]["clips"]["c"][
+                "keyframes"
+            ][:2]
+            assert off["project"]["clips"]["c"]["stabilization"] is None
+            assert off["stabilization"]["removed_points"] == points_written, off["stabilization"]
+            sped = client.post(
+                f"/v1/projects/{project.id}/edits",
+                json={
+                    "request_id": "speed-after-off",
+                    "expected_revision": off["project"]["revision"],
+                    # ripple=False: the clips after this one must not shift, or the render
+                    # assertions further down would measure a different phase of the same fixture.
+                    "commands": [
+                        {"op": "clip.speed", "clip_id": "c", "speed_percent": 200, "ripple": False}
+                    ],
+                },
+            ).json()
+            assert "project" in sped, json.dumps(sped)[:200]
+            assert sped["project"]["clips"]["c"]["stabilization"] is None
             print(
-                "stabilising a clip that already animates x/y/rotation/scale is refused as "
-                "STABILIZE_CONFLICT instead of correcting twice"
+                f"a stabilised clip refuses a speed change as STABILIZE_LOCKED (both the rate and "
+                f"the ramp); strength 0 takes all {points_written} points and the record off, and "
+                "the same clip can then be respeeded"
             )
             half = client.post(
                 f"/v1/projects/{project.id}/clips/again/stabilize",
                 json={
                     "request_id": "half",
-                    "expected_revision": whole["project"]["revision"],
+                    "expected_revision": sped["project"]["revision"],
                     "strength": 0.5,
                     "max_crop": 0.1,
                 },
@@ -684,6 +871,14 @@ def main() -> None:
                 turned_argv, cwd=str(folder), capture_output=True, check=False
             )
             assert turned_done.returncode == 0, turned_done.stderr.decode(errors="replace")[-400:]
+            # The measurement below reads the composited frame, so it is only the roll clip's
+            # picture if the roll clip is what is on top there. A clip stacked over this window made
+            # it read 0.00 degrees — a perfect score from measuring the wrong picture, which is how
+            # a green gate hides a feature that does not work.
+            window_start, window_end = int(SECONDS * T), 2 * int(SECONDS * T)
+            assert topmost(turned_steady["project"], window_start, window_end) == "r", (
+                "another clip paints over the window the roll render assertion measures"
+            )
             held_roll = measure(
                 FFMPEG,
                 folder / "rolled.mp4",
@@ -798,44 +993,93 @@ def main() -> None:
                 f"{tight['stabilization']['clamped_axes']} clamped axes and says why"
             )
 
-            # A retry — the same request_id, with the same payload or another one — must not write a
-            # second correction. The guard on the clip's own keyframes answers before the receipt
-            # layer does, so both doors close with the reason named, and the document is left
-            # exactly as the first run put it.
-            written = tight["project"]["clips"]["tightclip"]["keyframes"]
-            head = tight["project"]["revision"]
-            for label, body in (
-                (
-                    "same payload",
-                    {
-                        "request_id": "tight",
-                        "expected_revision": head,
-                        "strength": 1.0,
-                        "max_crop": 0.0,
-                    },
-                ),
-                (
-                    "other strength",
-                    {"request_id": "tight", "expected_revision": head, "strength": 0.5},
-                ),
-            ):
-                again = client.post(
-                    f"/v1/projects/{project.id}/clips/tightclip/stabilize", json=body
-                )
-                assert again.status_code == 422, (label, again.text[:200])
-                assert again.json()["error"]["code"] == "STABILIZE_CONFLICT", (
-                    label,
-                    again.text[:200],
-                )
-            current = client.get(f"/v1/projects/{project.id}").json()
-            assert current["revision"] == head, "a retried stabilisation moved the head"
-            assert current["clips"]["tightclip"]["keyframes"] == written, (
-                "a retried stabilisation changed the keyframes"
-            )
+            # With the record the route is idempotent again: a re-run computes the same commands
+            # from the same static base, so the same request_id with the same payload hits the
+            # receipt, and the same id with another payload is refused rather than written twice.
+            replay = client.post(
+                f"/v1/projects/{project.id}/clips/tightclip/stabilize",
+                json={
+                    "request_id": "tight",
+                    "expected_revision": audio,
+                    "strength": 1.0,
+                    "max_crop": 0.0,
+                },
+            ).json()
+            assert replay["project"]["revision"] == tight["project"]["revision"], replay
+            assert replay.get("replayed") is True, json.dumps(replay)[:200]
+            changed = client.post(
+                f"/v1/projects/{project.id}/clips/tightclip/stabilize",
+                json={"request_id": "tight", "expected_revision": audio, "strength": 0.5},
+            ).json()
+            assert changed["error"]["code"] == "IDEMPOTENCY_CONFLICT", changed
             print(
-                "a retried request_id is refused by name whichever way it arrives, head and "
-                "keyframes untouched"
+                "a repeated request_id replays the same revision, and the same id with another "
+                "payload is refused instead of writing twice"
             )
+
+            # The one case the record cannot speak for: curves the editor keyed by hand. The engine
+            # has no way to know they are not its own, so it refuses and names the way out — and the
+            # way out has to actually work.
+            hand = client.post(
+                f"/v1/projects/{project.id}/edits",
+                json={
+                    "request_id": "hand",
+                    "expected_revision": tight["project"]["revision"],
+                    "commands": [
+                        {
+                            "op": "keyframe.set",
+                            "clip_id": "handy",
+                            "keyframe": {
+                                "property": "x",
+                                "at_ticks": int(T / 2),
+                                "value": 0.1,
+                                "interpolation": "linear",
+                            },
+                        }
+                    ],
+                },
+            ).json()
+            assert "project" in hand, json.dumps(hand)[:200]
+            conflict = client.post(
+                f"/v1/projects/{project.id}/clips/handy/stabilize",
+                json={"request_id": "conflict", "expected_revision": hand["project"]["revision"]},
+            )
+            assert conflict.status_code == 422, conflict.text[:200]
+            assert conflict.json()["error"]["code"] == "STABILIZE_CONFLICT", conflict.text[:200]
+            assert conflict.json()["error"]["details"]["properties"] == ["x"], conflict.text[:200]
+            assert (
+                client.get(f"/v1/projects/{project.id}").json()["revision"]
+                == hand["project"]["revision"]
+            ), "a refused stabilisation moved the head"
+            cleared = client.post(
+                f"/v1/projects/{project.id}/edits",
+                json={
+                    "request_id": "clear-hand",
+                    "expected_revision": hand["project"]["revision"],
+                    "commands": [
+                        {
+                            "op": "keyframes.remove",
+                            "clip_id": "handy",
+                            "keyframes": [{"property": "x", "at_ticks": int(T / 2)}],
+                        }
+                    ],
+                },
+            ).json()
+            assert cleared["project"]["clips"]["handy"]["keyframes"] == []
+            steady = client.post(
+                f"/v1/projects/{project.id}/clips/handy/stabilize",
+                json={
+                    "request_id": "after-clear",
+                    "expected_revision": cleared["project"]["revision"],
+                },
+            ).json()
+            assert "project" in steady, json.dumps(steady)[:200]
+            assert steady["stabilization"]["written_points"] > 0, steady["stabilization"]
+            print(
+                "a hand-keyed curve is refused as STABILIZE_CONFLICT naming the property, and "
+                "clearing that one keyframe lets the same press through"
+            )
+            head = steady["project"]["revision"]
 
             # Every way an Agent can point this at nothing has to answer by name, not with a 500.
             untouched = client.get(f"/v1/projects/{project.id}").json()["revision"]

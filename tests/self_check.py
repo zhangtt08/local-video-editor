@@ -422,6 +422,10 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
             # only place a client that cannot read the contract learns what `clip.patch` may write.
             assert "blur" in json.dumps(tools["timeline_edit"].inputSchema)
             assert "sharpen" in json.dumps(tools["timeline_edit"].inputSchema)
+            # 1.69: the stabiliser's record is a command like any other, so the Agent's schema has
+            # to say it exists — otherwise clearing a stabilisation means guessing the op name.
+            assert "clip.stabilize_record" in json.dumps(tools["timeline_edit"].inputSchema)
+            assert "stabilization" in json.dumps(tools["timeline_edit"].inputSchema)
             assert "clip_stabilize" in tools, "the Agent lost the stabiliser tool"
             assert "max_crop" in json.dumps(tools["clip_stabilize"].inputSchema)
             assert tools["clip_silence"].annotations.readOnlyHint is True

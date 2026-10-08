@@ -298,8 +298,9 @@ function EffectsFields({ clip }: { clip: Clip }) {
       </div> : null}
           {app.caps?.features?.clip_stabilize && asset?.kind !== "audio" ? <span className="stabilize-row">
             <button className="btn tiny" disabled={Boolean(app.busy) || stabBlock !== null}
-              title={stabBlock ?? "让引擎读这段画面，量出相机自己的抖动，再写入反过来的平移与缩放把它抵消；强度 0 表示不动画面，允许裁切是愿意为消抖让画面放大多少。撤销一步回到稳定前"}
-              onClick={() => void stabilizeClip(clip.id, stabilizeStrength / 100, stabilizeCrop / 100)}>画面稳定</button>
+              title={stabBlock ?? (clip.stabilization ? "这段已经稳定过：再按一次按下面的强度重算一遍，替换掉上一次的抵消，不会叠两层" : "让引擎读这段画面，量出相机自己的抖动，再写入反过来的平移与缩放把它抵消；强度 0 表示不动画面，允许裁切是愿意为消抖让画面放大多少。撤销一步回到稳定前")}
+              onClick={() => void stabilizeClip(clip.id, stabilizeStrength / 100, stabilizeCrop / 100)}>{clip.stabilization ? "重新稳定" : "画面稳定"}</button>
+            {clip.stabilization ? <button className="btn tiny subtle" disabled={Boolean(app.busy)} title="把这条稳定摘掉：引擎写过的位移/缩放/旋转关键帧连同它的记录一起清掉，画面回到拍下来的样子" onClick={() => void stabilizeClip(clip.id, 0, stabilizeCrop / 100)}>取消稳定</button> : null}
             <label className="dim">强度
               <input className="input tiny" type="number" min={0} max={100} step={5} value={stabilizeStrength}
                 aria-label="稳定强度" onChange={(e) => setStabilizeStrength(clampPercent(e.target.value))} />%
@@ -308,6 +309,7 @@ function EffectsFields({ clip }: { clip: Clip }) {
               <input className="input tiny" type="number" min={0} max={cropCeiling} step={1} value={stabilizeCrop}
                 aria-label="稳定允许裁切" onChange={(e) => setStabilizeCrop(clampPercent(e.target.value, cropCeiling))} />%
             </label>
+            {clip.stabilization ? <span className="dim stabilize-state" role="status">已稳定 · 强度 {Math.round(clip.stabilization.strength * 100)}% · 抵消 {clip.stabilization.translation_correction.toFixed(3)} 画面宽 · {clip.stabilization.points} 个点{clip.stabilization.roll_correction ? ` · 转动 ${clip.stabilization.roll_correction.toFixed(2)}°` : ""}</span> : null}
           </span> : null}
             {sharpen.amount > 0 && asset?.kind !== "audio" ? <>
         <div className="effect-row">

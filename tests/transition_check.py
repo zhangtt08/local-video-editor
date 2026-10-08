@@ -250,6 +250,7 @@ def main():
             "embedded_audio",
             "mask",
             "speed_curve",
+            "stabilization",  # 1.69: a clip that never mentions one is older
         ):
             del legacy["commands"][0]["clip"][field]
         old_hash = hashlib.sha256(
