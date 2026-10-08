@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 13  # v13 gives a path mask a real box; older rows are fitted on load (ge=1).
-APP_VERSION = "1.82.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.83.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -246,6 +246,20 @@ class ClipEffects(Contract):
 # rows as often as 33 — a limit below that would refuse files people already own.
 CURVE_POINT_LIMIT = 16
 LUT_SAMPLE_LIMIT = 1024
+# The levels node's own ranges, published through `capabilities.grade_limits` so the interface
+# cannot offer a stretch the compiler would refuse. `black` and `white` are input points on the
+# 0..1 axis, and they must leave a real span between them: `white > black` is checked below.
+LEVELS_BLACK_MAX = 0.9
+LEVELS_WHITE_MIN = 0.1
+LEVELS_GAMMA_MIN = 0.1
+LEVELS_GAMMA_MAX = 10.0
+# Auto levels decodes the clip's own frames: how many, and how much of the picture may be clipped
+# at each end. Half a percent is the broadcast convention, and the ceiling is generous enough that
+# an editor can ask for a hard clip on a noisy source.
+AUTO_GRADE_SAMPLES_MAX = 24
+AUTO_GRADE_SAMPLES_DEFAULT = 12
+AUTO_PERCENTILE_MAX = 0.10
+AUTO_PERCENTILE_DEFAULT = 0.005
 
 
 class GradeCurvePoint(Contract):
@@ -315,6 +329,32 @@ class GradeWheels(Contract):
         return self
 
 
+class GradeLevels(Contract):
+    """Input-range levels on one channel group: black point, white point, midtone gamma.
+
+    The two input points say where this picture's own black and white sit; gamma moves the midtones
+    between them without dragging either end. Like every other node here it is a per-channel
+    function, so the chain still collapses to one table per channel and FFmpeg and the browser keep
+    reading the same polyline. The two points are added to the sampling grid, because a stretch this
+    steep is otherwise chorded away between the knots.
+    """
+
+    kind: Literal["levels"] = "levels"
+    channel: Literal["rgb", "red", "green", "blue"] = "rgb"
+    black: Annotated[float, Field(ge=0, le=LEVELS_BLACK_MAX)] = 0.0
+    white: Annotated[float, Field(ge=LEVELS_WHITE_MIN, le=1)] = 1.0
+    gamma: Annotated[float, Field(ge=LEVELS_GAMMA_MIN, le=LEVELS_GAMMA_MAX)] = 1.0
+    enabled: bool = True
+    mix: GradeMix = 1.0
+    blend: BlendMode = "normal"
+
+    @model_validator(mode="after")
+    def ordered_points(self):
+        if self.white <= self.black:
+            raise ValueError("the white point must sit above the black point")
+        return self
+
+
 class GradeTransfer(Contract):
     """Colour-space conversion: one published EOTF in, one OETF out, applied to every channel.
 
@@ -366,7 +406,7 @@ class GradeLUT(Contract):
         return self
 
 
-GradeBranch = GradeCurve | GradeWhiteBalance | GradeWheels | GradeTransfer | GradeLUT
+GradeBranch = GradeCurve | GradeWhiteBalance | GradeWheels | GradeLevels | GradeTransfer | GradeLUT
 
 GRADE_NODE_LIMIT = 8
 GRADE_BRANCH_LIMIT = 4
@@ -390,7 +430,15 @@ class GradeParallel(Contract):
     blend: BlendMode = "normal"
 
 
-GradeNode = GradeCurve | GradeWhiteBalance | GradeWheels | GradeTransfer | GradeLUT | GradeParallel
+GradeNode = (
+    GradeCurve
+    | GradeWhiteBalance
+    | GradeWheels
+    | GradeLevels
+    | GradeTransfer
+    | GradeLUT
+    | GradeParallel
+)
 
 
 class ClipColor(Contract):
@@ -1371,6 +1419,30 @@ class ClipStabilizeRequest(Contract):
     dry_run: bool = False
 
 
+class AutoGradeRequest(Contract):
+    """Measure the clip's own picture and write the levels node that stretches it to full range.
+
+    `percentile` is how much of the sampled pixels may be discarded at each end before black and
+    white are declared: half a percent ignores a few hot or dead pixels instead of letting one
+    specular highlight decide where white sits. `samples` is how many frames inside the clip's own
+    source window get decoded. `mode` picks one luma-based stretch (it cannot invent a colour cast)
+    or three per-channel stretches (it removes a cast, and costs three nodes). `replace` follows the
+    stabilise rule: pressing again re-computes the correction instead of stacking a second copy,
+    so with it off an existing levels node is refused by name rather than quietly doubled.
+    """
+
+    request_id: Identifier
+    expected_revision: Revision
+    # Read the ids below -- and apply the batch -- inside one nested composition.
+    sequence_id: Identifier | None = None
+    percentile: Annotated[float, Field(ge=0, le=AUTO_PERCENTILE_MAX)] = AUTO_PERCENTILE_DEFAULT
+    samples: Annotated[int, Field(ge=1, le=AUTO_GRADE_SAMPLES_MAX)] = AUTO_GRADE_SAMPLES_DEFAULT
+    mode: Literal["luma", "rgb"] = "luma"
+    replace: bool = True
+    apply: bool = False
+    dry_run: bool = False
+
+
 def project_content_ticks(project) -> int:
     """Where the ruler ends: the furthest clip edge on the timeline being edited.
 
@@ -1918,6 +1990,10 @@ def capabilities(
             "max_branches": GRADE_BRANCH_LIMIT,
             "max_curve_points": CURVE_POINT_LIMIT,
             "max_lut_samples": LUT_SAMPLE_LIMIT,
+            "levels_black_max": LEVELS_BLACK_MAX,
+            "levels_white_min": LEVELS_WHITE_MIN,
+            "levels_gamma_min": LEVELS_GAMMA_MIN,
+            "levels_gamma_max": LEVELS_GAMMA_MAX,
         },
         # The transition picker enumerates this list rather than carrying its own copy, so a kind
         # the exporter cannot honour can never appear in the interface.
@@ -2053,6 +2129,9 @@ def capabilities(
             "clip_sharpen": True,
             "clip_stabilize": True,
             "clip_denoise": True,
+            "grade_levels": True,
+            # Measuring a clip's own frames needs the media engine, like every other analysis here.
+            "clip_auto_grade": media_ready,
             "grade_node_blend_modes": True,
             "grade_parallel_branches": True,
             "timeline_marks": True,
@@ -2075,6 +2154,8 @@ def capabilities(
             "sharpen_radius_fraction": BLUR_LIMIT,
             "sharpen_radius_default": SHARPEN_RADIUS_DEFAULT,
             "denoise_db": DENOISE_LIMIT,
+            "auto_grade_samples_max": AUTO_GRADE_SAMPLES_MAX,
+            "auto_grade_percentile_max": AUTO_PERCENTILE_MAX,
             "stabilize_max_crop": STABILIZE_MAX_CROP_LIMIT,
             "stabilize_smoothing_frames": STABILIZE_SMOOTHING_FRAMES,
             "sample_rates": [44_100, 48_000, 96_000],

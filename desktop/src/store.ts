@@ -589,6 +589,63 @@ export async function reframeClip(clipId: string, maxScale = 4) {
 
 /** 画面稳定：让引擎量出相机自己的抖动，再把反过来的那点位移写成关键帧。
  * 与「主体跟随」同一类：分析在引擎里做（只有它能读验证过的媒体），写入仍走同一条 revision。 */
+/** 自动调色：让引擎读这段素材自己的画面，量出黑场与白场，再写回一个普通色阶节点。
+ *  分析只有引擎能做（它才拿得到校验过的媒体），写入仍然是一条 `clip.grade` 批次：
+ *  一步一个版本，撤销一步就回到按之前；量到「本来就占满量程」时什么都不写。 */
+export async function autoGradeClip(
+  clipId: string,
+  mode: "luma" | "rgb" = "luma",
+  percentile = 0.005,
+  replace = true
+) {
+  const project = state.project;
+  if (!engine || !project) return;
+  set({ busy: "量这段画面的黑场白场…" });
+  try {
+    const done = await engine.autoGrade(project.id, clipId, {
+      request_id: newId("autograde-"),
+      expected_revision: project.revision,
+      sequence_id: state.sequenceId,
+      mode,
+      percentile,
+      replace,
+      apply: true,
+      dry_run: false,
+    });
+    const found = done.auto_grade;
+    if (!found) return;
+    const channelNames: Record<string, string> = { luma: "亮度", red: "红", green: "绿", blue: "蓝" };
+    const bounds = Object.entries(found.measured.bounds ?? {})
+      .map(([name, pair]) => `${channelNames[name] ?? name} ${pair?.[0] ?? "?"}–${pair?.[1] ?? "?"}`)
+      .join("、");
+    if (!found.nodes.length) {
+      toast(
+        "info",
+        "这条画面本来就占满量程",
+        `量了 ${found.measured.frames} 帧，黑场白场在 ${bounds}，没有可拉开的层次，工程一点没改。要压暗部或抬亮部，就手动加一个色阶节点。`
+      );
+      return;
+    }
+    const next = found && done.project ? (done.project as Project) : undefined;
+    if (!next) return;
+    pushUndo(project.revision, "自动调色");
+    set({ project: next });
+    await refreshProjects();
+    toast(
+      "ok",
+      `已自动调色（${mode === "rgb" ? "分通道" : "亮度"}）`,
+      `量了 ${found.measured.frames} 帧，黑场白场拉到 ${bounds}；加了 ${found.nodes.length} 个色阶节点放在链子最前面` +
+        (found.removed.length ? `，顶掉了原来的第 ${found.removed.map((index) => index + 1).join("、")} 个` : "") +
+        `。两端各忽略 ${(found.measured.percentile * 100).toFixed(2)}% 的像素，撤销一步回到按之前。`
+    );
+  } catch (error) {
+    const { title, detail } = describe(error);
+    toast("error", title, detail);
+  } finally {
+    set({ busy: "" });
+  }
+}
+
 export async function stabilizeClip(clipId: string, strength = 1, maxCrop = 0.1) {
   const project = state.project;
   if (!engine || !project) return;

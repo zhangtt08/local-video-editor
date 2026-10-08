@@ -425,6 +425,7 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
                 "track_duck",
                 "render_batch",
                 "master_loudness",
+                "clip_auto_grade",
             }
             assert set(tools) == expected, set(tools) ^ expected
             assert "request" in tools["timeline_edit"].inputSchema["properties"]
@@ -467,6 +468,12 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
             assert "max_scale" in json.dumps(tools["clip_reframe"].inputSchema)
             assert "tolerance" in json.dumps(tools["clip_reframe"].inputSchema)
             assert tools["track_duck"].annotations.readOnlyHint is False
+            # 1.83: 自动调色会落一条普通 `clip.grade`，所以它是写工具而不是只读工具；schema 要说得出
+            # 那三个旋钮，Agent 才不会靠猜。色阶节点本身也必须出现在 timeline_edit 的 schema 里。
+            assert tools["clip_auto_grade"].annotations.readOnlyHint is False
+            for knob in ("percentile", "samples", "mode", "replace", "sequence_id"):
+                assert knob in json.dumps(tools["clip_auto_grade"].inputSchema), knob
+            assert '"levels"' in json.dumps(tools["timeline_edit"].inputSchema)
             # 1.74: an Agent has to be able to ask for a clip inside a nested composition. The tool
             # schema is generated from the request model, so the field being there is the promise.
             for steadied in (
@@ -1274,6 +1281,30 @@ async def analysis_through_mcp(session, media_root, ffmpeg):
     # Before this it answered "measured 0", and with `apply` it claimed the clips were aligned.
     assert "this track holds no clips" in empty.content[0].text, empty.content[0].text
     assert "mvt" in empty.content[0].text, empty.content[0].text
+    # 1.83: 自动调色也进得了合成。这一段用的平板素材本来就是一块均匀的暗板（0x202020），所以正确答案
+    # 是**点名拒绝并给出量到的两个数**，而不是假装拉开层次，更不是写一条什么都改不了的节点进工程。
+    # 这里同时钉住三件事：工具存在、`sequence_id` 读的是合成里的那一段、拒绝不涨 revision。
+    graded = await session.call_tool(
+        "clip_auto_grade",
+        {
+            "project_id": pid,
+            "clip_id": pieces[0]["id"],
+            "request": {
+                "request_id": "mcp-auto-grade",
+                "expected_revision": revision,
+                "sequence_id": "mcomp",
+                "mode": "luma",
+                "percentile": 0.0,
+                "samples": 4,
+            },
+        },
+    )
+    refused = graded.content[0].text
+    assert graded.isError, refused
+    assert "AUTO_GRADE_NO_RANGE" in refused, refused
+    assert '"low"' in refused and '"high"' in refused, refused
+    unchanged = await call_ok(session, "project_get", {"project_id": pid})
+    assert unchanged.structuredContent["revision"] == revision, "a refusal burned a revision"
     inside = await call_ok(
         session,
         "track_loudness",

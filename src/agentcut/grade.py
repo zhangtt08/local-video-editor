@@ -15,6 +15,29 @@ TOLERANCE = 0.05
 CHANNEL_NAMES = ("r", "g", "b")
 CURVE_CHANNELS = {"red": 0, "green": 1, "blue": 2}
 BALANCE = (0.30, 0.20, 0.10)
+LEVELS_NEUTRAL = (0.0, 1.0, 1.0)
+
+
+def _levels_function(node, index: int):
+    """Input-range stretch on one channel: black point, white point, then midtone gamma.
+
+    This is the levels control every grading surface has (Resolve's colour wheel panels, Photoshop's
+    Levels, 剪映's 色阶), and it stays a per-channel function, so adding it costs the chain nothing:
+    the browser table and the FFmpeg expression are still sampled from one polyline.
+    """
+    black, white, gamma = node.black, node.white, node.gamma
+    if node.channel != "rgb" and CURVE_CHANNELS[node.channel] != index:
+        return None
+    if (black, white, gamma) == LEVELS_NEUTRAL:
+        return None
+    span = white - black
+    inverse = 1 / gamma
+
+    def levels(value: float) -> float:
+        stretched = _clamp((value - black) / span)
+        return _clamp(stretched**inverse)
+
+    return levels
 
 
 def _clamp(value: float) -> float:
@@ -154,6 +177,8 @@ def _op_function(node, index: int):
         if node.channel != "rgb" and CURVE_CHANNELS[node.channel] != index:
             return None
         return _piecewise([(point.x, point.y) for point in node.points])
+    if node.kind == "levels":
+        return _levels_function(node, index)
     if node.kind == "lut":
         return lut_function(node.channels[index])
     if node.kind == "transfer":
@@ -231,6 +256,12 @@ def _curve_knots(node, index: int):
         elif operation.kind == "lut":
             count = operation.size
             yield from (step / (count - 1) for step in range(count))
+        elif operation.kind == "levels":
+            # The two input points are where this node's slope changes, so the sampling grid has to
+            # break there; without them a steep stretch is approximated by chords across the knee.
+            if operation.channel == "rgb" or CURVE_CHANNELS[operation.channel] == index:
+                yield operation.black
+                yield operation.white
 
 
 def _channel_points(nodes, index: int) -> list[tuple[float, float]] | None:

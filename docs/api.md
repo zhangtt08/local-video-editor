@@ -1846,3 +1846,37 @@ line / size+rows / project_id / revision / job_id 都覆盖到），九条正常
 - 五条变异测试逐条红：谓词恒返回 null、把 `clip.track_id` 比成 `clip.id`、`some` 改成 `every`、
   提示句去掉「面包屑」这条出路、表头不走谓词写死成 null。前四条红在 TS 门禁，第五条红在 Python 门禁。
 - 引擎侧一字未动：路由、契约、reducer、capabilities 与 1.79 的拒绝完全照旧。
+
+## 1.83 色阶节点与自动调色：把「一键拉开层次」接进同一条链（工程 schema 仍是 v13）
+
+新增一个调色节点 `levels`：`channel`（`rgb` / `red` / `green` / `blue`）、`black`、`white`（输入量程
+的两个点，0..1，`white` 必须高于 `black`；可填范围由 `capabilities.grade_limits.levels_*` 下发）、
+`gamma`（0.1–10）。它仍然只是每通道一条函数，所以整条链照旧塌成每通道一张表：`grade_filter` 出
+FFmpeg 的 `lutrgb`，`grade_tables` 出浏览器 `feComponentTransfer` 的 256 项表，两者从同一条折线采样。
+两个输入点被加进采样网格（`_curve_knots`），否则一条陡拉伸会在拐点之间被弦裁成另一条线。写入
+不需要新命令——用的就是既有的 `clip.grade`，所以 reducer、历史、回执与撤销全都照旧。
+
+新端点 `POST /v1/projects/{id}/clips/{clip}/auto-grade`，载荷 `AutoGradeRequest`：`request_id`、
+`expected_revision`、`sequence_id`、`percentile`（0–0.10，默认 0.005）、`samples`（1–24，默认 12）、
+`mode`（`luma` / `rgb`）、`replace`、`apply`、`dry_run`。MCP 的对应工具是 `clip_auto_grade`
+（`annotations=write`）。它和 `/stabilize`、`/reframe` 是同一类：**读画面只有引擎能做，写入仍然是
+一条普通批次**，于是一个 revision、一份回执、一步撤销，`dry_run` 什么都不留，`apply=false` 只把
+命令交回来看。
+
+测量在 `autograde.py`：用同一支 FFmpeg 把片段自己的源区间解成不超过 `samples` 帧、宽 256 的 rgb24，
+按 BT.601 权重算亮度直方图，取「两端各只有 `percentile` 份额像素落在其外」的那两个级。为什么用
+百分位而不是 min/max：一个镜面高光或一个坏点就能把白点定在 255，于是整张画面被压扁——剪映、
+达芬奇和 Photoshop 的一键拉伸同样是百分位拉伸。`frames`、`pixels`、`skipped_pixels`、分析尺寸与
+逐通道量到的两个数都进回复，人和 Agent 都看得到依据，不是只看一个结果。
+
+拒绝全部点名（1.75 的规矩：每条带 code、可读句子与非空 details，拒绝不涨 revision）：
+`AUTO_GRADE_INVALID`（音频、文字层，或停在非画面轨上的视频——量不到帧，也渲染不出帧）、
+`AUTO_GRADE_FAILED`（一帧都解不出来，例如源文件被替换）、`AUTO_GRADE_NO_RANGE`（量到的两点相距
+不足 16 级，details 把 low/high 报给你）、`AUTO_GRADE_CONFLICT`（`replace=false` 而链上已有色阶节点，
+positions 指出是哪几个）、`AUTO_GRADE_LIMIT`（加上这几支超过 `grade_limits.max_nodes`，并说明改用
+luma 只占一个节点）。画面本来就占满所测量程时**不写节点**：`commands` 为空、revision 不变，
+只把量到的数交回来——这一条与 1.69 的「稳定强度 0 就是取消」同一个形状。
+
+单帧素材（一张图片）在这里是个真坑：`fps` 滤镜喂给它会把那唯一一帧直接丢掉，量到 0 帧。
+`decode_rgb` 因此带一个 `spread` 开关，取不到帧时按「不做时间铺开」再解一次；
+`tests/autograde_check.py` 用真实的 FFmpeg 把这条路钉住。

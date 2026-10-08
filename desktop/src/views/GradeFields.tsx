@@ -1,18 +1,28 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 
 import {DEFAULT_TRANSFER, COLOR_SPACES, DEFAULT_CURVE_POINTS, DEFAULT_WHEELS, type GradeChannel, type GradeCurvePoint, type GradeNode, type GradeOperation, type GradeParallel, type ColorSpace, BLEND_MODES, type BlendMode} from "../engine";
-import { editableProject, setClipColor, useApp, applyLut } from "../store";
+import { editableProject, setClipColor, useApp, applyLut, autoGradeClip } from "../store";
+import { autoGradeBlocker } from "../effects";
 import { NODE_NAMES, cardsFor, moveWithin } from "../gradeGraph";
 
 const CHANNELS: [GradeChannel, string][] = [["rgb", "主色"], ["red", "红"], ["green", "绿"], ["blue", "蓝"]];
 const GREEN_MAGENTA = [0.70710678, -0.70710678, 0];
 const BLUE_YELLOW = [0.40824829, 0.40824829, -0.81649758];
-/** 链子上限的唯一主人是引擎的 `capabilities.grade_limits`；下面三个数只在引擎没有回该字段时兜底。 */
+/** 链子上限的唯一主人是引擎的 `capabilities.grade_limits`；下面这些数只在引擎没有回该字段时兜底。 */
 const FALLBACK_NODES = 8;
 const FALLBACK_POINTS = 16;
 const FALLBACK_BRANCHES = 4;
+const FALLBACK_LEVELS = { blackMax: 0.9, whiteMin: 0.1, gammaMin: 0.1, gammaMax: 10 };
 
-export type GradeLimits = { nodes: number; points: number; branches: number };
+export type GradeLimits = {
+  nodes: number;
+  points: number;
+  branches: number;
+  blackMax?: number;
+  whiteMin?: number;
+  gammaMin?: number;
+  gammaMax?: number;
+};
 
 function clamp(value: number, lo: number, hi: number) {
   return Math.min(hi, Math.max(lo, value));
@@ -199,6 +209,17 @@ function OpFields({ node, idPrefix, limits, onReplace, onCommit }: { node: Grade
       <p className="hint">正值偏暖，色调正值偏绿；按通道增益实现，不做色彩管理转换。</p>
     </div>;
   }
+  if (node.kind === "levels") {
+    const blackMax = Math.round((limits.blackMax ?? FALLBACK_LEVELS.blackMax) * 255);
+    const whiteMin = Math.round((limits.whiteMin ?? FALLBACK_LEVELS.whiteMin) * 255);
+    return <div className="grade-body">
+      <label className="mask-shape">通道 <select className="input" aria-label="色阶通道" value={node.channel} onChange={(e) => onCommit({ ...node, channel: e.target.value as GradeChannel })}>{CHANNELS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <Num id={`${idPrefix}-levels-black`} label="输入黑场" value={node.black * 255} min={0} max={blackMax} step={1} unit="/255" onCommit={(value) => onCommit({ ...node, black: round(value / 255), white: Math.max(node.white, round(Math.min(255, value + 1) / 255)) })} />
+      <Num id={`${idPrefix}-levels-white`} label="输入白场" value={node.white * 255} min={whiteMin} max={255} step={1} unit="/255" onCommit={(value) => onCommit({ ...node, white: round(value / 255), black: Math.min(node.black, round(Math.max(0, value - 1) / 255)) })} />
+      <Num id={`${idPrefix}-levels-gamma`} label="中间调" value={node.gamma} min={limits.gammaMin ?? FALLBACK_LEVELS.gammaMin} max={limits.gammaMax ?? FALLBACK_LEVELS.gammaMax} step={0.05} onCommit={(value) => onCommit({ ...node, gamma: round(value) })} />
+      <p className="hint">低于输入黑场的直接压成纯黑，高于输入白场的抬到纯白，中间调在两点之间挪位置，两个端点不动。引擎按发布公式把它采样成每通道一张表，预览的 feComponentTransfer 与导出的 lutrgb 读的是同一条折线，逐点误差不超过一个色阶（tests/autograde_check.py 把 256 级全量比过）。</p>
+    </div>;
+  }
   if (node.kind === "transfer") {
     return <div className="grade-body">
       <label className="mask-shape">输入色彩空间 <select className="input" aria-label="输入色彩空间" value={node.input_space} onChange={(e) => onCommit({ ...node, input_space: e.target.value as ColorSpace })}>{COLOR_SPACES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
@@ -250,7 +271,9 @@ function newOperation(kind: Exclude<GradeOperation["kind"], "lut">): GradeOperat
       ? { kind: "white_balance", temperature: 0, tint: 0, enabled: true }
       : kind === "transfer"
         ? { kind: "transfer", ...DEFAULT_TRANSFER, enabled: true }
-        : { kind: "wheels", lift: [...DEFAULT_WHEELS.lift], gamma: [...DEFAULT_WHEELS.gamma], gain: [...DEFAULT_WHEELS.gain], enabled: true };
+        : kind === "levels"
+          ? { kind: "levels", channel: "rgb", black: 0, white: 1, gamma: 1, enabled: true }
+          : { kind: "wheels", lift: [...DEFAULT_WHEELS.lift], gamma: [...DEFAULT_WHEELS.gamma], gain: [...DEFAULT_WHEELS.gain], enabled: true };
 }
 
 /** 调色节点：串行链与并联分支，引擎都编译成每通道一张表，预览与导出共用。 */
@@ -269,10 +292,26 @@ export function GradeFields({ clipId }: { clipId: string }) {
     nodes: app.caps?.grade_limits?.max_nodes ?? FALLBACK_NODES,
     points: app.caps?.grade_limits?.max_curve_points ?? FALLBACK_POINTS,
     branches: app.caps?.grade_limits?.max_branches ?? FALLBACK_BRANCHES,
+    blackMax: app.caps?.grade_limits?.levels_black_max ?? FALLBACK_LEVELS.blackMax,
+    whiteMin: app.caps?.grade_limits?.levels_white_min ?? FALLBACK_LEVELS.whiteMin,
+    gammaMin: app.caps?.grade_limits?.levels_gamma_min ?? FALLBACK_LEVELS.gammaMin,
+    gammaMax: app.caps?.grade_limits?.levels_gamma_max ?? FALLBACK_LEVELS.gammaMax,
   };
   const lutFile = useRef<HTMLInputElement>(null);
   const lutTarget = useRef<number | null>(null);
   const locked = Boolean(app.busy || !project || project.tracks.find((track) => track.id === clip?.track_id)?.locked);
+  // 按了只会弹错的按钮不该亮着（1.82 立下的规矩）：能不能量画面只由 effects.ts 一处判断，出路写进 title。
+  const assetKind = clip ? project?.assets[clip.asset_id]?.kind : undefined;
+  const clipKind = clip ? (clip.text ? "text" : assetKind) : undefined;
+  const trackKind = project?.tracks.find((track) => track.id === clip?.track_id)?.kind;
+  const autoBlock = autoGradeBlocker(
+    clipKind,
+    assetKind,
+    trackKind,
+    Boolean(app.caps?.features.clip_auto_grade)
+  );
+  const [autoMode, setAutoMode] = useState<"luma" | "rgb">("luma");
+  const [autoReplace, setAutoReplace] = useState(true);
 
   useEffect(() => {
     if (pending.current !== null && nodes.length > pending.current) {
@@ -292,7 +331,7 @@ export function GradeFields({ clipId }: { clipId: string }) {
     write(next);
     setActive(Math.min(Math.max(0, target), next.length - 1));
   };
-  const add = (kind: "curve" | "white_balance" | "wheels" | "transfer" | "parallel") => {
+  const add = (kind: "curve" | "white_balance" | "wheels" | "levels" | "transfer" | "parallel") => {
     if (nodes.length >= limits.nodes) return;
     const node: GradeNode = kind === "parallel"
       ? { kind: "parallel", branches: [newOperation("white_balance"), newOperation("white_balance")], enabled: true }
@@ -331,7 +370,7 @@ export function GradeFields({ clipId }: { clipId: string }) {
     <summary className="panel-label">调色节点{nodes.length ? ` · ${nodes.length} 个` : ""}</summary>
     <fieldset className="effects-fields" disabled={locked}>
       <div className="batch-actions">
-        {(["curve", "white_balance", "wheels", "transfer", "parallel"] as const).map((kind) => <button key={kind} className="btn tiny" disabled={nodes.length >= limits.nodes} onClick={() => add(kind)}>+{NODE_NAMES[kind]}</button>)}
+        {(["curve", "white_balance", "wheels", "levels", "transfer", "parallel"] as const).map((kind) => <button key={kind} className="btn tiny" disabled={nodes.length >= limits.nodes} onClick={() => add(kind)}>+{NODE_NAMES[kind]}</button>)}
         {app.caps?.features.lut_import ? <button className="btn tiny" disabled={nodes.length >= limits.nodes} title="选择 .cube 文件（1D 逐通道查找表），由引擎解析" onClick={() => pickLut(null)}>+LUT</button> : null}
         <input ref={lutFile} type="file" accept=".cube,text/plain" hidden onChange={(event) => {
           const file = event.target.files?.[0];
@@ -340,6 +379,19 @@ export function GradeFields({ clipId }: { clipId: string }) {
           event.target.value = "";
           if (file) void applyLut(clipId, file, target);
         }} />
+      </div>
+      <div className="batch-actions grade-auto-row">
+        <label className="mask-shape">自动调色
+          <select className="input" aria-label="自动调色测量方式" value={autoMode} onChange={(e) => setAutoMode(e.target.value as "luma" | "rgb")}>
+            <option value="luma">亮度（一个节点）</option>
+            <option value="rgb">分通道（三个节点）</option>
+          </select>
+        </label>
+        <label className="grade-switch"><input type="checkbox" checked={autoReplace} onChange={(e) => setAutoReplace(e.target.checked)} />替换已有色阶</label>
+        <button className="btn tiny" disabled={Boolean(autoBlock) || locked}
+          title={autoBlock ?? "让引擎读这段素材自己的画面，量出黑场与白场，写成一个色阶节点放在链子最前面；预览与导出读同一张表"}
+          onClick={() => void autoGradeClip(clipId, autoMode, 0.005, autoReplace)}>量黑场白场并拉开</button>
+        <p className="hint">亮度模式只动整体明暗，不会凭空造出色偏；分通道模式能把偏色的素材拉回中性，但要占三个节点。量到的数会写在提示里，不满意就在上面的色阶卡片里自己改两个点。</p>
       </div>
       {nodes.length ? <div className="grade-graph" role="list" aria-label="调色节点链">
         <span className="gg-io">输入</span>

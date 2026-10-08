@@ -24,6 +24,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import asr as asr_module
+from . import autograde as autograde_module
 from . import duck, silence
 from . import fourpoint as fourpoint_module
 from . import markers as marker_plan
@@ -34,6 +35,7 @@ from .bundles import MAX_BUNDLE_BYTES, export_bundle, import_bundle
 from .contracts import (
     APP_VERSION,
     TIMEBASE,
+    AutoGradeRequest,
     BundleImport,
     CachePrune,
     Clip,
@@ -663,6 +665,88 @@ def create_app(
         )
         mutation = projects.mutate(project_id, batch).model_dump()
         return {**mutation, "stabilization": notes}
+
+    @app.post("/v1/projects/{project_id}/clips/{clip_id}/auto-grade", dependencies=auth)
+    def clip_auto_grade(
+        project_id: Identifier, clip_id: Identifier, request: AutoGradeRequest, projects: Store
+    ):
+        """Measure one clip's own picture and write the levels node that stretches it to full range.
+
+        The frames are decoded by the media engine from the server-verified file, inside the clip's
+        own source window, and the bounds are percentiles of what is actually there. What comes back
+        is an ordinary `clip.grade`, so the reducer stays the only writer of state, `dry_run`
+        writes nothing, a repeated request_id replays, and a picture that already spans the measured
+        range gets its numbers back without burning a revision. Like stabilise, pressing again
+        re-computes the same correction instead of stacking a second copy — unless it would have to
+        overwrite a node nobody measured, which is refused by position.
+        """
+        engine = require_media()
+        root = projects.get(project_id)
+        project = sequence_view(root, request.sequence_id)
+        clip = project.clips.get(clip_id)
+        if clip is None:
+            raise EditorError("NOT_FOUND", "clip is not in this project", 404, clip_id=clip_id)
+        asset = project.assets.get(clip.asset_id)
+        if asset is None or asset.verified is None or asset.kind not in ("video", "image"):
+            raise EditorError(
+                "AUTO_GRADE_INVALID",
+                "there is no picture here to measure: auto levels reads the frames of a verified "
+                "video or image, and an audio or text clip has none",
+                422,
+                clip_id=clip_id,
+                asset_id=clip.asset_id,
+                asset_kind=asset.kind if asset is not None else None,
+            )
+        track = next((item for item in project.tracks if item.id == clip.track_id), None)
+        if track is None or track.kind != "video":
+            raise EditorError(
+                "AUTO_GRADE_INVALID",
+                "the clip is not on a picture track, so it renders no frame to measure",
+                422,
+                clip_id=clip_id,
+                track_id=clip.track_id,
+            )
+        source = Path(asset.verified.path)
+        if not source.is_file():
+            raise EditorError(
+                "MEDIA_MISSING",
+                "source file is gone",
+                410,
+                clip_id=clip.id,
+                asset_id=clip.asset_id,
+                asset_label=source.name,
+            )
+        settings = project.settings
+        measurement = autograde_module.measure(
+            engine.ffmpeg,
+            source,
+            asset.verified.width or settings.width,
+            asset.verified.height or settings.height,
+            asset.verified.frame_rate or settings.frame_rate,
+            clip.source_in_ticks,
+            clip.duration_ticks,
+            samples=request.samples,
+            percentile=request.percentile,
+        )
+        commands, notes = autograde_module.plan(
+            project, clip_id, measurement, mode=request.mode, replace=request.replace
+        )
+        body = {"auto_grade": notes, "commands": commands}
+        if not commands:
+            # The picture already spans the range this mode measures. Report the numbers and write
+            # nothing, rather than spending a revision on a node that cannot move a pixel.
+            return {"project": root.model_dump(mode="json"), "replayed": False, **body}
+        if not request.apply:
+            return {"committed": False, "project": root.model_dump(mode="json"), **body}
+        batch = EditBatch(
+            request_id=request.request_id,
+            expected_revision=request.expected_revision,
+            sequence_id=request.sequence_id,
+            commands=commands,  # type: ignore[arg-type]
+            dry_run=request.dry_run,
+        )
+        mutation = projects.mutate(project_id, batch).model_dump()
+        return {**mutation, **body}
 
     @app.post("/v1/projects/{project_id}/clips/{clip_id}/track", dependencies=auth)
     def mask_track(

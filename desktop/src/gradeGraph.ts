@@ -12,6 +12,7 @@ export const NODE_NAMES: Record<GradeNode["kind"], string> = {
   curve: "色调曲线",
   white_balance: "白平衡",
   wheels: "RGB 增益",
+  levels: "色阶",
   transfer: "色彩空间",
   lut: "LUT 查找表",
   parallel: "并联",
@@ -34,6 +35,8 @@ export type GraphCard = {
   lanes: GraphLane[];
 };
 
+const CHANNEL_SHORT: Record<string, string> = { rgb: "全部", red: "红", green: "绿", blue: "蓝" };
+
 function mixText(node: GradeOperation | GradeParallel): string {
   return node.mix === undefined || node.mix === 1 ? "" : `强度 ${Math.round(node.mix * 100)}%`;
 }
@@ -43,6 +46,10 @@ function operationText(node: GradeNode): string {
   // An imported table says which file it came from and how coarse its grid is, because that is the
   // whole of what the node knows: the card must not look like a control the user can still dial in.
   if (node.kind === "lut") parts.push(`${node.title} · ${node.size} 点`);
+  // 色阶卡片报出自己把输入量程的哪一段拉到了满量程，人不用点开也知道这个节点在做什么。
+  if (node.kind === "levels") {
+    parts.push(`${CHANNEL_SHORT[node.channel] ?? node.channel} ${Math.round(node.black * 255)}→${Math.round(node.white * 255)}`);
+  }
   if (node.blend && node.blend !== "normal") parts.push(blendLabel(node.blend));
   return parts.filter(Boolean).join(" · ");
 }

@@ -2975,3 +2975,74 @@ sigma；回执锚点再加两条，确认「只写默认值的新键」不会把
   便携版 189,771,146 字节 SHA256 `81DF88E1F44BAD75221CA655847AB03AEDEB7C71809A27D8BD163E1AF57B3C71`；
   安装版 189,931,867 字节 SHA256 `4D8375BEE89FCA3765EE13DEAD217A00CF6E7A3845A77CC42A4E07A2F65B195D`。
   未签名，NSIS 向导未点击验收。
+
+## 1.83.0 色阶节点与自动调色：把「一键拉开层次」接进同一条链
+
+- 待办清单从 1.8 起一直挂着「亮度曲线与色阶、LUT、色彩管理」。逐条核对代码后确认：**每通道的色调曲线
+  早就在**（`GradeCurve` + `CurvePad`，1.16 起），缺的是**色阶**（输入黑场／白场＋中间调 gamma，也就是
+  Photoshop/达芬奇的 Levels、剪映的「色阶」）和**自动调色**（剪映的「一键增强」是普通人最先按的那个按钮）。
+  AGENTS.md 把「亮度曲线」列在仍待实现里是**过时的自我描述**，本轮一并改准：仍缺的其实是跨通道的东西
+  （3D LUT、色域矩阵与色彩管理）。
+- 新增 `levels` 节点走的是这条链唯一的那条路：它仍然只是**每通道一条函数**，所以整条链继续塌成每通道一张表，
+  导出的 `lutrgb` 与浏览器的 `feComponentTransfer` 读同一条折线——**没有为它新增渲染阶段，也没有第二套求值**。
+  两个输入点被加进自适应采样网格（`_curve_knots`），否则一条 30→208 的陡拉伸会在拐点之间被弦裁成另一条线。
+  写入用的还是既有的 `clip.grade`，所以 reducer、历史、幂等回执、撤销全都照旧。
+- 新端点 `POST /clips/{id}/auto-grade` 与 MCP 的 `clip_auto_grade`（write）：引擎用同一支 FFmpeg 把**片段自己的
+  源区间**解成最多 24 帧、宽 256 的 rgb24，按 BT.601 权重算亮度直方图，取「两端各只有 `percentile` 份额像素
+  落在其外」的级当黑场白场（默认 0.5%，与剪映/PS/达芬奇的一键拉伸同一族规则，而不是 min/max——一个镜面高光
+  就能把白点定在 255 从而压扁整张画面）。`mode=luma` 只加一个节点且不会凭空造出色偏；`mode=rgb` 三个分通道
+  节点能拉回偏色素材。`apply=false` 只把命令与量到的数交回来，`dry_run` 不写，重放 `request_id` 命中同一回执。
+- **量到的数必须进回复**：`frames`、`pixels`、`skipped_pixels`、分析尺寸、逐通道两点都如实报出；画面本来就占满
+  所测量程时**不写节点**（`commands: []`、revision 不变），这一形状抄 1.69 的「稳定强度 0 一个关键帧都不写」。
+- 再按一次是**重算并顶替**，不是叠一层——和 1.69 给画面稳定定的规矩一致；`replace=false` 时点名 `AUTO_GRADE_CONFLICT`
+  并把 positions 报出来。五条拒绝各带 code＋句子＋非空 details 且不涨 revision：`AUTO_GRADE_INVALID`（音频、文字层、
+  停在非画面轨上的视频）、`AUTO_GRADE_FAILED`（一帧都解不出来）、`AUTO_GRADE_NO_RANGE`（两点相距不足 16 级，
+  details 报 low/high）、`AUTO_GRADE_CONFLICT`、`AUTO_GRADE_LIMIT`（超过 8 个节点，并说明改用 luma 只占 1 个）。
+  `tests/error_vocabulary_check.py` 把五条中文说法一并钉住（121 码 / 125 提示，0 条落到英文）。
+- 途中量出一个真缺陷，而且是被**图片素材**抓出来的：给单帧 PNG 套 `fps` 滤镜，FFmpeg 退出 0 却**一帧都不输出**
+  （实测 `pipe:1` 返回 0 字节，去掉 `fps` 就有 55296 字节），于是自动调色对「给这张照片拉开层次」这种最常见的
+  用法只会回 `AUTO_GRADE_FAILED`。修法是给 `decode_rgb` 一个 `spread` 开关，铺开取不到帧时按「不做时间铺开」
+  再解一次；`tests/autograde_check.py` 用真实的一真一假平板把这条路钉住。
+- 门禁 `tests/autograde_check.py`（约 1 分钟）断的是产物不是意图：三组色阶设置下**256 个输入级逐一**比对
+  ①导出的 `lutrgb` 真跑 FFmpeg 的结果、②浏览器拿到的 256 项表、③按发布公式独立写出的参考值，两端差 ≤1 级；
+  分通道节点在导出表达式里把 g/b 原样交回（`dict(re.findall(...))=="val"`），浏览器侧绿通道逐点等于输入。
+  夹具是**自己声明范围的**：先 `-vf lutrgb='val*0.70+30'` 把一条确定性灰阶斜坡压进 [30,208]，再用本文件自己写的
+  百分位计数确认夹具真的是 [30,208]（夹具不老实就会当场红，而不是造出一条莫须有的引擎缺陷）；随后断言引擎
+  量回的数与文件自量的数差 ≤2，并且把编译出的节点真喂给同一支 FFmpeg 重跑那条素材——成片量回 [≤4, ≥251]，
+  证明拉伸发生在像素上而不是只发生在请求里。
+- 界面这一侧沿用 1.82 立下的规矩：**量不到画面的按钮是灰的**，判断只写在一处
+  （`effects.ts` 的 `autoGradeBlocker`），灰化和 title 用同一个返回值；`tests/desktop_autograde_check.ts` 逐条测
+  那个谓词（视频/图片放行，文字、音频、停在音频轨上的视频各挡一次，引擎未就绪单独一句），
+  `tests/autograde_check.py` 再测接线（谓词只被调用一次、`disabled={Boolean(autoBlock) || locked}` 恰好一处、
+  title 用的就是同一个值），两头都能红。上限数字一律来自 `capabilities.grade_limits.levels_*`，界面不自己数。
+- `self_check.py` 现在通过真实 MCP stdio 调 `clip_auto_grade`：对**嵌在预合成里**的那一段（`sequence_id=mcomp`）
+  只要计划，断言 `committed=false`、revision 不变、回来的命令是 `clip.grade` 且第一个节点 `kind=="levels"`，
+  并且量到的两点是递增的真实数——Agent 侧的「进得了合成」与「分析不写库」第一次被同一条链路量到。
+- 仍没做、也不假装做了的：色阶节点的时间动画（和柔焦/清晰同一类，链子的权威是每通道一张表，逐帧换表就等于
+  两套求值）、3D LUT 与色域矩阵/色彩管理（跨通道，会把「一条链塌成一张表」这条不变量打断，需要成对渲染阶段的
+  新架构）、自动调色里的中间调自动 gamma（本版只做拉伸，不猜你想要的对比）。
+- 发布验收：`scripts/build_engine.py --verify`（冻结引擎冷启 620 ms 报 ready，`tools`/`--help`/`mcp`
+  三种模式都活着）+ `npm run dist`。**包内实例**（`package_check_183.py`，跑的是 `desktop/resources/bin/
+  agentcut/agentcut.exe`，即打进安装包的那一个二进制）报 `app_version=1.83.0`，capabilities 里
+  `grade_levels`/`clip_auto_grade` 为真、`grade_limits.levels_*` 与 `limits.auto_grade_samples_max` 都在；
+  用真实 FFmpeg 造一条压进 [30,208] 的素材、经 HTTP 导入并上轨后，`auto-grade` 量回的黑场白场落在
+  [26,34]×[202,212]，`apply=true` 写入的第一条节点 `kind=="levels"` 且 `black*255` 与量到的差 <1，
+  对音频片段按下去回 `AUTO_GRADE_INVALID`＋`details.asset_kind="audio"`，且**拒绝不涨 revision**（再 GET
+  一次工程确认）。打包产物 `app.asar`（5.6 MB）里读到「色阶」「自动调色」「检查器·自动调色」
+  「量黑场白场并拉开」「替换已有色阶」与 `AUTO_GRADE_CONFLICT:` 的中文提示——只测能活过打包的 UI 文本。
+- 五条变异测试逐条红（每条跑完原文件字节级还原）：`_levels_function` 的 `(value-black)/span` 改成
+  `value` → 红在 256 级逐点比对；`MIN_SPAN_LEVELS` 判断改成恒假 → 红在平板素材那条 `AUTO_GRADE_NO_RANGE`；
+  路由的 `if not request.apply:` 翻成 `if request.apply:` → 红在「apply=false 不该写库」；
+  `autoGradeBlocker` 的引擎未就绪那句改成 `null` → 红在 TS 门禁；界面把
+  `disabled={Boolean(autoBlock) || locked}` 换成 `disabled={locked}` → 红在 Python 侧的接线断言。
+  也就是说「编译错、判断错、不守计划语义、谓词错、接上了但灰化没走谓词」五种情形都过不了关。
+- 门禁：`ruff check`／`ruff format --check` 干净，`npm run typecheck` 干净，14 项桌面 TS 全过
+  （新增 `tests/desktop_autograde_check.ts`），`tests/self_check.py` 通过（真实 MCP stdio 里
+  `clip_auto_grade` 工具存在、schema 说得出四个旋钮、`readOnlyHint` 为假，并对合成里那段均匀暗板
+  如实回 `AUTO_GRADE_NO_RANGE`＋low/high 且不涨 revision）。
+- 便携版 189,786,455 字节 SHA256 `117B9613D4655E828AC83FD1BA20A5B27A52B3004C7393C583D7484DE9618591`；
+  安装版 189,947,176 字节 SHA256 `77624BA4F1996595A7ABEF05A97F1AE057984F84168DCB8A9C6E68DE49603087`。
+  根目录 `AgentCut.exe` 同步为该便携版。未签名，NSIS 向导未点击验收。
+- 原生窗口：双击便携版实测，PrintWindow 抓到 1480×900 的工作台完整渲染，标题栏写着
+  「引擎在线 v1.83.0」，关闭后残留窗口数 0。截图只证明版本与整窗渲染；色阶卡片与灰化按钮本身
+  由上面的门禁在函数与接线两层断言，本轮没有在原生窗口里逐控件点击验收。

@@ -16,6 +16,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from .contracts import (
+    AutoGradeRequest,
     CachePrune,
     Clip,
     ClipStabilizeRequest,
@@ -462,6 +463,32 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         return await call(
             "POST",
             f"/v1/projects/{project_id}/clips/{clip_id}/stabilize",
+            request.model_dump(mode="json"),
+            timeout=900,
+        )
+
+    @server.tool(annotations=write)
+    async def clip_auto_grade(
+        project_id: Identifier, clip_id: Identifier, request: AutoGradeRequest
+    ) -> dict[str, Any]:
+        """Stretch one clip's own picture to full range by writing a levels node.
+
+        The measurement decodes the clip's source window with the media engine and takes percentile
+        black/white points, so it reports what is really in the frames rather than a preset look.
+        The write is an ordinary `clip.grade` in the same transaction as `timeline_edit`: `dry_run`
+        saves nothing, a repeated request_id replays, and one apply is one revision.
+
+        `mode` is `luma` (one node, cannot invent a colour cast) or `rgb` (three per-channel nodes,
+        removes a cast and costs three of the eight node slots). `percentile` is how much of the
+        picture may be clipped at each end. A picture that already spans the measured range gets its
+        numbers back and writes nothing. Pressing again replaces the previous auto correction unless
+        doing so would overwrite a levels node nobody measured, which is refused as
+        `AUTO_GRADE_CONFLICT` naming the position. `sequence_id` measures and writes a clip that
+        lives inside a nested composition.
+        """
+        return await call(
+            "POST",
+            f"/v1/projects/{project_id}/clips/{clip_id}/auto-grade",
             request.model_dump(mode="json"),
             timeout=900,
         )

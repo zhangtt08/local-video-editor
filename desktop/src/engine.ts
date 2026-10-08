@@ -71,6 +71,8 @@ export type GradeOperation =
   | { kind: "curve"; channel: GradeChannel; points: GradeCurvePoint[]; enabled: boolean; mix?: number; blend?: BlendMode }
   | { kind: "white_balance"; temperature: number; tint: number; enabled: boolean; mix?: number; blend?: BlendMode }
   | { kind: "wheels"; lift: number[]; gamma: number[]; gain: number[]; enabled: boolean; mix?: number; blend?: BlendMode }
+  /** 色阶：输入黑场、白场与中间调 gamma。仍然是每通道一条函数，所以整条链照样塌成一张表。 */
+  | { kind: "levels"; channel: GradeChannel; black: number; white: number; gamma: number; enabled: boolean; mix?: number; blend?: BlendMode }
   | { kind: "transfer"; input_space: ColorSpace; output_space: ColorSpace; enabled: boolean; mix?: number; blend?: BlendMode }
   /** 导入的 1D 查找表：三个通道各一条折线，采样点由引擎解析 `.cube` 文件得到，界面不自己读文件。 */
   | { kind: "lut"; title: string; size: number; channels: number[][]; enabled: boolean; mix?: number; blend?: BlendMode };
@@ -403,7 +405,16 @@ export type Capabilities = {
   safe_area_insets?: { action: number; title: number };
   mask_vertex_limit?: number;
   /** 调色链的形状上限（节点数、并联支数、曲线点数、LUT 采样数）由引擎下发，界面照此限制。 */
-  grade_limits?: { max_nodes: number; max_branches: number; max_curve_points: number; max_lut_samples: number };
+  grade_limits?: {
+    max_nodes: number;
+    max_branches: number;
+    max_curve_points: number;
+    max_lut_samples: number;
+    levels_black_max?: number;
+    levels_white_min?: number;
+    levels_gamma_min?: number;
+    levels_gamma_max?: number;
+  };
   /** 可选的转场种类与中文名：界面列的是这份表，不是自己写死的三个。 */
   transition_kinds?: TransitionChoice[];
   /** 本机装着的文字字体（id / 中文名 / CSS family）；选择器列的是这份表。 */
@@ -480,6 +491,11 @@ export class EngineError extends Error {
       INVALID_REQUEST: "请求字段不符合契约。界面已把这一步的错误原因显示在这里。",
       STABILIZE_INVALID: "这段还不能稳定：只有放在画面轨、按 100% 原速播放、且真正导入进来的视频素材能量出抖动。先把它放回画面轨或把速度改回 100%。",
       STABILIZE_FAILED: "画面对不上第一帧的帧太少，量不出相机怎么动——片段太短、太暗或切得比跟踪还快。这段保持原样，换一段更稳的参照。",
+      AUTO_GRADE_INVALID: "自动调色要先看得见画面：只有已经校验过的视频或图片素材能测出自己的黑场与白场，音频和文字没有画面可言。把这段素材放到画面轨上再按，或者直接在调色里手动填色阶的黑场、白场。",
+      AUTO_GRADE_FAILED: "剪辑引擎没能读出这段素材的任何一帧：可能是源文件被换掉或删掉了，也可能片段的入出点落在了素材长度之外。先确认文件还在、重新导入一次，再按自动调色；工程没有被改动，历史里也不会多出一步。",
+      AUTO_GRADE_NO_RANGE: "量出来的黑场和白场几乎挨在一起（不到 16 个色阶），这条画面没有可以拉开的层次——多半是一色底板、全黑或全白。换个取样范围、把「两端忽略」调大一些，或者直接用色阶节点自己填黑场白场。",
+      AUTO_GRADE_CONFLICT: "这条片段上已经有色阶节点了，再来一次会把同一段拉伸叠两遍，画面朝一个方向越推越极端。要么先在调色里把那个节点删掉，要么把「替换已有色阶」打开，让引擎重算并顶替它，仍然只占一个节点。",
+      AUTO_GRADE_LIMIT: "调色的链子上限是 8 个节点，这一次放不下（分通道 rgb 模式要占 3 个）。删掉一个不再用的节点，或者改用亮度（luma）模式——它只加 1 个节点，也不会凭空造出色偏。",
       STABILIZE_CONFLICT: "这段画面已经K过位移/缩放/旋转，再稳定一次会把同一段抖动抵消两遍、画面朝反方向偏。撤销这一步，或在曲线编辑器里清掉那几条，再按一次。",
       STABILIZE_LOCKED: "这段画面还带着一次稳定：抵消按「一帧源画面对一个关键帧」量出来，占的正是位移/缩放/旋转这三条曲线。改速度会让它按错的速率播放，主体跟随重构图又会把这几条整条改写、顺手抹掉稳定。先「取消稳定」（或画面稳定填 0），再做这一步，之后想稳定就再按一次。",
       BLUR_OUT_OF_RANGE: "柔焦/清晰的半径超出了导出与预览验证过一致的范围。把数值调小；滑杆的上限就是引擎在当前画幅下允许的最大值。",
@@ -789,6 +805,27 @@ export class Engine {
   }
 
   /** 画面稳定：引擎读一次随包 FFmpeg 解码的画面，把相机的抖动量出来，再写成 x/y/scale 关键帧。 */
+  /** 自动调色：引擎读这段素材自己的画面，量出黑场白场，写回一个普通色阶节点。 */
+  autoGrade(projectId: string, clipId: string, body: Record<string, unknown>) {
+    return this.request<{
+      committed?: boolean;
+      replayed?: boolean;
+      project?: unknown;
+      commands: Record<string, unknown>[];
+      auto_grade?: {
+        mode: string;
+        measured: {
+          frames: number; pixels: number; percentile: number; skipped_pixels: number;
+          analysis: string; bounds: Record<string, number[]>;
+        };
+        nodes: Record<string, unknown>[];
+        removed: number[];
+        chain_length?: number;
+        reason?: string;
+      };
+    }>("POST", `/v1/projects/${projectId}/clips/${clipId}/auto-grade`, body, 300000);
+  }
+
   stabilize(projectId: string, clipId: string, body: Record<string, unknown>) {
     return this.request<{ stabilization?: Record<string, unknown> } & Record<string, unknown>>(
       "POST", `/v1/projects/${projectId}/clips/${clipId}/stabilize`, body, 900000

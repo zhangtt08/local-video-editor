@@ -102,3 +102,24 @@ export const EMPTY_TRACK_HINT =
 export function trackToolBlocker(trackId: string, clips: Clip[]): string | null {
   return clips.some((clip) => clip.track_id === trackId) ? null : EMPTY_TRACK_HINT;
 }
+
+/** 自动调色的三道门，一次算清：按了只会弹错的按钮不该亮着（1.82 立下的规矩）。
+ *  每句都给出真能走通的出路：换到画面轨、等素材就绪、或直接在色阶里手动填两个点。 */
+export const AUTO_GRADE_NOT_PICTURE =
+  "自动调色要先看得见画面：只有素材库已校验过的视频或图片能量出自己的黑场与白场。把这段素材放到画面轨上，或者在色阶节点里自己填黑场、白场。";
+export const AUTO_GRADE_NO_ENGINE =
+  "引擎现在还没接上素材库，读不到这段素材的画面。等标题栏显示素材就绪后再按一次，或者先在色阶里手动填两个输入点。";
+
+export function autoGradeBlocker(
+  clipKind: string | undefined,
+  assetKind: string | undefined,
+  trackKind: string | undefined,
+  engineReady: boolean
+): string | null {
+  // 没有片段、文字层、音频素材都不在「有画面可量」的范围里；素材轨也不是画面轨就渲染不出帧。
+  if (clipKind === undefined || clipKind === "text") return AUTO_GRADE_NOT_PICTURE;
+  if (!engineReady) return AUTO_GRADE_NO_ENGINE;
+  const measurable = assetKind === "video" || assetKind === "image";
+  if (!measurable || trackKind !== "video") return AUTO_GRADE_NOT_PICTURE;
+  return null;
+}
