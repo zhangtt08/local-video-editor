@@ -3316,3 +3316,50 @@ AgentCut.exe 与便携版一字不差；未签名，NSIS 向导未点击验收�
 打包后的引擎上单独验过（一次性脚本在这条片段上写曲线时被 `SOURCE_OUT_OF_BOUNDS` 先拦下——2 秒源片装不下
 那段区间，是夹具的账算错，不是那条规则的证据；曲线这条拒绝由源码级门禁 `stabilize_check.py` 与
 `desktop_stabilize_check.ts` 两处断言）；400 % 的采样密度边界如上；遮罩尺寸曲线在分割时刻的对齐仍未断。
+
+## 1.87.0 跟踪的两个旋钮交到人的手上（引擎一字未动）
+
+1.85 给 `clip_track` 加了 `reacquire`、1.72 加了 `max_gap_frames`，两个都是「人想看结果才能判断对不对」
+的旋钮，却只有 Agent 传得到：界面上「跟踪主体」就是一个按钮。这一版不新加任何判断，只是把人缺的那半个
+入口补上——同一个请求体、同一套默认值、同一个上限来源。
+
+检查器（Inspector）的遮罩区里，「跟踪主体 / 从头重跟」旁边多了两个控件：**挡住最多猜**（帧，就是
+`max_gap_frames`，`min=0`、`max` 与默认都取自 `capabilities.limits.track_max_gap_frames` /
+`track_gap_default`）与**满画面重找**（就是 `reacquire`，默认开着，和引擎一致）。`trackMask()` 多收一个可选
+`options`：调用方没给值就不把字段放进请求体，所以界面不会因为自己存在而改变 Agent 的行为。提示会说出这次
+是哪一档——`reacquire=false` 时明写「换个位置回来会被当成跟丢」，而不是让人事后猜。
+
+门禁仍然钉接线不钉意图（`tests/tracking_check.py` 的 `interface_suite`）：两个按钮都带同一份
+`{ reacquire: trackSweep, maxGapFrames: trackGap }`（数两遍，少一个就是漏接）；客户端确实把
+`max_gap_frames` / `reacquire` 放进请求体；`240` 在整个 Inspector 里只许出现一次，而且就是那个 `?? 240`
+兜底；输入框真的用 `max={gapCeiling}` 夹着；帮助页写着这两个旋钮的名字与作用。
+
+三条变异逐条红（跑完原文件按 sha256 还原并复跑全绿）：把「从头重跟」那份 options 摘掉 → 红在「两个按钮都要
+带上旋钮」；把输入框的 `max={gapCeiling}` 换成写死的 `max={240}` → 红在「引擎那个数只许出现在兜底里」；把
+客户端的 `max_gap_frames` 不发出去 → 红在「界面摆出来的旋钮必须真的发出去」。三条都是接线的红，不是判断的
+红——这一版没有新判断，只有把已有判断交到人手里。
+
+这一版按的是界面，所以界面真的开过一次：把 `vite build --mode development` 产出的渲染层用静态服务器喂给
+真实浏览器（Edge 内核），深链 `?engine=&token=&project=` 指向**打包引擎**（`desktop/resources/bin/agentcut`，
+`/v1/info` 报 v1.87.0），工程是预先用 HTTP 灌好的那条长遮挡素材。页面顶部写着「引擎在线 v1.87.0」，点中时间线
+上的片段后，检查器遮罩区里出现的就是这两个控件：`挡住最多猜` 是 `min=0 max=240 step=5 value=60`（240 来自
+`capabilities.limits.track_max_gap_frames`，界面上量到的 `max` 就是它；把 999 敲进去被夹回 240），
+`满画面重找` 的复选框是勾着的。然后按开关做了一次真实差分——同一条片段、同一个按钮，只差那个勾：
+
+- 开着点「跟踪主体」：落库 90 条 `mask_x`，从 0 秒到 2.967 秒（revision 2）。
+- 关掉点「从头重跟」：落库 30 条，停在 0.967 秒（revision 3）；把猜窗敲到 240 再重来一次仍是 30 条
+  （revision 4）——挡住时找不回来这件事不是猜窗不够长，缺的就是那一次整画面重找。
+
+这是本仓库第一次把「界面点了真的有效」写成验收证据而不是边界。指针级点击仍然没做（Qoder 内嵌浏览器这一页
+没有可视视口，`click` 报 `NATIVE_BROWSER_VIEWPORT_UNAVAILABLE`，只有结构快照与脚本可用，事件是通过组件的
+React `onClick/onChange` 直接派发的），提示气泡的文案也没在窗口里读到（会话超时前已消失），所以界面侧的
+文案与灰化仍由 TS 与 Python 门禁钉住。
+
+其余验收：ruff check 与 format --check 干净、`npm run typecheck` 干净、15 项桌面 TS 全过、串行套件 69/69、
+`self_check.py` 通过；`build_engine --verify` 冻结引擎 ready，`app.asar`（5,575,658 字节）里读到「挡住最多猜」
+3 处、「满画面重找」、「track_max_gap_frames」、「maxGapFrames」与那句「换个位置回来会被当成跟丢」；便携版从
+ASCII 路径启动实测 1 个窗口、标题「AgentCut 剪辑台」，关闭后残留窗口 0、进程 0。便携版 189,796,714 字节
+SHA256 500D85059F239EB3A2E664366E7A4ACC3A437776BA5746D5AB2D6083F35218E0，安装版 189,957,435 字节 SHA256
+A3B12D68048FEA6AEAE5CE33CA666D9BBD055AE71F11DD67BFECF24F87990E00，根目录 AgentCut.exe 与便携版一字不差；
+未签名，NSIS 向导未点击验收。仍未做：把这两个旋钮存进工程状态（现在是一次性的界面状态，撤销一步不会回到
+「上一档旋钮」）；引擎侧那条拒绝码没有新增，所以界面中文提示表一字未动。

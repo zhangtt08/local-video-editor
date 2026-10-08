@@ -445,7 +445,7 @@ export type Capabilities = {
   max_commands_per_batch: number;
   commands: string[];
   features: Record<string, boolean>;
-  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; denoise_db?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number };
+  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; denoise_db?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number; track_max_gap_frames?: number; track_gap_default?: number };
   render_presets: Preset[];
 };
 

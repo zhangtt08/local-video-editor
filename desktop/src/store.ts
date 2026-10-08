@@ -702,7 +702,10 @@ export async function stabilizeClip(clipId: string, strength = 1, maxCrop = 0.1)
   }
 }
 
-export async function trackMask(clipId: string, fromTicks: number, frames: number, merge = true) {
+export async function trackMask(
+  clipId: string, fromTicks: number, frames: number, merge = true,
+  options?: { reacquire?: boolean; maxGapFrames?: number },
+) {
   const project = state.project;
   if (!engine || !project) return;
   set({ busy: "跟踪遮罩主体…" });
@@ -711,6 +714,8 @@ export async function trackMask(clipId: string, fromTicks: number, frames: numbe
       request_id: newId("track-"), expected_revision: project.revision,
       sequence_id: state.sequenceId,
       from_ticks: fromTicks, frames, merge, dry_run: true,
+      ...(options?.reacquire === undefined ? {} : { reacquire: options.reacquire }),
+      ...(options?.maxGapFrames === undefined ? {} : { max_gap_frames: options.maxGapFrames }),
     });
     const points = analysed.tracking.points;
     if (points.length < 2) {
@@ -724,6 +729,7 @@ export async function trackMask(clipId: string, fromTicks: number, frames: numbe
         ? `保住前面 ${stats.kept_frames} 帧的路径，只重写这一段（接缝处差 ${(stats.seam_jump ?? 0).toFixed(3)} 画面宽），`
         : "",
       stats.scale_estimated ? "遮罩盒随主体远近变大变小，" : "遮罩盒保持原大小，",
+      stats.reacquire ? "" : "（满画面重找这次是关着的，换个位置回来会被当成跟丢）",
       stats.predicted_frames > 0
         ? `${stats.predicted_frames} 帧被挡住时按匀速补了一段，找回后整段按真实位置校正（最多挪了 ${(stats.gap_closure * 100).toFixed(0)}% 画面宽）；`
         : "",

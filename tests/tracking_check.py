@@ -373,6 +373,25 @@ def interface_suite() -> None:
     assert "重新找" in help_page and "补的那一段随后按找回的真实位置校正" in help_page, help_page[
         :80
     ]
+    # 1.87: the two tracking knobs the Agent can pass have controls in the Inspector, and the
+    # ceiling they clamp to is the engine's number rather than one the interface invented.
+    assert "{ reacquire: trackSweep, maxGapFrames: trackGap }" in inspector
+    assert inspector.count("maxGapFrames: trackGap") == 2, (
+        "both tracking buttons must carry the knobs"
+    )
+    assert (
+        "max_gap_frames: options.maxGapFrames" in store and "reacquire: options.reacquire" in store
+    ), "the client never sends the knobs the interface shows"
+    assert "app.caps?.limits?.track_max_gap_frames" in inspector, "the ceiling is hardcoded"
+    assert inspector.count("240") == 1 and "?? 240" in inspector, (
+        "only the fallback may carry the engine number"
+    )
+    assert "max={gapCeiling}" in inspector, "the field does not clamp to the issued ceiling"
+    assert "挡住最多猜" in help_page and "满画面重找" in help_page, help_page[:80]
+    print(
+        "   interface: 挡住最多猜 / 满画面重找 send max_gap_frames and reacquire, clamped to the "
+        "ceiling the engine issues"
+    )
     print("   interface: the reply's re-find fields are declared, toasted and explained")
 
 
