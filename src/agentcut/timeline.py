@@ -908,6 +908,15 @@ def apply_commands(
     for entry in _all_clips(candidate, candidate):
         if entry.mask is not None and entry.mask.shape == "path":
             entry.mask = fit_box(entry.mask)
+    # A stabilisation record is a claim about the curves the run wrote. Ordinary keyframe commands
+    # can delete those curves from under it, and a clip that no longer steadies anything must not
+    # keep telling the editor and the Agent that it is stabilised — the row would read 已稳定 while
+    # the speed and reframe locks went on refusing on behalf of a correction that is not there.
+    for entry in _all_clips(candidate, candidate):
+        if entry.stabilization is not None and not any(
+            key.property in {"x", "y", "rotation", "scale"} for key in entry.keyframes
+        ):
+            entry.stabilization = None
     # Validate the final batch state, allowing atomic swaps with temporary overlaps.
     validate_timeline(candidate)
     return candidate

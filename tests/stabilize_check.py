@@ -1081,6 +1081,55 @@ def main() -> None:
             )
             head = steady["project"]["revision"]
 
+            # A record is a claim about curves that exist. Wipe them with ordinary keyframe commands
+            # and the claim has to go with them — otherwise the row still says 已稳定, the speed and
+            # reframe locks keep refusing, and nothing is steadying the picture any more.
+            owned = half["project"]["clips"]["again"]
+            assert owned["stabilization"] is not None, owned["stabilization"]
+            emptied = client.post(
+                f"/v1/projects/{project.id}/edits",
+                json={
+                    "request_id": "wipe",
+                    "expected_revision": head,
+                    "commands": [
+                        {
+                            "op": "keyframes.remove",
+                            "clip_id": "again",
+                            "keyframes": [
+                                {"property": point["property"], "at_ticks": point["at_ticks"]}
+                                for point in owned["keyframes"]
+                                if point["property"] in {"x", "y", "rotation", "scale"}
+                            ],
+                        }
+                    ],
+                },
+            ).json()
+            assert "project" in emptied, json.dumps(emptied)[:200]
+            wiped = emptied["project"]["clips"]["again"]
+            assert wiped["keyframes"] == [], wiped["keyframes"][:2]
+            assert wiped["stabilization"] is None, "the record outlived the curves it described"
+            freed = client.post(
+                f"/v1/projects/{project.id}/edits",
+                json={
+                    "request_id": "speed-after-wipe",
+                    "expected_revision": emptied["project"]["revision"],
+                    "commands": [
+                        {
+                            "op": "clip.speed",
+                            "clip_id": "again",
+                            "speed_percent": 200,
+                            "ripple": False,
+                        }
+                    ],
+                },
+            ).json()
+            assert "project" in freed, json.dumps(freed)[:200]
+            print(
+                "deleting every curve the stabiliser wrote drops its record too, and the clip "
+                "can be respeeded again"
+            )
+            head = freed["project"]["revision"]
+
             # Every way an Agent can point this at nothing has to answer by name, not with a 500.
             untouched = client.get(f"/v1/projects/{project.id}").json()["revision"]
             for clip_id, expect in (("ghost", "NOT_FOUND"), ("c", "INVALID_REQUEST")):

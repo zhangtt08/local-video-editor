@@ -576,6 +576,21 @@ def http_suite(folder: Path) -> None:
                 "request_id": "stamp",
                 "expected_revision": revision,
                 "commands": [
+                    # A record on its own is a state 1.71 no longer allows: the repair drops one
+                    # whose curves are gone, so this fixture has to look like a real run wrote it.
+                    {
+                        "op": "keyframes.replace",
+                        "clip_id": "c",
+                        "property": "x",
+                        "keyframes": [
+                            {
+                                "property": "x",
+                                "at_ticks": int(T / 2),
+                                "value": 0.01,
+                                "interpolation": "linear",
+                            }
+                        ],
+                    },
                     {
                         "op": "clip.stabilize_record",
                         "clip_id": "c",
@@ -588,7 +603,7 @@ def http_suite(folder: Path) -> None:
                             "zoom_to_hide_borders": 1.04,
                             "analysed_frames": 3,
                         },
-                    }
+                    },
                 ],
             },
         ).json()
@@ -603,7 +618,16 @@ def http_suite(folder: Path) -> None:
             json={
                 "request_id": "unstamp",
                 "expected_revision": stamped["project"]["revision"],
-                "commands": [{"op": "clip.stabilize_record", "clip_id": "c", "record": None}],
+                "commands": [
+                    {"op": "clip.stabilize_record", "clip_id": "c", "record": None},
+                    # Take the prop curve back out too: the assertions further down plan against a
+                    # clip whose only curves are the mask's.
+                    {
+                        "op": "keyframes.remove",
+                        "clip_id": "c",
+                        "keyframes": [{"property": "x", "at_ticks": int(T / 2)}],
+                    },
+                ],
             },
         ).json()
         allowed = request("allowed", revision=unstamped["project"]["revision"])

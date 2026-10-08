@@ -1533,3 +1533,19 @@ revision 变化、只带测量结果。
 验收（并入 `tests/reframe_check.py`）：计划层——给一条跟好的片段挂上稳定记录，`reframe_plan` 必须以
 `STABILIZE_LOCKED` 拒绝；HTTP 层——同一条命令 422 且 head 不动，把记录用 `clip.stabilize_record`
 清掉之后同一次请求返回 200。两条断言在守卫落地前都是红的（先红后绿，红的那次就是缺陷的实证）。
+
+## 1.71 记录随曲线一起作废
+
+`Clip.stabilization` 说的是「引擎写过抵消，这四条曲线是它的」。1.70 之后它还会拦住变速与重构图，
+于是它必须真话。而关键帧是可以被普通命令删掉的：`keyframes.remove`、曲线编辑器里全选删除、
+`clips.add` 的粘贴丢掉某条曲线——记录不会跟着动。结果是片段上写着「已稳定 · 强度 100%」，
+画面里一条抵消都没有，而改速度和重构图还在为一件不存在的事被拒。
+
+`apply_commands` 的收尾（与路径遮罩补框、转场修复同一处）现在统一修一次：某条记录还在、
+而 `x`/`y`/`rotation`/`scale` 四条曲线一条都不剩时，记录置空。只在这一种情况下动手，
+所以分割（两半各自留着窗口内的曲线）与删掉个别点（还剩别的）都不会误伤——宁可留着一条不完美的
+说法，也不误删一个仍然成立的成果。
+
+验收（并入 `tests/stabilize_check.py`）：稳定过的片段用 `keyframes.remove` 把那四条曲线全部删空，
+回读必须 `stabilization is null`，随后同一句 `clip.speed=200` 必须通过。这条断言在收尾落地前是红的
+（`the record outlived the curves it described`），红了的那次输出就是缺陷的实证。
