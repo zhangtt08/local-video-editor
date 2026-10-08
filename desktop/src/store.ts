@@ -598,7 +598,8 @@ export async function stabilizeClip(clipId: string, strength = 1, maxCrop = 0.1)
       strength, max_crop: maxCrop, dry_run: false,
     });
     const stats = done.stabilization as {
-      written_points?: number; measured_travel?: number[]; residual_after?: number;
+      written_points?: number; measured_travel?: number[]; translation_correction?: number;
+      roll_correction?: number;
       zoom_to_hide_borders?: number; clamped_axes?: number; dropped_frames?: number;
       warning?: string; note?: string;
     } | undefined;
@@ -614,8 +615,9 @@ export async function stabilizeClip(clipId: string, strength = 1, maxCrop = 0.1)
     const travel = stats.measured_travel ?? [];
     const detail = [
       `量出画面最多走过 ${Math.max(...travel, 0).toFixed(3)} 画面宽`,
-      `写入 ${stats.written_points} 个关键点，抵消后还剩 ${stats.residual_after?.toFixed(3) ?? "?"}`,
+      `写入 ${stats.written_points} 个关键点，抵消掉 ${stats.translation_correction?.toFixed(3) ?? "?"}`,
       `放大 ${stats.zoom_to_hide_borders?.toFixed(3) ?? "?"} 倍盖住边上`,
+      stats.roll_correction ? `顺手把 ${stats.roll_correction.toFixed(2)}° 的滚动也压了回去` : "",
       stats.warning ?? (stats.dropped_frames ? `${stats.dropped_frames} 帧没跟上，已按前后插值` : ""),
     ].filter(Boolean).join(" · ");
     toast("ok", "画面稳定已写入", `${detail}。撤销一步回到稳定前。`);

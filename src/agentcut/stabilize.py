@@ -16,7 +16,7 @@ an editor wants gone is the jitter on top of that motion. So the smooth path sta
 comes off, and `strength` is how wide a window decides what counts as smooth.
 """
 
-from math import isfinite
+from math import atan2, degrees, isfinite, radians
 from statistics import median
 
 from .animation import sample
@@ -42,6 +42,9 @@ ANCHORS = (
 )
 ANCHOR_SIZE = 0.22
 SEARCH_RADIUS = 12
+# One pixel of anchor quantisation across the ~300 px between anchors is 0.19 degrees; anything the
+# roll estimate finds below that is the measurement's own grain, not the camera.
+ROLL_DEADBAND_DEGREES = 0.25
 STRENGTH_LIMIT = STABILIZE_STRENGTH_LIMIT
 MAX_CROP_LIMIT = STABILIZE_MAX_CROP_LIMIT
 # Half-width of the smoothing window, in frames, at full strength: 30 frames at 30fps is a second,
@@ -103,31 +106,70 @@ def measure(
             frames=count,
         )
     offsets: list[list[float]] = []
+    rolls: list[float] = []
     lost = 0
     for index in range(1, count):
         step_x = []
         step_y = []
+        # Arun's rigid fit: the angle that best carries the four first-frame anchor centres onto the
+        # four found this frame, in the picture's own pixel metric. One pair would give the same
+        # angle class but with a pixel of quantisation over a ~300 px baseline (0.2 degrees), so the
+        # fit averages the four anchors instead of trusting one edge.
+        before: list[tuple[float, float]] = []
+        after: list[tuple[float, float]] = []
         for track in tracks:
             boxes = track["boxes"]
             if len(boxes) <= index or index in track["predicted"]:
                 continue
             step_x.append(boxes[index][0] - boxes[0][0])
             step_y.append(boxes[index][1] - boxes[0][1])
+            before.append((boxes[0][0] * width, boxes[0][1] * height))
+            after.append((boxes[index][0] * width, boxes[index][1] * height))
         if len(step_x) < 3:
             # Fewer than three anchors agree on where the frame went: this frame is a hole, not a
             # measurement, so the correction interpolates across it instead of trusting a pair.
             lost += 1
             offsets.append(list(offsets[-1]) if offsets else [0.0, 0.0])
+            rolls.append(rolls[-1] if rolls else 0.0)
             continue
         offsets.append([median(step_x), median(step_y)])
+        rolls.append(_rigid_angle(before, after))
     return {
         "offsets": offsets,
+        "rolls": rolls,
         "analysis_width": width,
         "analysis_height": height,
         "analysed_frames": count,
         "dropped_frames": lost,
         "frame_ticks": frame_ticks,
     }
+
+
+def _rigid_angle(before: list[tuple[float, float]], after: list[tuple[float, float]]) -> float:
+    """The rotation (degrees) that best carries `before` onto `after`, centred on their means."""
+    n = len(before)
+    bx = sum(point[0] for point in before) / n
+    by = sum(point[1] for point in before) / n
+    ax = sum(point[0] for point in after) / n
+    ay = sum(point[1] for point in after) / n
+    cross = sum(
+        (px - bx) * (qy - ay) - (py - by) * (qx - ax) for (px, py), (qx, qy) in zip(before, after)
+    )
+    dot = sum(
+        (px - bx) * (qx - ax) + (py - by) * (qy - ay) for (px, py), (qx, qy) in zip(before, after)
+    )
+    return degrees(atan2(cross, dot))
+
+
+def _smooth_series(values: list[float], radius: int) -> list[float]:
+    """The same centred average, for the one series the compositor keeps in degrees."""
+    if radius <= 0:
+        return [0.0 for _ in values]
+    return [
+        sum(values[max(0, i - radius) : min(len(values), i + radius + 1)])
+        / len(values[max(0, i - radius) : min(len(values), i + radius + 1)])
+        for i in range(len(values))
+    ]
 
 
 def _smoothed(offsets: list[list[float]], radius: int) -> list[list[float]]:
@@ -222,6 +264,13 @@ def plan(
                 clamped += 1
 
     frame_ticks = motion["frame_ticks"]
+    # The roll is smoothed with the same window and the same strength, so translation and rotation
+    # come off at the same rate; a shot that pans while it rolls does not lose one and keep the
+    # other.
+    rolls = motion.get("rolls", [])
+    roll_residual = [
+        strength * (roll - base) for roll, base in zip(rolls, _smooth_series(rolls, radius))
+    ]
     if strength == 0.0:
         # Nothing to write: a zero-valued keyframe in every frame is noise in the project, not a
         # gentler correction.
@@ -233,7 +282,11 @@ def plan(
                 round(max(abs(point[0]) for point in offsets), 6),
                 round(max(abs(point[1]) for point in offsets), 6),
             ],
-            "residual_after": 0.0,
+            "measured_roll": round(
+                max([abs(roll) for roll in motion.get("rolls", [])], default=0.0), 6
+            ),
+            "translation_correction": 0.0,
+            "roll_correction": 0.0,
             "zoom_to_hide_borders": 1.0,
             "max_crop": max_crop,
             "clamped_axes": 0,
@@ -246,6 +299,13 @@ def plan(
     # uniform pick is what the renderer's linear interpolation between keyframes reproduces best.
     picks = sorted({round(index * (len(residual) - 1) / (budget - 1)) for index in range(budget)})
     worst = max(max(abs(point[0]) for point in residual), max(abs(point[1]) for point in residual))
+    worst_roll = max([abs(roll) for roll in roll_residual], default=0.0)
+    if worst_roll < ROLL_DEADBAND_DEGREES:
+        # Nothing above was resolved: one pixel of anchor quantisation over the ~300 px baseline
+        # between anchors is 0.19 degrees, so writing a rotation curve for less than that would be
+        # the stabiliser inventing a roll the measurement cannot tell from its own noise.
+        roll_residual = []
+        worst_roll = 0.0
 
     commands: list[dict] = []
     written: dict[str, list[Keyframe]] = {}
@@ -264,7 +324,27 @@ def plan(
                 )
             )
         written[name] = frames
-    zoom = 1.0 + 2.0 * worst
+    if roll_residual:
+        written["rotation"] = [
+            Keyframe(
+                property="rotation",
+                at_ticks=min(clip.duration_ticks - 1, frame_ticks * (index + 1)),
+                value=round(
+                    sample(
+                        clip, "rotation", min(clip.duration_ticks - 1, frame_ticks * (index + 1))
+                    )
+                    - roll_residual[index],
+                    6,
+                ),
+                interpolation="linear",
+            )
+            for index in picks
+        ]
+    # Rotating a frame-sized layer by θ uncovers its corners: with the picture `w` wide and `h`
+    # tall, the height has to grow by w·sinθ, i.e. a scale of 1 + θ·(w/h) for small θ. Added to the
+    # translation term rather than maxed with it, because both can be at their worst together.
+    aspect = project.settings.width / project.settings.height
+    zoom = 1.0 + 2.0 * worst + radians(worst_roll) * aspect
     written["scale"] = [
         Keyframe(
             property="scale",
@@ -279,7 +359,9 @@ def plan(
             interpolation="linear",
         ),
     ]
-    for name in ("x", "y", "scale"):
+    for name in ("x", "y", "rotation", "scale"):
+        if name not in written:
+            continue
         commands.append(
             {
                 "op": "keyframes.replace",
@@ -296,7 +378,9 @@ def plan(
             round(max(abs(point[0]) for point in offsets), 6),
             round(max(abs(point[1]) for point in offsets), 6),
         ],
-        "residual_after": round(worst, 6),
+        "measured_roll": round(max([abs(roll) for roll in rolls], default=0.0), 6),
+        "translation_correction": round(worst, 6),
+        "roll_correction": round(worst_roll, 6),
         "zoom_to_hide_borders": round(zoom, 6),
         "max_crop": max_crop,
         "clamped_axes": clamped,

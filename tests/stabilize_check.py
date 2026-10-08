@@ -33,7 +33,10 @@ from agentcut.stabilize import measure
 ROOT = Path(__file__).resolve().parent.parent
 FFMPEG = ROOT / "desktop/resources/bin/ffmpeg.exe"
 FFPROBE = ROOT / "desktop/resources/bin/ffprobe.exe"
-PLATE_W, PLATE_H = 720, 420
+# The plate is deliberately much bigger than the frame: the roll fixture rotates it by a degree, and
+# a crop window that came near the plate's edge would sample the black corners the rotation exposes
+# instead of picture — which would read as a tracker failure and not as the fixture lying.
+PLATE_W, PLATE_H = 900, 560
 WIDTH, HEIGHT = 640, 360
 FPS = 30
 SECONDS = 2.0
@@ -52,6 +55,7 @@ X_ROOM = PLATE_W - WIDTH
 Y_ROOM = PLATE_H - HEIGHT
 # The same term, written in the two languages the fixture has to agree on.
 ALT_FFMPEG = f"{2 * ALT:.0f}*mod(floor({FPS}*t),2)-{ALT:.0f}"
+ROLL = 1.0  # degrees the third fixture rolls by, to the other side every frame
 
 
 def window_x(t: float) -> float:
@@ -128,7 +132,7 @@ def plate(path: Path) -> None:
     )
 
 
-def build(folder: Path, name: str, expr_x: str, expr_y: str) -> Path:
+def build(folder: Path, name: str, expr_x: str, expr_y: str, pre: str = "") -> Path:
     out = folder / name
     subprocess.run(
         [
@@ -146,7 +150,7 @@ def build(folder: Path, name: str, expr_x: str, expr_y: str) -> Path:
             # `fps` first, then `crop`: the crop expression reads the frame's own timestamp, and a
             # looped still arrives at the image2 default rate, so putting `fps` after it makes the
             # window a staircase sampled at the wrong clock and the analytic truth stops being true.
-            f"fps={FPS},crop={WIDTH}:{HEIGHT}:x='{expr_x}':y='{expr_y}',format=yuv420p",
+            f"fps={FPS},{pre}crop={WIDTH}:{HEIGHT}:x='{expr_x}':y='{expr_y}',format=yuv420p",
             "-c:v",
             "libx264",
             "-preset",
@@ -206,11 +210,24 @@ def main() -> None:
         )
         # Same pan, but the smooth shake is replaced by a per-frame jolt of +-8 px.
         jolt = build(folder, "jolt.mp4", f"20+20*t+{ALT_FFMPEG}", "25+5*sin(10*PI*t+1)")
+        # A third fixture rolls the whole plate by +-1 degree every frame: the stabiliser has to
+        # take the roll off too, or a handheld shot still twitches at its corners.
+        rolled = build(
+            folder,
+            "roll.mp4",
+            "20+20*t",
+            "25",
+            pre=(
+                f"rotate=a='(2*mod(floor({FPS}*t),2)-1)*{ROLL:.0f}*PI/180'"
+                f":ow={PLATE_W}:oh={PLATE_H}:fillcolor=black@0,"
+            ),
+        )
 
         media = MediaService(folder / "db.sqlite3", [folder], folder / "cache", FFMPEG, FFPROBE)
         store = ProjectStore(media.db_path, media)
         probe = media.import_file(str(shake))
         jolt_probe = media.import_file(str(jolt))
+        roll_probe = media.import_file(str(rolled))
         client = TestClient(
             create_app(media.db_path, token, media),
             base_url="http://127.0.0.1",
@@ -247,12 +264,31 @@ def main() -> None:
             {
                 "op": "clip.add",
                 "clip": {
+                    "id": "r",
+                    "asset_id": "roll",
+                    # On the same track, after the jolt clip: the roll assertions render and measure
+                    # the second half of the timeline, and nothing else changes for the clips above.
+                    "track_id": "j",
+                    "position_ticks": int(SECONDS * T),
+                    "duration_ticks": int(SECONDS * T),
+                },
+            },
+            {
+                "op": "clip.add",
+                "clip": {
                     "id": "hard",
                     "asset_id": "jolt",
                     "track_id": "j",
                     "position_ticks": 0,
                     "duration_ticks": int(SECONDS * T),
                 },
+            },
+            {
+                "op": "asset.import",
+                "asset_id": "roll",
+                "label": "roll",
+                "probe_id": roll_probe.id,
+                "verified": roll_probe.verified.model_dump(),
             },
             {
                 "op": "clip.add",
@@ -412,7 +448,7 @@ def main() -> None:
             # chosen to satisfy; checking it is what makes "no border" a claim that can fail — the
             # pixel check below cannot see a border at all, because other clips sit underneath.
             zoom = notes["zoom_to_hide_borders"]
-            assert zoom >= 1 + 2 * notes["residual_after"] - 1e-6, notes
+            assert zoom >= 1 + 2 * notes["translation_correction"] - 1e-6, notes
             for name in ("x", "y"):
                 moved = max(
                     abs(point["value"])
@@ -420,11 +456,14 @@ def main() -> None:
                     if point["property"] == name
                 )
                 assert moved <= (zoom - 1) / 2 + 1e-6, (name, moved, zoom)
-            assert counts == {
+            expected = {
                 "x": notes["written_points"],
                 "y": notes["written_points"],
                 "scale": 2,
             }
+            if notes["roll_correction"] > 0:
+                expected["rotation"] = notes["written_points"]
+            assert counts == expected, (counts, notes["roll_correction"])
             assert notes["clamped_axes"] == 0, notes
             print(
                 f"strength 1.0: shake {before * WIDTH:.1f} px -> "
@@ -447,7 +486,7 @@ def main() -> None:
                 },
             ).json()
             assert none["project"]["clips"]["c"]["keyframes"] == [], "strength 0 wrote keyframes"
-            assert none["stabilization"]["residual_after"] == 0.0, none["stabilization"]
+            assert none["stabilization"]["translation_correction"] == 0.0, none["stabilization"]
             whole = client.post(
                 f"/v1/projects/{project.id}/clips/c/stabilize",
                 json={
@@ -468,15 +507,15 @@ def main() -> None:
             ).json()
             assert (
                 abs(
-                    half["stabilization"]["residual_after"]
-                    - whole["stabilization"]["residual_after"] / 2
+                    half["stabilization"]["translation_correction"]
+                    - whole["stabilization"]["translation_correction"] / 2
                 )
                 < 1e-5
             ), (whole["stabilization"], half["stabilization"])
             print(
                 "strength 0 writes no keyframes at all; 0.5 asks for half the correction "
-                f"({half['stabilization']['residual_after']:.5f} vs "
-                f"{whole['stabilization']['residual_after']:.5f} of a frame)"
+                f"({half['stabilization']['translation_correction']:.5f} vs "
+                f"{whole['stabilization']['translation_correction']:.5f} of a frame)"
             )
             revision = half["project"]["revision"]
 
@@ -554,6 +593,80 @@ def main() -> None:
                 f"({wanted * WIDTH:.1f} px -> {got * WIDTH:.1f} px) while shake comes off"
             )
 
+            # ---- 1.67: the same control has to take a roll off, not only a slide --------------
+            turned = measure(
+                FFMPEG,
+                rolled,
+                WIDTH,
+                HEIGHT,
+                project.settings.frame_rate,
+                0,
+                int(SECONDS * T),
+                project.settings.frame_ticks,
+            )
+            rolls = turned["rolls"]
+            peak = max(range(len(rolls)), key=lambda index: abs(rolls[index]))
+            # The measurement is relative to the first frame, and frame 0 sits at −ROLL, so the
+            # swing the stabiliser has to find is the full 2·ROLL, not one side of it.
+            assert abs(abs(rolls[peak]) - 2 * ROLL) < 0.5, (rolls[peak], 2 * ROLL)
+            roll_before = wiggle([[roll, 0.0] for roll in rolls])
+            roll_revision = client.get(f"/v1/projects/{project.id}").json()["revision"]
+            turned_steady = client.post(
+                f"/v1/projects/{project.id}/clips/r/stabilize",
+                json={
+                    "request_id": "roll",
+                    "expected_revision": roll_revision,
+                    "strength": 1.0,
+                    "max_crop": 0.25,
+                },
+            ).json()
+            assert "error" not in turned_steady, turned_steady
+            turned_notes = turned_steady["stabilization"]
+            assert abs(turned_notes["measured_roll"] - 2 * ROLL) < 0.5, turned_notes
+            written_rotation = {
+                point["at_ticks"]: point["value"]
+                for point in turned_steady["project"]["clips"]["r"]["keyframes"]
+                if point["property"] == "rotation"
+            }
+            # The correction has to fight the roll, not follow it: at the frame that leaned the most
+            # one way, the written angle leans the other.
+            at_peak = (peak + 1) * project.settings.frame_ticks
+            assert written_rotation[at_peak] * rolls[peak] < 0, (
+                written_rotation[at_peak],
+                rolls[peak],
+            )
+            turned_plan = compile_render_plan(
+                Project.model_validate(turned_steady["project"]), "h264-source-quality"
+            )
+            turned_argv = turned_plan.ffmpeg_argv(str(FFMPEG), str(folder / "rolled.mp4"))
+            for name, body in turned_plan.text_files.items():
+                (folder / name).write_text(body, encoding="utf-8")
+            turned_done = subprocess.run(
+                turned_argv, cwd=str(folder), capture_output=True, check=False
+            )
+            assert turned_done.returncode == 0, turned_done.stderr.decode(errors="replace")[-400:]
+            held_roll = measure(
+                FFMPEG,
+                folder / "rolled.mp4",
+                WIDTH,
+                HEIGHT,
+                project.settings.frame_rate,
+                int(SECONDS * T),
+                int(SECONDS * T),
+                project.settings.frame_ticks,
+            )
+            roll_after = wiggle([[roll, 0.0] for roll in held_roll["rolls"]])
+            assert roll_after < roll_before * 0.4, (
+                f"the delivered picture still rolls {roll_after:.2f} degrees "
+                f"(was {roll_before:.2f})"
+            )
+            print(
+                f"roll: {rolls[peak]:+.2f} degrees of swing relative to frame 0, which is the "
+                f"2x{ROLL:g} the fixture alternates by; the exported file rolls "
+                f"{roll_after:.2f} degrees instead of {roll_before:.2f}, with the correction "
+                "leaning the other way"
+            )
+
             # No border may show: the zoom has to cover the largest correction.
             raw = subprocess.run(
                 [
@@ -592,7 +705,9 @@ def main() -> None:
                 f"/v1/projects/{project.id}/edits",
                 json={
                     "request_id": "aud",
-                    "expected_revision": kept["project"]["revision"],
+                    "expected_revision": client.get(f"/v1/projects/{project.id}").json()[
+                        "revision"
+                    ],
                     "commands": [
                         {"op": "track.add", "track": {"id": "a", "kind": "audio", "name": "a"}},
                         {
@@ -695,8 +810,8 @@ def main() -> None:
         print(
             "PASS: the tracker recovers a written camera path to within "
             f"{worst * WIDTH:.1f} px, the rendered file after stabilising wiggles "
-            f"{after_wiggle * WIDTH:.1f} px instead of {before * WIDTH:.1f} px, a "
-            "20 px/s pan keeps "
+            f"{after_wiggle * WIDTH:.1f} px instead of {before * WIDTH:.1f} px and rolls "
+            f"{roll_after:.2f} degrees instead of {roll_before:.2f}; a 20 px/s pan keeps "
             f"{got / wanted * 100:.0f}% of its travel, strength 0 writes nothing, borders stay "
             "covered, and audio/speed/max_crop cases are refused by name"
         )

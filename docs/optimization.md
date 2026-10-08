@@ -2259,7 +2259,7 @@ sigma；回执锚点再加两条，确认「只写默认值的新键」不会把
   `Get-CimInstance` 查出来杀掉再重建才通过（`DIST=1` 是被日志记下来的，没有当成成功）。
 - 包内验收 `package_check_166.py`（实例 `3ae892b4faae`，`/v1/info` 报 `1.66.0`，
   `features.clip_stabilize` + 两个 limits 下发）：样片抖动 **11.2 px**，`dry_run` 计划 59 个点而
-  工程头不动；正式写入 `{'x': 59, 'y': 59, 'scale': 2}`、residual 0.02124、zoom 1.0425；
+  工程头不动；正式写入 `{'x': 59, 'y': 59, 'scale': 2}`、translation_correction 0.02124、zoom 1.0425；
   **用随包的 FFmpeg 复检交付文件**，抖动降到 **1.5 px**；指向不存在的片段回 `NOT_FOUND` 而不是 500；
   MCP stdio 40 个工具，`clip_stabilize` 的 schema 点名 `strength` 与 `max_crop`；
   `app.asar` 5,540,884 B 带着「画面稳定」按钮、两个输入框与能力门控。
@@ -2283,3 +2283,46 @@ sigma；回执锚点再加两条，确认「只写默认值的新键」不会把
   会让先写 `text_files` 的调用方拿到一个不存在的文件（`tracking_check` 当场红在
   「Error opening file filtergraph.txt」），改到编译期决定并拆成渲染/取帧两个文件；以及嵌套合成会把
   子合成的 `filtergraph.txt` 覆盖到父工程同名文件上，合并时按名字跳过。
+
+## 1.67.0 画面稳定补上旋转：一次测量，两个自由度（2026-10-08）
+
+1.66 交付时我在提交说明里写下「只治平移」，这就是这一轮的活：手持画面的难受有一半来自滚（roll），
+只把画面钉平而不把水平线钉平，看上去仍然是晃。做法上没有引入第二个跟踪器——四个锚点已经在了，
+把它们相对第一帧做一次 Arun 刚体拟合（去质心后 `atan2(Σ p×q, Σ p·q)`）就多出一个角度，
+与平移共用同一个滑动窗口、同一个 `strength`、同一条 `keyframes.replace` 写入路径。
+
+一条只有做出来才会知道的边界：**测量分辨不出的旋转不能写**。锚点基线 ~300 px、位移量化到整像素，
+一个像素就是 0.19°；第一版没有死区，纯平移的样片量到 ±0.2° 的「滚动」，于是也被写上一条旋转曲线，
+`tests/stabilize_check.py` 里那条「20 px/s 的推拉必须活下来」从 75% 掉到 69%。加了 0.25° 死区
+（低于它 `roll_correction = 0`、一条旋转关键帧都不写）之后回到 75%。这不是把阈值放松，
+是把「这个测量分辨不出来」写进代码：分辨不出来就不要假装纠正了。
+
+缩放随之多一项：把 `w×h` 的层转 θ 后要不露边，高度方向至少 `1 + θ·(w/h)`（θ 弧度），
+与平移项相加而不是取大（两者可以同时最坏）。
+
+样片也要讲实话：图版原来只比画幅大 80/60 px，转 1° 就会把旋转后露出的黑角送进裁剪窗口，
+量到的就不是相机的转而是图版的边——把图版放大到 900×560（裁剪窗口离图版边 ≥96/80 px）之后，
+第三条样片（每帧在 ±0.5° 之间来回转，相对第一帧满摆幅 2°）量到 **2.47°**，
+写进去的旋转在最大偏转那一帧与测量反向，**导出成片再量一次旋转抖动 1.58° → 0.17°**。
+平移与旋转两条样片共用同一个门禁文件，跑一次就把两个自由度都验了。
+
+### 发布验收（1.67.0）
+
+- 冻结引擎：`scripts/build_engine.py` 必须在改过 `stabilize.py` 之后再跑一次——第一次 1.67 的
+  `npm run dist` 只重打了 asar，把 00:57 冻结的旧引擎（还没有 `roll_correction` 这些键）原样装进包里，
+  包内验收当场 `KeyError: 'roll_correction'`。重冻结 + 重打包（产物 mtime 09:10）才通过。
+- 包内验收 `package_check_167.py`（实例 `c0faefd6272f`，`/v1/info` 报 `1.67.0`）：交付的抖动文件仍是 **11.2 px → 1.5 px**；新加的第三条样片
+  （图版每帧在 ±0.5° 之间来回转）在包内量到 **+0.95°**（相对第一帧，真值满摆幅 1°），
+  **它导出的文件滚动 0.00° 而不是 0.65°**；MCP stdio 40 个工具、`clip_stabilize` 的 schema 点名
+  `strength`/`max_crop`；`app.asar` 5,541,131 B 带着「转了多少」这句新说明。
+- 契约表面改名：1.66 的 `residual_after` 名字说的是「剩下多少」，值却是「抵消掉了多少」，
+  包内验收第一次按字面理解去断言就撞上了。改成 `translation_correction` / `roll_correction`，
+  界面提示、README、api、门禁同步；这不是美化措辞，是一个会误导 Agent 的字段名。
+- 原生窗口：`release/win-unpacked/AgentCut.exe` 启动后 `PrintWindow(flags=2)` 采到 1480×900 的
+  「AgentCut 剪辑台」，标题栏写「引擎在线 v1.67.0」（`AgentCut-1.67-原生窗口.png`），
+  优雅关闭后 `no AgentCut/agentcut residue`。该会话读的是用户 `%APPDATA%` 的真实工程，只截图与关闭。
+- 产物：便携版 189,753,404 字节 SHA256
+  `94B2C6EB74FAF804AE5D08F8E5F760F1E17A2C6F1329B8B0B726CCAAD1F4B415`；安装版 189,914,115 字节
+  SHA256 `188E3D5A0FA4AA7688BBF830682E6B2CEFE729FC28512CD4C8F1A6E0D3FA4613`。
+- 门禁：`ruff check` / `ruff format --check`、`npm run typecheck`、10 项桌面 TS、`tests/self_check.py`
+  全绿，`tests/suite_check.py` 串行 **59/59**（`SUITE=0`）。
