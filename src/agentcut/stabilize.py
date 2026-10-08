@@ -30,6 +30,7 @@ from .contracts import (
     Keyframe,
     Project,
 )
+from .speed import analysis_rate
 from .tracking import MAX_FRAMES, decode_luma, track_box
 
 # Anchors sit inset from the corners: a template that touches an edge has nowhere to search when the
@@ -75,12 +76,16 @@ def measure(
     start_ticks: int,
     duration_ticks: int,
     frame_ticks: int,
+    speed_percent: int = 100,
 ) -> dict:
     """Follow four anchors over the clip's own frames and return the camera's translation.
 
     Offsets are fractions of the frame, relative to the first analysed frame, so the caller can hand
     them straight to the compositor's `x`/`y`. An anchor that loses the picture is dropped rather
-    than guessed at, and `anchor_frames` says how many of the four survived to each frame.
+    than guessed at, and `anchor_frames` says how many of the four survived to each frame. The
+    samples are pulled at `rate / speed`, so anchor `i` is measured on the frame the timeline shows
+    at its `i`-th frame — otherwise a 200 % clip would be corrected against motion the viewer never
+    sees.
     """
     seconds = duration_ticks / TIMEBASE
     frames_wanted = max(3, round(seconds * rate.numerator / rate.denominator))
@@ -94,6 +99,7 @@ def measure(
         source_height,
         # One frame per rendered frame, capped by the tracker's own frame limit.
         min(MAX_FRAMES, frames_wanted),
+        speed_percent,
     )
     tracks = []
     for centre_x, centre_y in ANCHORS:
@@ -151,6 +157,8 @@ def measure(
         "analysed_frames": count,
         "dropped_frames": lost,
         "frame_ticks": frame_ticks,
+        "speed_percent": speed_percent,
+        "sample_rate": "{}/{}".format(*analysis_rate(rate, speed_percent)),
     }
 
 

@@ -612,16 +612,6 @@ def create_app(
                 clip_id=clip_id,
                 track_id=clip.track_id,
             )
-        if clip.speed_percent != 100:
-            raise EditorError(
-                "STABILIZE_INVALID",
-                "the clip plays at "
-                f"{clip.speed_percent}%: the camera's motion is measured one frame per rendered "
-                "frame, so stabilise a clip that plays at its recorded speed",
-                422,
-                clip_id=clip_id,
-                speed_percent=clip.speed_percent,
-            )
         source = Path(asset.verified.path)
         if not source.is_file():
             raise EditorError(
@@ -642,6 +632,7 @@ def create_app(
             clip.source_in_ticks,
             clip.duration_ticks,
             settings.frame_ticks,
+            clip.speed_percent,
         )
         commands, notes = stabilize_module.plan(
             project,
@@ -650,6 +641,9 @@ def create_app(
             strength=request.strength,
             max_crop=request.max_crop,
         )
+        # Say which frames were measured: a clip that plays at 200 % was sampled at half the
+        # sequence rate on purpose, and the reply is where a person can check that.
+        notes = {**notes, "sample_rate": motion["sample_rate"], "speed_percent": clip.speed_percent}
         if not commands:
             # Nothing to write (strength 0). Report the measurement without burning a revision.
             return {
@@ -824,6 +818,7 @@ def create_app(
             estimate_scale,
             request.max_gap_frames,
             request.reacquire,
+            clip.speed_percent,
         )
         points = [
             {
@@ -871,6 +866,8 @@ def create_app(
                 "reacquired_at_ticks": [request.from_ticks + at for at in result["reacquired_at"]],
                 "gap_closure": result["gap_closure"],
                 "scale_estimated": result["scale"],
+                "speed_percent": result["speed_percent"],
+                "sample_rate": result["sample_rate"],
                 "gaps": [
                     {
                         "from_ticks": request.from_ticks + gap["from_ticks"],

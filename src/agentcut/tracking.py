@@ -25,6 +25,7 @@ from .contracts import (
     EditorError,
     FrameRate,
 )
+from .speed import analysis_rate
 
 ANALYSIS_WIDTH = 256
 MAX_TEMPLATE = 96 * 54
@@ -45,10 +46,18 @@ def decode_luma(
     source_width: int,
     source_height: int,
     limit: int,
+    speed_percent: int = 100,
 ) -> tuple[int, int, list[bytes]]:
-    """Decode at most `limit` frames as gray bitmaps, never wider than the analysis width."""
+    """Decode at most `limit` frames as gray bitmaps, never wider than the analysis width.
+
+    `speed_percent` is how fast the clip plays: the samples are pulled at `rate / speed`, so sample
+    `i` is the frame the timeline shows at its `i`-th frame rather than the `i`-th frame of the
+    source. The window read from the file grows by the same factor, because a sped-up clip spends
+    more source than it spends timeline.
+    """
     width = _plan_width(source_width)
     height = max(2, round(source_height * width / source_width / 2) * 2)
+    sample_num, sample_den = analysis_rate(rate, speed_percent)
     argv = [
         str(ffmpeg),
         "-v",
@@ -59,9 +68,9 @@ def decode_luma(
         "-i",
         str(source),
         "-t",
-        f"{duration_seconds:.6f}",
+        f"{duration_seconds * speed_percent / 100:.6f}",
         "-vf",
-        f"fps={rate.numerator}/{rate.denominator},scale={width}:{height}:flags=area,format=gray",
+        f"fps={sample_num}/{sample_den},scale={width}:{height}:flags=area,format=gray",
         "-frames:v",
         str(limit),
         "-f",
@@ -440,11 +449,21 @@ def track_mask(
     scale: bool = True,
     max_gap: int = GAP_LIMIT,
     reacquire: bool = True,
+    speed_percent: int = 100,
 ) -> dict:
     """Track the mask box for `frames` frames and return mask keyframes in clip-local ticks."""
     duration = frames * frame_ticks / TIMEBASE
+    sample_num, sample_den = analysis_rate(rate, speed_percent)
     width, height, decoded = decode_luma(
-        ffmpeg, source, start_ticks / TIMEBASE, duration, rate, source_width, source_height, frames
+        ffmpeg,
+        source,
+        start_ticks / TIMEBASE,
+        duration,
+        rate,
+        source_width,
+        source_height,
+        frames,
+        speed_percent,
     )
     if len(decoded) < 2:
         raise EditorError("TRACK_FAILED", "too few frames to track", 422)
@@ -477,6 +496,8 @@ def track_mask(
         ],
         "scale": scale,
         "frame_ticks": frame_ticks,
+        "speed_percent": speed_percent,
+        "sample_rate": f"{sample_num}/{sample_den}",
         "lost_at_ticks": None if result["lost_at"] is None else result["lost_at"] * frame_ticks,
         "points": points,
     }

@@ -64,6 +64,21 @@ def consumed_source_ticks(clip, quantum: int) -> int:
     return round_to(total, quantum)
 
 
+def analysis_rate(rate, speed_percent: int) -> tuple[int, int]:
+    """The source frame rate an analysis has to sample at, so one analysed frame is one shown frame.
+
+    A clip at 200 % spends two seconds of source on every second of timeline, so pulling the
+    sequence rate out of the source would measure frames the viewer never sees and write that curve
+    onto the ticks it does. Sampling at `rate / speed` makes the analysis index and the timeline
+    index the same frame: the mask path and the stabilisation correction then land on the picture
+    they were measured from. A speed curve cannot be reduced to one rate, which is why both features
+    still refuse it.
+    """
+    numbers = (100 * rate.numerator, max(1, rate.denominator * speed_percent))
+    shared = math.gcd(*numbers)
+    return (numbers[0] // shared, numbers[1] // shared)
+
+
 def _marks(clip, points, base: float, quantum: int) -> list[int]:
     """Timeline boundaries: clip ends, curve nodes, and the subdivision a steep ramp needs."""
     wanted: list[tuple[int, int, int]] = []

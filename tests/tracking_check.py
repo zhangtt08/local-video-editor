@@ -1018,6 +1018,90 @@ def http_suite(folder: Path) -> None:
             "the object at that source frame"
         )
 
+        # 1.86: the analysis has to sample the frames the timeline *shows*. A clip at 200 % spends
+        # two source frames on every frame it plays, so one analysed frame per source frame would
+        # measure a picture the viewer never sees and write it onto the ticks that do.
+        revision = client.get(path).json()["revision"]
+        sped = client.post(
+            path + "/edits",
+            json={
+                "request_id": "sped",
+                "expected_revision": revision,
+                "commands": [
+                    {
+                        "op": "clip.add",
+                        "clip": {
+                            "id": "c5",
+                            "asset_id": "a",
+                            "track_id": "v",
+                            "position_ticks": 6 * T,
+                            "duration_ticks": T + T // 2,
+                            "speed_percent": 200,
+                            "mask": mask_box(
+                                center_x=path_at(0.0)[0],
+                                center_y=path_at(0.0)[1],
+                            ),
+                        },
+                    },
+                    {
+                        "op": "clip.add",
+                        "clip": {
+                            "id": "c6",
+                            "asset_id": "a",
+                            "track_id": "v",
+                            "position_ticks": 8 * T,
+                            "duration_ticks": T,
+                            "speed_percent": 50,
+                            "mask": mask_box(
+                                center_x=path_at(0.0)[0],
+                                center_y=path_at(0.0)[1],
+                            ),
+                        },
+                    },
+                ],
+            },
+        )
+        assert sped.status_code == 200, sped.text[:300]
+        revision = sped.json()["project"]["revision"]
+        strides = {}
+        for clip_id, frames, wanted_rate in (("c5", 45, "15/1"), ("c6", 30, "60/1")):
+            run = client.post(
+                path + f"/clips/{clip_id}/track",
+                json={
+                    "request_id": f"stride-{clip_id}",
+                    "expected_revision": revision,
+                    "frames": frames,
+                },
+            )
+            assert run.status_code == 200, run.text[:400]
+            reply = run.json()["tracking"]
+            # The window read has to be the whole one: a `-t` that forgot the speed would hand
+            # back a shorter path whose every point is still correct.
+            assert reply["tracked_frames"] == frames, (clip_id, reply)
+            revision = run.json()["project"]["revision"]
+            assert reply["speed_percent"] != 100 and reply["sample_rate"] == wanted_rate, reply
+            shown = sorted(
+                (key["at_ticks"], key["value"])
+                for key in run.json()["project"]["clips"][clip_id]["keyframes"]
+                if key["property"] == "mask_x"
+            )
+            speed = reply["speed_percent"] / 100
+            worst_shown = max(abs(value - path_at(at / T * speed)[0]) for at, value in shown)
+            # What the old stride measured: the object where the source plays it, one frame per
+            # source frame. Kept as a foil so the assertion above cannot pass by accident.
+            worst_source = max(abs(value - path_at(at / T)[0]) for at, value in shown)
+            strides[clip_id] = (speed, worst_shown, worst_source)
+            assert worst_shown * WIDTH < 4.0, (clip_id, worst_shown)
+            if speed != 1.0:
+                assert worst_source * WIDTH > 20.0, (clip_id, worst_source)
+        print(
+            "   stride: a 200 % clip sampled at 15/1 fps and a 50 % clip at 60/1 fps both "
+            "follow the object the timeline shows (worst "
+            f"{strides['c5'][1] * WIDTH:.2f} / {strides['c6'][1] * WIDTH:.2f} px) and are "
+            f"{strides['c5'][2] * WIDTH:.0f} / {strides['c6'][2] * WIDTH:.0f} px away from "
+            "the frames they never played"
+        )
+
 
 def media_suite(folder: Path) -> None:
     """The tracked keyframes must move the exported mask, not just the preview."""

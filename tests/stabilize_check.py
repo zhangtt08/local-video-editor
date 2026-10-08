@@ -973,17 +973,96 @@ def main() -> None:
             )
             assert refused.status_code == 422, refused.text[:200]
             assert refused.json()["error"]["code"] == "STABILIZE_INVALID", refused.text[:200]
+            # 1.86: a clip at 200 % plays every other source frame, so the anchors have to be
+            # measured two source frames apart. Compared against the fixture's written path at
+            # both strides: matching the source stride would mean correcting motion the viewer
+            # never sees.
+            stride = measure(
+                FFMPEG,
+                shake,
+                WIDTH,
+                HEIGHT,
+                project.settings.frame_rate,
+                0,
+                int(SECONDS * T / 2),
+                project.settings.frame_ticks,
+                200,
+            )
+            grain = WIDTH / stride["analysis_width"] / WIDTH
+            offsets = stride["offsets"]
+            # Half the timeline, half the frames: one measured frame per frame that plays.
+            assert len(offsets) == int(SECONDS * FPS / 2) - 1, (
+                len(offsets),
+                stride["analysed_frames"],
+            )
+            shown = max(
+                abs(abs(point[axis]) - abs(truth(2 * (index + 1))[axis]))
+                for index, point in enumerate(offsets)
+                for axis in (0, 1)
+            )
+            source_stride = max(
+                abs(abs(point[axis]) - abs(truth(index + 1)[axis]))
+                for index, point in enumerate(offsets)
+                for axis in (0, 1)
+            )
+            assert shown <= 2 * grain, (shown, grain)
+            assert source_stride > 8 * grain, source_stride
             sped = client.post(
                 f"/v1/projects/{project.id}/clips/fast/stabilize",
-                json={"request_id": "no-speed", "expected_revision": audio},
+                json={"request_id": "speed-ok", "expected_revision": audio, "dry_run": True},
             )
-            assert sped.status_code == 422, sped.text[:200]
-            assert sped.json()["error"]["code"] == "STABILIZE_INVALID", sped.text[:200]
+            assert sped.status_code == 200, sped.text[:300]
+            notes = sped.json()["stabilization"]
+            assert notes["speed_percent"] == 200, notes
+            assert notes["sample_rate"] == "15/1", notes
             assert client.get(f"/v1/projects/{project.id}").json()["revision"] == audio
+            # A curve is still a refusal, not a guess: no single stride describes it. The new
+            # head is handed back so the cases below keep using the revision they expect.
+            curved = client.post(
+                f"/v1/projects/{project.id}/edits",
+                json={
+                    "request_id": "curvy",
+                    "expected_revision": audio,
+                    "commands": [
+                        {
+                            "op": "clip.add",
+                            "clip": {
+                                "id": "curvy",
+                                "asset_id": "shake",
+                                "track_id": "v",
+                                "position_ticks": int(3 * T),
+                                "duration_ticks": int(T),
+                            },
+                        },
+                        {
+                            "op": "clip.speed_curve",
+                            "clip_id": "curvy",
+                            "points": [
+                                {"at_ticks": 0, "percent": 100},
+                                {"at_ticks": T - 1, "percent": 200},
+                            ],
+                        },
+                    ],
+                },
+            )
+            assert curved.status_code == 200, curved.text[:300]
+            audio = curved.json()["project"]["revision"]
+            ramped_stab = client.post(
+                f"/v1/projects/{project.id}/clips/curvy/stabilize",
+                json={"request_id": "no-curve", "expected_revision": audio},
+            )
+            assert ramped_stab.status_code == 422, ramped_stab.text[:200]
+            assert ramped_stab.json()["error"]["code"] == "STABILIZE_INVALID", ramped_stab.text[
+                :200
+            ]
+            assert client.get(f"/v1/projects/{project.id}").json()["revision"] == audio, (
+                "a refused stabilise moved the head"
+            )
             print(
-                "an audio clip and a 200% clip are both refused as "
-                "STABILIZE_INVALID without moving "
-                "the head"
+                f"a 200% clip is measured at {notes['sample_rate']} fps: its anchors follow "
+                f"the frames the timeline shows (worst {shown * WIDTH:.2f} px = "
+                f"{shown / grain:.1f} analysis px) and sit {source_stride * WIDTH:.1f} px away "
+                "from the source frames it skipped; the dry run wrote nothing"
             )
 
             # A crop budget of 0 cannot hide anything: the plan has to say so rather than lie.
@@ -1218,7 +1297,7 @@ def main() -> None:
             f"{after_wiggle * WIDTH:.1f} px instead of {before * WIDTH:.1f} px and rolls "
             f"{roll_after:.2f} degrees instead of {roll_before:.2f}; a 20 px/s pan keeps "
             f"{got / wanted * 100:.0f}% of its travel, strength 0 writes nothing, borders stay "
-            "covered, and audio/speed/max_crop cases are refused by name"
+            "covered, and audio / speed-curve / max_crop cases are refused by name"
         )
 
 

@@ -455,10 +455,13 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         `strength 0` takes it off again. A clip whose `x`/`y`/`rotation`/`scale` curves were keyed
         by hand is refused as `STABILIZE_CONFLICT` — the engine cannot tell those from its own —
         and a stabilised clip refuses `clip.speed`/`clip.speed_curve` and `clip.reframe` as
-        `STABILIZE_LOCKED`: the correction is one keyframe per source frame and lives in the same
+        `STABILIZE_LOCKED`: the correction is one keyframe per frame the clip plays and lives in
         `x`/`y`/`scale` curves the follow writes, so a speed change would play it at the wrong rate
         and a reframe would delete it while the record still claimed it. `sequence_id` measures and
-        writes a clip that lives inside a nested composition.
+        writes a clip that lives inside a nested composition. A clip at a constant speed is
+        measured on the frames it actually plays — `stabilization.sample_rate` names the stride
+        (15/1 for a 200 % clip of a 30 fps source); a speed curve is still refused, because no
+        single stride describes it.
         """
         return await call(
             "POST",

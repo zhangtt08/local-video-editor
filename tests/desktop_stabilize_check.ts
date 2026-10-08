@@ -19,8 +19,9 @@ assert.equal(plain, null, `a clean clip at 100% must be stabilisable, got: ${pla
 
 const ramp = stabilizeBlocked(clip({ speed_curve: [{ at_ticks: 0, speed_percent: 100 }] }));
 assert.ok(ramp?.includes("100%"), `a speed curve must be refused with its exit, got: ${ramp}`);
+// 1.86: a constant speed is a stride the sampler can follow, so it must not grey the button out.
 const fast = stabilizeBlocked(clip({ speed_percent: 200 }));
-assert.equal(fast, ramp, "a respeeded clip and a ramped clip are refused for the same reason");
+assert.equal(fast, null, `a clip at a constant 200% is measurable: ${fast}`);
 
 const scaled = stabilizeBlocked(clip({ keyframes: [{ property: "scale", at_ticks: 0, value: 1 }] }));
 assert.ok(scaled?.includes("缩放"), `the refusal must name the curve it would reuse, got: ${scaled}`);
@@ -53,11 +54,13 @@ const owned = stabilizeBlocked(clip({
   ],
 }));
 assert.equal(owned, null, `a clip carrying its own stabilisation must be re-pressable, got: ${owned}`);
-const ownedRamp = stabilizeBlocked(clip({ stabilization: record, speed_percent: 200 }));
-assert.ok(ownedRamp?.includes("100%"), `ownership must not outvote the speed rule, got: ${ownedRamp}`);
+const ownedFast = stabilizeBlocked(clip({ stabilization: record, speed_percent: 200 }));
+assert.equal(ownedFast, null, `re-pressing a sped clip that owns its record must stay open: ${ownedFast}`);
+const ownedRamp = stabilizeBlocked(clip({ stabilization: record, speed_curve: [{ at_ticks: 0, speed_percent: 150 }] }));
+assert.ok(ownedRamp?.includes("100%"), `ownership must not outvote the speed-curve rule, got: ${ownedRamp}`);
 
 console.log(
-  "PASS: 画面稳定 is offered exactly when the engine would accept it — speed cases and the four "
-  + "transform curves block with a named exit, mask and opacity curves do not, and the clip's own "
-  + "stabilisation record re-opens the button without overruling the speed rule",
+  "PASS: 画面稳定 is offered exactly when the engine would accept it — a speed *curve* and the "
+  + "four transform curves block with a named exit, a constant 200% / mask / opacity curve do not, "
+  + "and the clip's own stabilisation record re-opens the button without outvoting the curve rule",
 );
