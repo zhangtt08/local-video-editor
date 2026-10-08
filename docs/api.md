@@ -1635,8 +1635,17 @@ clip/track id（不另写一套读取规则），派生的批次也一并盖上 
   不会把合成的响度压两遍；
 - `tests/self_check.py` 另外断言 MCP 的六个工具 schema 里都有 `sequence_id`——Agent 读的就是这份 schema。
 
-没单独端到端量过的一条：自动字幕（`/speech-captions`）在合成里的实际听写。改动与其他八条逐字相同
-（同一段 `sequence_view` + 同一个批次戳），字段在契约里可见，但本轮没有为它写媒体夹具。
+补测的一条（`tests/captions_comp_check.py`，真实音频 + 真实导出）：自动字幕（`/speech-captions`）在合成里的听写
+不再靠「改动与其他八条逐字相同」推断。同一段 Windows 语音合成的中文两句（7.769 秒，中间 1 秒静音）配一张
+0x404040 灰底画面，先在外层时间线听出 **2** 条cue（`大家好欢迎来到剪辑教学` / `今天我们学习自动侧目`），再把
+两条片段 `sequence.nest` 进合成 `s1`：外层问同一条片段回 404 且点名 `clip_id=c`（空的同名轨点名 `track_id=a1`，
+不存在的合成点名 `sequence_id=nope`）；带 `sequence_id=s1` 再问，听出的 cue 与外层**逐字逐 tick 相同**，
+内容寻址的 `subt-…` 轨 id 也相同；dry run 在合成的投影里预览到那 2 条字幕片段、库里仍是 revision 2；
+apply 之后 revision 3，字幕轨与 cue 片段只出现在 `sequences[s1]` 里，外层依旧只有容器片段 `cn`；
+换 request_id 重跑（含 dry run）撞 `DUPLICATE_ID`；`replace_track_id` 在合成里原位重生成同 id 同条数（revision 4）。
+最后导出外层时间线：`comp-captions.mp4` 复检通过（10 秒 / h264+aac），两条字幕各自的中间帧量到 55 与 30 个
+>200 的亮像素（>235 为 11 与 3），而前导、两条之间的那 1 秒空隙与结尾三处都是 0——灰底本身一个亮像素都没有，
+所以这些字只可能来自合成里那条字幕轨。
 
 ## 1.75 每一条分析拒绝都点名它说的是谁
 
