@@ -18,6 +18,7 @@ from agentcut.contracts import (
     ReframeRequest,
     SequenceSettings,
     ShapeMask,
+    Stabilization,
     Track,
     VerifiedMedia,
 )
@@ -376,6 +377,28 @@ def plan_suite() -> None:
         "impossible ceiling": refused(project_with(tracked_clip()), max_scale=9.0),
     }
     assert all(value == "INVALID_REFRAME" for value in cases.values()), cases
+
+    # 1.70: two features cannot own the same three curves. A stabilisation writes `x`/`y`/`scale`
+    # from the camera's motion; the follow writes them from the subject's path, as an absolute
+    # replacement. Whichever runs second silently deletes the other's work — and the record would
+    # keep telling the editor and the Agent that the shot is still steadied.
+    stabilised = tracked_clip()
+    stabilised.stabilization = Stabilization(
+        strength=1.0,
+        max_crop=0.1,
+        points=3,
+        translation_correction=0.02,
+        roll_correction=0.0,
+        zoom_to_hide_borders=1.04,
+        analysed_frames=3,
+    )
+    assert refused(project_with(stabilised), max_scale=2.0) == "STABILIZE_LOCKED", (
+        "a reframe over a stabilised clip overwrote the correction instead of refusing"
+    )
+    print(
+        "   reframe: a clip carrying a stabilisation is refused as STABILIZE_LOCKED, because both "
+        "features write the same three curves"
+    )
     # A tracked free-form outline has a centre too, so the follow reads it the same way.
     path_commands, path_notes = reframe_plan(
         project_with(tracked_clip(shape="path")), clip_id="c", max_scale=2.0
@@ -544,6 +567,53 @@ def http_suite(folder: Path) -> None:
                     **extra,
                 },
             )
+
+        # 1.70, over HTTP: a clip carrying a stabilisation refuses the follow by name, and the same
+        # request lands once the record is cleared — the exit the message names has to work.
+        stamped = client.post(
+            path + "/edits",
+            json={
+                "request_id": "stamp",
+                "expected_revision": revision,
+                "commands": [
+                    {
+                        "op": "clip.stabilize_record",
+                        "clip_id": "c",
+                        "record": {
+                            "strength": 1.0,
+                            "max_crop": 0.1,
+                            "points": 3,
+                            "translation_correction": 0.02,
+                            "roll_correction": 0.0,
+                            "zoom_to_hide_borders": 1.04,
+                            "analysed_frames": 3,
+                        },
+                    }
+                ],
+            },
+        ).json()
+        blocked = request("blocked", revision=stamped["project"]["revision"])
+        assert blocked.status_code == 422, blocked.text[:200]
+        assert blocked.json()["error"]["code"] == "STABILIZE_LOCKED", blocked.text[:200]
+        assert client.get(path).json()["revision"] == stamped["project"]["revision"], (
+            "a refused reframe still wrote"
+        )
+        unstamped = client.post(
+            path + "/edits",
+            json={
+                "request_id": "unstamp",
+                "expected_revision": stamped["project"]["revision"],
+                "commands": [{"op": "clip.stabilize_record", "clip_id": "c", "record": None}],
+            },
+        ).json()
+        allowed = request("allowed", revision=unstamped["project"]["revision"])
+        assert allowed.status_code == 200, allowed.text[:200]
+        print(
+            "   reframe over HTTP: a stabilised clip is refused as STABILIZE_LOCKED without moving "
+            "the head, and the same request lands once the record is cleared"
+        )
+        # Those two commits moved the head; everything below plans against where it is now.
+        revision = unstamped["project"]["revision"]
 
         preview = request("p")
         assert preview.status_code == 200, preview.text

@@ -86,6 +86,17 @@ def plan(
             422,
             clip_id=clip_id,
         )
+    if clip.stabilization is not None:
+        raise EditorError(
+            "STABILIZE_LOCKED",
+            "this clip is stabilised: the follow writes the same `x`/`y`/`scale` curves the "
+            "correction lives in, and it writes them absolutely, so running it would delete the "
+            "stabilisation while the clip still claimed to carry one. Take the stabilisation off "
+            "first (stabilize at strength 0, or `clip.stabilize_record` with no record), then "
+            "reframe.",
+            422,
+            clip_id=clip_id,
+        )
     if not 1.0 <= max_scale <= MAX_SCALE_LIMIT or not isfinite(max_scale):
         raise EditorError(
             "INVALID_REFRAME",

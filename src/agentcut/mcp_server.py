@@ -331,8 +331,10 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         strength, one call) instead of stacking a second copy of the same measurement, and
         `strength 0` takes it off again. A clip whose `x`/`y`/`rotation`/`scale` curves were keyed
         by hand is refused as `STABILIZE_CONFLICT` — the engine cannot tell those from its own —
-        and a stabilised clip refuses `clip.speed`/`clip.speed_curve` as `STABILIZE_LOCKED`,
-        because the correction is one keyframe per source frame.
+        and a stabilised clip refuses `clip.speed`/`clip.speed_curve` and `clip.reframe` as
+        `STABILIZE_LOCKED`: the correction is one keyframe per source frame and lives in the same
+        `x`/`y`/`scale` curves the follow writes, so a speed change would play it at the wrong rate
+        and a reframe would delete it while the record still claimed it.
         """
         return await call(
             "POST",

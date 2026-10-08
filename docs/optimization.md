@@ -2445,3 +2445,41 @@ sigma；回执锚点再加两条，确认「只写默认值的新键」不会把
   SHA256 `41B0CBD7BE81EC7B03A985C64AF77FD256B57666FBCAC33A42AFA9DB97FE56F9`；安装版 189,918,479
   字节 SHA256 `133FBF1741F04BF8DD475FAED6104A53C28D244D0F36F26C06888600DCD985F8`。没有自有代码签名
   证书，NSIS 向导未做点击验收。
+
+## 1.70.0 稳定与重构图不能同时拥有同三条曲线（2026-10-08）
+
+- 找缺陷的方法还是组合，而不是单功能：1.69 给稳定加了记录之后，「谁拥有 `x`/`y`/`scale`」第一次成了
+  可以问的问题。一问就撞上主体跟随重构图——它写的正是这三条，而且是整条改写。先稳定再重构图，
+  稳定被静默删掉，片段上那条记录还留着：界面写着「已稳定 · 强度 100%」，导出里已经没有抵消，
+  速度锁还在为一件不存在的事挡路。
+- 修法是一句守卫（`reframe_plan` 见到 `Clip.stabilization` 就 `STABILIZE_LOCKED`），不是新功能：
+  反方向（先重构图再稳定）1.68 的守卫本来就管住了，因为重构图留下的曲线没有记录。界面同一条判断
+  把「主体跟随重构图」灰掉，`title` 给的是引擎那句话；`STABILIZE_LOCKED` 的中文提示改成同时说清
+  变速与重构图两件事。
+- 门禁先红后绿：`tests/reframe_check.py` 计划层与 HTTP 层各一条断言，在守卫落地之前跑是红的
+  （红的输出就是缺陷的实证），加上守卫之后绿。HTTP 层还要把记录清掉再请求一次，证明消息里说的出路
+  真的走得通。
+- 顺带记一条流程：在既有 HTTP 门禁中间插入两次会提交的编辑，必须把局部 `revision` 一起推进——
+  后面「planning 不写盘」那条断言拿的是旧 head，第一次跑就红在那儿。
+
+### 发布验收（1.70.0）
+
+- `scripts/build_engine.py` 先重冻结（`FREEZE=0`），再 `npm run dist`（`DIST=0`）。包内实例
+  `1250e6f6b4b7` 的 `/v1/info` 报 `app_version=1.70.0`，`capabilities` 同时开着
+  `clip_stabilize` 与 `subject_reframe`。
+- 包内 HTTP 实测（`package_check_170.py`，只用包里的 FFmpeg 与 HTTP）：没有稳定记录时重构图答的是它
+  自己的理由（这条片段没有跟好的遮罩路径）`INVALID_REFRAME`；按一次稳定（59 点/曲线 + 记录）之后
+  同一条重构图请求 422 `STABILIZE_LOCKED`，回读的工程 revision 一字未动；用
+  `clip.stabilize_record` 把记录清掉，同一句请求又回到 `INVALID_REFRAME`——锁确实是唯一挡路的，
+  消息里说的出路真的走得通。
+- 包内 MCP 文本同时点名 `clip.reframe` 与 `STABILIZE_LOCKED`；`app.asar` 里搜得到
+  「主体跟随重构图」「会把稳定悄悄抹掉」「先「取消稳定」，再重构图」（按界面文字与类名断言，
+  不按会被打包改名的标识符断言）。
+- 门禁：`ruff check` / `ruff format --check`、`npm run typecheck`、11 项桌面 TS 全绿，
+  `tests/suite_check.py` 串行 **59/59**（`SUITE=0`）；`tests/reframe_check.py` 计划层与 HTTP 层两条
+  新断言在守卫落地前先跑为红（红的输出即缺陷实证），加守卫后为绿。
+- `release/win-unpacked/AgentCut.exe` 启动到「AgentCut 剪辑台」1480×900，标题栏「引擎在线 v1.70.0」
+  （`AgentCut-1.70-原生窗口.png`），关闭后无残留进程。便携版 189,757,895 字节
+  SHA256 `987093A74BD378FDA90098FBF25D525E4060D7AFF368B4C4D431FF2F348F5C5D`；安装版 189,918,614
+  字节 SHA256 `2B7D8791783E8E6EE01B5C55F2906070C2D52A42B01340B35FCDDCA1D1D31480`。没有自有代码签名
+  证书，NSIS 向导未做点击验收。
