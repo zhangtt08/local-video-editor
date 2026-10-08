@@ -38,7 +38,7 @@ def sequence_view(project: Project, sequence_id: str | None = None) -> Project:
         return project
     sequence = project.sequences.get(sequence_id)
     if sequence is None:
-        raise EditorError("NOT_FOUND", "sequence does not exist", 404)
+        raise EditorError("NOT_FOUND", "sequence does not exist", 404, sequence_id=sequence_id)
     return project.model_copy(update={"tracks": sequence.tracks, "clips": sequence.clips})
 
 
@@ -257,7 +257,9 @@ def apply_commands(
             elif command.op == "sequence.update":
                 sequence = candidate.sequences.get(command.sequence_id)
                 if sequence is None:
-                    raise EditorError("NOT_FOUND", "sequence does not exist", 404)
+                    raise EditorError(
+                        "NOT_FOUND", "sequence does not exist", 404, sequence_id=command.sequence_id
+                    )
                 if command.name is not None:
                     sequence.name = command.name
                 if command.duration_ticks is not None:
@@ -273,7 +275,9 @@ def apply_commands(
                         "return to the main timeline before removing this sequence",
                     )
                 if command.sequence_id not in candidate.sequences:
-                    raise EditorError("NOT_FOUND", "sequence does not exist", 404)
+                    raise EditorError(
+                        "NOT_FOUND", "sequence does not exist", 404, sequence_id=command.sequence_id
+                    )
                 assets = {
                     a.id for a in candidate.assets.values() if a.sequence_id == command.sequence_id
                 }

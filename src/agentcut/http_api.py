@@ -445,7 +445,7 @@ def create_app(
         project = projects.get(project_id)
         asset = project.assets.get(asset_id)
         if asset is None:
-            raise EditorError("NOT_FOUND", "asset is not in this project", 404)
+            raise EditorError("NOT_FOUND", "asset is not in this project", 404, asset_id=asset_id)
         if asset.verified is None:
             raise EditorError("UNVERIFIED_ASSET", "asset has no verified media", 422)
         path = Path(asset.verified.path)
@@ -480,7 +480,7 @@ def create_app(
         project = projects.get(project_id)
         asset = project.assets.get(asset_id)
         if asset is None:
-            raise EditorError("NOT_FOUND", "asset is not in this project", 404)
+            raise EditorError("NOT_FOUND", "asset is not in this project", 404, asset_id=asset_id)
         if asset.verified is None:
             raise EditorError("UNVERIFIED_ASSET", "asset has no verified media", 422)
         return asset
@@ -568,7 +568,7 @@ def create_app(
         project = sequence_view(root, request.sequence_id)
         clip = project.clips.get(clip_id)
         if clip is None:
-            raise EditorError("NOT_FOUND", "clip is not in this project", 404)
+            raise EditorError("NOT_FOUND", "clip is not in this project", 404, clip_id=clip_id)
         asset = project.assets.get(clip.asset_id)
         if asset is None or asset.kind != "video" or asset.verified is None:
             raise EditorError(
@@ -597,7 +597,14 @@ def create_app(
             )
         source = Path(asset.verified.path)
         if not source.is_file():
-            raise EditorError("MEDIA_MISSING", "source file is gone", 410)
+            raise EditorError(
+                "MEDIA_MISSING",
+                "source file is gone",
+                410,
+                clip_id=clip.id,
+                asset_id=clip.asset_id,
+                asset_label=source.name,
+            )
         settings = project.settings
         motion = stabilize_module.measure(
             engine.ffmpeg,
@@ -642,7 +649,7 @@ def create_app(
         project = sequence_view(root, request.sequence_id)
         clip = project.clips.get(clip_id)
         if clip is None:
-            raise EditorError("NOT_FOUND", "clip is not in this project", 404)
+            raise EditorError("NOT_FOUND", "clip is not in this project", 404, clip_id=clip_id)
         asset = project.assets.get(clip.asset_id)
         if asset is None or asset.kind != "video" or asset.verified is None:
             raise EditorError(
@@ -670,7 +677,14 @@ def create_app(
             )
         source = Path(asset.verified.path)
         if not source.is_file():
-            raise EditorError("MEDIA_MISSING", "source file is gone", 410)
+            raise EditorError(
+                "MEDIA_MISSING",
+                "source file is gone",
+                410,
+                clip_id=clip.id,
+                asset_id=clip.asset_id,
+                asset_label=source.name,
+            )
         frame_ticks = project.settings.frame_ticks
         speed = clip.speed_percent / 100
         start = clip.source_in_ticks + int(request.from_ticks * speed)
@@ -707,7 +721,14 @@ def create_app(
             for point in result["points"]
         ]
         if len(points) < 2:
-            raise EditorError("TRACK_FAILED", "too few frames matched to track", 422)
+            raise EditorError(
+                "TRACK_FAILED",
+                "too few frames matched to track",
+                422,
+                clip_id=clip_id,
+                matched=len(points),
+                frames=request.frames,
+            )
         batch = EditBatch(
             request_id=request.request_id,
             expected_revision=request.expected_revision,
@@ -794,14 +815,21 @@ def create_app(
         project = sequence_view(root, request.sequence_id)
         clip = project.clips.get(clip_id)
         if clip is None:
-            raise EditorError("NOT_FOUND", "clip is not in this project", 404)
+            raise EditorError("NOT_FOUND", "clip is not in this project", 404, clip_id=clip_id)
         problem = audio_scan_problem(project, clip)
         if problem:
             raise EditorError("INVALID_SILENCE_TARGET", problem, 422, clip_id=clip_id)
         asset = project.assets[clip.asset_id]
         source = Path(asset.verified.path)
         if not source.is_file():
-            raise EditorError("MEDIA_MISSING", "source file is gone", 410)
+            raise EditorError(
+                "MEDIA_MISSING",
+                "source file is gone",
+                410,
+                clip_id=clip.id,
+                asset_id=clip.asset_id,
+                asset_label=source.name,
+            )
         result = silence.analyse(
             engine.ffmpeg,
             source,
@@ -845,13 +873,20 @@ def create_app(
         project = sequence_view(root, request.sequence_id)
         clip = project.clips.get(clip_id)
         if clip is None:
-            raise EditorError("NOT_FOUND", "clip is not in this project", 404)
+            raise EditorError("NOT_FOUND", "clip is not in this project", 404, clip_id=clip_id)
         problem = audio_scan_problem(project, clip) or volume_problem(clip)
         if problem:
             raise EditorError("INVALID_LOUDNESS_TARGET", problem, 422, clip_id=clip_id)
         source = Path(project.assets[clip.asset_id].verified.path)
         if not source.is_file():
-            raise EditorError("MEDIA_MISSING", "source file is gone", 410)
+            raise EditorError(
+                "MEDIA_MISSING",
+                "source file is gone",
+                410,
+                clip_id=clip.id,
+                asset_id=clip.asset_id,
+                asset_label=source.name,
+            )
         speed = clip.speed_percent / 100
         measured = measure_loudness(
             engine.ffmpeg,
@@ -894,7 +929,7 @@ def create_app(
         root = projects.get(project_id)
         project = sequence_view(root, request.sequence_id)
         if next((track for track in project.tracks if track.id == track_id), None) is None:
-            raise EditorError("NOT_FOUND", "track is not in this project", 404)
+            raise EditorError("NOT_FOUND", "track is not in this project", 404, track_id=track_id)
         commands: list[dict] = []
         clips: list[dict] = []
         for clip in sorted(
@@ -907,7 +942,14 @@ def create_app(
                 continue
             source = Path(project.assets[clip.asset_id].verified.path)
             if not source.is_file():
-                raise EditorError("MEDIA_MISSING", "source file is gone", 410)
+                raise EditorError(
+                    "MEDIA_MISSING",
+                    "source file is gone",
+                    410,
+                    clip_id=clip.id,
+                    asset_id=clip.asset_id,
+                    asset_label=source.name,
+                )
             speed = clip.speed_percent / 100
             measured = measure_loudness(
                 engine.ffmpeg,
@@ -1065,7 +1107,7 @@ def create_app(
         root = projects.get(project_id)
         project = sequence_view(root, request.sequence_id)
         if next((track for track in project.tracks if track.id == track_id), None) is None:
-            raise EditorError("NOT_FOUND", "track is not in this project", 404)
+            raise EditorError("NOT_FOUND", "track is not in this project", 404, track_id=track_id)
         frame_ticks = project.settings.frame_ticks
         commands: list[dict] = []
         scanned: list[dict] = []
@@ -1079,7 +1121,14 @@ def create_app(
                 continue
             source = Path(project.assets[clip.asset_id].verified.path)
             if not source.is_file():
-                raise EditorError("MEDIA_MISSING", "source file is gone", 410)
+                raise EditorError(
+                    "MEDIA_MISSING",
+                    "source file is gone",
+                    410,
+                    clip_id=clip.id,
+                    asset_id=clip.asset_id,
+                    asset_label=source.name,
+                )
             result = silence.analyse(
                 engine.ffmpeg,
                 source,
@@ -1137,17 +1186,29 @@ def create_app(
         """
         engine = require_media()
         if request.clip_id is None and request.track_id is None:
-            raise EditorError("INVALID_REQUEST", "name a clip_id or a track_id to transcribe", 422)
+            raise EditorError(
+                "INVALID_REQUEST",
+                "name a clip_id or a track_id to transcribe",
+                422,
+                clip_id=None,
+                track_id=None,
+            )
         if request.clip_id is not None and request.track_id is not None:
             raise EditorError(
-                "INVALID_REQUEST", "name either a clip_id or a track_id, not both", 422
+                "INVALID_REQUEST",
+                "name either a clip_id or a track_id, not both",
+                422,
+                clip_id=request.clip_id,
+                track_id=request.track_id,
             )
         root = projects.get(project_id)
         project = sequence_view(root, request.sequence_id)
         if request.clip_id is not None:
             chosen = project.clips.get(request.clip_id)
             if chosen is None:
-                raise EditorError("NOT_FOUND", "clip is not in this project", 404)
+                raise EditorError(
+                    "NOT_FOUND", "clip is not in this project", 404, clip_id=request.clip_id
+                )
             clips = [chosen]
         else:
             clips = sorted(
@@ -1155,7 +1216,9 @@ def create_app(
                 key=lambda c: c.position_ticks,
             )
             if not clips:
-                raise EditorError("NOT_FOUND", "this track holds no clips", 404)
+                raise EditorError(
+                    "NOT_FOUND", "this track holds no clips", 404, track_id=request.track_id
+                )
         cues: list[dict] = []
         scanned: list[dict] = []
         model_name = ""
@@ -1170,7 +1233,14 @@ def create_app(
                 continue
             source = Path(project.assets[clip.asset_id].verified.path)
             if not source.is_file():
-                raise EditorError("MEDIA_MISSING", "source file is gone", 410)
+                raise EditorError(
+                    "MEDIA_MISSING",
+                    "source file is gone",
+                    410,
+                    clip_id=clip.id,
+                    asset_id=clip.asset_id,
+                    asset_label=source.name,
+                )
             clip_cues, model_name = asr_module.cues_from_clip(
                 engine.ffmpeg,
                 source,
@@ -1249,7 +1319,7 @@ def create_app(
         root = projects.get(project_id)
         project = sequence_view(root, request.sequence_id)
         if next((track for track in project.tracks if track.id == track_id), None) is None:
-            raise EditorError("NOT_FOUND", "track is not in this project", 404)
+            raise EditorError("NOT_FOUND", "track is not in this project", 404, track_id=track_id)
         frame_ticks = project.settings.frame_ticks
         driver_ids = request.driver_track_ids
         if driver_ids is None:
@@ -1280,7 +1350,14 @@ def create_app(
                     continue
                 source = Path(project.assets[clip.asset_id].verified.path)
                 if not source.is_file():
-                    raise EditorError("MEDIA_MISSING", "source file is gone", 410)
+                    raise EditorError(
+                        "MEDIA_MISSING",
+                        "source file is gone",
+                        410,
+                        clip_id=clip.id,
+                        asset_id=clip.asset_id,
+                        asset_label=source.name,
+                    )
                 result = silence.analyse(
                     engine.ffmpeg,
                     source,

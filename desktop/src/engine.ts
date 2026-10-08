@@ -483,9 +483,37 @@ export class EngineError extends Error {
       STABILIZE_CONFLICT: "这段画面已经K过位移/缩放/旋转，再稳定一次会把同一段抖动抵消两遍、画面朝反方向偏。撤销这一步，或在曲线编辑器里清掉那几条，再按一次。",
       STABILIZE_LOCKED: "这段画面还带着一次稳定：抵消按「一帧源画面对一个关键帧」量出来，占的正是位移/缩放/旋转这三条曲线。改速度会让它按错的速率播放，主体跟随重构图又会把这几条整条改写、顺手抹掉稳定。先「取消稳定」（或画面稳定填 0），再做这一步，之后想稳定就再按一次。",
       BLUR_OUT_OF_RANGE: "柔焦/清晰的半径超出了导出与预览验证过一致的范围。把数值调小；滑杆的上限就是引擎在当前画幅下允许的最大值。",
+      NOT_FOUND: "这条时间线上找不到它——片段或轨道可能在另一个合成里（从时间线上方的面包屑进去再操作），或者已经被删掉。",
+      INVALID_SILENCE_TARGET: "这段没有可剪的静音，或它还不能剪：带变速曲线的片段要先去掉速度；也可以把阈值调低（默认 -35 dB）、把最短静音调短（默认 0.25 秒）再扫一次。",
+      INVALID_LOUDNESS_TARGET: "这段量不了响度：需要真正导入的音频，且音量没有被关键帧占用。先清掉音量曲线，或换一段素材。",
+      INVALID_REFRAME: "主体跟随要一条画了遮罩、遮罩中心有动画的片段：先画遮罩再按「跟踪主体」，或自己在位移/缩放上手打关键帧。",
+      INVALID_DUCK: "自动闪避要两条不同的声音轨：一条说话、一条被压。目标轨不能给自己闪避。",
+      DUCK_PLAN_TOO_LARGE: "一次要闪避的片段太多（上限 90 条）：先用「去空白」把口播切成几段，或把配乐拆成几条片段再分次闪避。",
+      INVALID_TRACK_TARGET: "要跟踪的窗口超出了这条片段：缩短帧数，或从更早的一帧开始。",
+      TRACK_FAILED: "画面里没有跟得住的东西：把遮罩盖到纹理明显的主体上再试，或加大搜索半径、减少帧数。",
+      INVALID_SPEED: "这个速度改不了：图片和文字没有播放速度，曲线变速要真正的媒体片段。",
+      PROJECT_LIMIT: "工程到了契约上限（片段、轨道或关键帧的数量）：删掉不用的素材与曲线，或把长段落拆成几条片段。",
+      TIME_OVERFLOW: "这一步超出了可保存的时间范围：把内容往前挪，或缩短这段。",
     };
     const hint = hints[this.code];
-    return hint ? hint : this.message;
+    if (!hint) return this.message;
+    // The engine names the file, clip, track or composition a refusal is about. A generic sentence
+    // on top of that still leaves a person guessing which of forty assets moved.
+    const details = this.details ?? {};
+    const named: string[] = [];
+    const file = typeof details.asset_label === "string" ? details.asset_label : "";
+    const asset = typeof details.asset_id === "string" ? details.asset_id : "";
+    if (file) named.push(`素材 ${file}`);
+    else if (asset) named.push(`素材 ${asset}`);
+    for (const [key, word] of [
+      ["clip_id", "片段"],
+      ["track_id", "轨道"],
+      ["sequence_id", "合成"],
+    ] as const) {
+      const value = details[key];
+      if (typeof value === "string" && value && value !== asset) named.push(`${word} ${value}`);
+    }
+    return named.length ? `${hint}（${named.join("、")}）` : hint;
   }
 }
 

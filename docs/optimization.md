@@ -2637,3 +2637,53 @@ sigma；回执锚点再加两条，确认「只写默认值的新键」不会把
   （`AgentCut-1.74-原生窗口.png`），关闭无残留。便携版 189,762,223 字节
   SHA256 `FB4FDF5544DAAA2D7547AE700FAD43D2DE5F528319D028C4193DB9DFFC46BA51`；安装版 189,922,939 字节
   SHA256 `759464BD8D3B124C69B3D5A0D4806E881BF63D89BE5B08E9E41C525094B79C65`。未签名，NSIS 向导未点击验收。
+
+## 1.75.0 每一条分析拒绝都点名它说的是谁
+
+- 找缺陷的方法还是组合：1.74 给九个分析入口开了 `sequence_id`，于是多了「合成不存在」「id 在另一条
+  时间线上」「窗口越过片段末尾」「driver 指向自己」这些拒绝形状。挨个问一遍（`tests/
+  analysis_sweep_check.py` 的前身，九条路由 × 各自边界形状 × dry/提交），当场抓到一批
+  `{"code": ..., "message": ..., "details": {}}`：错误码有了，「哪一条？」没人说。具体四处：
+  片段不在根时间线上时 `/clips/{id}/silence`、`/loudness` 的 404 是空 details；
+  `sequence_view` 对不存在的合成回「sequence does not exist」但不说是哪个 id（这条不止分析入口，
+  `timeline_edit` 走的是同一个函数）；跟不到东西时 `TRACK_FAILED` 不说量到几帧、要几帧；素材被挪走
+  之后八处 `MEDIA_MISSING` 全是「source file is gone」+ 空 details——四十个素材的工程里没人知道
+  该去找哪一个。
+- 改的是错误负载不是判断：`clip_id` / `track_id` / `asset_id` / `sequence_id` 进 `details`，
+  `TRACK_FAILED` 另带 `matched` 与 `frames`，`MEDIA_MISSING` 同时给片段与素材。一条拒绝的条件都没
+  放宽或收紧，`details` 本来就是 `EditorError` 的第四个参数，所以契约、reducer、回执都不动。
+- 门禁钉住五件事：不 5xx；每条拒绝有 code、有能读的句子、`details` 非空；`NOT_FOUND` 必须点出一个
+  id；拒绝绝不抬 revision；同一个问题 dry 与真实提交答案一致——唯一允许的差别是「空计划」
+  （`apply=false` 是 200 给你看，`apply=true` 按名字说「没什么可做」，因为提交一条空批次没有意义）。
+  再把样片从磁盘上删掉重问三次：三条路由都回 410 并点名打不开的片段与素材。实测这一轮：
+  **47 条拒绝、26 条点名 id、0 个 5xx、0 次 revision 变动**。
+- 夹具自己也要讲实话：`vid` 原本挂在「灰底 + 一条 tone」上，稳定与跟踪在那种画面上量不到东西，
+  于是门禁先红在 `STABILIZE_FAILED` / `TRACK_FAILED` 上——那不是缺陷，是夹具在撒谎。换成
+  「无周期纹理 + 抖动窗口 + 滑动的亮块」之后，稳定回的是 `STABILIZE_CONFLICT`（同一条片段先被
+  主体跟随写过 `x`/`y`/`scale`，1.68 的守卫本来就该挡），跟踪 200 写点，门禁量的才是它想量的东西。
+- 变异测试五条红：剥掉 `clip_id`（4 处）→「NOT_FOUND: empty details」；剥掉 `sequence_view` 的
+  `sequence_id` → ghost comp 当场红；剥掉 `asset_id`（8 处）→ 410 的断言红；只剥掉 `asset_label`（8 处）也红（文件名是这一句里唯一
+  人能看懂的部分）；剥掉 duck 的 `track_id=driver_id` → 「driver not there」红。剥掉 duck 的
+  `track_id=driver_id` → 「driver not there」红。全部还原后 `git status src` 只剩本轮该改的文件。
+- 界面是这件事的另一半：`EngineError.explain()` 原本用中文提示**替换**引擎的英文句子，所以名字即使
+  在 `details` 里也看不见。1.75 起它把 `asset_label`/`asset_id`/`clip_id`/`track_id`/`sequence_id`
+  织到提示后面（「素材原文件已被移动或删除，请重新导入。（素材 tone.mp4、片段 s）」），没有目标就不加
+  空括号；另外补上原先**根本没有中文说明**的 11 个分析错误码（`NOT_FOUND`、`INVALID_SILENCE_TARGET`、
+  `INVALID_LOUDNESS_TARGET`、`INVALID_REFRAME`、`INVALID_DUCK`、`DUCK_PLAN_TOO_LARGE`、
+  `INVALID_TRACK_TARGET`、`TRACK_FAILED`、`INVALID_SPEED`、`PROJECT_LIMIT`、`TIME_OVERFLOW`）——
+  在此之前按「去空白」「自动闪避」「主体跟随」被拒时，提示里就是引擎那句英文。
+  `tests/desktop_error_naming_check.ts` 逐条钉住（12 项桌面 TS 之一）。
+- 自己踩的坑记一条：给 AGENTS.md 打补丁时用 `decode → replace("\n", "\r\n") → encode` 写回，把
+  本来就有的 CRLF 变成了 `\r\r\n`（39 处）。`git diff --stat` 立刻显示 39 增 39 删——按字节改文件
+  必须先探测换行符，或者干脆用编辑工具。已从索引 blob 复原。
+
+- 发布验收：`build_engine.py`（`FREEZE=0`）+ `npm run dist`（`DIST=0`）。包内实例 `d341e1bc8040` 报
+  `app_version=1.75.0`；`package_check_175.py` 在打包后的引擎上量：不存在的合成 → 404 带
+  `sequence_id:"nope"`，不存在的片段 → 404 带 `clip_id:"ghostclip"`，driver 指向不存在的轨 → 404 带
+  `track_id:"ghost"`，删掉样片后 → 410 `MEDIA_MISSING` 说出 `tone.mp4` 与片段 `s`、revision 不动；
+  包内 MCP schema 仍带 `sequence_id`，asar 里既有中文提示也有 `asset_label`，说明织入真的进了壳层。
+  `ruff`、`npm run typecheck`、**12 项**桌面 TS（新增 `desktop_error_naming_check.ts`）、串行套件
+  **62/62** 全绿；原生窗口 1480×900 标题栏「引擎在线 v1.75.0」（`AgentCut-1.75-原生窗口.png`），
+  关闭无残留。便携版 189,763,030 字节 SHA256
+  `270E6BF13208933EE3077C7C900328C905100163719BAF63C2E3AFE723C53CC8`；安装版 189,923,746 字节
+  SHA256 `A9B75C75EA17F67135D46C6564653F182CC6C3B3B7747C4FFF5140037653887B`。未签名，NSIS 向导未点击验收。

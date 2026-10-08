@@ -1637,3 +1637,38 @@ clip/track id（不另写一套读取规则），派生的批次也一并盖上 
 
 没单独端到端量过的一条：自动字幕（`/speech-captions`）在合成里的实际听写。改动与其他八条逐字相同
 （同一段 `sequence_view` + 同一个批次戳），字段在契约里可见，但本轮没有为它写媒体夹具。
+
+## 1.75 每一条分析拒绝都点名它说的是谁
+
+1.74 让九个分析入口能进嵌套合成，同时也开出了新的拒绝形状：合成不存在、id 在另一条时间线上、
+窗口越过片段末尾、driver 指向自己。这些拒绝里有一批是 `{"code": "...", "message": "...",
+"details": {}}`——错误码有了，可「哪一条？」没人说。实测（`tests/analysis_sweep_check.py` 的夹具，
+改动前先跑一遍记录现状）：
+
+- `/clips/{id}/silence`、`/clips/{id}/loudness` 对不在根时间线上的片段回 404，`details` 是空的；
+- `sequence_view` 对不存在的合成回 404「sequence does not exist」，不说是哪个 `sequence_id`
+  （这条不只影响分析入口，`timeline_edit` 走的是同一个函数）；
+- `/clips/{id}/track` 跟不到东西时回 422 `TRACK_FAILED`「too few frames matched to track」，
+  不说量到了几帧、也不说是哪条片段；
+- 素材文件被挪走之后（真实场景：移动素材夹），八处 `MEDIA_MISSING`「source file is gone」全部
+  `details:{}`——四十个素材的工程里没人知道该去找哪一个。
+
+1.75 起这些拒绝都带着目标：`clip_id` / `track_id` / `asset_id` / `sequence_id`，`TRACK_FAILED` 另带
+`matched` 与 `frames` 两个数，`MEDIA_MISSING` 同时给 `clip_id`、`asset_id` 与 `asset_label`（就是文件
+名——四十个素材的工程里，能认出来的只有名字）。改的是错误负载，不是
+判断：没有任何一条拒绝的条件被放宽或收紧，`details` 也只是 `EditorError` 已有的第四个参数，因此契约、
+reducer、回执都不动。
+
+新门禁把这件事钉住（九条路由 × 各自的边界形状，47 条拒绝）：不 5xx；每条拒绝有 code、有能读的句子、
+`details` 非空；`NOT_FOUND` 必须点出一个 id；拒绝绝不抬 revision；同一个问题 dry 与真实提交答案一致
+——唯一允许的差别是「空计划」：`apply=false` 看着是 200，`apply=true` 时按名字说「没什么可做」
+（`INVALID_SILENCE_TARGET` / `INVALID_LOUDNESS_TARGET` / `INVALID_DUCK`），因为提交一条空批次没有意义。
+再把样片从磁盘上删掉重问三次：三条路由都回 410 并点名打不开的片段与素材。
+
+界面这一侧同时补了两件事：`EngineError.explain()` 现在把 `details` 里的名字织进中文提示
+（「素材原文件已被移动或删除，请重新导入。（素材 tone.mp4、片段 s）」），没有名字时不加空括号；原先
+**根本没有中文说明**的 11 个分析错误码（`NOT_FOUND`、`INVALID_SILENCE_TARGET`、
+`INVALID_LOUDNESS_TARGET`、`INVALID_REFRAME`、`INVALID_DUCK`、`DUCK_PLAN_TOO_LARGE`、
+`INVALID_TRACK_TARGET`、`TRACK_FAILED`、`INVALID_SPEED`、`PROJECT_LIMIT`、`TIME_OVERFLOW`）各补一句
+能照着做的中文——在此之前按「去空白」「自动闪避」「主体跟随」被拒时，提示里就是引擎那句英文。
+`tests/desktop_error_naming_check.ts` 逐条钉住。
