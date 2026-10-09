@@ -35,6 +35,7 @@ from .bundles import MAX_BUNDLE_BYTES, export_bundle, import_bundle
 from .contracts import (
     APP_VERSION,
     TIMEBASE,
+    TRACK_FRAMES_MIN,
     AutoGradeRequest,
     BundleImport,
     CachePrune,
@@ -84,7 +85,14 @@ from .projects import ProjectStore
 from .render import compile_render_plan, text_fonts_available
 from .speed import consumed_source_ticks
 from .subtitles import export_srt
-from .timeline import sequence_view, validate_timeline
+from .timeline import (
+    CLIP_KEYFRAME_LIMIT,
+    MASK_TRACK_CURVES,
+    MASK_TRACK_SIZED_CURVES,
+    mask_track_capacity,
+    sequence_view,
+    validate_timeline,
+)
 from .tracking import track_mask
 
 MEDIA_TYPES = {
@@ -795,15 +803,33 @@ def create_app(
         frame_ticks = project.settings.frame_ticks
         speed = clip.speed_percent / 100
         start = clip.source_in_ticks + int(request.from_ticks * speed)
-        consumed = int(request.frames * frame_ticks * speed)
+        # The clip's curve budget decides how far one run can go: a sized sighting costs four
+        # curves per frame, so the request's own ceiling is unreachable long before 900 frames on a
+        # long clip. Ask for what the write can actually hold, and say so in the reply.
+        estimate_scale = request.estimate_scale and not follows_shape
+        curves = len(MASK_TRACK_SIZED_CURVES) if estimate_scale else len(MASK_TRACK_CURVES)
+        capacity = mask_track_capacity(clip, curves, request.merge, request.from_ticks, frame_ticks)
+        frames = min(request.frames, capacity)
+        if frames < TRACK_FRAMES_MIN:
+            raise EditorError(
+                "MASK_TRACK_BUDGET",
+                "this clip has no room left for another tracked frame",
+                422,
+                clip_id=clip_id,
+                frames_requested=request.frames,
+                capacity_frames=capacity,
+                curves_per_point=curves,
+                keyframe_limit=CLIP_KEYFRAME_LIMIT,
+                curves_used=len(clip.keyframes),
+            )
+        consumed = int(frames * frame_ticks * speed)
         if start + consumed > asset.verified.duration_ticks:
             raise EditorError(
                 "SOURCE_OUT_OF_BOUNDS",
                 "tracking runs past the end of the source media",
                 422,
-                frames=request.frames,
+                frames=frames,
             )
-        estimate_scale = request.estimate_scale and not follows_shape
         result = track_mask(
             engine.ffmpeg,
             source,
@@ -811,7 +837,7 @@ def create_app(
             asset.verified.height or project.settings.height,
             project.settings.frame_rate,
             (clip.mask.center_x, clip.mask.center_y, clip.mask.width, clip.mask.height),
-            request.frames,
+            frames,
             start,
             frame_ticks,
             request.search_radius,
@@ -876,6 +902,7 @@ def create_app(
                     for gap in result["gaps"]
                 ],
                 "merged": request.merge,
+                **({} if frames == request.frames else {"budget_frames": frames}),
                 **({} if not request.merge else track_seam(clip, points, request)),
                 "first_at_ticks": points[0]["at_ticks"],
                 "last_at_ticks": points[-1]["at_ticks"],

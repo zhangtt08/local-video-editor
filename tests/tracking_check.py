@@ -18,25 +18,36 @@ from pydantic import ValidationError
 
 from agentcut.contracts import TIMEBASE as T
 from agentcut.contracts import (
+    TRACK_FRAMES_MAX,
+    TRACK_FRAMES_MIN,
     TRACK_GAP_DEFAULT,
     TRACK_GAP_MAX,
     Clip,
     EditBatch,
     EditorError,
     FrameRate,
+    MaskTrackRequest,
     Project,
     VerifiedMedia,
 )
 from agentcut.http_api import create_app
 from agentcut.media import MediaService
 from agentcut.render import compile_render_plan
-from agentcut.timeline import apply_commands, validate_timeline
+from agentcut.timeline import (
+    CLIP_KEYFRAME_LIMIT,
+    apply_commands,
+    mask_track_capacity,
+    validate_timeline,
+)
 from agentcut.tracking import decode_luma, track_box, track_mask
 
 ROOT = Path(r"C:\Users\Administrator\Desktop\项目\agentcut")
 FFMPEG = ROOT / "desktop/resources/bin/ffmpeg.exe"
 FFPROBE = ROOT / "desktop/resources/bin/ffprobe.exe"
 WIDTH, HEIGHT = 320, 180
+# The long-window fixture only needs more frames, not more pixels: a smaller canvas keeps the
+# generator's cost where the suite can afford it while the clip still runs past twelve seconds.
+SMALL_WIDTH, SMALL_HEIGHT = 160, 90
 FPS = 30
 SIZE = 22
 BOX = (0.16, 0.24)
@@ -51,17 +62,29 @@ def path_at(seconds: float) -> tuple[float, float]:
     return 0.25 + 0.5 * phase, 0.5 + 0.18 * math.sin(2 * math.pi * phase)
 
 
+def long_path_at(seconds: float) -> tuple[float, float]:
+    """A walk that stays inside the picture for twelve seconds: x eases out and back every six."""
+    return (
+        0.2 + 0.6 * (0.5 - 0.5 * math.cos(2 * math.pi * seconds / 6)),
+        0.5 + 0.15 * math.sin(2 * math.pi * seconds / 4),
+    )
+
+
 def analytic_size(seconds: float) -> float:
     return SIZE * (1 + 2 * seconds / 3)
 
 
-def truth_at(seconds: float, shift: tuple[float, float, float] | None) -> tuple[float, float]:
-    """Where the fixture's target actually is: the sine path, stepped by `shift` from its tick.
+def truth_at(
+    seconds: float,
+    shift: tuple[float, float, float] | None,
+    trajectory=path_at,
+) -> tuple[float, float]:
+    """Where the fixture's target actually is: the path, stepped by `shift` from its tick.
 
     The generator draws from this one function, so a test that asks "did the tracker follow the
     object" is comparing against the same arithmetic that put the object there.
     """
-    cx, cy = path_at(seconds)
+    cx, cy = trajectory(seconds)
     if shift is not None and seconds >= shift[0]:
         cx, cy = cx + shift[1], cy + shift[2]
     return cx, cy
@@ -76,14 +99,24 @@ def render_source(
     flat: bool = False,
     shift: tuple[float, float, float] | None = None,
     decoy: tuple[float, float, float, int] | None = None,
+    picture: tuple[int, int] = (WIDTH, HEIGHT),
+    duration: float = 3.0,
+    trajectory=path_at,
+    square: int | None = None,
 ) -> None:
     """A dark noise field with a bright square walking a sine path; optional mid-clip vanish.
 
     `shift` steps the target by a fraction of the frame at a given second (a re-entry the motion
     model cannot predict), `decoy` switches on another square of `size` px from a given second, and
-    `occlusion` paints a flat grey bar over whatever the target is standing on.
+    `occlusion` paints a flat grey bar over whatever the target is standing on. `picture` and
+    `duration` only resize the fixture — a longer clip is the same arithmetic on a smaller canvas,
+    and `square` has to shrink with it: the tracker pins the target by the noise *around* it, so a
+    square that stays as wide as the correlation window lets a smaller window tie at any position
+    inside it, and the path comes back a constant few pixels off the truth.
     """
-    frame_bytes = WIDTH * HEIGHT * 3
+    width, height = picture
+    size_px = SIZE if square is None else square
+    frame_bytes = width * height * 3
     process = subprocess.Popen(
         [
             str(FFMPEG),
@@ -96,7 +129,7 @@ def render_source(
             "-pix_fmt",
             "rgb24",
             "-s",
-            f"{WIDTH}x{HEIGHT}",
+            f"{width}x{height}",
             "-r",
             str(FPS),
             "-i",
@@ -112,28 +145,28 @@ def render_source(
         creationflags=0x08000000,
     )
     assert process.stdin is not None
-    for index in range(FPS * 3):
+    for index in range(int(FPS * duration)):
         seconds = index / FPS
-        cx, cy = truth_at(seconds, shift) if motion else (0.5, 0.5)
-        size = analytic_size(seconds) if grow else SIZE
+        cx, cy = truth_at(seconds, shift, trajectory) if motion else (0.5, 0.5)
+        size = analytic_size(seconds) if grow else size_px
         hidden = vanish_after is not None and seconds >= vanish_after
         bar = occlusion is not None and occlusion[0] <= seconds < occlusion[1]
         rows = bytearray(frame_bytes)
-        for y in range(HEIGHT):
-            base = y * WIDTH * 3
-            for x in range(WIDTH):
+        for y in range(height):
+            base = y * width * 3
+            for x in range(width):
                 value = ((x * 17 + y * 31) * 2654435761 >> 7) & 63
                 inside = (
                     not hidden
-                    and abs(x - cx * WIDTH) <= size / 2
-                    and abs(y - cy * HEIGHT) <= size / 2
+                    and abs(x - cx * width) <= size / 2
+                    and abs(y - cy * height) <= size / 2
                 )
-                behind = bar and abs(x - cx * WIDTH) <= 60 and abs(y - cy * HEIGHT) <= 60
+                behind = bar and abs(x - cx * width) <= 60 and abs(y - cy * height) <= 60
                 level = 200 if flat else 4 if behind else (245 if inside else value)
                 if decoy is not None and seconds >= decoy[0]:
                     _, decoy_x, decoy_y, decoy_size = decoy
-                    if abs(x - decoy_x * WIDTH) <= decoy_size / 2 and (
-                        abs(y - decoy_y * HEIGHT) <= decoy_size / 2
+                    if abs(x - decoy_x * width) <= decoy_size / 2 and (
+                        abs(y - decoy_y * height) <= decoy_size / 2
                     ):
                         level = 250
                 offset = base + x * 3
@@ -375,19 +408,53 @@ def interface_suite() -> None:
     ]
     # 1.87: the two tracking knobs the Agent can pass have controls in the Inspector, and the
     # ceiling they clamp to is the engine's number rather than one the interface invented.
-    assert "{ reacquire: trackSweep, maxGapFrames: trackGap }" in inspector
+    assert "{ reacquire: trackSweep, maxGapFrames: trackGap" in inspector
     assert inspector.count("maxGapFrames: trackGap") == 2, (
         "both tracking buttons must carry the knobs"
     )
     assert (
         "max_gap_frames: options.maxGapFrames" in store and "reacquire: options.reacquire" in store
     ), "the client never sends the knobs the interface shows"
+    assert "estimate_scale: options.scale" in store, (
+        "the 遮罩随远近缩放 knob is decoration: the client never sends it"
+    )
+    assert inspector.count("scale: trackScale") == 2, "both buttons must carry the scale knob"
     assert "app.caps?.limits?.track_max_gap_frames" in inspector, "the ceiling is hardcoded"
     assert inspector.count("240") == 1 and "?? 240" in inspector, (
         "only the fallback may carry the engine number"
     )
     assert "max={gapCeiling}" in inspector, "the field does not clamp to the issued ceiling"
+    assert 'aria-label="跟踪时让遮罩盒随远近缩放"' in inspector
     assert "挡住最多猜" in help_page and "满画面重找" in help_page, help_page[:80]
+    assert "遮罩随远近缩放" in help_page, "the knob the interface shows is not in the help"
+    # 1.88: one run reaches the end of the clip, and the ceiling it stops at is the engine's number.
+    # The old code counted frames itself (`Math.max(2, Math.min(300, whole))`), which both invented
+    # a window narrower than the clip and left a tail nobody was told about.
+    effects = (ROOT / "desktop" / "src" / "effects.ts").read_text(encoding="utf-8")
+    assert "export function trackWindow" in effects, "the window decision has no single owner"
+    assert "Math.min(300" not in inspector, "the interface still caps a run at its own number"
+    assert "Math.max(2, Math.min(" not in inspector, "the interface still floors a run itself"
+    assert inspector.count("trackWindow(") == 2, "both buttons must go through the one decision"
+    assert "unreached" not in inspector and "unreached" not in store, (
+        "the shell is guessing how far a run reached instead of reading it from the reply"
+    )
+    assert "app.caps?.limits" in inspector, "the ceiling is hardcoded again"
+    assert effects.count("900") == 1 and "?? 900" in effects, (
+        "only the fallback may carry the engine's ceiling"
+    )
+    assert "Boolean(runOn.blocked)" in inspector and "Boolean(runAll.blocked)" in inspector, (
+        "a run that cannot start must not be pressable"
+    )
+    assert "stats.budget_frames" in store and "? stats.budget_frames" in store, (
+        "a run the clip's curve budget shortened must be branched on, not just mentioned"
+    )
+    assert "${stats.budget_frames}" in store, "the budget number is never spoken"
+    assert "片段还剩" in store, "a run that stops short of the clip's end must say so"
+    assert "导出使用同一份关键帧。" in store
+    assert "track_min_frames" in engine and "track_max_frames" in engine
+    assert "budget_frames" in engine, "the reply's budget number is not declared"
+    assert "MASK_TRACK_BUDGET" in engine, "the refusal has no Chinese hint"
+    assert "track_max_frames" in help_page and "track_min_frames" in help_page, help_page[:80]
     print(
         "   interface: 挡住最多猜 / 满画面重找 send max_gap_frames and reacquire, clamped to the "
         "ceiling the engine issues"
@@ -534,6 +601,24 @@ def reducer_suite(folder: Path) -> None:
         (T // FPS, 0.28),
     ], box.keyframes
     assert Clip.model_validate(box.model_dump())
+
+    # 从头重跟 replaces the mask's whole animation. A path tracked with size curves, then re-tracked
+    # centre-only (the interface's 遮罩随远近缩放 turned off) must not leave the old size curves
+    # behind, or the box keeps breathing along a path that no longer measures it at all.
+    breathe = apply(project, [{"op": "clip.mask_track", "clip_id": "c", "points": sized}])
+    centre_only = apply(
+        breathe,
+        [{"op": "clip.mask_track", "clip_id": "c", "merge": False, "points": points}],
+    ).clips["c"]
+    assert {key.property for key in centre_only.keyframes} == {"mask_x", "mask_y"}, (
+        centre_only.keyframes
+    )
+    assert len(centre_only.keyframes) == 4, centre_only.keyframes
+    # ... and the budget reads that promise: with the size curves cleared there is room for twice
+    # as many frames, which is why the interface's refusal can honestly name that exit.
+    assert mask_track_capacity(breathe.clips["c"], 2, False, 0, T // FPS) > mask_track_capacity(
+        breathe.clips["c"], 2, True, 0, T // FPS
+    ), "a whole-path rewrite is not credited with the curves it clears"
 
     half = [sized[0], {"at_ticks": T // FPS, "center_x": 0.4, "center_y": 0.52}]
     try:
@@ -967,6 +1052,203 @@ def http_suite(folder: Path) -> None:
         assert beyond.status_code == 422, beyond.text[:200]
         assert client.get(path).json()["revision"] == body["project"]["revision"], (
             "a contract refusal must not write"
+        )
+
+        # 1.88: the window one run covers. The interface used to ask for 300 frames however long the
+        # clip was, so a twelve-second shot was followed over its first ten while the toast still
+        # promised that the export used that path. The engine has always served up to the contract
+        # ceiling, so the seam to measure here is whether a run that asks for more actually gets
+        # better data — on a smaller canvas, because the only thing that has to grow is the frames.
+        limits = client.get("/v1/capabilities").json()["limits"]
+        assert limits["track_min_frames"] == TRACK_FRAMES_MIN, limits
+        assert limits["track_max_frames"] == TRACK_FRAMES_MAX, limits
+        bounds = {
+            (kind, getattr(rule, kind))
+            for rule in MaskTrackRequest.model_fields["frames"].metadata
+            for kind in ("ge", "le")
+            if getattr(rule, kind, None) is not None
+        }
+        assert bounds == {("ge", TRACK_FRAMES_MIN), ("le", TRACK_FRAMES_MAX)}, (
+            "the request contract and capabilities no longer read the same two numbers: "
+            + str(bounds)
+        )
+
+        walk_source = folder / "media" / "api-long-walk.mp4"
+        render_source(
+            walk_source,
+            picture=(SMALL_WIDTH, SMALL_HEIGHT),
+            duration=12.0,
+            trajectory=long_path_at,
+            square=SMALL_WIDTH * SIZE // WIDTH,
+        )
+        walk_probe = client.post("/v1/media/import", json={"path": str(walk_source)}).json()
+        assert "verified" in walk_probe, walk_probe
+        revision = client.get(path).json()["revision"]
+        walking = client.post(
+            path + "/edits",
+            json={
+                "request_id": "seed-walk",
+                "expected_revision": revision,
+                "commands": [
+                    {
+                        "op": "track.add",
+                        "track": {"id": "w", "kind": "video", "name": "w"},
+                    },
+                    {
+                        "op": "asset.import",
+                        "asset_id": "d",
+                        "label": "long-walk",
+                        "probe_id": walk_probe["id"],
+                        "verified": walk_probe["verified"],
+                    },
+                    {
+                        "op": "clip.add",
+                        "clip": {
+                            "id": "c7",
+                            "asset_id": "d",
+                            "track_id": "w",
+                            "position_ticks": 0,
+                            "duration_ticks": 12 * T,
+                            "mask": mask_box(center_x=0.2, center_y=0.5),
+                        },
+                    },
+                ],
+            },
+        )
+        assert walking.status_code == 200, walking.text[:300]
+        frame_ticks = T // FPS
+        tail_frames = 350
+
+        def window(frames: int, request_id: str) -> dict:
+            run = client.post(
+                path + "/clips/c7/track",
+                json={
+                    "request_id": request_id,
+                    "expected_revision": walking.json()["project"]["revision"],
+                    "frames": frames,
+                    "dry_run": True,
+                },
+            )
+            assert run.status_code == 200, run.text[:300]
+            return run.json()["tracking"]
+
+        part, whole = window(300, "window-300"), window(tail_frames, "window-350")
+        assert part["lost_at_ticks"] is None and whole["lost_at_ticks"] is None, (
+            "the target never vanished, so a run that stops at 300 frames stopped on the window"
+        )
+        assert part["tracked_frames"] == 300 and whole["tracked_frames"] == tail_frames, (
+            part["tracked_frames"],
+            whole["tracked_frames"],
+        )
+        assert whole["last_at_ticks"] == (tail_frames - 1) * frame_ticks, whole["last_at_ticks"]
+        assert whole["last_at_ticks"] - part["last_at_ticks"] == 50 * frame_ticks, (
+            "the extra frames have to reach further into the clip, not just count more"
+        )
+        # The frames the short window never reached are still real sightings of the object.
+        beyond_ticks = 300 * frame_ticks
+        extra = [point for point in whole["points"] if point["at_ticks"] > beyond_ticks]
+        assert len(extra) == 49, len(extra)
+        worst = max(
+            abs(point["center_x"] - long_path_at(point["at_ticks"] / T)[0])
+            + abs(point["center_y"] - long_path_at(point["at_ticks"] / T)[1])
+            for point in extra
+        )
+        print(
+            f"   window: the engine serves {tail_frames} frames (past the 300 the interface used to"
+            f" ask for), the {len(extra)} frames beyond it track the walk within {worst:.4f} of a"
+            f" frame ({worst * SMALL_WIDTH:.2f} px)"
+        )
+        assert worst < 0.012, worst
+
+        # The clip's own curve budget is a second, tighter ceiling: a sized sighting costs four
+        # curves (centre + size) and `Clip.keyframes` holds CLIP_KEYFRAME_LIMIT of them, so on a
+        # crowded clip the request's frame ceiling is unreachable. The route has to shorten the run
+        # and hand back the number it stopped at — before this the write died with a generic
+        # PROJECT_LIMIT that named nothing and left the mask wherever it had been drawn.
+        crowded = CLIP_KEYFRAME_LIMIT - 4 * 100
+        fill = client.post(
+            path + "/edits",
+            json={
+                "request_id": "crowd",
+                "expected_revision": walking.json()["project"]["revision"],
+                "commands": [
+                    {
+                        "op": "keyframes.replace",
+                        "clip_id": "c7",
+                        "property": "opacity",
+                        "keyframes": [
+                            {
+                                "property": "opacity",
+                                "at_ticks": index * (12 * T // crowded),
+                                "value": 1.0,
+                                "interpolation": "linear",
+                            }
+                            for index in range(crowded)
+                        ],
+                    }
+                ],
+            },
+        )
+        assert fill.status_code == 200, fill.text[:300]
+        room = (CLIP_KEYFRAME_LIMIT - crowded) // 4
+        revision = client.get(path).json()["revision"]
+        tight = client.post(
+            path + "/clips/c7/track",
+            json={
+                "request_id": "tight",
+                "expected_revision": revision,
+                "frames": tail_frames,
+                "dry_run": True,
+            },
+        )
+        assert tight.status_code == 200, tight.text[:300]
+        scarce = tight.json()["tracking"]
+        assert scarce["tracked_frames"] == room, scarce["tracked_frames"]
+        assert scarce["budget_frames"] == room, scarce
+        assert scarce["last_at_ticks"] == (room - 1) * frame_ticks, scarce["last_at_ticks"]
+        assert client.get(path).json()["revision"] == revision, "a clamped dry run must not write"
+        last = scarce["points"][-1]
+        assert abs(last["center_x"] - long_path_at(last["at_ticks"] / T)[0]) < 0.012, last
+        print(
+            f"   budget: a clip holding {crowded} curves lets a sized run cover {room} of the"
+            f" {tail_frames} frames asked for, and the reply names that number"
+        )
+
+        # The reducer is the authority: a hand-made path that will not fit is refused by name, with
+        # the arithmetic that decided it, rather than by a pydantic length check.
+        over = client.post(
+            path + "/edits",
+            json={
+                "request_id": "over-budget",
+                "expected_revision": revision,
+                "commands": [
+                    {
+                        "op": "clip.mask_track",
+                        "clip_id": "c7",
+                        "merge": True,
+                        "points": [
+                            {
+                                "at_ticks": index * frame_ticks,
+                                "center_x": 0.3,
+                                "center_y": 0.5,
+                                "width": 0.16,
+                                "height": 0.24,
+                            }
+                            for index in range(room + 50)
+                        ],
+                    }
+                ],
+            },
+        )
+        assert over.status_code == 422, over.text[:300]
+        body = over.json()["error"]
+        assert body["code"] == "MASK_TRACK_BUDGET", body
+        assert body["details"]["curves_per_point"] == 4, body["details"]
+        assert body["details"]["keyframe_limit"] == CLIP_KEYFRAME_LIMIT, body["details"]
+        assert client.get(path).json()["revision"] == revision, "a refusal must not write"
+        print(
+            f"   budget: a hand-made path of {room + 50} sized points is refused by name,"
+            " with the arithmetic that decided it"
         )
 
         # A split tail carries `animation_offset_ticks`, so the source window it is analysed, the

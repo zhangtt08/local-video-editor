@@ -1999,3 +1999,88 @@ Agent 都能看出量得稀。
 `{ reacquire: trackSweep, maxGapFrames: trackGap }`（数两遍）、客户端确实把 `max_gap_frames` / `reacquire`
 发出去、上限来自 `app.caps?.limits?.track_max_gap_frames` 且整个 Inspector 里 `240` 只出现一次（就是那个
 `?? 240` 兜底）、输入框的 `max={gapCeiling}` 真的用着它，以及帮助页写着这两个旋钮的名字。
+
+## 1.88 一次跟踪量到片段结尾，量不完的话由界面自己说清
+
+`/clips/{id}/track` 的 `frames` 一直是 `2..900`（`MaskTrackRequest`），可从 1.72 起到 1.87 为止，界面自己
+在 Inspector 里数了一遍：`Math.max(2, Math.min(300, whole))`。两个数都不是引擎给的，而 300 那一个是真的会
+咬人的——十二秒的片段在 30 fps 下是 360 帧，点一次「跟踪主体」只量了前十秒，剩下两秒遮罩停在最后一次跟到
+的位置，而提示结尾写着「导出使用同一份关键帧」。人不看帧数只看提示，就会被这句话骗过去。
+
+这一版把「这一次量几帧」收成一个判断、一个数字来源：
+
+- `contracts.py` 里新增 `TRACK_FRAMES_MIN = 2` / `TRACK_FRAMES_MAX = 900`，`MaskTrackRequest.frames` 的
+  `ge`/`le` 与 `capabilities.limits.track_min_frames` / `track_max_frames` 都从这里取——请求契约与能力接口
+  不可能再各写一个数（`tests/tracking_check.py` 会把两边读出来的上下限摆在一起比）。
+- 界面一侧新增 `effects.ts` 的 `trackWindow(remainingFrames, fromHead, limits)`：够得着就整条量到结尾
+  （`frames = min(上限, 剩余)`），量不完时把 `unreachedFrames` 如实交回调用方，剩余不足最低帧数就给出灰掉的
+  理由。Inspector 两个按钮都走这一个函数，不再自己数帧。
+- 提示跟着判断走：`lost_at_ticks === null` 而这一次没量完时，说的是「单次最多量 N 帧，片段还剩 X.X 秒没分析，
+  那段里遮罩停在最后跟到的位置；把播放头挪过去再点「接着跟」就能续上」；量完了才说「导出使用同一份关键帧」。
+  开不了跑时按钮是灰的，`title` 写着为什么，出路按位置分两种——播放头之后不够帧数就说「把播放头往前挪一些」，
+  从片段开头重跟不够帧数就说「把这段切长一点，或在曲线编辑器里给遮罩中心加两个关键帧」。
+
+`tests/desktop_trackwin_check.ts` 钉的是「它真的听传入的数」：换一组 `{track_min_frames: 8, track_max_frames: 30}`，
+帧数、没量完的差额、灰不灰、理由里的数字全都跟着变；两个按钮的接线与那句披露由 `interface_suite` 钉住
+（`Math.min(300` 与 `Math.max(2, Math.min(` 都不许再出现在 Inspector 里，`900` 在 `effects.ts` 只许出现一次，
+就是那个 `?? 900` 兜底）。行为侧的永久断言在 `http_suite`：一条 12 秒、160×90 的往返走位素材，同一片段两次
+dry run 只差请求的窗口——`frames=300` 量到 299 帧刻度、`frames=350` 量到 349 帧刻度，两次之差恰好 50 帧，
+而 `lost_at_ticks` 两边都是 `null`（目标从没消失，短窗口停下来说明那是窗口的账，不是跟丢的账）；350 帧那次
+越过 300 的那 49 个点仍然是真 sighting，逐点离合成真值最差 1.32 px（0.0083 画面宽，断言 <0.012）。
+
+夹具在这里欠了一次账，记下来因为它长得像引擎缺陷：第一次把这条素材改成 160×90 时只缩了画面、没缩那个亮方块
+（仍是 22 px），于是方块比钉住它的相关窗口还宽——方块内部是一整片 245 的均匀值，一个更小的窗口在里面任何一个
+位置都能打出同样的分数。报出来的路径整体偏 7 px、尺寸估到 0.124，看上去像「长窗口跟不住」，实际是夹具让目标
+失去了唯一的位置。把方块按画幅同比缩到 11 px 后，同一条素材直连 `track_mask` 整跑最差 0.96 px，走 HTTP 路由的那 49 个点最差 1.32 px。分辨办法还是那一条：先核对夹具与自己的
+读数，再谈引擎。
+
+### 1.88 的第二道天花板：这条片段的曲线还装不装得下
+
+把界面改成「量到结尾」之后，第一次在真实界面上点十二秒以上的片段就撞出了下一件事：请求被
+`PROJECT_LIMIT` 拒了——「工程到了契约上限（片段、轨道或关键帧的数量）」。原因不是界面，也不是跟踪，是两条
+一直各说各话的数：`Clip.keyframes` 的上限是 2000 条，而一个**带尺寸的**跟踪点要写 4 条曲线（中心 X/Y 加宽高），
+所以 900 帧的请求在数学上永远写不下去（4×900 = 3600）。1.87 及以前那个 300 反而一直没碰到它，因为
+4×300 = 1200 恰好装得下——错的窗口把错的天花板藏住了。
+
+修法仍然是「一个行为一处权威」：
+
+- `timeline.py` 里 `CLIP_KEYFRAME_LIMIT` 从契约字段的 `max_length` 元数据读出来（和 `reframe` 的关键帧预算同一
+  个读法，不另写一份），`mask_track_capacity(clip, curves_per_point, merge, from_ticks, frame_ticks)` 算出这一次
+  还能写几帧：不是本次结果能改写的曲线都算占位（merge 时窗口之前的都留下），一条更长的窗口又会把尾部的点
+  吃掉，所以是逐步放宽再回验，而不是解一次方程。
+- `/clips/{id}/track` 先按这个容量把 `frames` 收短再分析，回复里多一个 `budget_frames` 说清这次真正写得到几帧。
+  收短到不足契约下限（`track_min_frames`）时不再假装能跑，回 422 `MASK_TRACK_BUDGET`，`details` 里带着
+  `frames_requested` / `capacity_frames` / `curves_per_point` / `keyframe_limit` / `curves_used` 这五个数。
+- reducer 那一侧同样点名拒绝（`clip.mask_track` 里 `kept + tracked` 超上限），所以手搓一条超预算的路径拿到的是
+  带算式的 `MASK_TRACK_BUDGET`，而不是 pydantic 的长度检查。界面 `desktop/src/engine.ts` 补了这条码的中文提示，
+  出路写的是真能走通的三条：切成短片段分别跟、删掉不要的关键帧、关掉尺寸估计（一个点少占两条）。
+- 提示这句话不再由界面自己数帧：尾巴 = `clip.duration_ticks − 回复的 last_at_ticks − 一帧`，被曲线预算收短和被
+  单次上限收短是两套话，前者还会说「关掉尺寸估计能让一个点少占几条」。1.87 那种「界面自己算还剩几秒」的
+  `unreachedTicks` 参数整个删掉了——界面无权猜引擎跑到哪儿。
+
+门禁：`http_suite` 先用 `keyframes.replace` 给一条 12 秒片段灌 1600 条 opacity 曲线，再按 350 帧请求，要求
+`tracked_frames == budget_frames == 100`、最后一个点落在 99 帧刻度、且那个点仍与物体真值差 <0.012 画面宽、
+dry run 不动 revision；再手搓一条 150 点的路径（150×4 = 600 > 剩下的 400）要求 422 `MASK_TRACK_BUDGET` 并逐条
+读出 `details` 里的 `curves_per_point` 与 `keyframe_limit`。三条变异各自红：路由不再按容量收窗口 → 红在那句
+`status_code == 200`（写下去就是通用 PROJECT_LIMIT）；reducer 不再点名 → 红在 `code == "MASK_TRACK_BUDGET"`；
+界面不再分支在 `budget_frames` 上 → 红在 `interface_suite` 新增的那两条（分支与插值各钉一处，只提到名字不算）。
+MCP 的 `clip_track` docstring 也写了这道天花板，Agent 与人在这里读到的必须是同一句话。
+
+### 1.88 的第三只旋钮：遮罩随远近缩放
+
+那句拒绝的出路里写着「关掉尺寸估计让一个点少占几条」，可 1.87 的界面上并没有这个开关——`estimate_scale` 从
+1.72 起就是 Agent 能传的参数，人只能看着引擎给的那句话自己去猜怎么办。出路必须真能走通，所以这只旋钮也交到
+人手上：检查器遮罩区里第三个勾「遮罩随远近缩放」，默认开着（与引擎一致），路径遮罩下是灰的并说明为什么
+（轮廓的形状与大小按画好的轮廓走，引擎对它本来就不估尺寸）。`trackMask()` 的 `options.scale` 只有调用方给了值
+才把 `estimate_scale` 放进请求体，Agent 不传时行为一字不变。
+
+同一次改动把「从头重跟」的语义钉准：`merge=false` 现在清掉**全部四条**遮罩运动曲线，而不是只清这次写出的那
+两条。之前的行为留了个洞——先跟出一条带尺寸的路径（2000 条曲线装满），再关掉缩放从头重跟（一个点只写两条），
+旧的 `mask_width`/`mask_height` 会原样留在片段上，于是遮罩盒继续沿一条已经不再量它的旧路径呼吸。按钮写的是
+「整条重跟」，reducer 就得按那句话做。`mask_track_capacity` 也按同一条判断读容量（整条重写时把四条都算作可清空），
+所以这条出路在数字上是真的：同一条 16 秒片段，缩放开着只能量到 500 帧，关着能量到 900 帧（单次的上限）。
+
+`tests/tracking_check.py` 的 `reducer_suite` 断这条语义：先写一条带尺寸的路径，再 `merge=false` 写一条只有中心的
+路径，剩下的曲线集合必须恰好是 `{mask_x, mask_y}`、总数 4 条；并断 `mask_track_capacity(..., merge=False)` 大于
+`merge=True` 的同一个窗口——否则界面那句出路就是空头支票。`interface_suite` 断两个按钮都带 `scale: trackScale`、
+客户端真的发 `estimate_scale`、aria-label 在、帮助页写着这只旋钮。

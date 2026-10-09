@@ -6,7 +6,7 @@ import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionCh
 import { Icon, Modal } from "../ui";
 import { GradeFields } from "./GradeFields";
 import { SpeedFields } from "./SpeedFields";
-import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, sharpenLimits, stabilizeBlocked } from "../effects";
+import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, sharpenLimits, stabilizeBlocked, trackWindow } from "../effects";
 import { frameTicks, TIMEBASE, align, humanDuration, seconds, ticks } from "../time";
 import {
   clearBatch,
@@ -395,6 +395,11 @@ function MaskFields({ clip }: { clip: Clip }) {
   const gapCeiling = app.caps?.limits?.track_max_gap_frames ?? 240;
   const [trackGap, setTrackGap] = useState(app.caps?.limits?.track_gap_default ?? 60);
   const [trackSweep, setTrackSweep] = useState(true);
+  const [trackScale, setTrackScale] = useState(true);
+  // 一次量几帧、量不完时怎么说：判断在 effects.ts 的 trackWindow 里，上下限是引擎的数。
+  const perFrame = project ? frameTicks(project.settings.frame_rate) : 1;
+  const runOn = trackWindow(Math.floor((clip.duration_ticks - at) / perFrame), at === 0, app.caps?.limits);
+  const runAll = trackWindow(Math.floor(clip.duration_ticks / perFrame), true, app.caps?.limits);
   return <details className="insp-section mask-section"><summary className="panel-label">遮罩{mask ? ` · ${{ ellipse: "椭圆", rectangle: "矩形", path: "路径" }[mask.shape]}` : ""}</summary>
     <fieldset className="effects-fields" disabled={disabled}>
       <label className="mask-shape">形状 <select className="input" aria-label="遮罩形状" value={mask?.shape ?? "none"} onChange={(e) => { const shape = e.target.value; if (shape === "none") { setClipMask(clip.id, null); return; } const base = { ...(mask ?? DEFAULT_MASK), shape: shape as ShapeMask["shape"] }; setClipMask(clip.id, shape === "path" ? { ...base, vertices: base.vertices?.length ? base.vertices : DEFAULT_PATH.map((vertex) => ({ ...vertex, handle_out: [...vertex.handle_out] as [number, number], handle_in: [...vertex.handle_in] as [number, number] })) } : { ...base, vertices: null }); }}><option value="none">无</option><option value="ellipse">椭圆</option><option value="rectangle">矩形</option><option value="path">路径</option></select></label>
@@ -410,14 +415,16 @@ function MaskFields({ clip }: { clip: Clip }) {
         <div className="effect-row"><label htmlFor="mask-feather">向内羽化</label><EffectInput id="mask-feather" value={mask.feather * 100} min={0} max={100} step={1} onCommit={(value) => setClipMask(clip.id, { ...mask, feather: value / 100 })} /><span className="dim">%</span></div>
         <label><input type="checkbox" checked={mask.inverted} onChange={(e) => setClipMask(clip.id, { ...mask, inverted: e.target.checked })} />反转遮罩</label>
         <div className="insp-actions"><button className={`btn tiny${app.maskEditing ? " active" : ""}`} aria-pressed={app.maskEditing} onClick={() => setMaskEditing(!app.maskEditing)}>画面中编辑</button>
-          {animatable && project ? <button className="btn tiny" disabled={disabled} title={mask.shape === "path" ? "从播放头开始逐帧分析画面，把轮廓的中心写成关键帧；路径遮罩只整体搬动，不改形状与大小。主体被挡住时按匀速补一段，同时每一帧都在整幅画面里重新找它，找回后把补的那段按真实位置校正；跟丢时会停下来说明" : "从播放头开始逐帧分析画面，把遮罩中心与大小写成关键帧；主体被挡住时按匀速补一段，同时每一帧都在整幅画面里重新找它，找回后把补的那段按真实位置校正；跟丢时会停下来说明"} onClick={() => { const rate = project.settings.frame_rate; const whole = Math.floor(((clip.duration_ticks - at) * rate.numerator) / (TIMEBASE * rate.denominator)); trackMask(clip.id, at, Math.max(2, Math.min(300, whole)), true, { reacquire: trackSweep, maxGapFrames: trackGap }); }}>{(clip.keyframes ?? []).some((key) => key.property === "mask_x") ? "接着跟" : "跟踪主体"}</button> : null}
-          {animatable && project && (clip.keyframes ?? []).some((key) => key.property === "mask_x") ? <button className="btn tiny subtle" disabled={disabled} title="整条重跟：从片段开头重新分析，播放头之前已有的路径会被这一段的结果替换" onClick={() => { const rate = project.settings.frame_rate; const whole = Math.floor((clip.duration_ticks * rate.numerator) / (TIMEBASE * rate.denominator)); trackMask(clip.id, 0, Math.max(2, Math.min(300, whole)), false, { reacquire: trackSweep, maxGapFrames: trackGap }); }}>从头重跟</button> : null}
+          {animatable && project ? <button className="btn tiny" disabled={disabled || Boolean(runOn.blocked)} title={runOn.blocked ?? (mask.shape === "path" ? "从播放头开始逐帧分析画面，把轮廓的中心写成关键帧，一直量到片段结尾（单次上限由引擎的 capabilities 下发，量不完会在提示里说清）；路径遮罩只整体搬动，不改形状与大小。主体被挡住时按匀速补一段，同时每一帧都在整幅画面里重新找它，找回后把补的那段按真实位置校正；跟丢时会停下来说明" : "从播放头开始逐帧分析画面，把遮罩中心与大小写成关键帧，一直量到片段结尾（单次上限由引擎的 capabilities 下发，量不完会在提示里说清）；主体被挡住时按匀速补一段，同时每一帧都在整幅画面里重新找它，找回后把补的那段按真实位置校正；跟丢时会停下来说明")} onClick={() => trackMask(clip.id, at, runOn.frames, true, { reacquire: trackSweep, maxGapFrames: trackGap, scale: trackScale })}>{(clip.keyframes ?? []).some((key) => key.property === "mask_x") ? "接着跟" : "跟踪主体"}</button> : null}
+          {animatable && project && (clip.keyframes ?? []).some((key) => key.property === "mask_x") ? <button className="btn tiny subtle" disabled={disabled || Boolean(runAll.blocked)} title={runAll.blocked ?? "整条重跟：从片段开头重新分析，播放头之前已有的路径会被这一段的结果替换"} onClick={() => trackMask(clip.id, 0, runAll.frames, false, { reacquire: trackSweep, maxGapFrames: trackGap, scale: trackScale })}>从头重跟</button> : null}
           {animatable && project ? <label className="dim" title="被挡住的那段时间最多猜多少帧；猜窗用完还没找回，路径就停在最后一次看到的地方。上限由引擎的 capabilities.limits 下发">挡住最多猜
             <input className="input tiny" type="number" min={0} max={gapCeiling} step={5} value={trackGap} aria-label="遮挡时最多猜几帧"
               onChange={(e) => setTrackGap(Math.max(0, Math.min(gapCeiling, Math.round(Number(e.target.value) || 0))))} />帧
           </label> : null}
           {animatable && project ? <label className="dim" title="开着时，主体被挡住的每一帧都在整幅画面上重新找它；关掉就不会——换个位置回来会被当成跟丢">满画面重找
             <input type="checkbox" checked={trackSweep} aria-label="遮挡时在整幅画面上重新找主体" onChange={(e) => setTrackSweep(e.target.checked)} /></label> : null}
+          {animatable && project ? <label className="dim" title="开着时一个跟踪点会写中心 X/Y 加宽高四条曲线，遮罩盒随主体远近变大变小；关掉只写两条中心曲线，同样的曲线预算能多跟一倍长度。路径遮罩的形状与大小按画好的轮廓，引擎对它本来就不估尺寸">遮罩随远近缩放
+            <input type="checkbox" checked={trackScale} disabled={mask.shape === "path"} aria-label="跟踪时让遮罩盒随远近缩放" onChange={(e) => setTrackScale(e.target.checked)} /></label> : null}
           {animatable && project ? <button className="btn tiny" disabled={disabled || Boolean(clip.stabilization)} title={clip.stabilization ? "这段画面带着一次稳定：重构图写的就是稳定占用的位移/缩放三条曲线，跑一遍会把稳定悄悄抹掉。先「取消稳定」，再重构图。" : "读取刚跟踪出来的遮罩路径，写入把主体保持在画面正中的平移与缩放曲线；竖屏裁切出货时主体不会跑出画面。放大上限 4 倍，跟不到时会说明"} onClick={() => void reframeClip(clip.id)}>主体跟随重构图</button> : null}
           <button className="btn tiny" onClick={() => setClipMask(clip.id, { ...DEFAULT_MASK, shape: mask.shape, vertices: mask.shape === "path" ? DEFAULT_PATH.map((vertex) => ({ ...vertex, handle_out: [...vertex.handle_out] as [number, number], handle_in: [...vertex.handle_in] as [number, number] })) : null })}>重置遮罩</button></div>
         <p className="hint">遮罩随片段变换；矩形/椭圆拖中间移动、拖四角缩放，羽化占半径比例。中心与大小可按◇打关键帧，「跟踪主体」会一次写入整条路径。路径遮罩按画好的轮廓裁切，可以打「中心 X / 中心 Y」关键帧、也可以跟踪，但轮廓的形状与大小还不能随时间变化；反相遮罩不支持关键帧。声音保持原样。</p>

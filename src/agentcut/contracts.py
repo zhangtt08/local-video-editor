@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 13  # v13 gives a path mask a real box; older rows are fitted on load (ge=1).
-APP_VERSION = "1.87.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.88.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -209,6 +209,12 @@ STABILIZE_SMOOTHING_FRAMES = 30
 TRACK_GAP_DEFAULT = 60
 TRACK_GAP_MAX = 240
 TRACK_REAQUIRE_SCALE = 4
+# One tracking run is a synchronous analysis, so its length has a ceiling: 900 frames is thirty
+# seconds at 30fps, and measured at 20-45 ms per frame that is a run of a few tens of seconds. The
+# interface must ask for the whole remaining clip and say so when the clip is longer than this —
+# a window narrower than the clip is what makes a tracked mask silently hold still.
+TRACK_FRAMES_MIN = 2
+TRACK_FRAMES_MAX = 900
 
 
 def spatial_radius(fraction: float, frame_height: int) -> float:
@@ -1441,7 +1447,7 @@ class MaskTrackRequest(Contract):
     # Read the ids below -- and apply the batch -- inside one nested composition.
     sequence_id: Identifier | None = None
     from_ticks: Ticks = 0
-    frames: Annotated[int, Field(ge=2, le=900)] = 120
+    frames: Annotated[int, Field(ge=TRACK_FRAMES_MIN, le=TRACK_FRAMES_MAX)] = 120
     search_radius: Annotated[int, Field(ge=2, le=16)] = 10
     estimate_scale: bool = True
     max_gap_frames: Annotated[int, Field(ge=0, le=TRACK_GAP_MAX)] = TRACK_GAP_DEFAULT
@@ -2210,6 +2216,8 @@ def capabilities(
             "stabilize_smoothing_frames": STABILIZE_SMOOTHING_FRAMES,
             "track_max_gap_frames": TRACK_GAP_MAX,
             "track_gap_default": TRACK_GAP_DEFAULT,
+            "track_min_frames": TRACK_FRAMES_MIN,
+            "track_max_frames": TRACK_FRAMES_MAX,
             "sample_rates": [44_100, 48_000, 96_000],
         },
         "render_presets": render_presets(),

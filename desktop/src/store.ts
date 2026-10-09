@@ -704,7 +704,7 @@ export async function stabilizeClip(clipId: string, strength = 1, maxCrop = 0.1)
 
 export async function trackMask(
   clipId: string, fromTicks: number, frames: number, merge = true,
-  options?: { reacquire?: boolean; maxGapFrames?: number },
+  options?: { reacquire?: boolean; maxGapFrames?: number; scale?: boolean },
 ) {
   const project = state.project;
   if (!engine || !project) return;
@@ -716,6 +716,7 @@ export async function trackMask(
       from_ticks: fromTicks, frames, merge, dry_run: true,
       ...(options?.reacquire === undefined ? {} : { reacquire: options.reacquire }),
       ...(options?.maxGapFrames === undefined ? {} : { max_gap_frames: options.maxGapFrames }),
+      ...(options?.scale === undefined ? {} : { estimate_scale: options.scale }),
     });
     const points = analysed.tracking.points;
     if (points.length < 2) {
@@ -724,6 +725,12 @@ export async function trackMask(
     }
     submit([{ op: "clip.mask_track", clip_id: clipId, points, merge }], "跟踪遮罩主体");
     const stats = analysed.tracking;
+    const clip = project.clips[clipId];
+    // 这一次跑到哪儿为止，只由回复里的数算：引擎既按单次上限、也按这条片段的曲线预算收过窗口，
+    // 界面不再自己数一遍——1.87 及以前就是自己数了 300，才把「没量完」说成了「量完了」。
+    const tail = clip && stats.lost_at_ticks === null
+      ? clip.duration_ticks - stats.last_at_ticks - frameTicks(project.settings.frame_rate)
+      : 0;
     const detail = [
       merge && stats.kept_frames
         ? `保住前面 ${stats.kept_frames} 帧的路径，只重写这一段（接缝处差 ${(stats.seam_jump ?? 0).toFixed(3)} 画面宽），`
@@ -736,9 +743,13 @@ export async function trackMask(
       stats.reacquired_frames > 0
         ? `在 ${(stats.reacquired_at_ticks[0] / TIMEBASE).toFixed(2)} 秒处重新找到了目标，之后是量出来的位置；`
         : "",
-      stats.lost_at_ticks === null
-        ? "导出使用同一份关键帧。"
-        : `在 ${(stats.lost_at_ticks / TIMEBASE).toFixed(2)} 秒处跟丢目标，之后遮罩停在最后找到的位置。`,
+      stats.lost_at_ticks !== null
+        ? `在 ${(stats.lost_at_ticks / TIMEBASE).toFixed(2)} 秒处跟丢目标，之后遮罩停在最后找到的位置。`
+        : tail > 0
+          ? stats.budget_frames
+            ? `这条片段的曲线预算只装得下 ${stats.budget_frames} 帧（一个跟踪点要占几条曲线由引擎算），量到 ${(stats.last_at_ticks / TIMEBASE).toFixed(1)} 秒就停了，后面 ${(tail / TIMEBASE).toFixed(1)} 秒遮罩停在最后跟到的位置；把播放头挪过去再点「接着跟」可以续一段，或关掉尺寸估计让一个点少占几条。`
+            : `单次最多量 ${frames} 帧，片段还剩 ${(tail / TIMEBASE).toFixed(1)} 秒没分析，那段里遮罩停在最后跟到的位置；把播放头挪过去再点「接着跟」就能续上。`
+          : "导出使用同一份关键帧。",
     ].join("");
     toast("info", `已跟踪 ${points.length} 帧`, detail);
   } catch (error) {

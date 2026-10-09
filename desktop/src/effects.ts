@@ -104,6 +104,29 @@ export function trackToolBlocker(trackId: string, clips: Clip[]): string | null 
   return clips.some((clip) => clip.track_id === trackId) ? null : EMPTY_TRACK_HINT;
 }
 
+/** 一次遮罩跟踪该量几帧。上下限都是引擎的数（`capabilities.limits.track_min_frames` /
+ *  `track_max_frames`），界面不自己数一个：1.87 之前这里写死过 300，于是十二秒以上的片段只量了
+ *  前十秒，提示却说「导出使用同一份关键帧」。这里只决定「这一次敢要几帧」；引擎还会按这条片段的
+ *  曲线预算把窗口再收短（一个跟踪点占 2 或 4 条曲线），那一段由回复里的 `budget_frames` 说清，
+ *  界面无权自己猜。`fromHead` 只用来决定那句出路：从片段开头重跟时，挪播放头是没用到的。 */
+export function trackWindow(
+  remainingFrames: number,
+  fromHead: boolean,
+  limits?: { track_min_frames?: number; track_max_frames?: number }
+): { frames: number; blocked: string | null } {
+  const min = limits?.track_min_frames ?? 2;
+  const max = limits?.track_max_frames ?? 900;
+  if (remainingFrames < min) {
+    return {
+      frames: min,
+      blocked: `这里只剩 ${remainingFrames} 帧，一次跟踪至少要看 ${min} 帧才能量出移动的方向。${
+        fromHead ? "把这段切得长一点，或直接在曲线编辑器里给遮罩中心加两个关键帧。" : "把播放头往前挪一些再点。"
+      }`,
+    };
+  }
+  return { frames: Math.min(max, remainingFrames), blocked: null };
+}
+
 /** 自动调色的三道门，一次算清：按了只会弹错的按钮不该亮着（1.82 立下的规矩）。
  *  每句都给出真能走通的出路：换到画面轨、等素材就绪、或直接在色阶里手动填两个点。 */
 export const AUTO_GRADE_NOT_PICTURE =

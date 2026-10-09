@@ -3363,3 +3363,61 @@ SHA256 500D85059F239EB3A2E664366E7A4ACC3A437776BA5746D5AB2D6083F35218E0，安装
 A3B12D68048FEA6AEAE5CE33CA666D9BBD055AE71F11DD67BFECF24F87990E00，根目录 AgentCut.exe 与便携版一字不差；
 未签名，NSIS 向导未点击验收。仍未做：把这两个旋钮存进工程状态（现在是一次性的界面状态，撤销一步不会回到
 「上一档旋钮」）；引擎侧那条拒绝码没有新增，所以界面中文提示表一字未动。
+
+## 1.88 一次跟踪量到结尾，以及它撞出来的第二道天花板
+
+缺口是 1.87 收尾时自己写在纸上的那条：界面上的 `frames` 是 `Math.max(2, Math.min(300, whole))`。
+读一遍就能确认它是缺陷而不是风格问题：300 既不是引擎的数（`MaskTrackRequest.frames` 一直是 `2..900`），
+也没人告诉被它截断的人——提示结尾那句「导出使用同一份关键帧」在十二秒片段上描述的是前十秒。
+
+第一步仍然是先量再改（一次性脚本，不进仓库）：同一条 12 秒 160×90 的往返走位素材、同一个片段，
+只差请求的窗口——300 帧停在 299 帧刻度，350 帧停在 349 帧刻度，两边的 `lost_at_ticks` 都是 `null`。
+所以短窗口停下来说明那是窗口的账，目标从没消失。这一步之后才动代码：
+
+- 数字回到契约：`TRACK_FRAMES_MIN = 2` / `TRACK_FRAMES_MAX = 900` 定义在 `contracts.py`，
+  `MaskTrackRequest.frames` 的 `ge`/`le` 与 `capabilities.limits.track_min_frames` / `track_max_frames`
+  都从这里取；`http_suite` 还把契约字段的元数据与 capabilities 交回的数摆在一起比，两边各写一份就红。
+- 判断回到一处：`effects.ts` 的 `trackWindow(remainingFrames, fromHead, limits)`，两个按钮都走它，
+  剩余不足最低帧数时给出灰掉的理由，出路按位置分两种（挪播放头 / 切长一点或在曲线编辑器里加两点）。
+  `desktop_trackwin_check.ts` 钉的是「它听传入的数」：换一组 `{8, 30}`，帧数、灰不灰、理由里的数字全变。
+
+然后是在真实界面上点第一下的收获——这也是这次真正修掉的东西：十二秒以上、带尺寸的跟踪按下去拿到的是
+`PROJECT_LIMIT`「工程到了契约上限（片段、轨道或关键帧的数量）」。两条一直没对表的数撞上来了：
+`Clip.keyframes` 装 2000 条，而一个带尺寸的跟踪点要写 4 条曲线（中心 X/Y 加宽高），于是 900 帧的请求
+在数学上永远写不下去。1.87 那个 300 恰好把这条藏在 4×300=1200 里——**一个错得太小的窗口，会让另一条
+错的天花板一直不见天日**。这一条值得单独记：修 A 之后才看得见 B，不是因为 B 是 A 造成的。
+
+修法和 1.73 给稳定/重构图立的规矩同一个形状：容量从契约字段的 `max_length` 元数据读（`reframe`、
+`stabilize` 已经这么读），不写第二份。`timeline.mask_track_capacity()` 算出这一次还能写几帧（merge 时
+窗口之前留下的曲线都算占位，更长的窗口又会吃掉尾部的点，所以逐步放宽再回验），路由据此先收窗口再分析，
+回复里给 `budget_frames`；收不动了就 422 `MASK_TRACK_BUDGET`，`details` 交出
+`frames_requested`/`capacity_frames`/`curves_per_point`/`keyframe_limit`/`curves_used` 五个数；reducer 对
+手搓的超预算路径同样点名拒绝。界面那句「还剩几秒没量」改成拿回复里的 `last_at_ticks` 算，
+1.88 早段自己加的 `unreachedTicks` 参数删掉了——界面无权猜引擎跑到哪儿；`desktop/src/engine.ts`
+补了新码的中文提示，三条出路都是真能走通的。
+
+验收：ruff check 与 format --check 干净（98 文件）、`npm run typecheck` 干净、16 项桌面 TS 全过、
+`tracking_check.py` 单跑通过（新增 window 与 budget 两段真实测量）、`self_check.py` 通过；串行套件 69/69（含 16 项桌面 TS）。
+行为侧的永久断言：灌 1600 条 opacity 曲线后再按 350 帧请求，量到 100 帧、`budget_frames=100`、末点落在
+99 帧刻度且离物体真值 <0.012 画面宽、dry run 不动 revision；手搓 150 点（600 条 > 剩下的 400 条）
+要求 422 且 `details` 里读得出 `curves_per_point=4` 与 `keyframe_limit=2000`。
+八条变异各自红（跑完按 sha256 还原并复跑全绿）：界面上限写死、界面不再走那一个判断、`trackWindow`
+的上下限不听传入、按钮不再按能不能开跑决定灰不灰、提示不再分支在 `budget_frames` 上、新错误码没有
+中文提示、路由不再按容量收窗口（写下去就是谁也不点名的 `PROJECT_LIMIT`）、reducer 不再点名拒绝。
+其中第一条在第一次跑时没红，被换掉了：原本只把 `stats.budget_frames` 改名，但句子内部的
+`${stats.budget_frames}` 让 `"stats.budget_frames" in store` 照样成立——门禁当时钉的是「提到过这个数」，
+不是「按这个数分了支」。这是 [[mutation-must-hit-the-assertion]] 的第 5 条在同一天里的第二次应验。
+
+真实界面与发布包：
+
+把开发构建的渲染层用静态服务器喂给真实浏览器（`npx vite preview --port 5206`），深链指向**打包后的 1.88 引擎**（标题栏实测「引擎在线 v1.88.0」，`capabilities.limits` 交回 `track_min_frames=2` / `track_max_frames=900`），一次灌进三条同一条 17 秒素材的片段，然后只做三件事：
+
+- 8 秒片段（60 fps 序列 = 480 帧）点「跟踪主体」：落库 480 条 `mask_x` + 480 条 `mask_width`（共 1920 条，覆盖 99.8%），提示写着「已跟踪 480 帧…导出使用同一份关键帧」——这句话在 1.87 对这条片段是假话（只会量到 300 帧），现在是真的。
+- 16 秒片段（960 帧）点同一个按钮：落库恰好 2000 条曲线（500×4），提示是「这条片段的曲线预算只装得下 500 帧…量到 8.3 秒就停了，后面 7.7 秒遮罩停在最后跟到的位置；把播放头挪过去再点「接着跟」可以续一段，或关掉尺寸估计让一个点少占几条」。
+- 路径遮罩的 16 秒片段（一个点只占两条曲线）：落库 900 条 `mask_x`、零条宽高曲线，提示是「单次最多量 900 帧，片段还剩 1.0 秒没分析…」——两句不同的话，各自对上真正拦住它的那道天花板。
+
+那句「关掉尺寸估计」在界面上点不出来：检查器每次落库后整块重挂，`useState(true)` 把三个旋钮弹回默认，而同一次脚本里派发 `onChange` 之后立刻点按钮，按钮闭包读到的还是旧值。所以这一步改在**同一个打包引擎**上用真实 HTTP 量：同一条已经装满 2000 条曲线的 16 秒片段，`estimate_scale=false` + `merge=false` 重跟 → 回 900 条 `mask_x`/`mask_y`、`mask_width`/`mask_height` 清零、总曲线 1800 条、没有 `budget_frames`（容量 1000 > 上限 900）。也就是说那句出路在数字上确实成立：500 帧变 900 帧。旋钮本身的接线由 `interface_suite` 钉（两个按钮都带 `scale: trackScale`、客户端真的发 `estimate_scale`、aria-label 在、帮助页写着），旋钮跳回默认这件事记在下面「仍未做」里。
+
+便携版从 ASCII 路径启动实测出现标题「AgentCut 剪辑台」的窗口，PrintWindow 抓到 1480×900 的真实帧，裁切放大后标题栏写着「引擎在线 v1.88.0」，关闭后 AgentCut/agentcut 残留 0。`app.asar`（5,578,898 字节）里读到「遮罩随远近缩放」2 处、「跟踪时让遮罩盒随远近缩放」「曲线预算只装得下」「单次最多量」「一直量到片段结尾」「把播放头往前挪」各 1 处，以及 `track_min_frames` / `track_max_frames` / `budget_frames` / `MASK_TRACK_BUDGET`。便携版 189,799,355 字节 SHA256 4A682CAAF8E988B670EFC05FEB0B5BA53EA25F9DE117417E270F64FB2AC8FCB8，安装版 189,960,070 字节 SHA256 885B2A6547CFEE34638230337734464D0AAA41DC1F85CE0D2B00FA63E8BFE413，根目录 AgentCut.exe 与便携版逐字节一致；未签名，NSIS 向导未点击验收。
+
+仍未做，也不假装做了：三个跟踪旋钮（挡住最多猜 / 满画面重找 / 遮罩随远近缩放）还是一次性的界面状态，没存进工程状态，任何一次落库后重挂检查器都会把它们弹回默认；被曲线预算收短的窗口只能靠「接着跟」一段一段续，界面没有「把这条片段的旧遮罩曲线删掉再重跟」的一键出路；多目标跟踪、路径遮罩形状与尺寸的动画、3D LUT、线性光色彩管理照旧。

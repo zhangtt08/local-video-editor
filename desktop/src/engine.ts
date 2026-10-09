@@ -445,7 +445,7 @@ export type Capabilities = {
   max_commands_per_batch: number;
   commands: string[];
   features: Record<string, boolean>;
-  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; denoise_db?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number; track_max_gap_frames?: number; track_gap_default?: number };
+  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; denoise_db?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number; track_max_gap_frames?: number; track_gap_default?: number; track_min_frames?: number; track_max_frames?: number };
   render_presets: Preset[];
 };
 
@@ -525,6 +525,7 @@ export class EngineError extends Error {
       INVALID_DUCK: "自动闪避要两条不同的声音轨：一条说话、一条被压。目标轨不能给自己闪避。",
       DUCK_PLAN_TOO_LARGE: "一次要闪避的片段太多（上限 90 条）：先用「去空白」把口播切成几段，或把配乐拆成几条片段再分次闪避。",
       INVALID_TRACK_TARGET: "要跟踪的窗口超出了这条片段：缩短帧数，或从更早的一帧开始。",
+      MASK_TRACK_BUDGET: "这条片段的曲线已经写满了：一个跟踪点要占 4 条曲线（中心 X/Y 加宽高），片段最多 2000 条。把这段切成几条短片段分别跟、删掉不要的关键帧，或者关掉尺寸估计（一个点只占 2 条）；也能把播放头挪到已经跟好的末尾，用「接着跟」续一小段。",
       TRACK_FAILED: "画面里没有跟得住的东西：把遮罩盖到纹理明显的主体上再试，或加大搜索半径、减少帧数。",
       INVALID_SPEED: "这个速度改不了：图片和文字没有播放速度，曲线变速要真正的媒体片段。",
       PROJECT_LIMIT: "工程到了契约上限（片段、轨道或关键帧的数量）：删掉不用的素材与曲线，或把长段落拆成几条片段。",
@@ -859,7 +860,9 @@ export class Engine {
         reacquire: boolean; reacquired_frames: number; reacquired_at_ticks: number[];
         gap_closure: number;
         gaps: { from_ticks: number; to_ticks: number }[]; lost_at_ticks: number | null;
+        first_at_ticks: number; last_at_ticks: number;
         merged?: boolean; kept_frames?: number; replaced_frames?: number;
+        budget_frames?: number;
         seam_ticks?: number; seam_jump?: number;
       };
       committed: boolean;

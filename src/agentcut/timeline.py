@@ -31,6 +31,56 @@ from .masks import fit_box
 from .speed import base_source_ticks, consumed_source_ticks, scale_curve, slice_curve
 from .subtitles import parse_srt
 
+# Read off the contract, so a tracking plan can never promise a write the clip has no room for.
+CLIP_KEYFRAME_LIMIT = next(
+    int(rule.max_length)
+    for rule in Clip.model_fields["keyframes"].metadata
+    if getattr(rule, "max_length", None)
+)
+MASK_TRACK_CURVES = ("mask_x", "mask_y")
+MASK_TRACK_SIZED_CURVES = (*MASK_TRACK_CURVES, "mask_width", "mask_height")
+
+
+def mask_track_capacity(
+    clip: Clip, curves_per_point: int, merge: bool, from_ticks: int, frame_ticks: int
+) -> int:
+    """How many frames a tracking run starting at `from_ticks` still fits on this clip.
+
+    One sighting costs `curves_per_point` curves — 2 for a centre-only path, 4 when the box also
+    follows the subject's scale — and every curve the run cannot reach stays on the clip: with
+    `merge` those before the window, and those past the end the run would have to overshoot to
+    reach a longer window. Because a longer window swallows tail curves, the count is widened and
+    re-checked rather than solved once, and it stops as soon as the window it proposes really fits.
+    A whole-path rewrite (`merge` off) is credited with clearing every mask-motion curve the clip
+    carries, which is exactly what `_apply_mask_track` does with it.
+    """
+    produced = set(
+        MASK_TRACK_SIZED_CURVES if curves_per_point > len(MASK_TRACK_CURVES) else MASK_TRACK_CURVES
+    )
+    cleared = set(MASK_TRACK_SIZED_CURVES) if not merge else produced
+    start = clip.animation_offset_ticks + from_ticks
+    fixed = sum(1 for key in clip.keyframes if key.property not in cleared)
+    before = (
+        0
+        if not merge
+        else sum(1 for key in clip.keyframes if key.property in produced and key.at_ticks < start)
+    )
+    frames = max(0, (CLIP_KEYFRAME_LIMIT - fixed - before) // curves_per_point)
+    if not merge:
+        return frames
+    for _ in range(4):
+        if frames < 2:
+            return frames
+        stop = start + (frames - 1) * frame_ticks
+        beyond = sum(
+            1 for key in clip.keyframes if key.property in produced and key.at_ticks > stop
+        )
+        room = (CLIP_KEYFRAME_LIMIT - fixed - before - beyond) // curves_per_point
+        if room >= frames:
+            return frames
+        frames = room
+    return frames
+
 
 def sequence_view(project: Project, sequence_id: str | None = None) -> Project:
     """A read projection; assets/settings/revision always belong to the root project."""
@@ -966,13 +1016,29 @@ def _apply_mask_track(clip, points, merge: bool = True) -> None:
     ]
 
     def survives(key) -> bool:
+        if not merge:
+            # 从头重跟 means the mask's animation comes from this run alone: a path that was sized
+            # before and is re-tracked centre-only must not keep the old size curves behind it.
+            return key.property not in MASK_TRACK_SIZED_CURVES
         if key.property not in values:
             return True
-        if not merge:
-            return False
         return not start <= key.at_ticks <= stop
 
-    clip.keyframes = [key for key in clip.keyframes if survives(key)]
+    kept = [key for key in clip.keyframes if survives(key)]
+    if len(kept) + len(tracked) > CLIP_KEYFRAME_LIMIT:
+        raise EditorError(
+            "MASK_TRACK_BUDGET",
+            f"a tracked path this long needs {len(tracked)} curves and the clip has room for "
+            f"{CLIP_KEYFRAME_LIMIT - len(kept)}",
+            422,
+            clip_id=clip.id,
+            curves_written=len(tracked),
+            curves_room=CLIP_KEYFRAME_LIMIT - len(kept),
+            curves_per_point=len(values),
+            keyframe_limit=CLIP_KEYFRAME_LIMIT,
+            frames=len(points),
+        )
+    clip.keyframes = kept
     clip.keyframes.extend(tracked)
     clip.keyframes.sort(key=lambda key: (key.property, key.at_ticks))
     # The drawn box describes the head of the path. A continuation joins onto an earlier segment,

@@ -510,6 +510,8 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         hidden `reacquire` searches the whole picture once more per frame, so a target that comes
         back somewhere else — or after a long occlusion — is found again instead of reported lost;
         the reply lists the ticks it was re-found at and how far the guesses had to be shifted.
+        A clip's curve list is the second ceiling: one sized sighting costs four curves, so the run
+        is shortened to whatever the clip can still hold and the reply says so with `budget_frames`.
         """
         return await call(
             "POST",
