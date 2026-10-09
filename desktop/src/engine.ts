@@ -474,6 +474,25 @@ export type Capabilities = {
   render_presets: Preset[];
 };
 
+/** 1.97 整轨规划的一项：要么是能搬的淡（带着将要落库的两个数），要么是搬不动的原因。 */
+export type FadeAdoptionEntry = {
+  clip_id: string;
+  property: "opacity" | "gain";
+  in_ticks?: number;
+  out_ticks?: number;
+  shape?: string;
+  keyframe_count?: number;
+  skipped?: string;
+};
+
+export type FadeAdoptionPlan = {
+  track_id: string;
+  clips: FadeAdoptionEntry[];
+  adopted: number;
+  skipped: number;
+  commands: Record<string, unknown>[];
+};
+
 export class EngineError extends Error {
   code: string;
   details: Record<string, unknown>;
@@ -573,6 +592,7 @@ export class EngineError extends Error {
       INVALID_COLOR: "这个颜色值引擎不认。用界面里的取色器，或者写成 #rrggbb / 0-1 之间的三个分量。",
       INVALID_DETACH: "这段拆不开：它可能已经拆过、或者是链接过来的从属片段。先在时间线上选中主片段再拆。",
       FADE_ADOPT_SHAPE: "这条淡搬不成边窗口：它不是 1.90 之前那种「从 0 缓到静止值」的淡——可能夹着别的关键帧、起点不是 0、形状不是缓入缓出，或者这一头已经是边窗口了。details 里逐条列出了这条属性上的关键帧与片段的静止值；先在曲线编辑器里把它们整理成一条从边上出发的淡（或直接删掉，再拖时间线的淡角柄重做一遍）。",
+      FADE_ADOPT_NONE: "这一轨上没有写成关键帧的淡可搬：每条片段的淡都已经在自己的两条边上（检查器那两个数字就是），或者这段本来就没有淡。要加淡直接拖时间线两边的淡角柄，或在检查器「淡入淡出」里填秒数。",
       INVALID_FADE: "淡入淡出放不下：这个片段比要淡的时间还短。先缩短淡入淡出，或者把片段留长一点。",
       INVALID_FOUR_POINT: "四点剪辑的四个位置对不上：源入点要在源出点之前，时间线入点也要在出点之前，且素材要够长。",
       INVALID_KEYFRAME: "这个关键帧写不了：属性名要选得对，时间要落在片段里，数值也别超出范围。用动画曲线面板改最稳。",
@@ -996,6 +1016,14 @@ export class Engine {
         commands: Record<string, unknown>[];
       };
     }>("POST", `/v1/projects/${projectId}/tracks/${trackId}/silence`, body, 600000);
+  }
+
+  /** 1.97：走一遍这条轨，把 1.90 之前写成关键帧的淡排成普通的 `clip.fade_adopt` 命令。只读。 */
+  fadeAdoptTrack(projectId: string, trackId: string, body: Record<string, unknown>) {
+    return this.request<{
+      committed: boolean;
+      fade_adoption: FadeAdoptionPlan;
+    }>("POST", `/v1/projects/${projectId}/tracks/${trackId}/fade-adopt`, body, 600000);
   }
 
   proxyPrune(maxBytes: number | null) {

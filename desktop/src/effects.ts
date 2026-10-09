@@ -278,6 +278,52 @@ export function fadeAdoptHint(clip: Clip, property: FadeProperty): boolean {
   return at(head) || at(tail);
 }
 
+/**
+ * 引擎搬不动淡时交回的那句原因（`timeline._fade_adoption` 的返回值）→ 中文说法。
+ *
+ * 键就是引擎那句原话，一个字都不许多：`tests/fadebatch_check.py` 会把 `_fade_adoption` 与整轨规划
+ * 里出现过的每条 reason 与这张表对起来，缺一条就红。加一张表而不是直接印英文，是因为整轨报告一次
+ * 列几十条，人读的是「哪几段、为什么」，不是日志。
+ */
+export const FADE_ADOPT_REASONS: Record<string, string> = {
+  "there are no keyframes on this property": "这条属性上没有关键帧",
+  "this property already carries edge windows": "这一头已经是边上的窗口了",
+  "some keyframes sit outside the clip": "有关键帧落在片段范围之外",
+  "the ramp does not run between 0.0 and the resting value": "斜坡不是从 0 走到这条属性的静止值",
+  "the ramp is not the eased shape a fade used": "斜坡不是老淡那种缓动形状",
+  "the clip starts faded but never comes back": "开头是淡的，但从来没有回到静止值",
+  "the clip ends faded but never started from full": "结尾是淡的，但没有从静止值开始",
+  "neither ramp starts at an edge of the clip": "两头都没从片段的边上出发",
+  "other keyframes are mixed into the fade": "淡里夹着别的关键帧",
+  "audio has no opacity to fade": "音频片段没有画面可淡",
+};
+
+/** 整轨搬完之后该说什么。只说数与原因，不替引擎判断。 */
+export function fadeAdoptSummary(plan: {
+  adopted: number;
+  skipped: number;
+  clips: { clip_id: string; property: string; skipped?: string }[];
+}): { title: string; detail: string } {
+  const blocked = plan.clips.filter((item) => item.skipped);
+  if (!plan.adopted) {
+    if (!blocked.length) {
+      return { title: "这条轨没有写成关键帧的淡", detail: "每条淡都已经在自己的两条边上，两个数字读的就是它们。" };
+    }
+    return {
+      title: "这条轨没有能搬的淡",
+      detail: `${blocked.length} 段有淡但搬不动：` + blocked.slice(0, 3)
+        .map((item) => `${item.clip_id}（${FADE_ADOPT_REASONS[item.skipped ?? ""] ?? "引擎没说原因"}）`)
+        .join("、") + (blocked.length > 3 ? `，还有 ${blocked.length - 3} 段` : "") + "。",
+    };
+  }
+  return {
+    title: `搬了 ${plan.adopted} 段淡`,
+    detail: blocked.length
+      ? `另有 ${blocked.length} 段搬不动：${FADE_ADOPT_REASONS[blocked[0].skipped ?? ""] ?? blocked[0].skipped}。画面一个像素都不变。`
+      : "画面一个像素都不变：搬的就是原来那条缓入缓出的斜坡。",
+  };
+}
+
 /** 一次淡角柄拖动的落库单位。`clipId` 带着走，是因为「这一组」不再只有被拖的那一条。 */
 export type FadeOp = { clipId: string; property: FadeProperty; side: FadeSide; ticks: number };
 

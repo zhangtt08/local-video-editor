@@ -426,6 +426,7 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
                 "render_batch",
                 "master_loudness",
                 "clip_auto_grade",
+                "track_fade_adoption",
             }
             assert set(tools) == expected, set(tools) ^ expected
             assert "request" in tools["timeline_edit"].inputSchema["properties"]
@@ -447,6 +448,13 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
             for voiced in ("clip_loudness", "track_loudness", "track_silence"):
                 assert tools[voiced].annotations.readOnlyHint is True, voiced
                 assert "sequence_id" in json.dumps(tools[voiced].inputSchema), voiced
+            # 1.97: the whole-track fade adoption is the same shape — a plan in, ordinary
+            # `clip.fade_adopt` commands out, and `timeline_edit` still the only writer.
+            assert tools["track_fade_adoption"].annotations.readOnlyHint is True
+            assert "sequence_id" in json.dumps(tools["track_fade_adoption"].inputSchema)
+            assert "clip.fade_adopt" in json.dumps(tools["timeline_edit"].inputSchema), (
+                "1.96 的命令没出现在 Agent 的 schema 里"
+            )
             # 1.80: an Agent could not see the timeline at all -- /frame was the desktop's
             # private view -- and could not read or bound the derived cache either.
             assert tools["preview_frame"].annotations.readOnlyHint is True

@@ -23,6 +23,7 @@ from .contracts import (
     CreateProject,
     DuckRequest,
     EditBatch,
+    FadeAdoptTrackRequest,
     FourPointRequest,
     Identifier,
     ImportRequest,
@@ -351,6 +352,27 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         return await call(
             "POST",
             f"/v1/projects/{project_id}/tracks/{track_id}/silence",
+            body,
+            timeout=600,
+        )
+
+    @server.tool(annotations=read)
+    async def track_fade_adoption(
+        project_id: Identifier, track_id: Identifier, request: FadeAdoptTrackRequest
+    ) -> dict[str, Any]:
+        """List the pre-1.90 keyframe fades on one track that can become edge windows.
+
+        Read-only here: `apply` and `dry_run` are forced off, so nothing is written. Each entry is
+        either an adoptable fade (`in_ticks` / `out_ticks` / `shape` as they will be stored) or a
+        refusal with the reason and the keyframes actually found on that property. Submit the
+        returned `clip.fade_adopt` commands with `timeline_edit` to land the whole track in one
+        revision. With `sequence_id` the track is read inside that nested composition, and the
+        commands then have to be submitted with the same `sequence_id`.
+        """
+        body = request.model_dump(mode="json") | {"apply": False, "dry_run": False}
+        return await call(
+            "POST",
+            f"/v1/projects/{project_id}/tracks/{track_id}/fade-adopt",
             body,
             timeout=600,
         )

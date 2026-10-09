@@ -42,6 +42,7 @@ import { FIT_MODES, type TransitionKind } from "./engine";
 import { align, frameTicks, sampleTicks, ticks, TIMEBASE } from "./time";
 import { copyClips, pasteCommands, relatedClips, selectionQuantum, timelineTracks, type ClipClipboard } from "./selection";
 import type { FadeOp, FadeProperty, FadeShape, FadeSide } from "./effects";
+import { fadeAdoptSummary } from "./effects";
 
 export type View = "home" | "editor" | "history" | "agent";
 
@@ -1696,6 +1697,35 @@ function setFadeWindows(clipId: string, windows: { property: FadeProperty; side:
  *  `clip.fade_adopt`；界面用 `fadeAdoptHint` 决定这颗按钮亮不亮（那是必要条件，不是规则）。 */
 export function adoptFade(clipId: string, property: FadeProperty) {
   submit([{ op: "clip.fade_adopt", clip_id: clipId, property }], "把淡搬成边窗口");
+}
+
+/**
+ * 整轨一次搬完（1.97）。先向引擎要一份只读规划——排出的就是普通 `clip.fade_adopt` 命令，
+ * 判断仍然只在 reducer 那一处；然后把它们交成一个批次，所以一整轨只涨一个版本、只进历史一条。
+ * 搬不动的一段都不会被排进命令里，界面因此不需要自己再判一遍。
+ */
+export async function adoptTrackFades(trackId: string) {
+  const project = state.project;
+  if (!engine || !project) return;
+  set({ busy: "找出这条轨上的老淡…" });
+  try {
+    const planned = await engine.fadeAdoptTrack(project.id, trackId, {
+      request_id: newId("fadeadopt-"), expected_revision: project.revision, sequence_id: state.sequenceId,
+    });
+    const body = planned.fade_adoption;
+    const summary = fadeAdoptSummary(body);
+    if (!body.commands.length) {
+      toast("info", summary.title, summary.detail);
+      return;
+    }
+    submit(body.commands as Command[], "整轨把老淡搬成边窗口");
+    toast("info", summary.title, summary.detail);
+  } catch (error) {
+    const { title, detail } = describe(error);
+    toast("error", title, detail);
+  } finally {
+    set({ busy: "" });
+  }
 }
 
 export function importCaptions(srt: string) {

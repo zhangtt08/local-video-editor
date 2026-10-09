@@ -1069,6 +1069,65 @@ def _fade_adoption(clip, prop: str) -> tuple[dict | None, str, dict]:
     return {"in": in_ticks, "out": out_ticks}, "", details
 
 
+FADE_PROPERTIES = ("opacity", "gain")
+
+
+def fade_adopt_track_plan(project, track_id: str) -> dict:
+    """Which of one track's pre-1.90 keyframe fades can become edge windows, and why the rest can't.
+
+    The rule is the one `clip.fade_adopt` already applies (`_fade_adoption`), called once per clip
+    and property, so the plan and the write can never disagree. A property with no keyframes at all
+    is not mentioned: there is nothing there to move, and a whole-track report that lists every clip
+    as "no fade here" would bury the ones that do have one.
+
+    An opacity ramp on an audio asset is reported as skipped rather than turned into a command —
+    the reducer refuses that combination (`INVALID_FADE`), and one bad command in the batch would
+    roll the whole track back.
+    """
+    entries: list[dict] = []
+    commands: list[dict] = []
+    for clip in sorted(
+        (item for item in project.clips.values() if item.track_id == track_id),
+        key=lambda item: item.position_ticks,
+    ):
+        asset = project.assets.get(clip.asset_id)
+        for prop in FADE_PROPERTIES:
+            if not any(k.property == prop for k in clip.keyframes):
+                continue
+            if prop == "opacity" and asset is not None and asset.kind == "audio":
+                entries.append(
+                    {
+                        "clip_id": clip.id,
+                        "property": prop,
+                        "skipped": "audio has no opacity to fade",
+                        "asset_kind": asset.kind,
+                    }
+                )
+                continue
+            adopted, reason, details = _fade_adoption(clip, prop)
+            if adopted is None:
+                entries.append({"clip_id": clip.id, "property": prop, "skipped": reason, **details})
+                continue
+            entries.append(
+                {
+                    "clip_id": clip.id,
+                    "property": prop,
+                    "in_ticks": adopted["in"],
+                    "out_ticks": adopted["out"],
+                    "shape": "ease_in_out",
+                    "keyframe_count": len(details["keyframes"]),
+                }
+            )
+            commands.append({"op": "clip.fade_adopt", "clip_id": clip.id, "property": prop})
+    return {
+        "track_id": track_id,
+        "clips": entries,
+        "adopted": len(commands),
+        "skipped": len(entries) - len(commands),
+        "commands": commands,
+    }
+
+
 def _apply_mask_track(clip, points, merge: bool = True) -> None:
     """Rewrite a mask's motion from a tracked path, in one clip."""
     mask = clip.mask

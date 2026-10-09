@@ -59,6 +59,7 @@ import {
   reframeClip, stabilizeClip, trackMask,
   cutSilence,
   autoCaptions,
+  adoptTrackFades,
   normaliseLoudness,
   alignMasterLoudness,
 } from "../store";
@@ -373,6 +374,7 @@ function FadeControls({ clip, locked, properties }: { clip: Clip; locked: boolea
       {(["in", "out"] as const).map((side) => <FadeRow key={side} clip={clip} property={property} side={side} />)}
       {app.caps?.features?.clip_fade_adopt && fadeAdoptHint(clip, property) ? <button className="btn tiny" disabled={locked} title="1.90 之前淡是写成关键帧的：那条淡在这两个数字里看不见，也不会跟着修剪与分割走。点一下把它搬成边窗口——引擎认得它原来那条从 0 缓到静止值的斜坡，搬完画面一个像素都不变；搬不动会点名说为什么（夹了别的点、起点不是 0、已经是窗口）。" onClick={() => adoptFade(clip.id, property)}>搬成边窗口</button> : null}
     </div>)}
+    {app.caps?.features?.clip_fade_adopt_track && rows.length ? <button className="btn tiny subtle" disabled={locked || Boolean(app.busy)} title="把这一整条轨上 1.90 之前写成关键帧的淡一次搬成边窗口：先向引擎要一份只读规划，排出的就是普通 clip.fade_adopt 命令，一整轨只写一个版本。搬不动的那段不会被排进来，报告里会说是哪几段、为什么。" onClick={() => adoptTrackFades(clip.track_id)}>整轨搬成边窗口</button> : null}
     <p className="hint">淡加在片段的两条边上，缓入缓出；它与音量关键帧、自动闪避、透明度动画相乘，不会互相抹掉。修剪、分割、挪动片段时淡跟着那条边走——切口不算一条边，所以中间不会凭空淡一下。</p>
   </fieldset></details>;
 }

@@ -45,6 +45,7 @@ from .contracts import (
     DuckRequest,
     EditBatch,
     EditorError,
+    FadeAdoptTrackRequest,
     FourPointRequest,
     Identifier,
     ImportRequest,
@@ -89,6 +90,7 @@ from .timeline import (
     CLIP_KEYFRAME_LIMIT,
     MASK_TRACK_CURVES,
     MASK_TRACK_SIZED_CURVES,
+    fade_adopt_track_plan,
     mask_track_capacity,
     sequence_view,
     validate_timeline,
@@ -1127,6 +1129,57 @@ def create_app(
         )
         mutation = projects.mutate(project_id, batch).model_dump()
         return {**mutation, "loudness": body}
+
+    @app.post("/v1/projects/{project_id}/tracks/{track_id}/fade-adopt", dependencies=auth)
+    def fade_adopt_track(
+        project_id: Identifier,
+        track_id: Identifier,
+        request: FadeAdoptTrackRequest,
+        projects: Store,
+    ):
+        """Move every pre-1.90 keyframe fade on one track into those clips' edge windows.
+
+        The plan applies the reducer's own rule (`_fade_adoption`) per clip and property, so the
+        commands it returns are exactly ones the same reducer accepts; a clip that cannot move
+        is reported with the reason and the keyframes actually found on it. `apply=false` is the
+        read-only plan an Agent submits through `timeline_edit`; `apply=true` writes them as one
+        batch, so a whole track costs one revision and one history entry.
+        """
+        root = projects.get(project_id)
+        project = sequence_view(root, request.sequence_id)
+        if next((track for track in project.tracks if track.id == track_id), None) is None:
+            raise EditorError("NOT_FOUND", "track is not in this project", 404, track_id=track_id)
+        if not any(item.track_id == track_id for item in project.clips.values()):
+            raise EditorError("NOT_FOUND", "this track holds no clips", 404, track_id=track_id)
+        body = fade_adopt_track_plan(project, track_id)
+        if request.apply and not body["commands"]:
+            raise EditorError(
+                "FADE_ADOPT_NONE",
+                "no fade on this track is written as keyframes: there is nothing to move",
+                422,
+                track_id=track_id,
+                inspected=body["adopted"] + body["skipped"],
+                skipped=[
+                    {
+                        "clip_id": item["clip_id"],
+                        "property": item["property"],
+                        "reason": item["skipped"],
+                    }
+                    for item in body["clips"]
+                    if "skipped" in item
+                ],
+            )
+        if not request.apply:
+            return {"committed": False, "project": root.model_dump(), "fade_adoption": body}
+        batch = EditBatch(
+            request_id=request.request_id,
+            expected_revision=request.expected_revision,
+            sequence_id=request.sequence_id,
+            commands=body["commands"],  # type: ignore[arg-type]
+            dry_run=request.dry_run,
+        )
+        mutation = projects.mutate(project_id, batch).model_dump()
+        return {**mutation, "fade_adoption": body}
 
     @app.post("/v1/projects/{project_id}/markers/split", dependencies=auth)
     def marker_split(project_id: Identifier, request: MarkerSplitRequest, projects: Store):

@@ -8,7 +8,7 @@ TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 15  # v15 gives each fade edge a shape; older rows read the smoothstep default
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
-APP_VERSION = "1.96.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.97.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -1646,6 +1646,23 @@ class LoudnessRequest(Contract):
     dry_run: bool = False
 
 
+class FadeAdoptTrackRequest(Contract):
+    """Move every pre-1.90 keyframe fade on one track into the edge windows, in one edit.
+
+    `apply=false` is the read-only plan: the ordinary `clip.fade_adopt` commands come back with the
+    clips that cannot move and the reason for each, and nothing is written — an Agent submits those
+    commands through `timeline_edit` to commit them. `apply=true` runs the same list as
+    one batch, so a whole track costs one revision. The rule stays the reducer's (`_fade_adoption`);
+    this only walks the track.
+    """
+
+    request_id: Identifier
+    expected_revision: Revision
+    sequence_id: Identifier | None = None
+    apply: bool = False
+    dry_run: bool = False
+
+
 class FourPointRequest(Contract):
     """Two source points plus two destination points, resolved into one placement command.
 
@@ -2312,6 +2329,8 @@ def capabilities(
             "clip_fade_shapes": True,
             # 1.96: a pre-1.90 keyframe fade can be moved into the edge windows in one command.
             "clip_fade_adopt": True,
+            # 1.97: the same move across one whole track, as a plan or as a single edit.
+            "clip_fade_adopt_track": True,
         },
         "limits": {
             "max_tracks": 128,

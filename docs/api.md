@@ -2175,3 +2175,50 @@ MCP 的 `clip_track` docstring 也写了这道天花板，Agent 与人在这里�
 `capabilities.features.clip_fade_adopt` 与 `capabilities.commands` 里的 `"clip.fade_adopt"` 是这条能力的
 说法，MCP 的 schema 由契约生成，因此 `timeline_edit` 直接收得到它。界面在检查器那一行给一个
 「搬成边窗口」按钮，只有 `fadeAdoptHint` 认为**可能**搬得动时才出现（它只断言必要条件，最终判断仍留给引擎）。
+
+
+## 1.97 整轨一次搬完：规划只读，写入仍然是那一处
+
+1.96 的 `clip.fade_adopt` 一次搬一条属性一个片段。老素材通常不是一段而是一整轨，所以这一版加一条
+只读规划，人那侧是检查器里的「整轨搬成边窗口」，Agent 那侧是同一件事：
+
+| HTTP | MCP | 语义 |
+|---|---|---|
+| `POST /v1/projects/{id}/tracks/{tid}/fade-adopt` | `track_fade_adoption` | 走一遍这条轨，能搬的排成普通 `clip.fade_adopt` 命令，搬不动的连原因与实际看到的关键帧一起交回 |
+
+请求体是 `FadeAdoptTrackRequest`：`request_id`、`expected_revision`、可选 `sequence_id`、`apply`、
+`dry_run`。`apply=false`（MCP 工具固定如此，并且 `readOnlyHint=true`）不落库，`committed=false`，
+交回的就是当前工程与命令表；`apply=true` 把这批命令交成一个 `EditBatch` 走 `ProjectStore.mutate`，
+所以**一整轨只涨一个 revision、只进历史一条**，`dry_run=true` 给的是将要落库的那个号（`base_revision`
+仍是当前的）。规划与写入用的是同一条判断——`timeline.fade_adopt_track_plan` 逐条调 `clip.fade_adopt`
+背后的 `_fade_adoption`——界面与 Agent 都不许有第二套规则，否则「规划说能搬、reducer 拒绝」会把整批
+一起回滚。
+
+报告形状：`fade_adoption = {track_id, clips[], adopted, skipped, commands[]}`。`clips` 按片段的
+`position_ticks` 排（界面与 Agent 读到的顺序就是时间线从上到下），每项要么是能搬的
+`{clip_id, property, in_ticks, out_ticks, shape, keyframe_count}`，要么是搬不动的
+`{clip_id, property, skipped, ...details}`（details 就是 `FADE_ADOPT_SHAPE` 那一条的五个字段）。
+**这条属性上根本没有关键帧的片段不出现在报告里**——整轨报告的价值是「哪几段、为什么」，列 N 条
+「这里没有淡」就把它埋了。音量轨上的 opacity 被跳过的原因单列一句（`audio has no opacity to fade`），
+并且不会被排成一条 reducer 必定拒绝的命令。
+
+拒绝：轨道不存在 `404 NOT_FOUND`（带 `track_id`）；这条轨上没有片段 `404`（同一句带 `track_id`）；
+`apply=true` 而一条都排不出来时 `422 FADE_ADOPT_NONE`，`details` 给 `track_id`、`inspected` 与逐条
+`skipped`。三种都不涨 revision。`capabilities.features.clip_fade_adopt_track` 是这条能力的说法。
+
+界面那句中文报告（`搬了 N 段淡` / `这条轨没有能搬的淡`）由 `desktop/src/effects.ts` 的
+`fadeAdoptSummary` 生成，原因走 `FADE_ADOPT_REASONS` 那张表：键就是引擎那句原话。
+`tests/fadebatch_check.py` 把两边的句子对起来（新增一条拒绝而表里没配就红），
+`tests/desktop_fadetoast_check.ts` 管另一半：数取自规划而不是界面自己数的、只列前三段、
+未知原因不许写成空串。
+
+`tests/fadebatch_check.py` 量的三件事：规划交回的命令交给 reducer 后，落库的窗口逐条等于规划报的两个
+数、形状是 `ease_in_out`、该删的关键帧删干净而另一条属性的点一个不动；只读规划不落库、`apply=true`
+一次只涨一个版本、没得搬与被拒都不写版本；成片上三段老淡一次搬完，18 个时刻的中心像素逐个相同
+（最差偏差 0 阶）。实机点过三次（发布包里的引擎 + 构建好的渲染端，量在 1280×800 同源 iframe 里做）：一条画面轨上两段
+老淡加一段手敲的，点「整轨搬成边窗口」后 r1→r2 只涨一个版本，四颗与两颗关键帧菱形归零、那两个数字从
+0.00 变成 1.00/1.00，手敲那段的三颗一字未动；再点一次提示「这条轨没有能搬的淡 / 1 段有淡但搬不动：
+c2（斜坡不是从 0 走到这条属性的静止值）」，版本不再变；往另一条轨再放两段老淡，点一次提示「搬了 2 段
+淡 / 画面一个像素都不变 / 整轨把老淡搬成边窗口 · r4 / 已原子写入，历史可回滚」，r3→r4。那颗按钮在折叠的
+`<details>` 里，所以探针先展开、再滚动、再用 `elementFromPoint` 命中——按钮的矩形在折叠时也报非零，
+只断言「存在」会绿着通过。
