@@ -1,4 +1,4 @@
-import type { AnimatedEffect, Capabilities, Clip, MaskProperty, ShapeMask } from "./engine";
+import type { AnimatedEffect, Asset, Capabilities, Clip, MaskProperty, ShapeMask } from "./engine";
 import { TIMEBASE } from "./time";
 
 /**
@@ -152,6 +152,18 @@ export function autoGradeBlocker(
 export type FadeProperty = "opacity" | "gain";
 export type FadeSide = "in" | "out";
 
+/** 这段素材能淡什么：画面、音量，或两者。引擎只有一条规矩（音频素材没有不透明度可淡，按
+ *  `INVALID_FADE` 点名 `asset_kind` 拒），但界面此前在 Inspector 里各算一遍。时间线新加的淡角柄
+ *  必须按同一个判断决定拖哪一头，否则就会在一个按下去必定被拒的属性上给出手柄。 */
+export function fadeProperties(clip: Clip, asset?: Asset | null): FadeProperty[] {
+  const picture = asset?.kind !== "audio";
+  const sound = asset?.kind === "audio" || Boolean(asset?.verified?.has_audio) && clip.embedded_audio !== false;
+  const list: FadeProperty[] = [];
+  if (picture) list.push("opacity");
+  if (sound) list.push("gain");
+  return list;
+}
+
 /** 片段自己那两条边上的淡入／淡出长度（tick）。没有 fade 记录就是全 0——1.90 之前淡是写成关键帧的，
  *  那些老片段照旧按写在曲线里的淡渲染，只是这个读数看不到它们（帮助页写明了这一条）。 */
 export function fadeWindows(clip: Clip): Record<FadeProperty, Record<FadeSide, number>> {
@@ -160,6 +172,29 @@ export function fadeWindows(clip: Clip): Record<FadeProperty, Record<FadeSide, n
     opacity: { in: fade?.opacity_in_ticks ?? 0, out: fade?.opacity_out_ticks ?? 0 },
     gain: { in: fade?.gain_in_ticks ?? 0, out: fade?.gain_out_ticks ?? 0 },
   };
+}
+
+/** 这一头还能要多少 tick：片段长度减去对面那头已经占掉的。
+ *  检查器那两行与时间线上的淡角柄都读这一个数——额度从头到尾只有一处来源。 */
+export function fadeRoom(clip: Clip, property: FadeProperty, side: FadeSide): number {
+  const windows = fadeWindows(clip)[property];
+  const other = side === "in" ? windows.out : windows.in;
+  return Math.max(0, clip.duration_ticks - other);
+}
+
+/** 时间线上拖淡角柄：指针离开这条边多远，这一头就淡多久。
+ *  按时间线自己的网格对齐，上限读 `fadeRoom`，所以拖不出一条引擎必定拒绝的淡；
+ *  拖回边上（或网格把它对齐到 0）就是取消这一头。 */
+export function fadeDragTicks(
+  clip: Clip,
+  property: FadeProperty,
+  side: FadeSide,
+  rawTicks: number,
+  quantum: number
+): number {
+  const step = quantum > 0 ? quantum : 1;
+  const aligned = Math.round(rawTicks / step) * step;
+  return Math.max(0, Math.min(aligned, fadeRoom(clip, property, side)));
 }
 
 /** 淡入与淡出共用片段的同一段长度：两个窗口加起来超过片段长度，引擎回 `INVALID_FADE`。
@@ -171,10 +206,9 @@ export function fadeBlocker(
   side: FadeSide,
   value: number
 ): string | null {
-  const windows = fadeWindows(clip)[property];
-  const other = side === "in" ? windows.out : windows.in;
+  const other = side === "in" ? fadeWindows(clip)[property].out : fadeWindows(clip)[property].in;
   if (value + other <= clip.duration_ticks) return null;
-  const room = Math.max(0, clip.duration_ticks - other);
+  const room = fadeRoom(clip, property, side);
   const name = side === "in" ? "淡入" : "淡出";
   const opposite = side === "in" ? "淡出" : "淡入";
   return (

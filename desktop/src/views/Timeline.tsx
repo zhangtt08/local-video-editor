@@ -40,8 +40,9 @@ import {
   removeMarker,
   setMarker,
   splitAtMarkers,
+  setFadeWindows,
 } from "../store";
-import { EMPTY_TRACK_HINT, trackToolBlocker } from "../effects";
+import { EMPTY_TRACK_HINT, trackToolBlocker, fadeDragTicks, fadeProperties, fadeWindows, type FadeProperty, type FadeSide } from "../effects";
 import { selectionQuantum, timelineTracks } from "../selection";
 
 const HEAD = 112;
@@ -653,6 +654,51 @@ function ClipBlock({
   const duration = shown?.duration_ticks ?? clip.duration_ticks;
   const width = Math.max(6, (duration / TIMEBASE) * px);
 
+  // 淡角柄：拖这条边离开多远，这一头就淡多久，写回 `Clip.fade` 的那一头。音轨淡的是音量，画面轨淡的是
+  // 不透明度；Shift 拖把两者一起淡。上限与检查器那两行同源（`fadeRoom`），所以拖不出一条引擎必定拒绝的淡。
+  const box = useRef<HTMLDivElement>(null);
+  const [fadeDrag, setFadeDrag] = useState<{ side: FadeSide; raw: number } | null>(null);
+  const fadeOptions = fadeProperties(clip, asset);
+  const wantedProperty: FadeProperty = track.kind === "audio" ? "gain" : "opacity";
+  const primary: FadeProperty = fadeOptions.includes(wantedProperty) ? wantedProperty : fadeOptions[0] ?? "gain";
+  const fades = fadeWindows(clip);
+  const shownFade = (property: FadeProperty, side: FadeSide) =>
+    fadeDrag && fadeDrag.side === side ? fadeDragTicks(clip, property, side, fadeDrag.raw, q) : fades[property][side];
+  const canFade =
+    selected && !track.locked && !razor && width >= 56 && fadeOptions.length > 0
+    && Boolean(app.caps?.features?.clip_fade_envelopes);
+
+  const startFade = (event: React.PointerEvent, side: FadeSide) => {
+    if (razor || event.button !== 0 || track.locked || !box.current) return;
+    event.stopPropagation();
+    event.preventDefault();
+    selectClip(clip.id, false, false);
+    const both = event.shiftKey;
+    const rect = box.current.getBoundingClientRect();
+    const edge = side === "in" ? rect.left : rect.right;
+    const rawOf = (clientX: number) => (Math.abs(clientX - edge) / px) * TIMEBASE;
+    const wanted = (raw: number) =>
+      (both ? fadeOptions : [primary]).map((property) => ({
+        property,
+        side,
+        ticks: fadeDragTicks(clip, property, side, raw, q),
+      }));
+    const move = (ev: PointerEvent) => setFadeDrag({ side, raw: rawOf(ev.clientX) });
+    const stop = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      setFadeDrag(null);
+      if (ev.type === "pointercancel" || Math.abs(ev.clientX - event.clientX) < 2) return;
+      const next = wanted(rawOf(ev.clientX));
+      if (next.every((item) => item.ticks === fades[item.property][item.side])) return;
+      setFadeWindows(clip.id, next);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+  };
+
   const start = (event: React.PointerEvent, modeIn: DragMode) => {
     if (razor || event.button !== 0) return;
     event.stopPropagation();
@@ -760,7 +806,8 @@ function ClipBlock({
 
   return (
     <div
-      className={`clip ${kind}${selected ? " selected" : ""}${shown ? " dragging" : ""}`}
+      ref={box}
+      className={`clip ${kind}${selected ? " selected" : ""}${shown ? " dragging" : ""}${fadeDrag ? " fading" : ""}`}
       style={{ left: (position / TIMEBASE) * px, width, transform: shown && drag?.mode === "move" ? `translateY(${drag.rowShift * ROW}px)` : undefined }}
       data-id={clip.id}
       role="button"
@@ -798,6 +845,21 @@ function ClipBlock({
         aria-label={`跳到${k.property}关键帧`}
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => { event.stopPropagation(); selectClip(clip.id); playhead.pause(); playhead.set(clip.position_ticks + k.at_ticks - (clip.animation_offset_ticks ?? 0)); }}>◆</button>)}
+      {(["opacity", "gain"] as FadeProperty[]).flatMap((property) => (["in", "out"] as FadeSide[]).map((side) => {
+        const length = shownFade(property, side);
+        if (!length) return null;
+        return <span key={`${property}-${side}`} className={`fade-wedge ${property} ${side}`} style={{ width: Math.max(2, Math.min(width - 2, (length / TIMEBASE) * px)) }} aria-hidden="true" />;
+      }))}
+      {fadeDrag ? <span className="fade-readout mono">{(shownFade(primary, fadeDrag.side) / TIMEBASE).toFixed(2)}s</span> : null}
+      {canFade ? (["in", "out"] as FadeSide[]).map((side) => <span
+        key={side}
+        className={`fade-handle ${side}`}
+        role="button"
+        tabIndex={-1}
+        aria-label={`拖动${side === "in" ? "淡入" : "淡出"}角柄`}
+        title={`拖着角柄走：这段${primary === "gain" ? "音量" : "画面"}淡${side === "in" ? "入" : "出"}多久，拖回边上取消（现在 ${(fades[primary][side] / TIMEBASE).toFixed(2)} 秒）。${fadeOptions.length > 1 ? "Shift 拖同时淡画面与音量。" : ""}修剪请拖最外面的边。`}
+        onPointerDown={(event) => startFade(event, side)}
+      />) : null}
       <span className="trim-handle left" title="拖动改变源入点（从素材的哪一秒开始）；Shift 涟漪修剪，Ctrl 滚动剪辑" onPointerDown={(event) => start(event, "trim-l")} />
       <span className="trim-handle right" title="拖动改变时长；Shift 涟漪修剪，Ctrl 滚动剪辑" onPointerDown={(event) => start(event, "trim-r")} />
     </div>

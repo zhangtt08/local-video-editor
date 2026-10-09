@@ -1658,10 +1658,25 @@ export function setClipText(clipId: string, patch: Partial<TextStyle>) {
  *  所以淡入与淡出能同时存在，也不会把这条轨上的音量关键帧（含自动闪避写的那些）顶掉。
  *  `seconds = 0` 就是取消这一头。 */
 export function setFade(clipId: string, property: FadeProperty, side: FadeSide, seconds: number) {
-  const duration = Math.max(0, ticks(seconds));
+  setFadeWindows(clipId, [{ property, side, ticks: ticks(seconds) }]);
+}
+
+/** 时间线上拖淡角柄走这条路：一次拖动的长度天生是 tick，不经过浮点秒。
+ *  一次提交可以带两头（Shift 拖同时淡画面与音量），一个批次一个 revision。 */
+export function setFadeWindows(clipId: string, windows: { property: FadeProperty; side: FadeSide; ticks: number }[]) {
+  if (!windows.length) return;
+  const label = windows.length > 1
+    ? (windows[0].side === "in" ? "淡入画面与音量" : "淡出画面与音量")
+    : (windows[0].side === "in" ? "设置淡入" : "设置淡出");
   submit(
-    [{ op: "clip.fade", clip_id: clipId, property, duration_ticks: duration, mode: side }],
-    side === "in" ? "设置淡入" : "设置淡出",
+    windows.map(({ property, side, ticks: length }) => ({
+      op: "clip.fade",
+      clip_id: clipId,
+      property,
+      duration_ticks: Math.max(0, Math.round(length)),
+      mode: side,
+    })),
+    label,
     { quiet: true }
   );
 }

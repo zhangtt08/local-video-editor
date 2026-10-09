@@ -6,7 +6,7 @@ import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionCh
 import { Icon, Modal } from "../ui";
 import { GradeFields } from "./GradeFields";
 import { SpeedFields } from "./SpeedFields";
-import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeBlocker, fadeWindows, sharpenLimits, stabilizeBlocked, trackWindow, type FadeProperty, type FadeSide } from "../effects";
+import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeBlocker, fadeProperties, fadeWindows, sharpenLimits, stabilizeBlocked, trackWindow, type FadeProperty, type FadeSide } from "../effects";
 import { frameTicks, TIMEBASE, align, humanDuration, seconds, ticks } from "../time";
 import {
   clearBatch,
@@ -355,16 +355,15 @@ function EffectsFields({ clip }: { clip: Clip }) {
       </div>
       <p className="hint">{slidingBlocked ? "带变速曲线或已链接声音的片段不能划动/滑移：时间不是线性的，让出来的帧在两侧含义不同。请直接修剪，或先解除链接。" : "划动改这段素材的起点；滑移改这段在时间线上的位置，两侧相邻片段各自补/让同样的帧数，整条轨不变长——两侧都得有相邻片段才滑得动，素材头尾不够时引擎会拒绝并说明原因。"}</p>
     </fieldset></details>
-    <FadeControls clip={clip} locked={locked} picture={asset?.kind !== "audio"} sound={asset?.kind === "audio" || Boolean(asset?.verified?.has_audio) && clip.embedded_audio !== false} />
+    <FadeControls clip={clip} locked={locked} properties={fadeProperties(clip, asset)} />
   </section>;
 }
 
 /** 淡入淡出改的是片段两条边上的窗口（`Clip.fade`）：一头一次提交只动自己那一头，所以淡入与淡出能
- *  同时存在，音量那一行也不会再把自动闪避写下的关键帧顶掉。数字读自工程状态，不是界面自己记的。 */
-function FadeControls({ clip, locked, picture, sound }: { clip: Clip; locked: boolean; picture: boolean; sound: boolean }) {
-  const rows: { property: FadeProperty; label: string }[] = [];
-  if (picture) rows.push({ property: "opacity", label: "画面透明度" });
-  if (sound) rows.push({ property: "gain", label: "音量" });
+ *  同时存在，音量那一行也不会再把自动闪避写下的关键帧顶掉。数字读自工程状态，不是界面自己记的。
+ *  能淡哪几头由 `fadeProperties` 说，时间线的淡角柄读的是同一个判断。 */
+function FadeControls({ clip, locked, properties }: { clip: Clip; locked: boolean; properties: FadeProperty[] }) {
+  const rows = properties.map((property) => ({ property, label: property === "opacity" ? "画面透明度" : "音量" }));
   return <details className="fade-controls"><summary className="panel-label">淡入淡出</summary><fieldset disabled={locked} className="effects-fields">
     {!rows.length ? <p className="hint">这段素材既不显示画面也没有声音，淡入淡出没处可加。</p> : rows.map(({ property, label }) => <div key={property} className="fade-rows">
       <p className="panel-label">{label}</p>

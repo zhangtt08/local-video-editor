@@ -7,6 +7,7 @@ loudly when either tool is missing rather than reporting a skip as a pass.
 """
 
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -58,6 +59,11 @@ def run_one(path: Path, out_dir: Path) -> None:
 def main() -> None:
     if not DESKTOP.joinpath("package.json").exists():
         raise SystemExit(f"FAIL: no desktop project at {DESKTOP}")
+    # 每个 shell check 的 PASS 句子是中文的，还可能带「−」这类 cp936 印不出的字符；
+    # 控制台按代码页走就会在 print 当场 UnicodeEncodeError，把一条绿的门禁报成崩溃。
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     files = sorted({found for pattern in PATTERNS for found in (ROOT / "tests").glob(pattern)})
     assert files, "no shell checks found"
     out_dir = ROOT / "build" / "shell-checks"
