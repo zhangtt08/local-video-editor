@@ -9,6 +9,9 @@ returns:
   sum to one. `{"kind", "curve", "invert"}` per clip, compiled into the layer's alpha by `render`.
 - a **size factor** (`scale`): zoom-in grows the incoming shot from `ZOOM_START` to 1 while it
   dissolves, zoom-out shrinks the outgoing one to `ZOOM_END`. Multiplied into the layer's scale.
+- a **whole-layer translation** (`motion_x` / `motion_y`): push and slide move the shot across the
+  frame. Offset is in fractions of the frame, the same unit the clip's own `x`/`y` use, so the
+  exporter adds it straight into its `overlay=` term and the browser into its translate wrapper.
 """
 
 from .contracts import TIMEBASE, Project
@@ -26,6 +29,22 @@ ZOOM_END = 0.6
 # The reveal edge is not a hard cut: a ramp this wide (as a fraction of the frame) is what makes the
 # boundary read as a wipe instead of a one-pixel jump between two opaque shots.
 WIPE_FEATHER = 0.02
+
+# A motion transition moves whole layers, so it needs one number per axis: where the incoming shot
+# starts (in frame fractions, off-frame) and where the outgoing one ends. Named for the side the
+# incoming shot arrives from — the same ruler the wipes use, so 「推移·从左入」 and 「从左擦除」
+# travel the same way across the frame. The two sides always move apart, so the layers never overlap
+# and the premultiplied sum stays at one; a covering 「滑动」 would need a frame-space complement.
+MOTION_KINDS = {
+    "push_from_left": ("x", -1.0, 1.0),
+    "push_from_right": ("x", 1.0, -1.0),
+    "push_from_top": ("y", -1.0, 1.0),
+    "push_from_bottom": ("y", 1.0, -1.0),
+}
+# A wipe and a motion both reveal *space*, not light: the two shots stay fully opaque the whole
+# window, so the scalar picture weight must stay whole or the export would double the exposure and
+# the preview would show an instant cut. Sound still cross-fades like a dissolve.
+WHOLE_WEIGHT_KINDS = {**WIPE_KINDS, **MOTION_KINDS}
 
 
 def envelopes(project: Project) -> dict:
@@ -60,12 +79,12 @@ def envelopes(project: Project) -> dict:
                 p = progress(at, incoming.duration_ticks, True)
                 # A wipe reveals space, not light: its scalar picture weight stays whole so the two
                 # opaque layers still sum to one, while the audio cross-fades like a dissolve.
-                if not (picture and incoming.kind in WIPE_KINDS):
+                if not (picture and incoming.kind in WHOLE_WEIGHT_KINDS):
                     fade = max(0, 2 * p - 1)
                     value *= fade if picture and incoming.kind in {"dip_black", "dip_white"} else p
             if tail:
                 p = progress(at, tail.duration_ticks, False)
-                if not (picture and tail.kind in WIPE_KINDS):
+                if not (picture and tail.kind in WHOLE_WEIGHT_KINDS):
                     fade = max(0, 1 - 2 * p)
                     value *= fade if picture and tail.kind in {"dip_black", "dip_white"} else 1 - p
             return value
@@ -83,6 +102,18 @@ def envelopes(project: Project) -> dict:
             if tail and tail.kind in WIPE_KINDS:
                 return tail.kind, progress(at, tail.duration_ticks, False), True
             return None
+
+        def motion_at(at) -> tuple[float, float]:
+            """Where this clip's whole layer sits right now, in frame fractions of offset."""
+            if incoming and incoming.kind in MOTION_KINDS:
+                axis, start, _exit = MOTION_KINDS[incoming.kind]
+                value = start * (1.0 - progress(at, incoming.duration_ticks, True))
+                return (value, 0.0) if axis == "x" else (0.0, value)
+            if tail and tail.kind in MOTION_KINDS:
+                axis, _start, exit_to = MOTION_KINDS[tail.kind]
+                value = exit_to * progress(at, tail.duration_ticks, False)
+                return (value, 0.0) if axis == "x" else (0.0, value)
+            return (0.0, 0.0)
 
         curves = {}
         for name in ("picture", "sound"):
@@ -118,6 +149,18 @@ def envelopes(project: Project) -> dict:
             {"offset": t / clip.duration_ticks, "value": scale_at(t), "easing": "linear"}
             for t in sorted(times)
         ]
+        # One point list per axis, because that is the shape both consumers already move in: the
+        # exporter adds each into its `overlay=x:`/`y:` term, and the browser animates its two
+        # nested translate wrappers with the same numbers.
+        for axis in ("x", "y"):
+            curves[f"motion_{axis}"] = [
+                {
+                    "offset": t / clip.duration_ticks,
+                    "value": motion_at(t)[0 if axis == "x" else 1],
+                    "easing": "linear",
+                }
+                for t in sorted(times)
+            ]
         probe = wipe_at(0)
         curves["wipe"] = (
             None
@@ -125,6 +168,12 @@ def envelopes(project: Project) -> dict:
             else {
                 "kind": probe[0],
                 "invert": probe[2],
+                # The browser needs the same ramp width the exporter divides by, or its edge would
+                # sit half a feather away from the exported one. And it needs the axis and the
+                # direction, because a second name→direction table in the shell is two authorities.
+                "feather": WIPE_FEATHER,
+                "axis": WIPE_KINDS[probe[0]][0],
+                "flipped": WIPE_KINDS[probe[0]][1],
                 "curve": [
                     {"offset": t / clip.duration_ticks, "value": wipe_at(t)[1], "easing": "linear"}
                     for t in sorted(times)

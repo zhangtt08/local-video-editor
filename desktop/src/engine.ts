@@ -162,7 +162,23 @@ export type Transition = { from_clip_id: string; kind: TransitionKind; duration_
 export type LinkStatus = { clip_ids: string[]; synchronized: boolean; anchor_clip_id: string; differences: Record<string, { position_ticks: number; source_ticks: number; duration_ticks: number; speed_percent: number }> };
 export type SpeedPoint = { at_ticks: number; percent: number };
 
-export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; grade?: GradeTables | null; sharpen?: { id: string; amount: number; bbox: [number, number] } | null; speed?: RampPiece[] | null; mask_image?: string | null; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; curves: Record<AnimatedEffect, Curve>; transition: Record<"picture" | "sound" | "black" | "white", Curve>; fade?: Record<"opacity" | "gain", Curve> | null }> };
+/** 一条擦除：轴、方向、羽化宽与 0..1 的进度点表，全部由引擎下发（`transitions.envelopes`）。
+ *  界面不许自备第二张「名字→方向」的表，也不许自己写羽化宽。 */
+export type WipeChannel = { kind: string; invert: boolean; axis: "x" | "y"; flipped: boolean; feather: number; curve: Curve };
+
+/** 转场的每一路都是引擎算好的一条点表：标量权重、黑/白闪、放大倍率、整层位移，以及那条擦除。 */
+export type TransitionEnvelope = {
+  picture: Curve;
+  sound: Curve;
+  black: Curve;
+  white: Curve;
+  scale: Curve;
+  motion_x: Curve;
+  motion_y: Curve;
+  wipe: WipeChannel | null;
+};
+
+export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; grade?: GradeTables | null; sharpen?: { id: string; amount: number; bbox: [number, number] } | null; speed?: RampPiece[] | null; mask_image?: string | null; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; curves: Record<AnimatedEffect, Curve>; transition: TransitionEnvelope; fade?: Record<"opacity" | "gain", Curve> | null }> };
 
 /** 引擎给这条片段记下的那一次稳定：有了它，再按一次是换一档强度而不是叠第二遍。 */
 export type Stabilization = {

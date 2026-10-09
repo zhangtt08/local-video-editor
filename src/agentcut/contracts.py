@@ -8,7 +8,7 @@ TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 14  # v14 gives a clip its fade windows; older rows read as "no envelope" (ge=1).
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
-APP_VERSION = "1.93.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.94.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -637,6 +637,10 @@ TransitionKind = Literal[
     "wipe_from_bottom",
     "zoom_in",
     "zoom_out",
+    "push_from_left",
+    "push_from_right",
+    "push_from_top",
+    "push_from_bottom",
 ]
 TRANSITION_KINDS: tuple[dict, ...] = (
     {"id": "dissolve", "label": "交叉溶解"},
@@ -648,6 +652,15 @@ TRANSITION_KINDS: tuple[dict, ...] = (
     {"id": "wipe_from_bottom", "label": "从下擦除"},
     {"id": "zoom_in", "label": "放大进入"},
     {"id": "zoom_out", "label": "缩出"},
+    # 名字说的是**新画面从哪一边进来**（与「从左擦除」同一把尺）。推移：两段像同一条胶片一样一起走，
+    # 旧画面从对面那一边退出，接缝横穿画面，两层永远不重叠。
+    # 「滑动」（新画面滑进来盖住原地不动的旧画面）故意不提供：这条导出链把预乘后的各层**相加**
+    # （见 transitions 的说明与擦除那条互补 alpha），重叠区会被双计成一片亮边——实测两幅纯色
+    # 叠出来是 (222,61,220)。要交滑动，得先有一条画面空间的互补 alpha，两端都得改。
+    {"id": "push_from_left", "label": "推移·从左入"},
+    {"id": "push_from_right", "label": "推移·从右入"},
+    {"id": "push_from_top", "label": "推移·从上入"},
+    {"id": "push_from_bottom", "label": "推移·从下入"},
 )
 
 
@@ -2200,6 +2213,9 @@ def capabilities(
             "transitions": True,
             "wipe_transitions": True,
             "zoom_transitions": True,
+            # 1.94: push/slide move whole layers. The offsets ride the same clip-local clock the
+            # clip's own x/y keyframes use, so the exporter and the browser read one envelope list.
+            "motion_transitions": True,
             "speed_change": True,
             "speed_curve": True,
             "color_correction": True,

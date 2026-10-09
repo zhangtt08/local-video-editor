@@ -1,4 +1,4 @@
-import type { AnimatedEffect, Asset, Capabilities, Clip, MaskProperty, Project, ShapeMask } from "./engine";
+import type { AnimatedEffect, Asset, Capabilities, Clip, MaskProperty, Project, ShapeMask, WipeChannel } from "./engine";
 import { TIMEBASE } from "./time";
 
 /**
@@ -181,6 +181,25 @@ export function autoGradeBlocker(
   const measurable = assetKind === "video" || assetKind === "image";
   if (!measurable || trackKind !== "video") return AUTO_GRADE_NOT_PICTURE;
   return null;
+}
+
+/** 预览里的擦除露出的是空间，不是光。导出在 alpha 上算一条宽 `feather` 的斜坡
+ *  （`transitions.wipe_expression`），浏览器只能给一条硬边，所以硬边取那条斜坡的**中点**：
+ *  `progress*(1+feather) - feather/2`。进度、轴、方向、羽化宽全部读引擎下发的数——
+ *  界面不许自备第二张「名字→方向」的表，也不许自己写 0.02。 */
+export function wipeClipPath(
+  wipe: Pick<WipeChannel, "axis" | "flipped" | "invert" | "feather">,
+  progress: number
+): string {
+  const edge = Math.max(0, Math.min(1, progress * (1 + wipe.feather) - wipe.feather / 2));
+  // 非反向时露出的是行进方向的那一头；反向（把补集交给另一层）就是对面那一头。
+  const coversStart = wipe.flipped === wipe.invert;
+  const percent = (value: number) => `${Math.round(value * 10000) / 100}%`;
+  const hiddenStart = coversStart ? 0 : edge;
+  const hiddenEnd = coversStart ? 1 - edge : 0;
+  return wipe.axis === "x"
+    ? `inset(0 ${percent(hiddenEnd)} 0 ${percent(hiddenStart)})`
+    : `inset(${percent(hiddenStart)} 0 ${percent(hiddenEnd)} 0)`;
 }
 
 export type FadeProperty = "opacity" | "gain";

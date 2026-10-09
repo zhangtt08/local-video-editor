@@ -1056,6 +1056,18 @@ def compile_render_plan(
                 start, stop = clip.position_ticks, clip.position_ticks + clip.duration_ticks
                 clock = f"(t-{sec(start)})"
                 x, y = expression(clip, "x", clock), expression(clip, "y", clock)
+                if mixed_track:
+                    # A motion transition moves the whole layer, and the placement below is already
+                    # an expression in frame fractions — so the transition and the clip's own
+                    # keyframes add, and both ends read the one envelope list the browser is handed.
+                    for axis, channel in (("x", "motion_x"), ("y", "motion_y")):
+                        points = transition_curves[clip.id][channel]
+                        if any(point["value"] for point in points):
+                            term = curve_expression(points, clip.duration_ticks, clock)
+                            if axis == "x":
+                                x = f"({x})+({term})"
+                            else:
+                                y = f"({y})+({term})"
                 plan.filters.append(
                     f"{backdrop}{chain}overlay=eof_action=pass:repeatlast=0:format=auto:"
                     f"x='(W-w)/2+W*({x})':y='(H-h)/2+H*({y})':"
