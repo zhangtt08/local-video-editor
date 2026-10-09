@@ -450,6 +450,18 @@ def interface_suite() -> None:
     )
     assert "${stats.budget_frames}" in store, "the budget number is never spoken"
     assert "片段还剩" in store, "a run that stops short of the clip's end must say so"
+    budget_line = [line for line in store.splitlines() if "曲线预算只装得下" in line]
+    assert len(budget_line) == 1, budget_line
+    assert "再点「接着跟」" not in budget_line[0], (
+        "the budget sentence must not offer a continuation the engine refuses"
+    )
+    assert "不会再量出新的一帧" in budget_line[0], budget_line[0]
+    assert "从头重跟" in budget_line[0] and "切成两段" in budget_line[0], (
+        "the budget sentence has to name the exits that really work"
+    )
+    assert "MASK_TRACK_BUDGET" in help_page, (
+        "the help must say which ceiling refused the continuation"
+    )
     assert "导出使用同一份关键帧。" in store
     assert "track_min_frames" in engine and "track_max_frames" in engine
     assert "budget_frames" in engine, "the reply's budget number is not declared"
@@ -619,6 +631,65 @@ def reducer_suite(folder: Path) -> None:
     assert mask_track_capacity(breathe.clips["c"], 2, False, 0, T // FPS) > mask_track_capacity(
         breathe.clips["c"], 2, True, 0, T // FPS
     ), "a whole-path rewrite is not credited with the curves it clears"
+
+    # A run that the budget cut short leaves the clip *full*, so the exit the toast must not promise
+    # is the one that looks obvious: continuing at the playhead. Measured here, because the sentence
+    # is written against this number: a full clip has room for zero more frames, and the refusal
+    # says so with `curves_room: 0`.
+    long_clip = project_payload(clip_payload(duration_ticks=17 * T), canvas=(1920, 1080))
+    long_clip.assets["a"].duration_ticks = 17 * T
+    sized_long = [
+        {
+            "at_ticks": index * (T // FPS),
+            "center_x": 0.2 + index / 100000,
+            "center_y": 0.5,
+            "width": 0.16,
+            "height": 0.24,
+        }
+        for index in range(500)
+    ]
+    filled_project = apply(
+        long_clip, [{"op": "clip.mask_track", "clip_id": "c", "points": sized_long}]
+    )
+    filled = filled_project.clips["c"]
+    assert len(filled.keyframes) == CLIP_KEYFRAME_LIMIT, len(filled.keyframes)
+    frame = T // FPS
+    assert mask_track_capacity(filled, 4, True, 500 * frame, frame) == 0, (
+        "a full clip must be out of room"
+    )
+    assert mask_track_capacity(filled, 2, False, 0, frame) == CLIP_KEYFRAME_LIMIT // 2, (
+        "a centre-only rewrite must be credited with the whole clip again"
+    )
+    try:
+        apply(
+            filled_project,
+            [
+                {
+                    "op": "clip.mask_track",
+                    "clip_id": "c",
+                    "merge": True,
+                    "points": [
+                        {
+                            "at_ticks": (500 + index) * frame,
+                            "center_x": 0.3,
+                            "center_y": 0.5,
+                            "width": 0.16,
+                            "height": 0.24,
+                        }
+                        for index in range(2)
+                    ],
+                }
+            ],
+        )
+    except EditorError as error:
+        assert error.code == "MASK_TRACK_BUDGET", error.payload()
+        assert error.payload()["details"]["curves_room"] == 0, error.payload()
+    else:
+        raise AssertionError("continuing onto a full clip must be refused, not written")
+    print(
+        f"   budget: a clip filled to {CLIP_KEYFRAME_LIMIT} curves has room for no more tracked"
+        " frames, so 接着跟 is refused by name and the toast must not offer it"
+    )
 
     half = [sized[0], {"at_ticks": T // FPS, "center_x": 0.4, "center_y": 0.52}]
     try:

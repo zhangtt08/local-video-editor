@@ -747,7 +747,7 @@ export async function trackMask(
         ? `在 ${(stats.lost_at_ticks / TIMEBASE).toFixed(2)} 秒处跟丢目标，之后遮罩停在最后找到的位置。`
         : tail > 0
           ? stats.budget_frames
-            ? `这条片段的曲线预算只装得下 ${stats.budget_frames} 帧（一个跟踪点要占几条曲线由引擎算），量到 ${(stats.last_at_ticks / TIMEBASE).toFixed(1)} 秒就停了，后面 ${(tail / TIMEBASE).toFixed(1)} 秒遮罩停在最后跟到的位置；把播放头挪过去再点「接着跟」可以续一段，或关掉尺寸估计让一个点少占几条。`
+            ? `这条片段的曲线预算只装得下 ${stats.budget_frames} 帧（一个跟踪点要占几条曲线由引擎算），量到 ${(stats.last_at_ticks / TIMEBASE).toFixed(1)} 秒就停了，后面 ${(tail / TIMEBASE).toFixed(1)} 秒遮罩停在最后跟到的位置。预算已经用满，「接着跟」不会再量出新的一帧；要覆盖后面那段，可以关掉「遮罩随远近缩放」再点「从头重跟」（遮罩盒不再随远近呼吸，但同一条片段能多跟将近一倍长度），或者把片段切成两段分别跟。`
             : `单次最多量 ${frames} 帧，片段还剩 ${(tail / TIMEBASE).toFixed(1)} 秒没分析，那段里遮罩停在最后跟到的位置；把播放头挪过去再点「接着跟」就能续上。`
           : "导出使用同一份关键帧。",
     ].join("");
