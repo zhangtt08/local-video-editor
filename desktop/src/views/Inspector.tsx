@@ -6,7 +6,7 @@ import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionCh
 import { Icon, Modal } from "../ui";
 import { GradeFields } from "./GradeFields";
 import { SpeedFields } from "./SpeedFields";
-import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeBlocker, fadeProperties, fadeWindows, sharpenLimits, stabilizeBlocked, trackWindow, type FadeProperty, type FadeSide } from "../effects";
+import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeBlocker, fadeProperties, fadeWindows, readTrackingDefaults, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackWindow, type FadeProperty, type FadeSide } from "../effects";
 import { frameTicks, TIMEBASE, align, humanDuration, seconds, ticks } from "../time";
 import {
   clearBatch,
@@ -425,9 +425,15 @@ function MaskFields({ clip }: { clip: Clip }) {
   const animatable = canAnimateMask(mask);
   // 遮挡期间最多猜几帧、要不要在整幅画面上重找：这两个旋钮 Agent 有，人也该有。
   const gapCeiling = app.caps?.limits?.track_max_gap_frames ?? 240;
-  const [trackGap, setTrackGap] = useState(app.caps?.limits?.track_gap_default ?? 60);
-  const [trackSweep, setTrackSweep] = useState(true);
-  const [trackScale, setTrackScale] = useState(true);
+  // 三个旋钮记在应用偏好里，换一个工程、重开一次窗口都还在（1.93）。不写进工程状态是有意的：
+  // 元数据那条路每点一次就涨一个 revision 并清空撤销栈，等于拿用户的编辑历史换一个勾选。
+  const storedKnobs = readTrackingDefaults(app.caps?.limits?.track_gap_default ?? 60, gapCeiling);
+  const [trackGap, setTrackGapState] = useState(storedKnobs.gap);
+  const [trackSweep, setTrackSweepState] = useState(storedKnobs.sweep);
+  const [trackScale, setTrackScaleState] = useState(storedKnobs.scale);
+  const setTrackGap = (value: number) => { setTrackGapState(value); rememberTrackingDefaults({ gap: value }); };
+  const setTrackSweep = (value: boolean) => { setTrackSweepState(value); rememberTrackingDefaults({ sweep: value }); };
+  const setTrackScale = (value: boolean) => { setTrackScaleState(value); rememberTrackingDefaults({ scale: value }); };
   // 一次量几帧、量不完时怎么说：判断在 effects.ts 的 trackWindow 里，上下限是引擎的数。
   const perFrame = project ? frameTicks(project.settings.frame_rate) : 1;
   const runOn = trackWindow(Math.floor((clip.duration_ticks - at) / perFrame), at === 0, app.caps?.limits);

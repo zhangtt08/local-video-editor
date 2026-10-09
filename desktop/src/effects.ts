@@ -128,6 +128,40 @@ export function trackWindow(
   return { frames: Math.min(max, remainingFrames), blocked: null };
 }
 
+/** 遮罩跟踪的三个旋钮：挡住最多猜几帧、要不要在整幅画面上重找、遮罩随远近缩放。
+ *  它们是「下一次请求怎么发」的默认值，不是工程数据——写进工程要经 `updateProjectMeta`，那会每
+ *  点一次涨一个 revision 并清空撤销栈，等于拿用户的编辑历史换一个勾选。所以它们跟着应用走
+ *  （与代理宽度同一处），换一个工程、重开一次窗口都还在。天花板只由引擎的 `capabilities.limits`
+ *  给：存着的数比这台引擎的天花板大，读出来就夹回去。 */
+const KNOB_KEYS = { gap: "agentcut.trackGap", sweep: "agentcut.trackSweep", scale: "agentcut.trackScale" };
+
+export type TrackingKnobs = { gap: number; sweep: boolean; scale: boolean };
+
+export function readTrackingDefaults(fallbackGap: number, gapCeiling: number): TrackingKnobs {
+  const clamp = (value: number) => Math.max(0, Math.min(Math.round(value), gapCeiling));
+  try {
+    // 没存过与存了个 0 是两件事：`Number(null)` 恰好是 0，直接拿去判范围会把「一次都不猜」
+    // 当成空存储的默认。先按字符串判缺失，再换算。
+    const raw = localStorage.getItem(KNOB_KEYS.gap);
+    const stored = raw === null || raw === "" ? Number.NaN : Number(raw);
+    const gap = Number.isFinite(stored) && stored >= 0 ? clamp(stored) : clamp(fallbackGap);
+    // 没存过就是开着的（引擎的默认就是 true），所以只有明确的 "0" 才算关。
+    return { gap, sweep: localStorage.getItem(KNOB_KEYS.sweep) !== "0", scale: localStorage.getItem(KNOB_KEYS.scale) !== "0" };
+  } catch {
+    return { gap: clamp(fallbackGap), sweep: true, scale: true };
+  }
+}
+
+export function rememberTrackingDefaults(knobs: Partial<TrackingKnobs>): void {
+  try {
+    if (knobs.gap !== undefined) localStorage.setItem(KNOB_KEYS.gap, String(knobs.gap));
+    if (knobs.sweep !== undefined) localStorage.setItem(KNOB_KEYS.sweep, knobs.sweep ? "1" : "0");
+    if (knobs.scale !== undefined) localStorage.setItem(KNOB_KEYS.scale, knobs.scale ? "1" : "0");
+  } catch {
+    /* 存不下就这一次生效，下次重开回到引擎给的默认 */
+  }
+}
+
 /** 自动调色的三道门，一次算清：按了只会弹错的按钮不该亮着（1.82 立下的规矩）。
  *  每句都给出真能走通的出路：换到画面轨、等素材就绪、或直接在色阶里手动填两个点。 */
 export const AUTO_GRADE_NOT_PICTURE =
