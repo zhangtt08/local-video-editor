@@ -41,7 +41,7 @@ import type {
 import { FIT_MODES, type TransitionKind } from "./engine";
 import { align, frameTicks, sampleTicks, ticks, TIMEBASE } from "./time";
 import { copyClips, pasteCommands, relatedClips, selectionQuantum, timelineTracks, type ClipClipboard } from "./selection";
-import type { FadeProperty, FadeSide } from "./effects";
+import type { FadeOp, FadeProperty, FadeSide } from "./effects";
 
 export type View = "home" | "editor" | "history" | "agent";
 
@@ -1662,14 +1662,15 @@ export function setFade(clipId: string, property: FadeProperty, side: FadeSide, 
 }
 
 /** 时间线上拖淡角柄走这条路：一次拖动的长度天生是 tick，不经过浮点秒。
- *  一次提交可以带两头（Shift 拖同时淡画面与音量），一个批次一个 revision。 */
-export function setFadeWindows(clipId: string, windows: { property: FadeProperty; side: FadeSide; ticks: number }[]) {
-  if (!windows.length) return;
-  const label = windows.length > 1
-    ? (windows[0].side === "in" ? "淡入画面与音量" : "淡出画面与音量")
-    : (windows[0].side === "in" ? "设置淡入" : "设置淡出");
+ *  一次提交可以带多条片段、多个属性、两头（多选与音画链接一起淡），一个批次一个 revision。 */
+export function setFadeWindowsForClips(ops: FadeOp[]) {
+  if (!ops.length) return;
+  const side = ops[0].side;
+  const label = ops.length > 1
+    ? `${side === "in" ? "淡入" : "淡出"} ${new Set(ops.map((op) => op.clipId)).size} 条片段`
+    : (side === "in" ? "设置淡入" : "设置淡出");
   submit(
-    windows.map(({ property, side, ticks: length }) => ({
+    ops.map(({ clipId, property, ticks: length }) => ({
       op: "clip.fade",
       clip_id: clipId,
       property,
@@ -1679,6 +1680,10 @@ export function setFadeWindows(clipId: string, windows: { property: FadeProperty
     label,
     { quiet: true }
   );
+}
+
+function setFadeWindows(clipId: string, windows: { property: FadeProperty; side: FadeSide; ticks: number }[]) {
+  setFadeWindowsForClips(windows.map(({ property, side, ticks }) => ({ clipId, property, side, ticks })));
 }
 
 export function importCaptions(srt: string) {

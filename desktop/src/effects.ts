@@ -1,4 +1,4 @@
-import type { AnimatedEffect, Asset, Capabilities, Clip, MaskProperty, ShapeMask } from "./engine";
+import type { AnimatedEffect, Asset, Capabilities, Clip, MaskProperty, Project, ShapeMask } from "./engine";
 import { TIMEBASE } from "./time";
 
 /**
@@ -195,6 +195,54 @@ export function fadeDragTicks(
   const step = quantum > 0 ? quantum : 1;
   const aligned = Math.round(rawTicks / step) * step;
   return Math.max(0, Math.min(aligned, fadeRoom(clip, property, side)));
+}
+
+/** 一次淡角柄拖动的落库单位。`clipId` 带着走，是因为「这一组」不再只有被拖的那一条。 */
+export type FadeOp = { clipId: string; property: FadeProperty; side: FadeSide; ticks: number };
+
+/** 拖一次淡角柄，落库的是「这一组」：被拖的那条 + 与它一起被选中的 + 与它们音画链接的伙伴
+ *  （剪映是一起动的，1.91 只淡被拖的那一条是它的半件事）。
+ *  每一条按**自己**的长度与**自己**能淡的属性算：
+ *  放不下就跳过并点名，绝不替用户把那一头清成 0——夹到 0 与「取消这一头」在 `Clip.fade` 里
+ *  是同一个数字，界面不许把两件事混为一谈。与现值相同的不写，所以一组里没人变过就一次写入都不发。 */
+export function fadeDragBatch(
+  project: Project,
+  anchorId: string,
+  side: FadeSide,
+  rawTicks: number,
+  quantum: number,
+  both: boolean,
+  groupIds: string[] = []
+): { ops: FadeOp[]; skipped: { clipId: string; why: string }[] } {
+  const ops: FadeOp[] = [];
+  const skipped: { clipId: string; why: string }[] = [];
+  const chosen = new Set<string>([anchorId, ...groupIds]);
+  // 链接不传递：一遍就够，把每条目标的同 `link_id` 伙伴拉进来。
+  for (const clip of Object.values(project.clips)) {
+    if (!clip.link_id || !chosen.has(clip.id)) continue;
+    for (const other of Object.values(project.clips)) if (other.link_id === clip.link_id) chosen.add(other.id);
+  }
+  const trackById = new Map(project.tracks.map((t) => [t.id, t]));
+  for (const id of chosen) {
+    const clip = project.clips[id];
+    if (!clip) continue;
+    const track = trackById.get(clip.track_id);
+    if (!track) continue;
+    if (track.locked) {
+      skipped.push({ clipId: id, why: "所在轨道已锁定" });
+      continue;
+    }
+    const options = fadeProperties(clip, project.assets[clip.asset_id]);
+    const wanted: FadeProperty = track.kind === "audio" ? "gain" : "opacity";
+    const primary = options.includes(wanted) ? wanted : options[0];
+    if (!primary) continue; // 既不显示画面也没有声音：按引擎的规矩这种片段存不下来，不替它编一个淡
+    for (const property of both ? options : [primary]) {
+      const ticks = fadeDragTicks(clip, property, side, rawTicks, quantum);
+      if (ticks === fadeWindows(clip)[property][side]) continue;
+      ops.push({ clipId: id, property, side, ticks });
+    }
+  }
+  return { ops, skipped };
 }
 
 /** 淡入与淡出共用片段的同一段长度：两个窗口加起来超过片段长度，引擎回 `INVALID_FADE`。

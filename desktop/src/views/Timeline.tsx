@@ -40,9 +40,9 @@ import {
   removeMarker,
   setMarker,
   splitAtMarkers,
-  setFadeWindows,
+  setFadeWindowsForClips,
 } from "../store";
-import { EMPTY_TRACK_HINT, trackToolBlocker, fadeDragTicks, fadeProperties, fadeWindows, type FadeProperty, type FadeSide } from "../effects";
+import { EMPTY_TRACK_HINT, trackToolBlocker, fadeDragBatch, fadeDragTicks, fadeProperties, fadeWindows, type FadeProperty, type FadeSide } from "../effects";
 import { selectionQuantum, timelineTracks } from "../selection";
 
 const HEAD = 112;
@@ -677,12 +677,6 @@ function ClipBlock({
     const rect = box.current.getBoundingClientRect();
     const edge = side === "in" ? rect.left : rect.right;
     const rawOf = (clientX: number) => (Math.abs(clientX - edge) / px) * TIMEBASE;
-    const wanted = (raw: number) =>
-      (both ? fadeOptions : [primary]).map((property) => ({
-        property,
-        side,
-        ticks: fadeDragTicks(clip, property, side, raw, q),
-      }));
     const move = (ev: PointerEvent) => setFadeDrag({ side, raw: rawOf(ev.clientX) });
     const stop = (ev: PointerEvent) => {
       window.removeEventListener("pointermove", move);
@@ -690,9 +684,16 @@ function ClipBlock({
       window.removeEventListener("pointercancel", stop);
       setFadeDrag(null);
       if (ev.type === "pointercancel" || Math.abs(ev.clientX - event.clientX) < 2) return;
-      const next = wanted(rawOf(ev.clientX));
-      if (next.every((item) => item.ticks === fades[item.property][item.side])) return;
-      setFadeWindows(clip.id, next);
+      // 落库的是一组：被拖的这条 + 一起选中的 + 与它们音画链接的伙伴，各自按自己的长度夹。
+      const { ops, skipped } = fadeDragBatch(project, clip.id, side, rawOf(ev.clientX), q, both, selected ? selectionFor(app.selectedClips) : []);
+      if (skipped.length) {
+        const nameOf = (id: string) => {
+          const other = project.clips[id];
+          return other?.text?.body ?? project.assets[other?.asset_id ?? ""]?.label ?? id;
+        };
+        toast("warn", `${skipped.length} 条片段没有被淡`, skipped.map((s) => `${nameOf(s.clipId)}：${s.why}`).join("；"));
+      }
+      if (ops.length) setFadeWindowsForClips(ops);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", stop);
