@@ -1,4 +1,5 @@
 import type { AnimatedEffect, Capabilities, Clip, MaskProperty, ShapeMask } from "./engine";
+import { TIMEBASE } from "./time";
 
 /**
  * 柔焦滑杆的上限（占画面高的百分比）。两个数都由引擎下发：`limits.blur_fraction` 是契约里
@@ -146,4 +147,39 @@ export function autoGradeBlocker(
   const measurable = assetKind === "video" || assetKind === "image";
   if (!measurable || trackKind !== "video") return AUTO_GRADE_NOT_PICTURE;
   return null;
+}
+
+export type FadeProperty = "opacity" | "gain";
+export type FadeSide = "in" | "out";
+
+/** 片段自己那两条边上的淡入／淡出长度（tick）。没有 fade 记录就是全 0——1.90 之前淡是写成关键帧的，
+ *  那些老片段照旧按写在曲线里的淡渲染，只是这个读数看不到它们（帮助页写明了这一条）。 */
+export function fadeWindows(clip: Clip): Record<FadeProperty, Record<FadeSide, number>> {
+  const fade = clip.fade;
+  return {
+    opacity: { in: fade?.opacity_in_ticks ?? 0, out: fade?.opacity_out_ticks ?? 0 },
+    gain: { in: fade?.gain_in_ticks ?? 0, out: fade?.gain_out_ticks ?? 0 },
+  };
+}
+
+/** 淡入与淡出共用片段的同一段长度：两个窗口加起来超过片段长度，引擎回 `INVALID_FADE`。
+ *  这句话在界面先算一遍，因为「按下去必定被拒」的按钮不该亮着（1.82 立下的规矩）。
+ *  报出来的余量是片段长度减去对面那头已经占掉的，不是界面自己另写的上限。 */
+export function fadeBlocker(
+  clip: Clip,
+  property: FadeProperty,
+  side: FadeSide,
+  value: number
+): string | null {
+  const windows = fadeWindows(clip)[property];
+  const other = side === "in" ? windows.out : windows.in;
+  if (value + other <= clip.duration_ticks) return null;
+  const room = Math.max(0, clip.duration_ticks - other);
+  const name = side === "in" ? "淡入" : "淡出";
+  const opposite = side === "in" ? "淡出" : "淡入";
+  return (
+    `${name} ${(value / TIMEBASE).toFixed(2)} 秒，加上另一头的${opposite} ` +
+    `${(other / TIMEBASE).toFixed(2)} 秒，比这段 ${(clip.duration_ticks / TIMEBASE).toFixed(2)} 秒还长。` +
+    `这一头最多还能要 ${(room / TIMEBASE).toFixed(2)} 秒；要更长就把片段剪长一点，或先把对面那头缩短。`
+  );
 }

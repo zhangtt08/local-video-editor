@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from .contracts import (
     MAX_TICKS,
+    PATH_BOX_SCHEMA_VERSION,
     SCHEMA_VERSION,
     BundleImport,
     CreateProject,
@@ -30,8 +31,12 @@ def _fitted(project: Project) -> Project:
     Rows written earlier stored the shape's default box, which meant nothing to a free-form mask.
     Fitting the box to the outline's bounds is the identity for how those rows rendered, and it is
     what lets the box be animated from here on.
+
+    The cut-off is the schema that introduced the box, not the current one: every later field (v14's
+    fade windows) reads from its own default, so re-fitting a row that was already fitted would just
+    be wasted work pretending to be a migration.
     """
-    if project.schema_version >= SCHEMA_VERSION:
+    if project.schema_version >= PATH_BOX_SCHEMA_VERSION:
         return project
     groups = [project.clips] + [sequence.clips for sequence in project.sequences.values()]
     for clips in groups:
@@ -145,6 +150,11 @@ class ProjectStore:
                 # before this release splits in two on retry.
                 if "asset_id" in node and node.get("stabilization") is None:
                     node.pop("stabilization", None)
+                # 1.90 gave a clip its fade windows. A payload that never mentions one must hash as
+                # the pre-1.90 payload it was, for the same reason as the record above: otherwise
+                # every receipt written before this release splits in two when it is retried.
+                if "asset_id" in node and node.get("fade") is None:
+                    node.pop("fade", None)
                 for value in node.values():
                     strip_bezier_defaults(value)
             elif isinstance(node, list):

@@ -41,6 +41,7 @@ import type {
 import { FIT_MODES, type TransitionKind } from "./engine";
 import { align, frameTicks, sampleTicks, ticks, TIMEBASE } from "./time";
 import { copyClips, pasteCommands, relatedClips, selectionQuantum, timelineTracks, type ClipClipboard } from "./selection";
+import type { FadeProperty, FadeSide } from "./effects";
 
 export type View = "home" | "editor" | "history" | "agent";
 
@@ -1653,8 +1654,16 @@ export function setClipText(clipId: string, patch: Partial<TextStyle>) {
   submit([{ op: "clip.patch", clip_id: clipId, text: patch }], "编辑文字", { quiet: true });
 }
 
-export function fadeClip(clipId: string, property: "opacity" | "gain", duration: number, mode: "in" | "out" | "both") {
-  submit([{ op: "clip.fade", clip_id: clipId, property, duration_ticks: ticks(duration), mode }], "设置淡入淡出", { quiet: true });
+/** 淡入淡出是片段两条边上的窗口（`Clip.fade`），不是曲线上的点：一头一次提交只改自己那一头，
+ *  所以淡入与淡出能同时存在，也不会把这条轨上的音量关键帧（含自动闪避写的那些）顶掉。
+ *  `seconds = 0` 就是取消这一头。 */
+export function setFade(clipId: string, property: FadeProperty, side: FadeSide, seconds: number) {
+  const duration = Math.max(0, ticks(seconds));
+  submit(
+    [{ op: "clip.fade", clip_id: clipId, property, duration_ticks: duration, mode: side }],
+    side === "in" ? "设置淡入" : "设置淡出",
+    { quiet: true }
+  );
 }
 
 export function importCaptions(srt: string) {

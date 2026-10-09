@@ -210,12 +210,18 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
 }) {
   const elementRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
   const wrappers = useRef<Partial<Record<AnimatedEffect, HTMLElement | null>>>({});
+  const fades = useRef<Partial<Record<"opacity" | "gain", HTMLElement | null>>>({});
   const blends = useRef<Partial<Record<"picture" | "sound" | "black" | "white", HTMLElement | null>>>({});
   const animations = useRef<Animation[]>([]); const [error, setError] = useState("");
   const asset = project.assets[clip.asset_id]; const isAudio = track.kind === "audio"; const isImage = asset?.kind === "image";
   const relative = (ticks - clip.position_ticks) / TIMEBASE;
   const pace = pacing(clip.speed_percent ?? 100, plan?.speed, relative);
   const effectiveRate = pace.rate * clockRate;
+  // 淡的当前倍数：由引擎下发的包络曲线驱动的那层 div 读出，界面自己不数时间。
+  const fadeValue = (name: "opacity" | "gain") => {
+    const node = fades.current[name];
+    return node ? Number(getComputedStyle(node).opacity) : 1;
+  };
   useLayoutEffect(() => {
     if (!plan) return;
     const created: Animation[] = [];
@@ -230,6 +236,14 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
     for (const name of ["picture", "sound", "black", "white"] as const) {
       const wrapper = blends.current[name]; if (!wrapper) continue;
       const animation = wrapper.animate(plan.transition[name].map(({ value, offset, easing }) => ({ opacity: value, offset, easing })), { duration: plan.duration_ms, fill: "both" });
+      animation.pause(); created.push(animation);
+    }
+    // 淡入淡出走自己的一条包络曲线，与上面那条属性曲线相乘（嵌套 opacity 天生就是乘法），
+    // 所以一次淡不会把音量关键帧或闪避曲线抹掉——引擎侧的 `expression` 乘的是同一条曲线。
+    for (const name of ["opacity", "gain"] as const) {
+      const curve = plan.fade?.[name]; const wrapper = fades.current[name];
+      if (!curve || !wrapper) continue;
+      const animation = wrapper.animate(curve.map(({ value, offset, easing }) => ({ offset, easing, opacity: value })), { duration: plan.duration_ms, fill: "both" });
       animation.pause(); created.push(animation);
     }
     animations.current = created;
@@ -249,7 +263,7 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
       if (asset?.verified?.has_audio) {
         const gain = wrappers.current.gain;
         const sound = blends.current.sound;
-        const value = (gain ? Number(getComputedStyle(gain).opacity) * 4 : 1) * (sound ? Number(getComputedStyle(sound).opacity) : 1) * track.volume * (project.settings.master_gain ?? 1) * (plan?.sound_enabled ? 1 : 0) * (parentGain?.() ?? 1);
+        const value = (gain ? Number(getComputedStyle(gain).opacity) * 4 : 1) * (sound ? Number(getComputedStyle(sound).opacity) : 1) * fadeValue("gain") * track.volume * (project.settings.master_gain ?? 1) * (plan?.sound_enabled ? 1 : 0) * (parentGain?.() ?? 1);
         const node = gainNode(element);
         if (node && audioContext) node.gain.setValueAtTime(value, audioContext.currentTime); else element.volume = Math.min(1, value);
       }
@@ -262,13 +276,14 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
   const textFonts = useApp().caps?.text_fonts ?? [];
   const inheritedGain = () => {
     const gain = wrappers.current.gain; const sound = blends.current.sound;
-    return (gain ? Number(getComputedStyle(gain).opacity) * 4 : 1) * (sound ? Number(getComputedStyle(sound).opacity) : 1) * track.volume * (plan?.sound_enabled ? 1 : 0) * (parentGain?.() ?? 1);
+    return (gain ? Number(getComputedStyle(gain).opacity) * 4 : 1) * (sound ? Number(getComputedStyle(sound).opacity) : 1) * fadeValue("gain") * track.volume * (plan?.sound_enabled ? 1 : 0) * (parentGain?.() ?? 1);
   };
   const media = asset?.sequence_id && manifest ? <NestedPreview id={asset.sequence_id} project={project} manifest={manifest} streams={streams} ticks={clip.source_in_ticks + Math.floor((ticks - clip.position_ticks) * (clip.speed_percent ?? 100) / 100)} playing={playing} monitorMuted={monitorMuted || track.muted || !plan?.sound_enabled} parentGain={inheritedGain} clockRate={clockRate * (clip.speed_percent ?? 100) / 100} /> : clip.text ? <div className="caption-layer" style={textLayerStyle(clip.text, textFonts)}><span>{clip.text.body}</span></div> : !url ? <div className="layer-error">「{asset?.label}」素材离线或未导入</div> : isImage ? <img src={url} alt={asset?.label} /> : isAudio ? <audio ref={(node) => { elementRef.current = node; }} crossOrigin="anonymous" src={url} preload="auto" onError={() => setError("音频无法解码")} /> : <video ref={(node) => { elementRef.current = node; }} crossOrigin="anonymous" src={url} playsInline preload="auto" onError={() => setError("视频无法解码")} />;
   return <><div className={`preview-layer${isAudio ? " audio-layer" : ""}`} style={{ mixBlendMode: mixed ? "plus-lighter" : "normal" }} onClick={interactive ? () => selectClip(clip.id) : undefined}>
     <div ref={(node) => { wrappers.current.gain = node; }} className="gain-sample" aria-hidden="true" />
+    <div ref={(node) => { fades.current.gain = node; }} className="gain-sample" aria-hidden="true" />
     <div ref={(node) => { blends.current.sound = node; }} className="gain-sample" aria-hidden="true" />
-    <div ref={(node) => { blends.current.picture = node; }} className="layer-transform"><div ref={(node) => { wrappers.current.opacity = node; }} className="layer-transform"><div ref={(node) => { wrappers.current.x = node; }} className="layer-transform"><div ref={(node) => { wrappers.current.y = node; }} className="layer-transform"><div ref={(node) => { wrappers.current.scale = node; }} className="layer-transform"><div ref={(node) => { wrappers.current.rotation = node; }} className="layer-transform"><MaskPicture clip={clip} image={plan?.mask_image} editable={interactive} animation={plan?.mask_curves && plan.mask_unit ? { unit: plan.mask_unit, curves: plan.mask_curves } : null}><div className="layer-transform" style={{ filter: plan?.color_filter }}>{media}</div></MaskPicture></div></div></div></div></div></div>
+    <div ref={(node) => { blends.current.picture = node; }} className="layer-transform"><div ref={(node) => { fades.current.opacity = node; }} className="layer-transform"><div ref={(node) => { wrappers.current.opacity = node; }} className="layer-transform"><div ref={(node) => { wrappers.current.x = node; }} className="layer-transform"><div ref={(node) => { wrappers.current.y = node; }} className="layer-transform"><div ref={(node) => { wrappers.current.scale = node; }} className="layer-transform"><div ref={(node) => { wrappers.current.rotation = node; }} className="layer-transform"><MaskPicture clip={clip} image={plan?.mask_image} editable={interactive} animation={plan?.mask_curves && plan.mask_unit ? { unit: plan.mask_unit, curves: plan.mask_curves } : null}><div className="layer-transform" style={{ filter: plan?.color_filter }}>{media}</div></MaskPicture></div></div></div></div></div></div></div>
     {error || playing && pace.rate > 0 && (effectiveRate < .0625 || effectiveRate > 16) ? <div className="layer-error">{error || "叠加速度超出浏览器连续播放范围，请暂停逐帧预览或导出检查"}</div> : null}
   </div>{!isAudio && plan?.transition.black.some((point) => point.value > 0) ? <div ref={(node) => { blends.current.black = node; }} className="transition-black" style={{ mixBlendMode: "plus-lighter" }} aria-hidden="true" /> : null}{!isAudio && plan?.transition.white?.some((point) => point.value > 0) ? <div ref={(node) => { blends.current.white = node; }} className="transition-white" aria-hidden="true" /> : null}</>;
 }

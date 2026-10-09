@@ -92,6 +92,7 @@ def main():
                 "mask",
                 "speed_curve",
                 "stabilization",  # 1.69: a clip that never mentions one is older
+                "fade",  # 1.90: a clip that never mentions a fade window is older
             ):
                 clip.pop(field)
             clip["color"].pop("grade", None)

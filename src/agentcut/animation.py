@@ -88,11 +88,90 @@ def base_value(clip: Clip, prop: str) -> float:
     return float(getattr(clip.mask, field)) if clip.mask else 0.0
 
 
+FADE_PROPS = ("opacity", "gain")
+
+
+def fade_windows(clip: Clip, prop: str) -> tuple[int, int]:
+    """This clip's fade windows, measured from its own edges and clamped to fit the clip."""
+    if clip.fade is None or prop not in FADE_PROPS:
+        return 0, 0
+    in_ticks, out_ticks = clip.fade.window(prop)
+    in_ticks = min(in_ticks, clip.duration_ticks)
+    return in_ticks, min(out_ticks, clip.duration_ticks - in_ticks)
+
+
+def fade_active(clip: Clip, prop: str) -> bool:
+    return any(fade_windows(clip, prop))
+
+
+def fade_curve(clip: Clip, prop: str) -> list[Keyframe]:
+    """The fade as an ordinary piecewise curve on a clock that starts at this clip's head.
+
+    1.0 means "this property is untouched", so the curve multiplies whatever else the property
+    carries. The ramps are `ease` — the same smoothstep a hand-keyed fade used before 1.90.
+    """
+    in_ticks, out_ticks = fade_windows(clip, prop)
+    if not in_ticks and not out_ticks:
+        return []
+    duration = clip.duration_ticks
+    positions = sorted({0, duration, in_ticks or duration, duration - (out_ticks or duration)})
+    curve = []
+    for index, at in enumerate(positions):
+        following = positions[index + 1] if index + 1 < len(positions) else None
+        value = 0.0 if (at == 0 and in_ticks) or (at == duration and out_ticks) else 1.0
+        ramp = bool(
+            following is not None
+            and (
+                (at == 0 and in_ticks and following == in_ticks)
+                or (out_ticks and at == duration - out_ticks and following == duration)
+            )
+        )
+        curve.append(
+            Keyframe(
+                property="opacity",
+                at_ticks=at,
+                value=value,
+                interpolation="ease" if ramp else "linear",
+            )
+        )
+    return curve
+
+
+def _fade_carrier(clip: Clip, prop: str) -> Clip | None:
+    """A stand-in clip whose only animation is this property's fade, so the fade is compiled by the
+    same `expression`/`property_curve` as every other curve instead of a second implementation."""
+    curve = fade_curve(clip, prop)
+    if not curve:
+        return None
+    return clip.model_copy(
+        deep=True,
+        update={
+            "fade": None,
+            "animation_offset_ticks": 0,
+            "keyframes": curve,
+            "effects": ClipEffects(x=0, y=0, scale=1, rotation=0, opacity=1, gain=1),
+        },
+    )
+
+
+def fade_factor(clip: Clip, prop: str, at_ticks: int) -> float:
+    """Multiply a property value by this, on the same clock `sample` answers on."""
+    keys = fade_curve(clip, prop)
+    if not keys:
+        return 1.0
+    return _walk(keys, min(max(at_ticks, 0), clip.duration_ticks))
+
+
 def sample(clip: Clip, prop: str, at_ticks: int) -> float:
     keys = points(clip, prop)
-    if not keys:
-        return base_value(clip, prop)
-    at = at_ticks + clip.animation_offset_ticks
+    value = _walk(keys, at_ticks + clip.animation_offset_ticks) if keys else base_value(clip, prop)
+    if prop in FADE_PROPS and clip.fade is not None:
+        value = value * fade_factor(clip, prop, at_ticks)
+    return value
+
+
+def _walk(keys: list[Keyframe], at: int) -> float:
+    """The one piecewise walk: every curve in the project answers samples through this."""
     if at <= keys[0].at_ticks:
         return keys[0].value
     for left, right in zip(keys, keys[1:]):
@@ -124,7 +203,20 @@ def _interpolate(left: Keyframe, right: Keyframe, at: int) -> float:
 
 
 def expression(clip: Clip, prop: str, clock: str = "t", registers: tuple[int, int] = (8, 9)) -> str:
-    """Compile the same piecewise curve to a controlled FFmpeg expression."""
+    """Compile the same piecewise curve to a controlled FFmpeg expression.
+
+    A fade multiplies the curve it rides on, and it happens here rather than at each call site: the
+    exporter must not be able to forget it the way the keyframe fades forgot a duck, and `sample`
+    above answers on the same product.
+    """
+    curve = _curve_expression(clip, prop, clock, registers)
+    carrier = _fade_carrier(clip, prop) if prop in FADE_PROPS else None
+    if carrier is None:
+        return curve
+    return f"({curve})*({_curve_expression(carrier, 'opacity', clock, registers)})"
+
+
+def _curve_expression(clip: Clip, prop: str, clock: str, registers: tuple[int, int]) -> str:
     keys = points(clip, prop)
     if not keys:
         return str(base_value(clip, prop))
@@ -293,6 +385,14 @@ def preview_manifest(
             curves[prop] = property_curve(clip, prop)
         grade = grade_tables(clip.color)
         track = tracks[clip.track_id]
+        # The fade travels as its own curve because the browser multiplies nested opacity, not two
+        # numbers on one element: a factor curve holding 1.0 through the middle of the clip composes
+        # with the property curve the same way `expression` above composes them for FFmpeg.
+        fade = {
+            prop: property_curve(carrier, "opacity")
+            for prop in FADE_PROPS
+            if (carrier := _fade_carrier(clip, prop)) is not None
+        }
         mask_curves = {
             prop: property_curve(clip, prop) for prop in MASK_FIELDS if points(clip, prop)
         }
@@ -332,6 +432,7 @@ def preview_manifest(
             + (f" url(#{sharpen['id']})" if sharpen else ""),
             "grade": grade,
             "transition": transition_curves[clip.id],
+            "fade": fade or None,
         }
     return {
         "revision": project.revision,

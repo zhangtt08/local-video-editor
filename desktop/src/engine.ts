@@ -142,6 +142,9 @@ export const DEFAULT_CURVE_POINTS: GradeCurvePoint[] = [
 ];
 export type MaskVertex = { x: number; y: number; handle_out: [number, number]; handle_in: [number, number] };
 export type ShapeMask = { shape: "rectangle" | "ellipse" | "path"; center_x: number; center_y: number; width: number; height: number; feather: number; inverted: boolean; vertices?: MaskVertex[] | null };
+
+/** The clip's own fade windows, in ticks measured from each edge. 0 means that edge is untouched. */
+export type FadeEnvelope = { opacity_in_ticks: number; opacity_out_ticks: number; gain_in_ticks: number; gain_out_ticks: number };
 export const DEFAULT_MASK: ShapeMask = { shape: "ellipse", center_x: .5, center_y: .5, width: .6, height: .6, feather: 0, inverted: false, vertices: null };
 export const DEFAULT_PATH: MaskVertex[] = [
   { x: .3, y: .25, handle_out: [0, 0], handle_in: [0, 0] },
@@ -159,7 +162,7 @@ export type Transition = { from_clip_id: string; kind: TransitionKind; duration_
 export type LinkStatus = { clip_ids: string[]; synchronized: boolean; anchor_clip_id: string; differences: Record<string, { position_ticks: number; source_ticks: number; duration_ticks: number; speed_percent: number }> };
 export type SpeedPoint = { at_ticks: number; percent: number };
 
-export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; grade?: GradeTables | null; sharpen?: { id: string; amount: number; bbox: [number, number] } | null; speed?: RampPiece[] | null; mask_image?: string | null; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; curves: Record<AnimatedEffect, Curve>; transition: Record<"picture" | "sound" | "black" | "white", Curve> }> };
+export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; grade?: GradeTables | null; sharpen?: { id: string; amount: number; bbox: [number, number] } | null; speed?: RampPiece[] | null; mask_image?: string | null; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; curves: Record<AnimatedEffect, Curve>; transition: Record<"picture" | "sound" | "black" | "white", Curve>; fade?: Record<"opacity" | "gain", Curve> | null }> };
 
 /** 引擎给这条片段记下的那一次稳定：有了它，再按一次是换一档强度而不是叠第二遍。 */
 export type Stabilization = {
@@ -174,6 +177,7 @@ export type Stabilization = {
 
 export type Clip = {
   mask?: ShapeMask | null;
+  fade?: FadeEnvelope | null;
   id: string;
   asset_id: string;
   track_id: string;

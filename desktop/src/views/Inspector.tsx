@@ -6,7 +6,7 @@ import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionCh
 import { Icon, Modal } from "../ui";
 import { GradeFields } from "./GradeFields";
 import { SpeedFields } from "./SpeedFields";
-import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, sharpenLimits, stabilizeBlocked, trackWindow } from "../effects";
+import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeBlocker, fadeWindows, sharpenLimits, stabilizeBlocked, trackWindow, type FadeProperty, type FadeSide } from "../effects";
 import { frameTicks, TIMEBASE, align, humanDuration, seconds, ticks } from "../time";
 import {
   clearBatch,
@@ -32,7 +32,7 @@ import {
   setClipSpeed,
   setClipColor,
   setClipText,
-  fadeClip,
+  setFade,
   slipClip,
   slideClip,
   setTransition,
@@ -247,9 +247,7 @@ function EffectsFields({ clip }: { clip: Clip }) {
   // The ceiling the contract allows, so the box can never offer what the engine would refuse.
   const cropCeiling = Math.round((app.caps?.limits?.stabilize_max_crop ?? 0.25) * 100);
   const [sampled, setSampled] = useState<{ at: number; clip: Clip; values: SampledValues } | null>(null);
-  const [fade, setFade] = useState(.5);
   const [slideFrames, setSlideFrames] = useState(1);
-  const [fadeProperty, setFadeProperty] = useState<"opacity" | "gain">("opacity");
   const effects = clip.effects ?? DEFAULT_EFFECTS;
   const at = Math.round(Math.max(0, Math.min(clip.duration_ticks, play.ticks - clip.position_ticks)));
   const offset = clip.animation_offset_ticks ?? 0;
@@ -357,13 +355,48 @@ function EffectsFields({ clip }: { clip: Clip }) {
       </div>
       <p className="hint">{slidingBlocked ? "带变速曲线或已链接声音的片段不能划动/滑移：时间不是线性的，让出来的帧在两侧含义不同。请直接修剪，或先解除链接。" : "划动改这段素材的起点；滑移改这段在时间线上的位置，两侧相邻片段各自补/让同样的帧数，整条轨不变长——两侧都得有相邻片段才滑得动，素材头尾不够时引擎会拒绝并说明原因。"}</p>
     </fieldset></details>
-    <details className="fade-controls"><summary className="panel-label">快速淡入淡出</summary><fieldset disabled={locked} className="effects-fields">
-      <div className="effect-row"><label htmlFor="fade-duration">时长</label><input id="fade-duration" className="input" type="number" min={.01} max={seconds(clip.duration_ticks)} step={.1} value={fade} onChange={(e) => setFade(Number(e.target.value))} /><span>秒</span></div>
-      {asset?.kind !== "audio" ? <select className="input" aria-label="淡入淡出属性" value={fadeProperty} onChange={(e) => setFadeProperty(e.target.value as "opacity" | "gain")}><option value="opacity">画面透明度</option><option value="gain">音量</option></select> : null}
-      <div className="insp-actions">{([['in','淡入'],['out','淡出'],['both','双向']] as const).map(([mode,label]) => <button key={mode} className="btn tiny" disabled={!Number.isFinite(fade) || fade <= 0 || ticks(fade) * (mode === 'both' ? 2 : 1) > clip.duration_ticks} onClick={() => fadeClip(clip.id, asset?.kind === 'audio' ? 'gain' : fadeProperty, fade, mode)}>{label}</button>)}</div>
-      <p className="hint">替换该属性的关键帧，使用缓入缓出曲线。</p>
-    </fieldset></details>
+    <FadeControls clip={clip} locked={locked} picture={asset?.kind !== "audio"} sound={asset?.kind === "audio" || Boolean(asset?.verified?.has_audio) && clip.embedded_audio !== false} />
   </section>;
+}
+
+/** 淡入淡出改的是片段两条边上的窗口（`Clip.fade`）：一头一次提交只动自己那一头，所以淡入与淡出能
+ *  同时存在，音量那一行也不会再把自动闪避写下的关键帧顶掉。数字读自工程状态，不是界面自己记的。 */
+function FadeControls({ clip, locked, picture, sound }: { clip: Clip; locked: boolean; picture: boolean; sound: boolean }) {
+  const rows: { property: FadeProperty; label: string }[] = [];
+  if (picture) rows.push({ property: "opacity", label: "画面透明度" });
+  if (sound) rows.push({ property: "gain", label: "音量" });
+  return <details className="fade-controls"><summary className="panel-label">淡入淡出</summary><fieldset disabled={locked} className="effects-fields">
+    {!rows.length ? <p className="hint">这段素材既不显示画面也没有声音，淡入淡出没处可加。</p> : rows.map(({ property, label }) => <div key={property} className="fade-rows">
+      <p className="panel-label">{label}</p>
+      {(["in", "out"] as const).map((side) => <FadeRow key={side} clip={clip} property={property} side={side} />)}
+    </div>)}
+    <p className="hint">淡加在片段的两条边上，缓入缓出；它与音量关键帧、自动闪避、透明度动画相乘，不会互相抹掉。修剪、分割、挪动片段时淡跟着那条边走——切口不算一条边，所以中间不会凭空淡一下。</p>
+  </fieldset></details>;
+}
+
+function FadeRow({ clip, property, side }: { clip: Clip; property: FadeProperty; side: FadeSide }) {
+  const id = useId();
+  const committed = fadeWindows(clip)[property][side];
+  const [text, setText] = useState((committed / TIMEBASE).toFixed(2));
+  const [refused, setRefused] = useState("");
+  useEffect(() => { setText((committed / TIMEBASE).toFixed(2)); setRefused(""); }, [committed]);
+  const apply = () => {
+    const value = Number(text);
+    if (!text.trim() || !Number.isFinite(value) || value < 0) { setText((committed / TIMEBASE).toFixed(2)); return; }
+    const wanted = ticks(value);
+    const blocker = fadeBlocker(clip, property, side, wanted);
+    if (blocker) { setRefused(blocker); return; }
+    setRefused("");
+    if (wanted !== committed) setFade(clip.id, property, side, value);
+  };
+  return <div className="fade-row"><label htmlFor={id}>{side === "in" ? "淡入" : "淡出"}</label>
+    <input id={id} className="input mono" type="number" min={0} max={seconds(clip.duration_ticks)} step={.05} value={text} aria-label={`${property === "gain" ? "音量" : "画面透明度"}${side === "in" ? "淡入" : "淡出"}秒`}
+      onChange={(e) => setText(e.target.value)} onBlur={apply}
+      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { setText((committed / TIMEBASE).toFixed(2)); setRefused(""); e.currentTarget.blur(); } }} />
+    <span>秒</span>
+    {committed > 0 ? <button className="btn tiny" title="取消这一头的淡" onClick={() => setFade(clip.id, property, side, 0)}>取消</button> : null}
+    {refused ? <p className="hint blocked">{refused}</p> : null}
+  </div>;
 }
 
 function EffectInput({ id, value, min, max, step, onCommit }: { id: string; value: number; min: number; max: number; step: number; onCommit: (value: number) => void }) {

@@ -2104,3 +2104,37 @@ MCP 的 `clip_track` docstring 也写了这道天花板，Agent 与人在这里�
 必须出现「不会再量出新的一帧」这句**说明为什么不给**、必须同时出现「从头重跟」与「切成两段」两条实出路；
 `reducer_suite` 把上面那段实测钉成永久断言（装满 2000 条 → 容量 0 → 两个点的续跟被 `MASK_TRACK_BUDGET`
 拒掉且 `curves_room == 0`，同时 `merge=false` 的中心重写仍能拿回 1000 帧的容量）。
+
+## 1.90 `clip.fade` 换了一处落点：淡是片段两条边上的窗口
+
+命令名、字段名、`property`（`opacity` / `gain`）、`mode`（`in` / `out` / `both`）都没变，变的是**它写
+到哪里**：1.89 及以前 `clip.fade` 把淡写成该属性的关键帧，写之前先把这条曲线整个清掉；现在它写
+`Clip.fade`——一份与曲线并列的片段状态，四个整数（`opacity_in_ticks` / `opacity_out_ticks` /
+`gain_in_ticks` / `gain_out_ticks`），单位是 tick，从片段自己的两条边量起。工程 schema 因此进 v14，
+`capabilities.features.clip_fade_envelopes` 是这条新语义的说法。
+
+行为上的四条差别，都是先量出来才改的：
+
+| 场景 | 1.89 | 1.90 |
+| --- | --- | --- |
+| 先淡入 1 秒、再淡出 2 秒 | 只剩 `5s=1, 6s=0`，淡入被抹掉 | `fade.gain_in_ticks=1s` 与 `gain_out_ticks=2s` 都在，`Clip.keyframes` 一条不写 |
+| 片段已有闪避/手敲的六个音量点 | 淡一次把六点清成两点 | 六点原样保住，导出与预览按 `曲线 × 淡` 走（3.5 秒处 0.250＝0.25×1.0，6 秒处 0.0） |
+| 淡完之后把片段剪短 | 淡停在旧刻度上，落在新结尾之外，等于没淡 | 淡从新的边量起 |
+| 淡完之后分割 | 切口两边各留一份淡，中间凭空淡一下 | 左半保住淡入、右半保住淡出，切口两头都是 1.0 |
+
+`duration_ticks` 的类型从 `Duration`（`gt=0`）放宽到 `Ticks`（`ge=0`）：**0 就是取消它点名的那一头**
+（`mode=both` 清两头，之后 `Clip.fade` 回到 `null`）。两头加起来仍不能超过片段长度，超了回
+`422 INVALID_FADE`，`details` 给 `clip_id` / `clip_duration_ticks` / `fade_in_ticks` / `fade_out_ticks` /
+`room_ticks`（这一头还能要多少）；音频素材点 `opacity` 回 `INVALID_FADE` 并带 `asset_kind`。
+窗口比片段长时不会报错，被夹到片段自己的长度（`fade_windows` 是唯一的夹法），因为修剪随时可能把
+片段弄短，而一条倒着走的淡不是任何人要的。
+
+求值只有一处权威：`animation.sample` 乘、`animation.expression` 也乘（编译出的 FFmpeg 式子形如
+`(曲线)*(…3-2*…)`，`volume=` 与 `geq` 的 alpha 各自带上它），浏览器用的是引擎在同一次
+`preview_manifest` 里**另发的一条包络曲线**（`clips[id].fade = {opacity, gain}`，值为 1.0 的那段就是
+平段），靠嵌套 `opacity` 相乘。所以 `clips[id].curves["opacity"]` 仍是未被乘的那条曲线——它在曲线
+编辑器里画的就是它自己。只有一层、只带淡的片段也不再走「直通」渲染路径：`compile_render_plan`
+会把它按合成来编（`geq` 的 alpha 里才有地方乘这条包络）。
+
+`clip.fade` 从此不再动 `Clip.keyframes`，因此它与 `Clip.stabilization` 那把锁、与曲线预算
+（`MASK_TRACK_BUDGET` / reframe）互不影响；老工程写在曲线里的淡一个点都不用改，照旧渲染。

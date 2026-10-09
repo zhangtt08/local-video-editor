@@ -14,7 +14,7 @@ import os
 import re
 from dataclasses import dataclass, field
 
-from .animation import expression, sound_enabled
+from .animation import expression, fade_active, sound_enabled
 from .compositing import blend_track
 from .contracts import (
     BLUR_RADIUS_LIMIT_PX,
@@ -610,6 +610,7 @@ def compile_render_plan(
             entry["asset"].kind in {"text", "sequence"}
             or entry["clip"].mask
             or entry["clip"].transition_in
+            or fade_active(entry["clip"], "opacity")
             or any(k.property != "gain" for k in entry["clip"].keyframes)
             or any(
                 getattr(entry["clip"].effects, name) != default
@@ -865,7 +866,12 @@ def compile_render_plan(
                 alpha = []
                 if clip.mask and not path_mask:
                     alpha.append(f"({alpha_expression(clip.mask, mask_values)})")
-                if clip.effects.opacity != 1 or "opacity" in animated or mixed_track:
+                if (
+                    clip.effects.opacity != 1
+                    or "opacity" in animated
+                    or mixed_track
+                    or fade_active(clip, "opacity")
+                ):
                     alpha.append(f"({opacity})")
                 # One alpha pass, and it has to happen before the size can move: `geq` allocates
                 # against the frame it is given, so feeding it the output of a

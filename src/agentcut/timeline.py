@@ -16,6 +16,7 @@ from .contracts import (
     ClipEffects,
     Command,
     EditorError,
+    FadeEnvelope,
     Identifier,
     Keyframe,
     Project,
@@ -629,35 +630,36 @@ def apply_commands(
                     clip.text = command.text.model_copy(deep=True)
                 elif command.op == "clip.fade":
                     if (
-                        command.duration_ticks * (2 if command.mode == "both" else 1)
-                        > clip.duration_ticks
-                    ):
-                        raise EditorError("INVALID_FADE", "fade duration exceeds clip duration")
-                    if (
                         command.property == "opacity"
                         and candidate.assets[clip.asset_id].kind == "audio"
                     ):
-                        raise EditorError("INVALID_FADE", "audio has no opacity")
-                    value = getattr(clip.effects, command.property)
-                    keys = []
-                    if command.mode in {"in", "both"}:
-                        keys += [(0, 0.0), (command.duration_ticks, value)]
-                    if command.mode in {"out", "both"}:
-                        keys += [
-                            (clip.duration_ticks - command.duration_ticks, value),
-                            (clip.duration_ticks, 0.0),
-                        ]
-                    clip.keyframes = [k for k in clip.keyframes if k.property != command.property]
-                    clip.keyframes += [
-                        Keyframe(
-                            property=command.property,
-                            at_ticks=at + clip.animation_offset_ticks,
-                            value=v,
-                            interpolation="ease",
+                        raise EditorError(
+                            "INVALID_FADE",
+                            "audio has no opacity to fade",
+                            422,
+                            clip_id=clip.id,
+                            asset_kind=candidate.assets[clip.asset_id].kind,
                         )
-                        for at, v in dict(keys).items()
-                    ]
-                    clip.keyframes.sort(key=lambda k: (k.property, k.at_ticks))
+                    envelope = (clip.fade or FadeEnvelope()).model_copy(deep=True)
+                    sides = ("in", "out") if command.mode == "both" else (command.mode,)
+                    for side in sides:
+                        setattr(
+                            envelope, f"{command.property}_{side}_ticks", command.duration_ticks
+                        )
+                    in_ticks, out_ticks = envelope.window(command.property)
+                    if in_ticks + out_ticks > clip.duration_ticks:
+                        raise EditorError(
+                            "INVALID_FADE",
+                            "this clip is too short for both windows: a fade-in and a fade-out "
+                            "share the same edge-to-edge span",
+                            422,
+                            clip_id=clip.id,
+                            clip_duration_ticks=clip.duration_ticks,
+                            fade_in_ticks=in_ticks,
+                            fade_out_ticks=out_ticks,
+                            room_ticks=clip.duration_ticks - max(in_ticks, out_ticks),
+                        )
+                    clip.fade = envelope if in_ticks or out_ticks else None
                 elif command.op == "clip.speed":
                     if candidate.assets[clip.asset_id].kind in {"image", "text"}:
                         raise EditorError("INVALID_SPEED", "images have no playback speed")
@@ -1407,6 +1409,18 @@ def _split_clip(project: Project, clip: Clip, at: int, right_id: str) -> None:
     project.clips[right_id] = _slice_clip(
         project, clip, left_duration, clip.duration_ticks, clip_id=right_id
     )
+    # A fade belongs to an edge the audience sees. The cut made by a split is not such an edge — it
+    # was one continuous shot a moment ago — so each half keeps only the window the parent had on
+    # the side it inherited. Copying both windows onto both halves would dip to silence or black at
+    # the cut, which is a picture the person never asked for.
+    for half, side in ((clip.id, "out"), (right_id, "in")):
+        envelope = project.clips[half].fade
+        if envelope is None:
+            continue
+        for prop in ("opacity", "gain"):
+            setattr(envelope, f"{prop}_{side}_ticks", 0)
+        if not any(envelope.model_dump().values()):
+            project.clips[half].fade = None
     _relink_outgoing(project, clip.id, right_id)
 
 

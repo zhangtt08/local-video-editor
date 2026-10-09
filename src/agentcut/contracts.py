@@ -6,8 +6,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
-SCHEMA_VERSION = 13  # v13 gives a path mask a real box; older rows are fitted on load (ge=1).
-APP_VERSION = "1.89.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+SCHEMA_VERSION = 14  # v14 gives a clip its fade windows; older rows read as "no envelope" (ge=1).
+PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
+APP_VERSION = "1.90.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -656,6 +657,29 @@ class Transition(Contract):
     duration_ticks: Duration
 
 
+class FadeEnvelope(Contract):
+    """How long each edge of this clip takes to arrive and leave, per property.
+
+    A fade is a property of the clip's *edges*, not a point on its curve. Stored as keyframes it was
+    wrong three ways at once: asking for a fade-out deleted the fade-in (the reducer replaced the
+    whole curve), a fade on a ducked or hand-keyed curve threw away every interior point, and
+    trimming the tail left the fade past the new end, where nothing renders it. Measured from
+    the edges instead all three are impossible, and the window survives any edit that moves an edge.
+    """
+
+    opacity_in_ticks: Ticks = 0
+    opacity_out_ticks: Ticks = 0
+    gain_in_ticks: Ticks = 0
+    gain_out_ticks: Ticks = 0
+
+    def window(self, prop: str) -> tuple[int, int]:
+        """This property's `(in, out)` pair, so callers never repeat the field-name dance."""
+        return (
+            getattr(self, f"{prop}_in_ticks"),
+            getattr(self, f"{prop}_out_ticks"),
+        )
+
+
 class Stabilization(Contract):
     """One stabilisation run's decision, stored on the clip it was written for.
 
@@ -688,6 +712,7 @@ class Clip(Contract):
     effects: ClipEffects = Field(default_factory=ClipEffects)
     color: ClipColor = Field(default_factory=ClipColor)
     mask: ShapeMask | None = None
+    fade: FadeEnvelope | None = None
     speed_curve: SpeedCurve | None = None
     stabilization: Stabilization | None = None
     keyframes: Annotated[list[Keyframe], Field(max_length=2000)] = Field(default_factory=list)
@@ -1157,10 +1182,12 @@ class ClipPatch(Contract):
 
 
 class ClipFade(Contract):
+    """Set one edge of one property's fade window. `duration_ticks: 0` clears the side it names."""
+
     op: Literal["clip.fade"]
     clip_id: Identifier
     property: Literal["opacity", "gain"]
-    duration_ticks: Duration
+    duration_ticks: Ticks
     mode: Literal["in", "out", "both"] = "both"
 
 
@@ -2198,6 +2225,10 @@ def capabilities(
             "text_titles": True,
             "srt_captions": True,
             "clip_fades": True,
+            # 1.90: a fade is stored as the clip's own edge windows (`Clip.fade`) and multiplied
+            # into the property curve at render, so an in-fade and an out-fade coexist and neither
+            # one erases a duck or hand-keyed curve. `clip_fades` alone was the keyframe behaviour.
+            "clip_fade_envelopes": True,
         },
         "limits": {
             "max_tracks": 128,
