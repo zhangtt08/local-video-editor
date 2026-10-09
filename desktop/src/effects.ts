@@ -265,6 +265,19 @@ export function fadeShape(clip: Clip, property: FadeProperty): FadeShape {
 
 export type FadeShape = "linear" | "ease_in" | "ease_out" | "ease_in_out";
 
+/** 「搬成边窗口」这颗按钮该不该亮。它判的是**必要条件**，不是引擎那条规则：这条属性上有关键帧、
+ *  且其中某个 0 值正好落在片段的一条边上——不满足就一定搬不动，所以按钮不该亮着（1.82 的规矩）。
+ *  满足也不保证搬得动（夹了别的点、起点不是 0、形状不是缓入缓出、已经是窗口），那由引擎点名拒绝，
+ *  界面不重复实现第二套判断。 */
+export function fadeAdoptHint(clip: Clip, property: FadeProperty): boolean {
+  const keys = (clip.keyframes ?? []).filter((key) => key.property === property);
+  if (keys.length < 2) return false;
+  const head = clip.animation_offset_ticks ?? 0;
+  const tail = head + clip.duration_ticks;
+  const at = (value: number) => keys.some((key) => Math.abs(key.value) < 1e-9 && key.at_ticks === value);
+  return at(head) || at(tail);
+}
+
 /** 一次淡角柄拖动的落库单位。`clipId` 带着走，是因为「这一组」不再只有被拖的那一条。 */
 export type FadeOp = { clipId: string; property: FadeProperty; side: FadeSide; ticks: number };
 

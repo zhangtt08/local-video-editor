@@ -8,7 +8,7 @@ TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 15  # v15 gives each fade edge a shape; older rows read the smoothstep default
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
-APP_VERSION = "1.95.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.96.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -1240,6 +1240,27 @@ class ClipFade(Contract):
         return self
 
 
+class ClipFadeAdopt(Contract):
+    """Move a pre-1.90 keyframe fade into this clip's edge windows.
+
+    Before 1.90 a fade was written as two keyframes on the property, replacing its whole curve: it
+    could not coexist with a duck, and it did not follow a trim. Such a fade is still an ordinary
+    curve today, invisible to the inspector's two rows and to the timeline's corner handles. This
+    command recognises exactly the shape the old reducer wrote — a ramp from `0.0` at an edge up to
+    the property's resting value, eased, and nothing else on that property — and turns it into
+    `Clip.fade` windows, deleting the keyframes it absorbed. The picture does not move: easing
+    `0 -> resting` is the same curve as `resting × smoothstep`, which `tests/fadeadopt_check.py`
+    measures by rendering the same timeline on both sides of the adoption.
+
+    Anything else (extra points, a non-zero floor, a hand-keyed shape, a window already on that
+    property) is refused by name with what was found, rather than guessed at.
+    """
+
+    op: Literal["clip.fade_adopt"]
+    clip_id: Identifier
+    property: Literal["opacity", "gain"]
+
+
 class MarkerSet(Contract):
     """Create a marker, or move and rename the one that already carries this id."""
 
@@ -1436,6 +1457,7 @@ Command = Annotated[
     | ClipTextSet
     | ClipPatch
     | ClipFade
+    | ClipFadeAdopt
     | MarkerSet
     | MarkerRemove
     | RecipeSet
@@ -2179,6 +2201,7 @@ def capabilities(
             "clip.text",
             "clip.patch",
             "clip.fade",
+            "clip.fade_adopt",
             "marker.set",
             "marker.remove",
             "recipe.set",
@@ -2287,6 +2310,8 @@ def capabilities(
             # `clip_fade_shapes` says the shape exists; `capabilities.fade_shapes` is the only list
             # the interface may read those names and labels from.
             "clip_fade_shapes": True,
+            # 1.96: a pre-1.90 keyframe fade can be moved into the edge windows in one command.
+            "clip_fade_adopt": True,
         },
         "limits": {
             "max_tracks": 128,

@@ -2145,3 +2145,33 @@ MCP 的 `clip_track` docstring 也写了这道天花板，Agent 与人在这里�
 1.90 把淡搬到片段的边上，但那条斜坡只有一种走法（smoothstep）。这一版给每条属性一个 `shape`：`linear` / `ease_in` / `ease_out` / `ease_in_out`，默认 `ease_in_out` 就是原来那一条，所以老工程读进来、渲出去一字不差。它不是新算术：淡本来就是一条普通分段曲线（`fade_curve`），导出编译它、预览动画它，两端读同一份点表；形状就是那条斜坡用哪种插值。淡出那一段按时间反演镜像控制点，所以同一个形状在两条边上摸起来是一样的（`tests/fadeshape_check.py` 把这条镜像恒等式与 35 点两端一致都钉了）。
 
 `clip.fade` 因此允许只带 `shape`（保留这一头原有的窗口长度），也允许一次同时带长度与形状；两者都不给是 422。`capabilities.fade_shapes` 下发 `{id,label}` 表，界面的下拉列的是它——与 `transition_kinds` 同一条规矩，界面不许自己写四个名字。`features.clip_fade_shapes` 是这条能力的说法；老引擎不回时那一行根本不出现。
+
+## 1.96 老工程里写在曲线上的淡，可以一条命令搬到边上
+
+1.90 改了 `clip.fade` 的落点，但没有动老工程：那些淡今天仍是属性曲线上的关键帧，检查器那两个数字看不
+见它，修剪与分割也不带着它走。帮助页给的出路是「先在曲线编辑器里清掉旧点」，等于把引擎已经知道的事
+推回给人手。新增 `{"op":"clip.fade_adopt","clip_id":"c1","property":"opacity"}`：认出**那一个**形状，
+把它写成 `Clip.fade` 的窗口，并删掉被搬走的那几条关键帧（不删就会乘两次）。工程 schema 仍是 v15——
+它写的是一份早已存在的 `FadeEnvelope`，只是来源换成了曲线。
+
+认出的条件一条都不放宽（`timeline._fade_adoption`）：
+
+- 这条属性上的点，去掉两头之后必须一条不剩（夹着任何人手敲的点就拒绝，并把多余的 `at_ticks` 交回）；
+- 每条边的值只能是 `0.0` 或这条属性的静止值（`clip.effects` 上的那个数），起点必须是 `0.0`；
+- 插值必须全是 `ease`——那是当年那条淡留下的形状，所以搬完记成 `shape="ease_in_out"`；
+- 点必须落在片段自己的范围内（相对时间含 `animation_offset_ticks`，所以裁过的片段量的是它真正播的那段）；
+- 这一头已经是窗口就不再搬第二次（`clip.fade` 上窗口非零 → 拒绝）。
+
+窗口长度从**实际点的位置**读：淡入 = 边上那个 0 到下一个点的距离，淡出 = 上一个点到结尾的距离。两条
+斜坡互相越过时（`in + out > duration`）不报错，各自读自己真正占的那一段，因此 `in + out <= duration`
+是构造保证的，不需要第二条拒绝。什么都不符合时回 `422 FADE_ADOPT_SHAPE`，`details` 点名 `clip_id`、
+`property`、片段长度、静止值，并把这条属性上看到的关键帧逐条带回；片段 id 不存在照旧是 `404 NOT_FOUND`
+且带 `clip_id`。两种拒绝都不涨 revision，`dry_run` 只回一份将要落库的预览（`committed=false`、
+`base_revision` 是当前的、`project.revision` 是下一个号）。
+
+「搬完画面不动」是被量过的，不是嘴上说的（`tests/fadeadopt_check.py`）：把 `0 → resting` 做 ease 插值
+与把 `resting` 乘上那条 smoothstep 是同一条曲线，于是 40 个采样点上搬前搬后的 `animation.sample` 逐点
+相同（最差偏差 0.0e+00）；同一条时间线用真实 FFmpeg 各渲一遍，八个时刻的中心像素逐个比，容差 1 阶。
+`capabilities.features.clip_fade_adopt` 与 `capabilities.commands` 里的 `"clip.fade_adopt"` 是这条能力的
+说法，MCP 的 schema 由契约生成，因此 `timeline_edit` 直接收得到它。界面在检查器那一行给一个
+「搬成边窗口」按钮，只有 `fadeAdoptHint` 认为**可能**搬得动时才出现（它只断言必要条件，最终判断仍留给引擎）。

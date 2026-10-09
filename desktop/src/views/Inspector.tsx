@@ -6,9 +6,10 @@ import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionCh
 import { Icon, Modal } from "../ui";
 import { GradeFields } from "./GradeFields";
 import { SpeedFields } from "./SpeedFields";
-import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, readTrackingDefaults, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
+import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeAdoptHint, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, readTrackingDefaults, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
 import { frameTicks, TIMEBASE, align, humanDuration, seconds, ticks } from "../time";
 import {
+  adoptFade,
   clearBatch,
   commitBatch,
   moveClip,
@@ -364,11 +365,13 @@ function EffectsFields({ clip }: { clip: Clip }) {
  *  同时存在，音量那一行也不会再把自动闪避写下的关键帧顶掉。数字读自工程状态，不是界面自己记的。
  *  能淡哪几头由 `fadeProperties` 说，时间线的淡角柄读的是同一个判断。 */
 function FadeControls({ clip, locked, properties }: { clip: Clip; locked: boolean; properties: FadeProperty[] }) {
+  const app = useApp();
   const rows = properties.map((property) => ({ property, label: property === "opacity" ? "画面透明度" : "音量" }));
   return <details className="fade-controls"><summary className="panel-label">淡入淡出</summary><fieldset disabled={locked} className="effects-fields">
     {!rows.length ? <p className="hint">这段素材既不显示画面也没有声音，淡入淡出没处可加。</p> : rows.map(({ property, label }) => <div key={property} className="fade-rows">
       <p className="panel-label">{label}</p>
       {(["in", "out"] as const).map((side) => <FadeRow key={side} clip={clip} property={property} side={side} />)}
+      {app.caps?.features?.clip_fade_adopt && fadeAdoptHint(clip, property) ? <button className="btn tiny" disabled={locked} title="1.90 之前淡是写成关键帧的：那条淡在这两个数字里看不见，也不会跟着修剪与分割走。点一下把它搬成边窗口——引擎认得它原来那条从 0 缓到静止值的斜坡，搬完画面一个像素都不变；搬不动会点名说为什么（夹了别的点、起点不是 0、已经是窗口）。" onClick={() => adoptFade(clip.id, property)}>搬成边窗口</button> : null}
     </div>)}
     <p className="hint">淡加在片段的两条边上，缓入缓出；它与音量关键帧、自动闪避、透明度动画相乘，不会互相抹掉。修剪、分割、挪动片段时淡跟着那条边走——切口不算一条边，所以中间不会凭空淡一下。</p>
   </fieldset></details>;

@@ -668,6 +668,36 @@ def apply_commands(
                         envelope.shape(prop) != "ease_in_out" for prop in ("opacity", "gain")
                     )
                     clip.fade = envelope if in_ticks or out_ticks or shaped else None
+                elif command.op == "clip.fade_adopt":
+                    if (
+                        command.property == "opacity"
+                        and candidate.assets[clip.asset_id].kind == "audio"
+                    ):
+                        raise EditorError(
+                            "INVALID_FADE",
+                            "audio has no opacity to fade",
+                            422,
+                            clip_id=clip.id,
+                            asset_kind=candidate.assets[clip.asset_id].kind,
+                        )
+                    adopted, reason, details = _fade_adoption(clip, command.property)
+                    if adopted is None:
+                        raise EditorError(
+                            "FADE_ADOPT_SHAPE",
+                            f"this fade cannot be moved into the edge windows: {reason}",
+                            422,
+                            **details,
+                        )
+                    envelope = (clip.fade or FadeEnvelope()).model_copy(deep=True)
+                    setattr(envelope, f"{command.property}_in_ticks", adopted["in"])
+                    setattr(envelope, f"{command.property}_out_ticks", adopted["out"])
+                    setattr(envelope, f"{command.property}_shape", "ease_in_out")
+                    # 两头都是从实际点位置读出来的，所以 `in + out <= duration` 是构造保证的，
+                    # 不需要再判一次 INVALID_FADE（斜坡互相越过时读到的就是它们真正占的那两段）。
+                    in_ticks, out_ticks = envelope.window(command.property)
+                    # 被搬走的那几条关键帧要一起删掉，否则同一条淡会被乘两次。
+                    clip.keyframes = [k for k in clip.keyframes if k.property != command.property]
+                    clip.fade = envelope
                 elif command.op == "clip.speed":
                     if candidate.assets[clip.asset_id].kind in {"image", "text"}:
                         raise EditorError("INVALID_SPEED", "images have no playback speed")
@@ -984,6 +1014,59 @@ def apply_commands(
     # Validate the final batch state, allowing atomic swaps with temporary overlaps.
     validate_timeline(candidate)
     return candidate
+
+
+def _fade_adoption(clip, prop: str) -> tuple[dict | None, str, dict]:
+    """Recognise the fade the pre-1.90 reducer wrote, and say how long each edge's window is.
+
+    That reducer left exactly this shape behind: two points per edge, `0.0` at the edge and the
+    property's resting value where the ramp ends, both eased, and nothing else on the property
+    (it cleared the curve first). Anything looser is a hand-keyed curve, not a fade, so it is
+    refused with the points quoted back rather than half-converted.
+    """
+    head = clip.animation_offset_ticks or 0
+    tail = head + clip.duration_ticks
+    resting = round(getattr(clip.effects, prop), 9)
+    points = sorted((k for k in clip.keyframes if k.property == prop), key=lambda k: k.at_ticks)
+    details = {
+        "clip_id": clip.id,
+        "property": prop,
+        "clip_duration_ticks": clip.duration_ticks,
+        "resting_value": getattr(clip.effects, prop),
+        "keyframes": [
+            {"at_ticks": k.at_ticks, "value": k.value, "interpolation": k.interpolation}
+            for k in points
+        ],
+    }
+    if not points:
+        return None, "there are no keyframes on this property", details
+    if clip.fade is not None and any(clip.fade.window(prop)):
+        return None, "this property already carries edge windows", details
+    if any(k.at_ticks < head or k.at_ticks > tail for k in points):
+        return None, "some keyframes sit outside the clip", details
+    if any(round(k.value, 9) not in (0.0, resting) for k in points):
+        return None, "the ramp does not run between 0.0 and the resting value", details
+    if any(k.interpolation != "ease" for k in points):
+        return None, "the ramp is not the eased shape a fade used", details
+    zeros = {k.at_ticks for k in points if round(k.value, 9) == 0.0}
+    in_ticks = out_ticks = 0
+    if head in zeros:
+        after = [k.at_ticks for k in points if k.at_ticks > head]
+        if not after:
+            return None, "the clip starts faded but never comes back", details
+        in_ticks = min(after) - head
+    if tail in zeros:
+        before = [k.at_ticks for k in points if k.at_ticks < tail]
+        if not before:
+            return None, "the clip ends faded but never started from full", details
+        out_ticks = tail - max(before)
+    if not in_ticks and not out_ticks:
+        return None, "neither ramp starts at an edge of the clip", details
+    expected = {head, tail, head + in_ticks, tail - out_ticks}
+    extra = sorted({k.at_ticks for k in points} - expected)
+    if extra:
+        return None, "other keyframes are mixed into the fade", {**details, "extra_at_ticks": extra}
+    return {"in": in_ticks, "out": out_ticks}, "", details
 
 
 def _apply_mask_track(clip, points, merge: bool = True) -> None:

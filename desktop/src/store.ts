@@ -1692,6 +1692,12 @@ function setFadeWindows(clipId: string, windows: { property: FadeProperty; side:
   setFadeWindowsForClips(windows.map(({ property, side, ticks }) => ({ clipId, property, side, ticks })));
 }
 
+/** 1.96：把 1.90 之前写成关键帧的淡搬成片段边上的窗口。判断只有一处，就是引擎的
+ *  `clip.fade_adopt`；界面用 `fadeAdoptHint` 决定这颗按钮亮不亮（那是必要条件，不是规则）。 */
+export function adoptFade(clipId: string, property: FadeProperty) {
+  submit([{ op: "clip.fade_adopt", clip_id: clipId, property }], "把淡搬成边窗口");
+}
+
 export function importCaptions(srt: string) {
   submit([{ op: "captions.import", track_id: newId("sub-"), asset_id: newId("text-"), srt, offset_ticks: 0 }], "导入字幕");
 }
