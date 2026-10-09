@@ -462,7 +462,7 @@ def reducer_suite() -> None:
 
     caps = capabilities(True, False, [])
     assert caps["features"]["clip_fade_envelopes"] is True, caps["features"]
-    assert caps["project_schema_version"] == 14, caps["project_schema_version"]
+    assert caps["project_schema_version"] == 15, caps["project_schema_version"]
     old = one_clip().model_dump()
     old["schema_version"] = 13
     assert Project.model_validate(old).clips["c"].fade is None, "a v13 row reads as 'no envelope'"

@@ -41,7 +41,7 @@ import type {
 import { FIT_MODES, type TransitionKind } from "./engine";
 import { align, frameTicks, sampleTicks, ticks, TIMEBASE } from "./time";
 import { copyClips, pasteCommands, relatedClips, selectionQuantum, timelineTracks, type ClipClipboard } from "./selection";
-import type { FadeOp, FadeProperty, FadeSide } from "./effects";
+import type { FadeOp, FadeProperty, FadeShape, FadeSide } from "./effects";
 
 export type View = "home" | "editor" | "history" | "agent";
 
@@ -1659,6 +1659,12 @@ export function setClipText(clipId: string, patch: Partial<TextStyle>) {
  *  `seconds = 0` 就是取消这一头。 */
 export function setFade(clipId: string, property: FadeProperty, side: FadeSide, seconds: number) {
   setFadeWindows(clipId, [{ property, side, ticks: ticks(seconds) }]);
+}
+
+/** 1.95：淡的形状。只带 `shape`、不带 `duration_ticks`，引擎就保留这一头原有的窗口长度——
+ *  形状是一个属性两头的性质（淡出那一段由引擎按时间反演镜像），所以一次提交改的是这条属性。 */
+export function setFadeShape(clipId: string, property: FadeProperty, shape: FadeShape) {
+  submit([{ op: "clip.fade", clip_id: clipId, property, shape }], "设置淡的形状", { quiet: true });
 }
 
 /** 时间线上拖淡角柄走这条路：一次拖动的长度天生是 tick，不经过浮点秒。

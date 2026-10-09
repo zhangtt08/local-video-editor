@@ -6,9 +6,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
-SCHEMA_VERSION = 14  # v14 gives a clip its fade windows; older rows read as "no envelope" (ge=1).
+SCHEMA_VERSION = 15  # v15 gives each fade edge a shape; older rows read the smoothstep default
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
-APP_VERSION = "1.94.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.95.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -670,6 +670,24 @@ class Transition(Contract):
     duration_ticks: Duration
 
 
+# 淡的形状：值沿着窗口「靠上」静止值的方式。界面列的是这张表（与 transition_kinds 同一个规矩），
+# 而 `FADE_SHAPE_CURVES` 是唯一一处把形状变成曲线的地方——导出与预览都只读那条曲线。
+# 默认 `ease_in_out` 就是 1.95 之前所有淡用的 smoothstep，所以老工程读进来、渲染出去一字不差。
+FadeShape = Literal["linear", "ease_in", "ease_out", "ease_in_out"]
+FADE_SHAPES: tuple[dict, ...] = (
+    {"id": "linear", "label": "线性"},
+    {"id": "ease_in", "label": "缓入"},
+    {"id": "ease_out", "label": "缓出"},
+    {"id": "ease_in_out", "label": "缓入缓出"},
+)
+FADE_SHAPE_CURVES: dict[str, object] = {
+    "linear": None,  # 普通直线段
+    "ease_in_out": "ease",  # 引擎早就有的 smoothstep
+    "ease_in": (0.42, 0.0, 1.0, 1.0),  # CSS ease-in
+    "ease_out": (0.0, 0.0, 0.58, 1.0),  # CSS ease-out
+}
+
+
 class FadeEnvelope(Contract):
     """How long each edge of this clip takes to arrive and leave, per property.
 
@@ -684,6 +702,10 @@ class FadeEnvelope(Contract):
     opacity_out_ticks: Ticks = 0
     gain_in_ticks: Ticks = 0
     gain_out_ticks: Ticks = 0
+    # 1.95: how the property approaches its resting value along that window. The default is exactly
+    # the smoothstep every pre-1.95 fade used, so an old project reads and renders unchanged.
+    opacity_shape: FadeShape = "ease_in_out"
+    gain_shape: FadeShape = "ease_in_out"
 
     def window(self, prop: str) -> tuple[int, int]:
         """This property's `(in, out)` pair, so callers never repeat the field-name dance."""
@@ -691,6 +713,9 @@ class FadeEnvelope(Contract):
             getattr(self, f"{prop}_in_ticks"),
             getattr(self, f"{prop}_out_ticks"),
         )
+
+    def shape(self, prop: str) -> str:
+        return getattr(self, f"{prop}_shape")
 
 
 class Stabilization(Contract):
@@ -1195,13 +1220,24 @@ class ClipPatch(Contract):
 
 
 class ClipFade(Contract):
-    """Set one edge of one property's fade window. `duration_ticks: 0` clears the side it names."""
+    """Set one edge of one property's fade window. `duration_ticks: 0` clears the side it names.
+
+    1.95 adds `shape`, and either field alone is a complete request: dragging the corner sends a
+    length, the shape dropdown sends only the shape and leaves the window exactly where it was.
+    """
 
     op: Literal["clip.fade"]
     clip_id: Identifier
     property: Literal["opacity", "gain"]
-    duration_ticks: Ticks
+    duration_ticks: Ticks | None = None
     mode: Literal["in", "out", "both"] = "both"
+    shape: FadeShape | None = None
+
+    @model_validator(mode="after")
+    def names_something(self):
+        if self.duration_ticks is None and self.shape is None:
+            raise ValueError("provide duration_ticks, shape, or both")
+        return self
 
 
 class MarkerSet(Contract):
@@ -2093,6 +2129,8 @@ def capabilities(
         # The transition picker enumerates this list rather than carrying its own copy, so a kind
         # the exporter cannot honour can never appear in the interface.
         "transition_kinds": [dict(item) for item in TRANSITION_KINDS],
+        # 淡的形状同一条规矩：界面列的是这份表，不是自己写的四个名字。
+        "fade_shapes": [dict(item) for item in FADE_SHAPES],
         "output_containers": list(OUTPUT_CONTAINERS),
         # The build identity, next to the schema it speaks: an Agent reading this document can tell
         # which engine answered, and the desktop shows it in the title bar.
@@ -2245,6 +2283,10 @@ def capabilities(
             # into the property curve at render, so an in-fade and an out-fade coexist and neither
             # one erases a duck or hand-keyed curve. `clip_fades` alone was the keyframe behaviour.
             "clip_fade_envelopes": True,
+            # 1.95: a fade window now carries a shape (linear / 缓入 / 缓出 / 缓入缓出).
+            # `clip_fade_shapes` says the shape exists; `capabilities.fade_shapes` is the only list
+            # the interface may read those names and labels from.
+            "clip_fade_shapes": True,
         },
         "limits": {
             "max_tracks": 128,

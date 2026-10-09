@@ -250,6 +250,21 @@ export function fadeDragTicks(
   return Math.max(0, Math.min(aligned, fadeRoom(clip, property, side)));
 }
 
+/** 淡的形状：界面列的必须是引擎 `capabilities.fade_shapes` 那张表（与转场种类同一个规矩）。
+ *  老引擎不回它就是空数组——那时这一行根本不出现，界面不许自己发明四个名字。 */
+export function fadeShapeChoices(caps?: { fade_shapes?: { id: string; label: string }[] } | null): { id: FadeShape; label: string }[] {
+  return (caps?.fade_shapes ?? []).filter((item) => FADE_SHAPE_IDS.includes(item.id as FadeShape)) as { id: FadeShape; label: string }[];
+}
+
+const FADE_SHAPE_IDS: FadeShape[] = ["linear", "ease_in", "ease_out", "ease_in_out"];
+
+/** 这一头现在用的形状：引擎没下发就是缓入缓出（那正是 1.95 之前唯一的形状）。 */
+export function fadeShape(clip: Clip, property: FadeProperty): FadeShape {
+  return clip.fade?.[property === "opacity" ? "opacity_shape" : "gain_shape"] ?? "ease_in_out";
+}
+
+export type FadeShape = "linear" | "ease_in" | "ease_out" | "ease_in_out";
+
 /** 一次淡角柄拖动的落库单位。`clipId` 带着走，是因为「这一组」不再只有被拖的那一条。 */
 export type FadeOp = { clipId: string; property: FadeProperty; side: FadeSide; ticks: number };
 

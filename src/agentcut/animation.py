@@ -4,6 +4,7 @@ import hashlib  # preview filter ids are content-addressed, like the caption tex
 from math import sqrt
 
 from .contracts import (
+    FADE_SHAPE_CURVES,
     MASK_FIELDS,
     PROPERTY_LIMITS,
     TIMEBASE,
@@ -104,15 +105,31 @@ def fade_active(clip: Clip, prop: str) -> bool:
     return any(fade_windows(clip, prop))
 
 
+def _fade_ramp(shape: str, from_head: bool) -> tuple[str, Bezier | None]:
+    """这条淡斜坡用哪种插值。形状说的是「从淡的那一头走向静止的那一头」，所以淡出那一段要把控制点
+    按时间反演镜像过来——同一个形状在两条边上摸起来才是一样的。linear 与 smoothstep 自己就对称。"""
+    curve = FADE_SHAPE_CURVES[shape]
+    if curve is None:
+        return "linear", None
+    if curve == "ease":
+        return "ease", None
+    x1, y1, x2, y2 = curve  # type: ignore[misc]
+    if not from_head:
+        x1, y1, x2, y2 = 1 - x2, 1 - y2, 1 - x1, 1 - y1
+    return "bezier", Bezier(x1=x1, y1=y1, x2=x2, y2=y2)
+
+
 def fade_curve(clip: Clip, prop: str) -> list[Keyframe]:
     """The fade as an ordinary piecewise curve on a clock that starts at this clip's head.
 
     1.0 means "this property is untouched", so the curve multiplies whatever else the property
-    carries. The ramps are `ease` — the same smoothstep a hand-keyed fade used before 1.90.
+    carries. The ramps take their shape from `Clip.fade` — the default is the same smoothstep a
+    hand-keyed fade used before 1.90, so an old project renders exactly as it did.
     """
     in_ticks, out_ticks = fade_windows(clip, prop)
     if not in_ticks and not out_ticks:
         return []
+    shape = clip.fade.shape(prop) if clip.fade else "ease_in_out"
     duration = clip.duration_ticks
     positions = sorted({0, duration, in_ticks or duration, duration - (out_ticks or duration)})
     curve = []
@@ -126,12 +143,14 @@ def fade_curve(clip: Clip, prop: str) -> list[Keyframe]:
                 or (out_ticks and at == duration - out_ticks and following == duration)
             )
         )
+        interpolation, controls = _fade_ramp(shape, at == 0) if ramp else ("linear", None)
         curve.append(
             Keyframe(
                 property="opacity",
                 at_ticks=at,
                 value=value,
-                interpolation="ease" if ramp else "linear",
+                interpolation=interpolation,
+                bezier=controls,
             )
         )
     return curve

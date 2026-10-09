@@ -143,8 +143,11 @@ export const DEFAULT_CURVE_POINTS: GradeCurvePoint[] = [
 export type MaskVertex = { x: number; y: number; handle_out: [number, number]; handle_in: [number, number] };
 export type ShapeMask = { shape: "rectangle" | "ellipse" | "path"; center_x: number; center_y: number; width: number; height: number; feather: number; inverted: boolean; vertices?: MaskVertex[] | null };
 
-/** The clip's own fade windows, in ticks measured from each edge. 0 means that edge is untouched. */
-export type FadeEnvelope = { opacity_in_ticks: number; opacity_out_ticks: number; gain_in_ticks: number; gain_out_ticks: number };
+/** The clip's own fade windows, in ticks measured from each edge. 0 means that edge is untouched.
+ *  `*_shape` (1.95) is how the property approaches its resting value along that window; the engine
+ *  issues the list of names, and every edge defaults to the smoothstep pre-1.95 fades used. */
+export type FadeShape = "linear" | "ease_in" | "ease_out" | "ease_in_out";
+export type FadeEnvelope = { opacity_in_ticks: number; opacity_out_ticks: number; gain_in_ticks: number; gain_out_ticks: number; opacity_shape?: FadeShape; gain_shape?: FadeShape };
 export const DEFAULT_MASK: ShapeMask = { shape: "ellipse", center_x: .5, center_y: .5, width: .6, height: .6, feather: 0, inverted: false, vertices: null };
 export const DEFAULT_PATH: MaskVertex[] = [
   { x: .3, y: .25, handle_out: [0, 0], handle_in: [0, 0] },
@@ -456,6 +459,8 @@ export type Capabilities = {
   };
   /** 可选的转场种类与中文名：界面列的是这份表，不是自己写死的三个。 */
   transition_kinds?: TransitionChoice[];
+  /** 1.95：淡的形状（线性 / 缓入 / 缓出 / 缓入缓出）。下拉列的是这份表；老引擎不回就没有这一行。 */
+  fade_shapes?: TransitionChoice[];
   /** 本机装着的文字字体（id / 中文名 / CSS family）；选择器列的是这份表。 */
   text_fonts?: TextFont[];
   /** 引擎自身的构建号；旧引擎不回这个字段，界面按空字符串处理。 */

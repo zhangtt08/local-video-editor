@@ -6,7 +6,7 @@ import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionCh
 import { Icon, Modal } from "../ui";
 import { GradeFields } from "./GradeFields";
 import { SpeedFields } from "./SpeedFields";
-import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeBlocker, fadeProperties, fadeWindows, readTrackingDefaults, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackWindow, type FadeProperty, type FadeSide } from "../effects";
+import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, readTrackingDefaults, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
 import { frameTicks, TIMEBASE, align, humanDuration, seconds, ticks } from "../time";
 import {
   clearBatch,
@@ -33,6 +33,7 @@ import {
   setClipColor,
   setClipText,
   setFade,
+  setFadeShape,
   slipClip,
   slideClip,
   setTransition,
@@ -375,6 +376,9 @@ function FadeControls({ clip, locked, properties }: { clip: Clip; locked: boolea
 
 function FadeRow({ clip, property, side }: { clip: Clip; property: FadeProperty; side: FadeSide }) {
   const id = useId();
+  const app = useApp();
+  // 形状是「这条属性两头共用」的一个数（淡出那一段由引擎按时间反演镜像），所以两行显示同一个下拉。
+  const shapes = fadeShapeChoices(app.caps);
   const committed = fadeWindows(clip)[property][side];
   const [text, setText] = useState((committed / TIMEBASE).toFixed(2));
   const [refused, setRefused] = useState("");
@@ -393,6 +397,7 @@ function FadeRow({ clip, property, side }: { clip: Clip; property: FadeProperty;
       onChange={(e) => setText(e.target.value)} onBlur={apply}
       onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { setText((committed / TIMEBASE).toFixed(2)); setRefused(""); e.currentTarget.blur(); } }} />
     <span>秒</span>
+    {shapes.length ? <select className="input tiny" aria-label={`${property === "gain" ? "音量" : "画面透明度"}淡的形状`} value={fadeShape(clip, property)} title="淡的形状：值沿着窗口靠上静止值的方式。画面与音量各一个，同一条属性的淡入与淡出共用（淡出那一段按时间反演镜像，所以两条边摸起来一样）。列表是引擎 capabilities.fade_shapes 下发的。" onChange={(e) => setFadeShape(clip.id, property, e.target.value as FadeShape)}>{shapes.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select> : null}
     {committed > 0 ? <button className="btn tiny" title="取消这一头的淡" onClick={() => setFade(clip.id, property, side, 0)}>取消</button> : null}
     {refused ? <p className="hint blocked">{refused}</p> : null}
   </div>;

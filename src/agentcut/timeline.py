@@ -643,9 +643,12 @@ def apply_commands(
                     envelope = (clip.fade or FadeEnvelope()).model_copy(deep=True)
                     sides = ("in", "out") if command.mode == "both" else (command.mode,)
                     for side in sides:
-                        setattr(
-                            envelope, f"{command.property}_{side}_ticks", command.duration_ticks
-                        )
+                        if command.duration_ticks is not None:
+                            setattr(
+                                envelope, f"{command.property}_{side}_ticks", command.duration_ticks
+                            )
+                    if command.shape is not None:
+                        setattr(envelope, f"{command.property}_shape", command.shape)
                     in_ticks, out_ticks = envelope.window(command.property)
                     if in_ticks + out_ticks > clip.duration_ticks:
                         raise EditorError(
@@ -659,7 +662,12 @@ def apply_commands(
                             fade_out_ticks=out_ticks,
                             room_ticks=clip.duration_ticks - max(in_ticks, out_ticks),
                         )
-                    clip.fade = envelope if in_ticks or out_ticks else None
+                    # A shape with no window anywhere still records the choice, so the envelope is
+                    # only dropped when nothing at all is left.
+                    shaped = any(
+                        envelope.shape(prop) != "ease_in_out" for prop in ("opacity", "gain")
+                    )
+                    clip.fade = envelope if in_ticks or out_ticks or shaped else None
                 elif command.op == "clip.speed":
                     if candidate.assets[clip.asset_id].kind in {"image", "text"}:
                         raise EditorError("INVALID_SPEED", "images have no playback speed")

@@ -234,7 +234,7 @@ preview-manifest 给出 mixed_track_ids 与每片段 transition.picture/sound/bl
 | clip.speed | clip_id, speed_percent, ripple? | 整数 25..400；默认 ripple=true，保留源范围并向下对齐结果时长；音高保持 |
 | clip.color | clip_id, color | exposure(-2..2 EV)、contrast(0..2)、saturation(0..2)，默认 0/1/1 |
 | clip.text | clip_id, text | 替换文字内容/字号/颜色，只能操作文字片段 |
-| clip.fade | clip_id, property, duration_ticks, mode | opacity/gain；in/out/both；替换该属性关键帧，双向时每边不超过片段一半 |
+| clip.fade | clip_id, property, duration_ticks?, mode, shape? | opacity/gain；in/out/both；1.90 起写的是片段两条边上的窗口（不再动关键帧）；两头之和不超过片段长度；1.95 起 `duration_ticks` 可以省略（只改形状），`shape` 取 `linear/ease_in/ease_out/ease_in_out`，两者都不给则 422 |
 | captions.import | track_id, asset_id, srt, offset_ticks? | 原子创建新字幕轨、文字素材与片段；最多 2000 条，重叠拒绝并整体回滚 |
 
 效果 x/y 以画布宽高为单位，正方向右/下；scale 默认 1；rotation 为度；opacity 为 0..1，gain 为 0..4。
@@ -2138,3 +2138,10 @@ MCP 的 `clip_track` docstring 也写了这道天花板，Agent 与人在这里�
 
 `clip.fade` 从此不再动 `Clip.keyframes`，因此它与 `Clip.stabilization` 那把锁、与曲线预算
 （`MASK_TRACK_BUDGET` / reframe）互不影响；老工程写在曲线里的淡一个点都不用改，照旧渲染。
+
+
+## 1.95 淡有形状了：一条命令可以同时带长度与形状
+
+1.90 把淡搬到片段的边上，但那条斜坡只有一种走法（smoothstep）。这一版给每条属性一个 `shape`：`linear` / `ease_in` / `ease_out` / `ease_in_out`，默认 `ease_in_out` 就是原来那一条，所以老工程读进来、渲出去一字不差。它不是新算术：淡本来就是一条普通分段曲线（`fade_curve`），导出编译它、预览动画它，两端读同一份点表；形状就是那条斜坡用哪种插值。淡出那一段按时间反演镜像控制点，所以同一个形状在两条边上摸起来是一样的（`tests/fadeshape_check.py` 把这条镜像恒等式与 35 点两端一致都钉了）。
+
+`clip.fade` 因此允许只带 `shape`（保留这一头原有的窗口长度），也允许一次同时带长度与形状；两者都不给是 422。`capabilities.fade_shapes` 下发 `{id,label}` 表，界面的下拉列的是它——与 `transition_kinds` 同一条规矩，界面不许自己写四个名字。`features.clip_fade_shapes` 是这条能力的说法；老引擎不回时那一行根本不出现。
