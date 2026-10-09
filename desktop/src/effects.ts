@@ -1,4 +1,4 @@
-import type { AnimatedEffect, Asset, Capabilities, Clip, MaskProperty, Project, ShapeMask, WipeChannel } from "./engine";
+import type { AnimatedEffect, Asset, Capabilities, Clip, Curve, MaskProperty, Project, ShapeMask, WipeChannel } from "./engine";
 import { TIMEBASE } from "./time";
 
 /**
@@ -326,6 +326,17 @@ export function fadeAdoptSummary(plan: {
 
 /** 一次淡角柄拖动的落库单位。`clipId` 带着走，是因为「这一组」不再只有被拖的那一条。 */
 export type FadeOp = { clipId: string; property: FadeProperty; side: FadeSide; ticks: number };
+
+/** 1.98：引擎把柔焦曲线编译成一格一步的窗（`spatial_schedule`），浏览器照同一份点表动画 `filter`。
+ *  值仍是「占画面高的比例」，所以单位是 cqh——与导出交给 `gblur=sigma=` 的是同一个数。
+ *  没有曲线就返回空数组：那一行走的是静态那条路，界面不自己造第二条规则。 */
+export function blurFrames(curve: Curve | null | undefined): { filter: string; offset: number; easing: string }[] {
+  return (curve ?? []).map((point) => ({
+    filter: `blur(${point.value * 100}cqh)`,
+    offset: point.offset,
+    easing: point.easing,
+  }));
+}
 
 /** 拖一次淡角柄，落库的是「这一组」：被拖的那条 + 与它一起被选中的 + 与它们音画链接的伙伴
  *  （剪映是一起动的，1.91 只淡被拖的那一条是它的半件事）。

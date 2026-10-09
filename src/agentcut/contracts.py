@@ -8,7 +8,7 @@ TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 15  # v15 gives each fade edge a shape; older rows read the smoothstep default
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
-APP_VERSION = "1.97.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
+APP_VERSION = "1.98.0"  # one place: /v1/info, the OpenAPI document and the desktop shell must agree
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -132,9 +132,13 @@ class Track(Contract):
 
 
 EffectProperty = Literal["x", "y", "scale", "rotation", "opacity", "gain"]
-# What `clip.patch` may write is wider than what can be keyframed: `blur`, `sharpen` and
-# `sharpen_radius` have no per-frame form (see ClipEffects), so they are patchable without being
-# animatable properties.
+# 1.98: soft focus joins the keyable set, but through its own compiled staircase rather than through
+# the scalar-expression path above — `gblur` cannot read an expression for its sigma, so
+# `animation.spatial_schedule` turns the curve into windows that both ends consume (see
+# `SPATIAL_SCHEDULE_MAX`). Sharpen, its radius and denoise stay patch-only for now.
+SpatialProperty = Literal["blur"]
+# What `clip.patch` may write is wider than what can be keyframed: `sharpen` and `sharpen_radius`
+# have no per-frame form (see ClipEffects), so they are patchable without being animatable.
 EffectField = EffectProperty | Literal["blur", "sharpen", "sharpen_radius", "denoise"]
 # Rectangle and ellipse masks keyframe in the mask's own normalized space, so the exporter and the
 # browser interpolate the same numbers. A free-form (path) mask rasterizes its outline once and can
@@ -147,7 +151,7 @@ MASK_FIELDS = {
     "mask_height": "height",
 }
 MASK_SIZE_FIELDS = {"mask_width", "mask_height"}
-Property = EffectProperty | MaskProperty
+Property = EffectProperty | MaskProperty | SpatialProperty
 PROPERTY_LIMITS = {
     "x": (-2, 2),
     "y": (-2, 2),
@@ -177,13 +181,27 @@ PROPERTY_LIMITS = {
 # `BLUR_LIMIT` is a quarter of the frame height because past that the picture has already averaged
 # into one color. `BLUR_RADIUS_LIMIT_PX` is the top of the measured band — the step-edge probe runs
 # out of contrast above it, so a bigger radius is refused by name rather than claimed as verified.
-# Two absences, each for the same reason: no keyframes (the only per-frame hook `gblur` offers is
-# `enable`, an on/off window, so an animated radius would export as a staircase while the preview
-# interpolates smoothly) and no sharpen (`unsharp` convolves a box-window kernel, not a Gaussian of
-# the named radius, so one name would be two functions).
+# Two absences, each for the same reason: no keyframes for sharpen (`unsharp` convolves a
+# box-window kernel, not a Gaussian of the named radius, so one name would be two functions) and no
+# per-frame radius for it either. Soft focus does get keyframes from 1.98, and the way the earlier
+# refusal described is exactly the way it is done: `gblur`'s only per-frame hook is `enable`, an
+# on/off window, so an animated radius compiles to a staircase. What changed is who steps: the
+# staircase is now the single authority (`animation.spatial_schedule`) — the exporter chains
+# `gblur=sigma=…:enable='between(t,…) per step` and the browser animates the very same steps
+# (`easing: "steps(1, end)"`), so neither end quietly smooths over what the other is doing.
 BLUR_LIMIT = 0.25
 BLUR_RADIUS_LIMIT_PX = 64.0
 GBLUR_STEPS = 6
+# How many on/off windows one animated soft-focus curve may compile into. Each step is one extra
+# `gblur` stage in the export graph, and the browser animates the same count, so this is the one
+# number that bounds both ends' cost. Measured here: three chained `gblur` stages encode six
+# seconds of 320x180 in 0.12 s, so twenty-four is comfortably affordable while still being coarse
+# enough that a long ramp is scheduled in wide steps rather than one step per frame.
+SPATIAL_SCHEDULE_MAX = 24
+# A keyframed radius is bounded by the very same ceiling the static knob uses, so a curve
+# cannot reach past what one click can. It lives down here because `BLUR_LIMIT` is defined
+# after `PROPERTY_LIMITS`.
+PROPERTY_LIMITS["blur"] = (0.0, BLUR_LIMIT)
 # Sharpen is an unsharp mask, so it carries the two numbers that operation always has: an amount
 # (what 剪映 calls the degree, AE and Resolve call Amount) and a radius. The radius uses the same
 # unit as soft focus - a fraction of the frame height, capped by the same measured band - because
@@ -2331,6 +2349,9 @@ def capabilities(
             "clip_fade_adopt": True,
             # 1.97: the same move across one whole track, as a plan or as a single edit.
             "clip_fade_adopt_track": True,
+            # 1.98: soft focus can be keyframed. It compiles to a bounded staircase that both ends
+            # consume, so `limits.blur_schedule_segments` says how coarse the steps may get.
+            "blur_keyframes": True,
         },
         "limits": {
             "max_tracks": 128,
@@ -2342,6 +2363,7 @@ def capabilities(
             "sharpen_amount": SHARPEN_LIMIT,
             "sharpen_radius_fraction": BLUR_LIMIT,
             "sharpen_radius_default": SHARPEN_RADIUS_DEFAULT,
+            "blur_schedule_segments": SPATIAL_SCHEDULE_MAX,
             "denoise_db": DENOISE_LIMIT,
             "auto_grade_samples_max": AUTO_GRADE_SAMPLES_MAX,
             "auto_grade_percentile_max": AUTO_PERCENTILE_MAX,

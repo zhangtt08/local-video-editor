@@ -7,6 +7,7 @@ from .contracts import (
     FADE_SHAPE_CURVES,
     MASK_FIELDS,
     PROPERTY_LIMITS,
+    SPATIAL_SCHEDULE_MAX,
     TIMEBASE,
     Bezier,
     Clip,
@@ -363,6 +364,56 @@ def property_curve(clip: Clip, prop: str) -> list[dict]:
     return curve
 
 
+SPATIAL_PROPS = ("blur",)
+
+
+def spatial_schedule(clip: Clip, prop: str, quantum: int, limit: int | None = None) -> list[dict]:
+    """The windows a keyframed spatial knob actually executes — the same list at both ends.
+
+    `gblur` has no per-frame sigma: its only time hook is `enable`, an on/off window. Letting the
+    export step while the browser interpolates smoothly is exactly why this knob refused keyframes
+    before 1.98. The answer is not to hide the staircase but to make it the single authority: the
+    curve is sampled here into frame-aligned windows, at most `limit` of them, and the exporter
+    chains one `gblur=sigma=…:enable='between(t,…)'` per window while the browser animates those
+    same windows with `steps(1, end)`. A clip shorter than `limit` frames is therefore exact at the
+    frame level, and a longer one coarsens by a number both ends can be checked against.
+    """
+    span = clip.duration_ticks
+    if span <= 0 or not points(clip, prop):
+        return []
+    ceiling = SPATIAL_SCHEDULE_MAX if limit is None else max(1, limit)
+    grid = max(1, int(quantum or 1))
+    # Whole frames first, then as many frames per step as the ceiling needs: a step that is not a
+    # multiple of the frame grid would put a window boundary between two frames, and the exporter's
+    # `enable` window is evaluated per frame anyway — it would silently drop the boundary.
+    per_window = max(grid, -(-span // max(1, ceiling)))
+    step = ((per_window + grid - 1) // grid) * grid
+    windows: list[dict] = []
+    start = 0
+    while start < span:
+        end = min(start + step, span)
+        value = round(sample(clip, prop, (start + end) // 2), 9)
+        if windows and windows[-1]["value"] == value:
+            windows[-1]["to_ticks"] = end
+        else:
+            windows.append({"from_ticks": start, "to_ticks": end, "value": value})
+        start = end
+    return windows
+
+
+def spatial_curve(clip: Clip, schedule: list[dict]) -> list[dict]:
+    """The browser's copy of the schedule: one point per window, each held with a step easing."""
+    span = clip.duration_ticks
+    return [
+        {
+            "offset": window["from_ticks"] / span,
+            "value": window["value"],
+            "easing": "steps(1, end)",
+        }
+        for window in schedule
+    ]
+
+
 def sharpen_preview(clip: Clip, width: int, height: int) -> dict | None:
     """The browser's copy of the unsharp mask: the same amount, a radius expressed in frame units.
 
@@ -422,7 +473,15 @@ def preview_manifest(
             if track.kind == "video"
             else project.settings.timebase // project.settings.sample_rate
         )
+        # 1.98: the staircase is the authority, so the browser animates the very same windows the
+        # exporter chains — see `spatial_schedule`.
+        spatial = {
+            prop: spatial_curve(clip, spatial_schedule(clip, prop, quantum))
+            for prop in SPATIAL_PROPS
+            if points(clip, prop)
+        }
         clips[clip.id] = {
+            "spatial": spatial or None,
             "mask_image": mask_image(clip.mask, project.settings.width, project.settings.height)
             if clip.mask
             else None,
@@ -446,9 +505,22 @@ def preview_manifest(
             + (f" url(#{grade['id']})" if grade else "")
             # The blur fraction the exporter feeds to `blur_sigma` becomes 1cqh = 1% of the frame's
             # rendered height here, so the preview's radius is the same number of frame-heights.
-            + (f" blur({clip.effects.blur * 100:g}cqh)" if clip.effects.blur > 0 else "")
+            # A keyframed radius is NOT baked in: `spatial` carries the windows and the browser
+            # animates the same steps on its own wrapper — the same division the exporter makes,
+            # where the schedule replaces the static stage rather than stacking on top of it.
+            + (
+                f" blur({clip.effects.blur * 100:g}cqh)"
+                if clip.effects.blur > 0 and not spatial
+                else ""
+            )
             # Unsharp last, as in the exporter: tonal grade, then radius, then edge enhancement.
-            + (f" url(#{sharpen['id']})" if sharpen else ""),
+            # With a keyframed radius the unsharp step has to leave this string: the animated blur
+            # is its own element (CSS cannot animate one term of a shared filter list), and the
+            # exporter's order — grade, then blur, then edge — only survives if the edge filter sits
+            # on the wrapper *outside* it. Without a curve nothing moves, so the string is what it
+            # always was.
+            + ("" if spatial else (f" url(#{sharpen['id']})" if sharpen else "")),
+            "edge_filter": (f" url(#{sharpen['id']})" if sharpen and spatial else None),
             "grade": grade,
             "transition": transition_curves[clip.id],
             "fade": fade or None,

@@ -259,7 +259,8 @@ function EffectsFields({ clip }: { clip: Clip }) {
   const locked = Boolean(app.busy || !project || project.tracks.find((t) => t.id === clip.track_id)?.locked);
   const slidingBlocked = Boolean(clip.speed_curve) || Boolean(clip.link_id);
   const frames = (clip.keyframes ?? []).filter((k) => k.at_ticks >= offset && k.at_ticks <= offset + clip.duration_ticks);
-  // 柔焦这一行没有 ◇ 关键帧按钮：导出侧的 gblur 没有逐帧半径，界面不能假装能给它做动画。
+  // 柔焦的 ◇ 从 1.98 起有了：引擎把曲线编译成一格一步的柔焦窗，两端共用那一份窗表；
+  // 按钮亮不亮仍按 caps.features.blur_keyframes，界面不凭记忆决定哪颗旋钮能做动画。
   // 上限完全由引擎下发的两个数决定（见 effects.ts 的 blurMaxPercent），界面不自己另写一套。
   const blurMax = blurMaxPercent(app.caps, project?.settings.height ?? 0);
   // 降噪只有一条真实的路：导出。浏览器预览没有等价的 FFT 降噪，所以这一行必须自己说明白，
@@ -297,11 +298,20 @@ function EffectsFields({ clip }: { clip: Clip }) {
             onClick={() => frame ? removeKeyframe(clip.id, f.property, at) : setKeyframe(clip.id, { property: f.property, at_ticks: at, value: currentValues[f.property], interpolation })}>◇</button>
         </div>;
       })}
-      {blurMax > 0 && asset?.kind !== "audio" ? <div className="effect-row">
-        <label htmlFor="fx-blur">柔焦</label>
-        <EffectInput id="fx-blur" value={(effects.blur ?? 0) * 100} min={0} max={blurMax} step={0.5} onCommit={(value) => setClipEffects(clip.id, { blur: value / 100 })} />
-        <span className="dim">% 高 · ≈{(effects.blur * (project?.settings.height ?? 0)).toFixed(1)} px</span>
-      </div> : null}
+      {blurMax > 0 && asset?.kind !== "audio" ? (() => {
+        const frame = frames.find((k) => k.property === "blur" && k.at_ticks === at + offset);
+        const keyed = (clip.keyframes ?? []).some((k) => k.property === "blur");
+        const shown = (frame?.value ?? effects.blur ?? 0) * 100;
+        return <div className="effect-row">
+          <label htmlFor="fx-blur">柔焦</label>
+          <EffectInput id="fx-blur" value={shown} min={0} max={blurMax} step={0.5} onCommit={(value) => keyed ? setKeyframe(clip.id, { ...frame, property: "blur", at_ticks: at, value: value / 100, interpolation: frame?.interpolation ?? interpolation }) : setClipEffects(clip.id, { blur: value / 100 })} />
+          <span className="dim">% 高 · ≈{((shown / 100) * (project?.settings.height ?? 0)).toFixed(1)} px</span>
+          {app.caps?.features?.blur_keyframes ? <button type="button" className={`keyframe-btn${frame ? " active" : ""}`} aria-label={frame ? "删除柔焦关键帧" : "添加柔焦关键帧"}
+            disabled={outside || play.playing || !sampleReady}
+            title={`${frame ? "删除" : "添加"}当前位置的柔焦关键帧：导出把这条曲线编译成一格一步的柔焦窗，预览走的是同一份窗表`}
+            onClick={() => frame ? removeKeyframe(clip.id, "blur", at) : setKeyframe(clip.id, { property: "blur", at_ticks: at, value: effects.blur ?? 0, interpolation })}>◇</button> : null}
+        </div>;
+      })() : null}
           {app.caps?.features?.clip_stabilize && asset?.kind !== "audio" ? <span className="stabilize-row">
             <button className="btn tiny" disabled={Boolean(app.busy) || stabBlock !== null}
               title={stabBlock ?? (clip.stabilization ? "这段已经稳定过：再按一次按下面的强度重算一遍，替换掉上一次的抵消，不会叠两层" : "让引擎读这段画面，量出相机自己的抖动，再写入反过来的平移与缩放把它抵消；强度 0 表示不动画面，允许裁切是愿意为消抖让画面放大多少。撤销一步回到稳定前")}

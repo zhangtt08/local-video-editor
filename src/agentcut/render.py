@@ -14,7 +14,7 @@ import os
 import re
 from dataclasses import dataclass, field
 
-from .animation import expression, fade_active, sound_enabled
+from .animation import expression, fade_active, sound_enabled, spatial_schedule
 from .compositing import blend_track
 from .contracts import (
     BLUR_RADIUS_LIMIT_PX,
@@ -138,7 +138,9 @@ def focus_radius(fraction: float, knob: str, out_h: int) -> float:
     return radius
 
 
-def focus_stages(plan, head: str, clip, out_h: int, *, alpha: bool = False) -> str:
+def focus_stages(
+    plan, head: str, clip, out_h: int, *, frame_ticks: int, alpha: bool = False
+) -> str:
     """The layer's soft focus and unsharp mask, applied once the picture sits at output size.
 
     Returns the chain text, still hanging so the caller continues it with a comma. Both stages run
@@ -152,13 +154,28 @@ def focus_stages(plan, head: str, clip, out_h: int, *, alpha: bool = False) -> s
     another filter "trailing garbage after a filter", so a closed pad can only end a chain, and
     every caller here has more filters to append.
     """
-    if clip.effects.blur > 0 or clip.effects.sharpen > 0:
+    schedule = spatial_schedule(clip, "blur", frame_ticks)
+    if schedule or clip.effects.blur > 0 or clip.effects.sharpen > 0:
         if alpha:
             # `gblur` samples planes, so the cut chain only asks for the rgba form when a spatial
             # knob is actually on: with both at zero the emitted string stays what it always was,
             # which is what the sampling-format acceptance (`tests/format_check.py`) pins.
             head = f"{head},format=rgba"
-    if clip.effects.blur > 0:
+    if schedule:
+        # 1.98: a keyframed radius compiles to the same windows the browser animates. Each one is an
+        # on/off `enable` window because `gblur` cannot read an expression for its sigma — which is
+        # precisely why this knob had no keyframes before, when the staircase was only half-present.
+        for window in schedule:
+            if window["value"] <= 0:
+                continue
+            radius = focus_radius(window["value"], "blur", out_h)
+            start = sec(window["from_ticks"])
+            stop = sec(window["to_ticks"])
+            head = (
+                f"{head},gblur=sigma={radius:.4f}:steps={GBLUR_STEPS}"
+                f":enable='between(t,{start},{stop})'"
+            )
+    elif clip.effects.blur > 0:
         radius = focus_radius(clip.effects.blur, "blur", out_h)
         head = f"{head},gblur=sigma={radius:.4f}:steps={GBLUR_STEPS}"
     if clip.effects.sharpen > 0:
@@ -779,6 +796,7 @@ def compile_render_plan(
                 f"{source}{paced}{color}{fit_pre}",
                 clip,
                 out_h,
+                frame_ticks=settings.frame_ticks,
                 alpha=True,
             )
             head = f"{head},{fit_post}"
@@ -966,7 +984,7 @@ def compile_render_plan(
                     f"format=rgba,pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,"
                     "setsar=1"
                 )
-                head = focus_stages(plan, head, clip, out_h)
+                head = focus_stages(plan, head, clip, out_h, frame_ticks=settings.frame_ticks)
                 body = (
                     f"{transform}"
                     f"tpad=start_duration={sec(clip.position_ticks)}:start_mode=add:color=black@0,"
