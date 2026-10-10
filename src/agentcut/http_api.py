@@ -91,6 +91,7 @@ from .timeline import (
     MASK_TRACK_CURVES,
     MASK_TRACK_SIZED_CURVES,
     fade_adopt_track_plan,
+    grade_capacity,
     mask_track_capacity,
     sequence_view,
     validate_timeline,
@@ -1129,6 +1130,16 @@ def create_app(
         )
         mutation = projects.mutate(project_id, batch).model_dump()
         return {**mutation, "loudness": body}
+
+    @app.get("/v1/projects/{project_id}/grade-capacity", dependencies=auth)
+    def project_grade_capacity(project_id: Identifier, projects: Store):
+        """How much of this project's inline lookup-table budget is used, and by which clips.
+
+        Read-only, and the same numbers `clip.grade` is checked against: an Agent or the interface
+        can see `room` before writing a LUT onto a track instead of discovering the ceiling by
+        being refused. `sequence_id` is not needed — the budget belongs to the whole project.
+        """
+        return grade_capacity(projects.get(project_id))
 
     @app.post("/v1/projects/{project_id}/tracks/{track_id}/fade-adopt", dependencies=auth)
     def fade_adopt_track(

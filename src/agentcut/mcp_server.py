@@ -359,6 +359,17 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         )
 
     @server.tool(annotations=read)
+    async def grade_capacity(project_id: Identifier) -> dict[str, Any]:
+        """Report this project's inline lookup-table usage: samples used, the limit, what is left,
+        and which clips hold the biggest tables.
+
+        Read-only. These are exactly the numbers `clip.grade` refuses against, so a plan that puts
+        a LUT on a whole track can check `room` first instead of discovering the ceiling by being
+        refused with GRADE_INLINE_BUDGET.
+        """
+        return await call("GET", f"/v1/projects/{project_id}/grade-capacity")
+
+    @server.tool(annotations=read)
     async def track_fade_adoption(
         project_id: Identifier, track_id: Identifier, request: FadeAdoptTrackRequest
     ) -> dict[str, Any]:

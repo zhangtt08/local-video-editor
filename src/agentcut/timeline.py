@@ -319,6 +319,33 @@ def grade_inline_samples(project) -> int:
     return walk(project)
 
 
+def grade_capacity(project) -> dict:
+    """The inline lookup-table budget read from the other side: used, left, and by whom.
+
+    Same function the reducer refuses with, so an Agent that wants to put a look on a whole
+    track can see how many cubes still fit before it edits rather than by being refused. The
+    breakdown names the clips that actually hold tables; `nested_samples` is what the nested
+    compositions contribute, so the parts add back up to `samples`.
+    """
+    by_clip = {
+        clip_id: sum(_node_inline_samples(node) for node in clip.color.grade)
+        for clip_id, clip in project.clips.items()
+    }
+    used = grade_inline_samples(project)
+    ranked = sorted(by_clip.items(), key=lambda item: (-item[1], item[0]))
+    listed = dict(item for item in ranked[:20] if item[1])
+    return {
+        "samples": used,
+        "limit": GRADE_INLINE_SAMPLE_LIMIT,
+        "room": max(0, GRADE_INLINE_SAMPLE_LIMIT - used),
+        "clips_with_tables": sum(1 for value in by_clip.values() if value),
+        "worst_clip_id": ranked[0][0] if listed else None,
+        "worst_clip_samples": ranked[0][1] if listed else 0,
+        "by_clip": listed,
+        "nested_samples": used - sum(by_clip.values()),
+    }
+
+
 def _grade_inline_budget(project, before: int) -> None:
     """Refuse the edit that would push the project past its inline lookup-table budget.
 

@@ -2373,3 +2373,17 @@ reducer 的候选状态上算一次全工程的采样点总数——1D 节点是
 
 MCP 没有新工具（`timeline_edit` 从契约生成，自动带上这条判断）；`POST /v1/preview-manifest` 那份候选
 工程走同一个 reducer，同一条判断。
+
+## 1.105 额度先问得到：`GET /v1/projects/{id}/grade-capacity`
+
+只读，MCP 那边是 `grade_capacity(project_id)`。回执：
+
+- `samples`：全工程 inline 查找表占的采样点数——与 `clip.grade` 被拒时 details 里那一个是同一个函数算的；
+- `limit`：等于 `capabilities.grade_limits.max_inline_samples`（200000），不是第二处常数；
+- `room`：`max(0, limit - samples)`；一张 17³ 是 14739 个，所以 `room < 14739` 就是说「再挂一张必被拒」；
+- `clips_with_tables`、`worst_clip_id`、`worst_clip_samples`：哪条片段最占地方，腾地方的时候知道动谁；
+- `by_clip`：前 20 个真有表的片段（按占用从大到小、同值按 id 排，所以同一个工程两次问答案一样）；
+- `nested_samples`：嵌套合成里贡献的份额，满足 `sum(by_clip) + nested_samples == samples`。
+
+`sequence_id` 不接受——额度属于整份工程，不属于某一条时间线。未知的工程 id 按既有规矩点名回 404 并带回
+它收到的 id。

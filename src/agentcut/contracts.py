@@ -9,7 +9,7 @@ MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 15  # v15 gives each fade edge a shape; older rows read the smoothstep default
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.104.0"
+APP_VERSION = "1.105.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -2372,6 +2372,9 @@ def capabilities(
             # The exporter runs a 3D LUT through FFmpeg's `lut3d`; no browser primitive
             # can evaluate a cross-channel cube, so the UI must say the preview does not show it.
             "lut3d_preview": False,
+            # `GET /v1/projects/{id}/grade-capacity` and MCP `grade_capacity` read the same
+            # numbers the reducer refuses with, so usage can be asked before an edit.
+            "grade_capacity": True,
             "text_styling": True,
             "clip_blur": True,
             "clip_sharpen": True,

@@ -426,10 +426,142 @@ def refusal_suite() -> None:
     print("   一批同拒：额度是在候选状态上算的，半批落库这种事没有发生")
 
 
+def capacity_suite() -> None:
+    """1.105：额度要能在被拒之前问得到，而且数的还是同一个来源。"""
+    import tempfile
+
+    from fastapi.testclient import TestClient
+
+    from agentcut.http_api import create_app
+    from agentcut.timeline import grade_capacity
+
+    limit = GRADE_INLINE_SAMPLE_LIMIT
+    fits = limit // CUBE_SAMPLES
+    state = project({f"c{index}": [cube_node()] for index in range(3)})
+    view = grade_capacity(state)
+    assert view["samples"] == 3 * CUBE_SAMPLES, view
+    assert view["limit"] == limit and view["room"] == limit - 3 * CUBE_SAMPLES, view
+    assert view["clips_with_tables"] == 3, view
+    assert view["worst_clip_id"] == "c0" and view["worst_clip_samples"] == CUBE_SAMPLES, view
+    assert sum(view["by_clip"].values()) + view["nested_samples"] == view["samples"], view
+    empty = grade_capacity(project({}))
+    assert empty["worst_clip_id"] is None and empty["by_clip"] == {}, empty
+
+    token = "capacity-token-0123456789abcdef0123456789"
+    with tempfile.TemporaryDirectory(prefix="agentcut-capacity-") as scratch:
+        client = TestClient(
+            create_app(Path(scratch) / "db.sqlite3", token),
+            base_url="http://127.0.0.1",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with client:
+            created = client.post(
+                "/v1/projects",
+                json={
+                    "request_id": "cap-new",
+                    "name": "额度可读",
+                    "settings": {
+                        "width": 64,
+                        "height": 36,
+                        "frame_rate": {"numerator": 25, "denominator": 1},
+                    },
+                },
+            ).json()["project"]
+            pid = created["id"]
+            answer = client.post(
+                f"/v1/projects/{pid}/edits",
+                json={
+                    "request_id": "cap-seed",
+                    "expected_revision": created["revision"],
+                    "commands": [
+                        {"op": "track.add", "track": {"id": "v1", "kind": "video", "name": "画面"}},
+                        {
+                            "op": "asset.register",
+                            "asset": {
+                                "id": "a",
+                                "kind": "video",
+                                "label": "底",
+                                "reference": "r",
+                                "duration_ticks": T,
+                            },
+                        },
+                    ],
+                },
+            )
+            revision = answer.json()["project"]["revision"]
+            for index in range(fits):
+                answer = client.post(
+                    f"/v1/projects/{pid}/edits",
+                    json={
+                        "request_id": f"cap-add-{index}",
+                        "expected_revision": revision,
+                        "commands": [
+                            {
+                                "op": "clip.add",
+                                "clip": {
+                                    "id": f"c{index}",
+                                    "asset_id": "a",
+                                    "track_id": "v1",
+                                    "position_ticks": index * T,
+                                    "duration_ticks": T,
+                                },
+                            },
+                            {"op": "clip.grade", "clip_id": f"c{index}", "grade": [cube_node()]},
+                        ],
+                    },
+                )
+                assert answer.status_code == 200, answer.text[:200]
+                revision = answer.json()["project"]["revision"]
+            read = client.get(f"/v1/projects/{pid}/grade-capacity").json()
+            assert read["samples"] == fits * CUBE_SAMPLES, read["samples"]
+            assert read["limit"] == limit, read
+            assert read["room"] == limit - fits * CUBE_SAMPLES, read
+            assert 0 < read["room"] < CUBE_SAMPLES, read
+            assert (
+                read["worst_clip_samples"] == CUBE_SAMPLES and read["clips_with_tables"] == fits
+            ), read
+            # 剩下的格子装不下再一张表，这一句是给人/Agent 的预告：不必靠被拒来学。
+            refused = client.post(
+                f"/v1/projects/{pid}/edits",
+                json={
+                    "request_id": "cap-over",
+                    "expected_revision": revision,
+                    "commands": [
+                        {
+                            "op": "clip.add",
+                            "clip": {
+                                "id": "zover",
+                                "asset_id": "a",
+                                "track_id": "v1",
+                                "position_ticks": fits * T,
+                                "duration_ticks": T,
+                            },
+                        },
+                        {"op": "clip.grade", "clip_id": "zover", "grade": [cube_node()]},
+                    ],
+                },
+            )
+            assert refused.status_code == 422, refused.text[:200]
+            over_room = client.get(f"/v1/projects/{pid}/grade-capacity").json()
+            assert over_room == read, "被拒的那一步不该改动用量"
+            caps = client.get("/v1/capabilities").json()
+            assert caps["features"]["grade_capacity"] is True, caps["features"]
+            missing = client.get("/v1/projects/ghost/grade-capacity")
+            assert missing.status_code == 404, missing.text[:200]
+            assert missing.json()["error"]["details"]["project_id"] == "ghost", missing.json()
+            print(
+                f"   可读：装到第 {fits} 张正好 {read['samples']}/{limit}，"
+                f"room 剩 {read['room']} 个"
+                f"（小于一张表的 {CUBE_SAMPLES} 个），所以再挂一张必被拒——先问再写，不靠被拒来学；"
+                "未知工程 id 点名回 404"
+            )
+
+
 def main() -> None:
     count_suite()
     boundary_suite()
     refusal_suite()
+    capacity_suite()
     http_suite()
     print(
         f"PASS: 工程级 inline 查找表预算只有一处主人（{GRADE_INLINE_SAMPLE_LIMIT} 个采样点），"
