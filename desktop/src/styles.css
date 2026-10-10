@@ -330,7 +330,12 @@ textarea.input { resize: vertical; line-height: 1.5; }
 .tl-toolbar { overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
 .tl-toolbar > * { flex-shrink: 0; }
 .zoom-ctrl { margin-left: auto; }
-.clip-keyframe { position: absolute; bottom: 1px; transform: translateX(-50%); color: #ffe3a3; font-size: 9px; z-index: 3; }
+.clip-keyframe { position: absolute; bottom: 1px; transform: translateX(-50%); color: #ffe3a3; font-size: 9px; z-index: 4; padding: 3px 4px; border: 0; background: transparent; cursor: ew-resize; }
+.clip-keyframe[aria-disabled="true"] { cursor: not-allowed; opacity: .5; }
+.clip-keyframe.dragging { color: #fff; font-size: 11px; }
+.clip-keyframe.blocked { color: #ff9a9a; }
+.key-readout { position: absolute; top: 1px; left: 50%; transform: translateX(-50%); font-size: 9.5px; padding: 1px 5px; border-radius: 3px; color: var(--accent-deep); background: var(--accent-soft); white-space: nowrap; z-index: 5; pointer-events: none; }
+.key-readout.blocked { color: #ffdada; background: #5a1f24; }
 .insp-section > summary { cursor: pointer; margin-bottom: 8px; }
 .keyframe-btn:disabled { opacity: .4; cursor: not-allowed; }
 .workbench-bar { height: 40px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 14px; background: var(--panel); border-bottom: 1px solid var(--line); }

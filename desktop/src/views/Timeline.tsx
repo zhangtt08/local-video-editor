@@ -3,7 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon, IconBtn } from "../ui";
 import { TIMEBASE, align, frameTicks, humanDuration, timecode } from "../time";
 import { transitionLabel } from "../engine";
-import type { Clip, Marker, Project, Track } from "../engine";
+import type { Clip, Keyframe, Marker, Project, Track } from "../engine";
+import { planKeyframeDrag } from "../keyframeDrag";
 import {
   addLibraryItemToTimeline,
   addTrack,
@@ -23,6 +24,7 @@ import {
   updateTrack,
   useApp,
   useEdit,
+  editAtRevision,
   usePlay,
   selectClips,
   copySelection,
@@ -700,6 +702,44 @@ function ClipBlock({
     window.addEventListener("pointercancel", stop);
   };
 
+  // 时间线上直接拖针：几何与动画曲线共用同一份 keyframeSnap（绝对帧格子 + 像素容差 + 找播放头/找邻居），
+  // 落库的仍是一条普通 `keyframe.move`。移动不到两像素就还是原来的「点一下跳过去」，所以不新增快捷键、
+  // 也不新增命令；撞针在这里提前认出来（reducer 的 KEYFRAME_COLLISION 是同一条判断的权威说法）。
+  const [keyDrag, setKeyDrag] = useState<{ property: string; from: number; at: number; blocked: boolean } | null>(null);
+  const startKey = (event: React.PointerEvent, key: Keyframe) => {
+    event.stopPropagation();
+    if (razor || event.button !== 0 || track.locked || !box.current || !app.caps?.features?.keyframes) return;
+    event.preventDefault();
+    const node = box.current;
+    const from = key.at_ticks - (clip.animation_offset_ticks ?? 0);
+    const plan = (clientX: number) => planKeyframeDrag({
+      clip, key, px, snap, quantum: q,
+      pointer_ticks: ((clientX - node.getBoundingClientRect().left) / px) * TIMEBASE,
+      playhead_ticks: playhead.value - clip.position_ticks,
+    });
+    const move = (ev: PointerEvent) => {
+      const next = plan(ev.clientX);
+      setKeyDrag({ property: key.property, from, at: "at_ticks" in next ? next.at_ticks : from, blocked: next.kind === "blocked" });
+    };
+    const stop = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      setKeyDrag(null);
+      selectClip(clip.id);
+      if (ev.type === "pointercancel") return;
+      if (Math.abs(ev.clientX - event.clientX) < 2) { playhead.pause(); playhead.set(clip.position_ticks + from); return; }
+      const next = plan(ev.clientX);
+      if (next.kind === "noop") return;
+      if (next.kind === "blocked") { toast("warn", "那一格已经有一枚针", next.reason); return; }
+      editAtRevision([next.command], project.id, project.revision, "拖动关键帧", app.sequenceId);
+      playhead.pause(); playhead.set(clip.position_ticks + next.at_ticks);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+  };
+
   const start = (event: React.PointerEvent, modeIn: DragMode) => {
     if (razor || event.button !== 0) return;
     event.stopPropagation();
@@ -839,13 +879,19 @@ function ClipBlock({
       {clip.group_id || clip.link_id ? <span className="clip-association" title={`${clip.group_id ? "持久组合" : ""}${clip.link_id ? " · 音画链接" : ""}`}>{clip.group_id ? "▣" : ""}{clip.link_id ? "↔" : ""}</span> : null}
       <span className="clip-dur mono">{(duration / TIMEBASE).toFixed(2)}s</span>
       {asset?.sequence_id ? <span className="ghost-tag" title="双击进入合成编辑内部图层">合成</span> : asset && !asset.verified && asset.kind !== "text" ? <span className="ghost-tag unverified" title="只有元数据、没有真实文件，无法预览和导出">未导入</span> : null}
-      {(clip.keyframes ?? []).filter((k) => k.at_ticks >= (clip.animation_offset_ticks ?? 0) && k.at_ticks <= (clip.animation_offset_ticks ?? 0) + clip.duration_ticks).map((k) => <button
-        key={`${k.property}-${k.at_ticks}`} type="button" className="clip-keyframe"
-        style={{ left: Math.min(width - 6, Math.max(6, ((k.at_ticks - (clip.animation_offset_ticks ?? 0)) / clip.duration_ticks) * width)) }}
-        title={`${k.property} · ${humanDuration(k.at_ticks - (clip.animation_offset_ticks ?? 0))}`}
-        aria-label={`跳到${k.property}关键帧`}
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={(event) => { event.stopPropagation(); selectClip(clip.id); playhead.pause(); playhead.set(clip.position_ticks + k.at_ticks - (clip.animation_offset_ticks ?? 0)); }}>◆</button>)}
+      {(clip.keyframes ?? []).filter((k) => k.at_ticks >= (clip.animation_offset_ticks ?? 0) && k.at_ticks <= (clip.animation_offset_ticks ?? 0) + clip.duration_ticks).map((k) => {
+        const from = k.at_ticks - (clip.animation_offset_ticks ?? 0);
+        const held = keyDrag && keyDrag.property === k.property && keyDrag.from === from ? keyDrag : null;
+        const at = held ? held.at : from;
+        return <button
+          key={`${k.property}-${k.at_ticks}`} type="button" className={`clip-keyframe${held ? " dragging" : ""}${held?.blocked ? " blocked" : ""}`}
+          style={{ left: Math.min(width - 6, Math.max(6, (at / clip.duration_ticks) * width)) }}
+          title={`${k.property} · ${humanDuration(from)}${held ? ` → ${humanDuration(at)}` : " · 横向拖可以改时间"}`}
+          aria-label={`拖动${k.property}关键帧`}
+          aria-disabled={track.locked || razor || !app.caps?.features?.keyframes}
+          onPointerDown={(event) => startKey(event, k)}>◆</button>;
+      })}
+      {keyDrag ? <span className={`key-readout mono${keyDrag.blocked ? " blocked" : ""}`}>{(keyDrag.at / TIMEBASE).toFixed(3)}s{keyDrag.blocked ? " 已占用" : ""}</span> : null}
       {(["opacity", "gain"] as FadeProperty[]).flatMap((property) => (["in", "out"] as FadeSide[]).map((side) => {
         const length = shownFade(property, side);
         if (!length) return null;
