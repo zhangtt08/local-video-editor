@@ -5,6 +5,7 @@ import { TIMEBASE, align, frameTicks, humanDuration, timecode } from "../time";
 import { transitionLabel } from "../engine";
 import type { Clip, Keyframe, Marker, Project, Track } from "../engine";
 import { planKeyframeDrag } from "../keyframeDrag";
+import { LANE_PITCH_PIXELS, NEEDLE_AREA_PIXELS, laneCapacity, needleRows } from "../keyframeLanes";
 import {
   addLibraryItemToTimeline,
   addTrack,
@@ -25,6 +26,7 @@ import {
   useApp,
   useEdit,
   editAtRevision,
+  setGraphOpen,
   usePlay,
   selectClips,
   copySelection,
@@ -882,18 +884,29 @@ function ClipBlock({
       {clip.group_id || clip.link_id ? <span className="clip-association" title={`${clip.group_id ? "持久组合" : ""}${clip.link_id ? " · 音画链接" : ""}`}>{clip.group_id ? "▣" : ""}{clip.link_id ? "↔" : ""}</span> : null}
       <span className="clip-dur mono">{(duration / TIMEBASE).toFixed(2)}s</span>
       {asset?.sequence_id ? <span className="ghost-tag" title="双击进入合成编辑内部图层">合成</span> : asset && !asset.verified && asset.kind !== "text" ? <span className="ghost-tag unverified" title="只有元数据、没有真实文件，无法预览和导出">未导入</span> : null}
-      {(clip.keyframes ?? []).filter((k) => k.at_ticks >= (clip.animation_offset_ticks ?? 0) && k.at_ticks <= (clip.animation_offset_ticks ?? 0) + clip.duration_ticks).map((k) => {
-        const from = k.at_ticks - (clip.animation_offset_ticks ?? 0);
-        const held = keyDrag && keyDrag.property === k.property && keyDrag.from === from ? keyDrag : null;
-        const at = held ? held.at : from;
-        return <button
-          key={`${k.property}-${k.at_ticks}`} type="button" className={`clip-keyframe${held ? " dragging" : ""}${held?.blocked ? " blocked" : ""}`}
-          style={{ left: Math.min(width - 6, Math.max(6, (at / clip.duration_ticks) * width)) }}
-          title={`${k.property} · ${humanDuration(from)}${held ? ` → ${humanDuration(at)}` : " · 横向拖可以改时间"}`}
-          aria-label={`拖动${k.property}关键帧`}
-          aria-disabled={track.locked || razor || !app.caps?.features?.keyframes}
-          onPointerDown={(event) => startKey(event, k)}>◆</button>;
-      })}
+      {(() => {
+        // 一条属性一道：同一秒上的两枚针画在同一堆像素里，其中一枚就点不到（实测过）。
+        // 画不下的属性宁可不画，也不许叠回去——改成一枚 +N 的牌子把人带回动画曲线。
+        const visible = (clip.keyframes ?? []).filter((k) => k.at_ticks >= (clip.animation_offset_ticks ?? 0) && k.at_ticks <= (clip.animation_offset_ticks ?? 0) + clip.duration_ticks);
+        const { rowOf, hidden } = needleRows(visible, laneCapacity(NEEDLE_AREA_PIXELS));
+        return <>
+          {visible.filter((k) => rowOf.has(k.property)).map((k) => {
+            const from = k.at_ticks - (clip.animation_offset_ticks ?? 0);
+            const held = keyDrag && keyDrag.property === k.property && keyDrag.from === from ? keyDrag : null;
+            const at = held ? held.at : from;
+            return <button
+              key={`${k.property}-${k.at_ticks}`} type="button" className={`clip-keyframe${held ? " dragging" : ""}${held?.blocked ? " blocked" : ""}`}
+              style={{ left: Math.min(width - 6, Math.max(6, (at / clip.duration_ticks) * width)), bottom: 1 + (rowOf.get(k.property) ?? 0) * LANE_PITCH_PIXELS }}
+              title={`${k.property} · ${humanDuration(from)}${held ? ` → ${humanDuration(at)}` : " · 横向拖可以改时间"}`}
+              aria-label={`拖动${k.property}关键帧`}
+              aria-disabled={track.locked || razor || !app.caps?.features?.keyframes}
+              onPointerDown={(event) => startKey(event, k)}>◆</button>;
+          })}
+          {hidden.length ? <button type="button" className="clip-keyframe-more" aria-label={`${hidden.length} 条属性的针没有画在这里`}
+            title={`画不下的针：${hidden.join("、")}——点开进动画曲线看这条片段的全部针`}
+            onClick={() => { selectClip(clip.id); setGraphOpen(true); }}>+{hidden.length}</button> : null}
+        </>;
+      })()}
       {keyDrag ? <span className={`key-readout mono${keyDrag.blocked ? " blocked" : ""}`}>{(keyDrag.at / TIMEBASE).toFixed(3)}s{keyDrag.blocked ? " 已占用" : ""}</span> : null}
       {(["opacity", "gain"] as FadeProperty[]).flatMap((property) => (["in", "out"] as FadeSide[]).map((side) => {
         const length = shownFade(property, side);
