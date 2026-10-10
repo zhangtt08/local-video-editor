@@ -446,6 +446,29 @@ def capacity_suite() -> None:
     assert sum(view["by_clip"].values()) + view["nested_samples"] == view["samples"], view
     empty = grade_capacity(project({}))
     assert empty["worst_clip_id"] is None and empty["by_clip"] == {}, empty
+    # 突变跑出来的洞：原来的用例里没有带表的嵌套合成，所以把 nested_samples 硬写成 0 门禁照样绿。
+    # 这条断言补上「分项加起来等于总数」真正被断的那一刻。
+    nested = state.model_copy(deep=True)
+    nested.sequences["s1"] = Sequence(
+        id="s1",
+        name="子合成",
+        duration_ticks=T,
+        clips={
+            "n": Clip(
+                id="n",
+                asset_id="a",
+                track_id="v1",
+                position_ticks=0,
+                duration_ticks=T,
+                color=ClipColor(grade=[cube_node()]),
+            )
+        },
+    )
+    seen = grade_capacity(nested)
+    assert seen["samples"] == 4 * CUBE_SAMPLES, seen
+    assert seen["nested_samples"] == CUBE_SAMPLES, seen
+    assert seen["clips_with_tables"] == 3, seen
+    assert sum(seen["by_clip"].values()) + seen["nested_samples"] == seen["samples"], seen
 
     token = "capacity-token-0123456789abcdef0123456789"
     with tempfile.TemporaryDirectory(prefix="agentcut-capacity-") as scratch:
