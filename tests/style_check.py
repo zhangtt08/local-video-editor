@@ -135,7 +135,7 @@ def main():
         )
         filters = "\n".join(plan.filters)
         assert "geq=r='0':g='0':b='0':a='if(gte(Y" in filters
-        assert "y=h-text_h-h*0.08" in filters, filters
+        assert "y=165.60-text_h" in filters, filters  # 180 高的画面，92% 处
 
         plan_center = compile_render_plan(make_project(silent, {}), "h264-source-quality")
         filters_center = "\n".join(plan_center.filters)

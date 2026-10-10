@@ -114,6 +114,24 @@ def _rgb(color: str) -> tuple[int, int, int]:
 GRAPH_SCRIPT_LIMIT = 12_000
 
 
+def picture_size(
+    out_w: int, out_h: int, frame_width: int, frame_height: int, fit: str
+) -> tuple[int, int]:
+    """The box the composition's picture actually occupies inside the delivered frame.
+
+    `contain` keeps the composition's aspect and bars the rest, so the picture can be narrower or
+    shorter than the frame; `cover` and `stretch` fill it. Percentages the viewer reads
+    against the picture — caption size, its inset, a spatial radius — belong to this box:
+    the preview's own box is locked to the composition's aspect.
+    """
+    if fit != "contain" or frame_width <= 0 or frame_height <= 0:
+        return out_w, out_h
+    return (
+        max(1, min(out_w, round(out_h * frame_width / frame_height))),
+        max(1, min(out_h, round(out_w * frame_height / frame_width))),
+    )
+
+
 def picture_height(out_w: int, out_h: int, frame_width: int, frame_height: int, fit: str) -> int:
     """The height the composition's picture actually occupies inside the delivered frame.
 
@@ -127,7 +145,7 @@ def picture_height(out_w: int, out_h: int, frame_width: int, frame_height: int, 
     """
     if fit != "contain" or frame_width <= 0:
         return out_h
-    return max(1, min(out_h, round(out_w * frame_height / frame_width)))
+    return picture_size(out_w, out_h, frame_width, frame_height, fit)[1]
 
 
 def focus_radius(fraction: float, knob: str, basis: int) -> float:
@@ -573,7 +591,8 @@ def compile_render_plan(
     settings = project.settings
     out_w, out_h = preview_size or preset["scale"] or (settings.width, settings.height)
     # 两个空间旋钮量的是「画面」的高：预览那个框锁工程比例，成片里画面占多高由 fit 决定。
-    focus_basis = picture_height(out_w, out_h, settings.width, settings.height, fit)
+    picture_w, picture_h = picture_size(out_w, out_h, settings.width, settings.height, fit)
+    focus_basis = picture_h
     fps = f"{settings.frame_rate.numerator}/{settings.frame_rate.denominator}"
     rate = settings.frame_rate.numerator / settings.frame_rate.denominator
     size = f"{out_w}x{out_h}"
@@ -937,26 +956,28 @@ def compile_render_plan(
                     name = "text-" + hashlib.sha256(text.body.encode()).hexdigest() + ".txt"
                     plan.text_files[name] = text.body
                     font = text_font_path(text.font)
-                    font_size = out_h * text.font_size
+                    font_size = picture_h * text.font_size
+                    # 补边宽度：只有 `contain` 会让画面小于帧，其它适配是 0。
+                    bar_y, bar_x = (out_h - picture_h) / 2, (out_w - picture_w) / 2
                     y = "(h-text_h)/2"
                     if text.align == "top":
-                        y = "h*0.08"
+                        y = f"{bar_y + picture_h * 0.08:.2f}"
                     elif text.align == "bottom":
-                        y = "h-text_h-h*0.08"
+                        y = f"{bar_y + picture_h * 0.92:.2f}-text_h"
                     x = "(w-text_w)/2"
                     if text.text_align == "left":
-                        x = "w*0.08"
+                        x = f"{bar_x + picture_w * 0.08:.2f}"
                     elif text.text_align == "right":
-                        x = "w-text_w-w*0.08"
+                        x = f"{bar_x + picture_w * 0.92:.2f}-text_w"
                     # drawtext's own box plate is unreliable, so express the subtitle
                     # backing as an alpha band via geq (same pattern as dip_black).
                     band = ""
                     if text.box:
                         band_h = font_size * 1.5
                         if text.align == "top":
-                            y0 = out_h * 0.08
+                            y0 = bar_y + picture_h * 0.08
                         elif text.align == "bottom":
-                            y0 = out_h - band_h - out_h * 0.04
+                            y0 = bar_y + picture_h * 0.96 - band_h
                         else:
                             y0 = (out_h - band_h) / 2
                         y1 = y0 + band_h

@@ -115,6 +115,34 @@ def project_with(video: Path, text: dict) -> Project:
     )
 
 
+def delivery_suite(video: Path) -> None:
+    """1.101：字幕的字号与上下内缩按画面框，不按交付帧——竖屏补边时不许压进黑边。"""
+    square = " ".join(
+        step
+        for step in compile_render_plan(
+            project_with(video, {"align": "top"}), "h264-source-quality", preview_size=(320, 320)
+        ).filters
+        if "drawtext" in step
+    )
+    assert abs(float(square.split("fontsize=")[1].split(":")[0]) - 10.8) < 1e-6, square[:400]
+    assert "y=84.40" in square, square[:400]  # 上黑边 70 + 8% × 180
+    assert "x=(w-text_w)/2" in square, square[:400]
+
+    tall = " ".join(
+        step
+        for step in compile_render_plan(
+            project_with(video, {"align": "bottom"}), "h264-source-quality", preview_size=(160, 320)
+        ).filters
+        if "drawtext" in step
+    )
+    assert abs(float(tall.split("fontsize=")[1].split(":")[0]) - 5.4) < 1e-6, tall[:400]
+    assert "y=197.80-text_h" in tall, tall[:400]  # 画面带 [115,205] 的下沿 92%
+    bar_top, bar_bottom = (320 - 90) / 2, (320 + 90) / 2
+    placed = float(tall.split("y=")[1].split("-text_h")[0])
+    assert bar_top <= placed <= bar_bottom, (placed, bar_top, bar_bottom)
+    print("   交付补边：字幕字号与落位都在画面带里（方画幅 y=84.40 / 竖屏 y=202.20）")
+
+
 def filters(project: Project) -> str:
     plan = compile_render_plan(project, "h264-source-quality")
     return " ".join(step for step in plan.filters if "drawtext" in step or "geq=" in step)
@@ -266,12 +294,12 @@ def filter_suite(video: Path) -> None:
     assert f"shadowx={round(0.5 * size)}" in styled, styled
     assert f"shadowy={round(-0.25 * size)}" in styled, styled
     assert "shadowcolor=#00ff00" in styled, styled
-    assert "x=w*0.08" in styled, styled
+    assert "x=25.60" in styled, styled  # 画面宽 320 的 8%（1.101 起内缩按画面框量）
     assert "line_spacing=216" in styled or f"line_spacing={round(1 * size)}" in styled, styled
     assert "geq=r='64':g='64':b='64'" in styled, styled
     assert "a='if(gte(Y" in styled and ",204,0)'" in styled, styled
     right = filters(project_with(video, {"text_align": "right"}))
-    assert "x=w-text_w-w*0.08" in right, right
+    assert "x=294.40-text_w" in right, right
     assert re.search("expansion=none", styled) and re.search(
         r"textfile=text-[0-9a-f]{64}\.txt", styled
     )
@@ -474,6 +502,7 @@ def main() -> None:
         folder = Path(scratch)
         video = source(folder)
         filter_suite(video)
+        delivery_suite(video)
         pixel_suite(folder, video)
         http_suite(folder, video)
     print(
