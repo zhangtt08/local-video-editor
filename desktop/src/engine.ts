@@ -95,7 +95,7 @@ export type LutPayload =
 export type GradeMixer = { kind: "matrix"; coefficients: number[]; enabled: boolean; mix?: number };
 // 与契约同一处排除：并联分支输出的是各支的平均，跨通道的表平均不进一张每通道表。
 export type GradeBranch = Exclude<GradeOperation, GradeMixer | { kind: "lut3d" }>;
-export type GradeParallel = { kind: "parallel"; branches: GradeBranch[]; enabled: boolean; mix?: number; blend?: BlendMode; weights?: number[] };
+export type GradeParallel = { kind: "parallel"; branches: GradeBranch[]; enabled: boolean; mix?: number; blend?: BlendMode; weights?: number[]; blends?: BlendMode[] };
 export type GradeNode = GradeOperation | GradeParallel;
 export type ColorSpace =
   | "linear" | "srgb" | "gamma18" | "gamma20" | "gamma22" | "gamma24" | "rec709";

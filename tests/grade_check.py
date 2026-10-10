@@ -140,10 +140,17 @@ def predict(nodes: list[dict], index: int) -> list[float]:
             # 1.120: `weights` are that mixer's knobs — absent means every branch counts the same,
             # which is the mean above; all zero means the node adds nothing at all, so it leaves
             # this channel alone (None), because there is nothing left to divide by.
+            modes = list(node.get("blends") or [])
             parts = []
-            for branch in node["branches"]:
+            for slot, branch in enumerate(node["branches"]):
                 out = node_step(branch, value)
-                parts.append(value if out is None else out)
+                # 1.122：一支先按自己的方式与进来的画面相合；停用或不动本通道的那支仍直通，它的模式
+                # 不参与——与引擎里同一句一致（`blend_values` 的 normal 原样交回该支结果）。
+                parts.append(
+                    value
+                    if out is None
+                    else blend_reference(modes[slot] if modes else "normal", value, out)
+                )
             weights = list(node.get("weights") or [])
             if not weights:
                 return sum(parts) / len(parts)
@@ -956,6 +963,86 @@ def parallel_http_suite(folder: Path) -> None:
         )
 
 
+def blend_mode_suite(folder: Path) -> None:
+    """1.122：每一支还可以自带一个混合方式——先与进来的画面相合，再按权重参与平均。
+
+    断的四件事只有算错才会红：全 normal 与不设这份表逐位相同；换成 screen
+    之后表真的跟着 `blend_reference` 走，并与独立参考表对上；停用那一支的模式不参与——「停用即直通」
+    不能由一个没人看的下拉改掉；形状（给就给全）在契约层就拒。最后再拿真实成片要一次差别。
+    """
+    source = banded_source(folder)
+    lift = {
+        "kind": "curve",
+        "channel": "rgb",
+        "points": [{"x": 0.0, "y": 0.25}, {"x": 1.0, "y": 1.0}],
+    }
+    press = {
+        "kind": "curve",
+        "channel": "rgb",
+        "points": [{"x": 0.0, "y": 0.0}, {"x": 1.0, "y": 0.35}],
+    }
+
+    def graph(**fields: object) -> dict:
+        made = {"kind": "parallel", "branches": [dict(lift), dict(press)]}
+        made.update(fields)
+        return made
+
+    def tables(**fields: object) -> dict | None:
+        return lut_stage(make_project(source, [graph(**fields)]).clips["c"].color)
+
+    plain = tables()
+    assert plain is not None
+    for name in CHANNELS:
+        assert plain[name] == tables(blends=["normal", "normal"])[name], (
+            f"[blend-plain] 全 normal 必须与不设这份表逐位相同，{name} 动了"
+        )
+
+    screened = tables(blends=["normal", "screen"])
+    assert screened is not None
+    for name in CHANNELS:
+        moved = max(abs(screened[name][key] - plain[name][key]) * 255 for key in range(256))
+        assert moved > 4.0, f"[blend-screen] {name} 把一支换成 screen 后表没动（最大 {moved:.2f}）"
+        reference = predict([graph(blends=["normal", "screen"])], CHANNELS.index(name))
+        drift = max(abs(screened[name][key] - reference[key]) * 255 for key in range(256))
+        assert drift <= 0.5, f"[blend-reference] {name} 与独立参考表差 {drift:.2f}，算法不止一处"
+
+    off = {"kind": "parallel", "branches": [dict(lift), {**press, "enabled": False}]}
+    assert lut_stage(
+        make_project(source, [{**off, "blends": ["normal", "screen"]}]).clips["c"].color
+    ) == lut_stage(make_project(source, [dict(off)]).clips["c"].color), (
+        "[blend-disabled] 停用那一支的 screen 参与了计算，「停用即直通」被下拉改掉了"
+    )
+
+    for label, blends in (("只覆盖一支", ["screen"]), ("多出格来", ["screen", "normal", "normal"])):
+        try:
+            make_project(source, [graph(blends=blends)])
+        except ValidationError:
+            continue
+        raise AssertionError(
+            f"[blend-shape] {label}的混合方式表（{blends}）被收下了，两端会算出不同的平均"
+        )
+
+    assert capabilities(True, False, [])["features"]["grade_branch_blend_modes"] is True
+    difference = band_levels(
+        render(
+            make_project(source, [graph(blends=["normal", "difference"])]),
+            folder,
+            "branch-diff.mp4",
+        )
+    )
+    normal = band_levels(render(make_project(source, [graph()]), folder, "branch-normal.mp4"))
+    span = max(
+        abs(a - b)
+        for left, right in zip(difference, normal, strict=True)
+        for a, b in zip(left, right, strict=True)
+    )
+    assert span > 2.0, f"[blend-media] difference 与正常交回同一幅画（最大差 {span:.1f}）"
+    print(
+        "   branch blend: all-normal bit-identical, screen follows the reference, disabled stays "
+        f"direct, delivered gap {span:.1f} levels"
+    )
+
+
 def weight_math_suite(folder: Path) -> None:
     """1.120：并联节点的分支权重——不给就是 1.119 那份均分，给全了就是达芬奇那排混频旋钮。
 
@@ -1107,7 +1194,7 @@ def weight_receipt_suite() -> None:
     with_empty = dict(command)
     with_empty["color"] = {
         **command["color"],
-        "grade": [{**command["color"]["grade"][0], "weights": []}],
+        "grade": [{**command["color"]["grade"][0], "weights": [], "blends": []}],
     }
     first = EditBatch(request_id="same", expected_revision=1, commands=[command])
     second = EditBatch(request_id="same", expected_revision=1, commands=[with_empty])
@@ -1128,12 +1215,14 @@ def main():
         parallel_math_suite(folder)
         parallel_media_suite(folder)
         parallel_http_suite(folder)
+        blend_mode_suite(folder)
         weight_math_suite(folder)
         weight_media_suite(folder)
         weight_receipt_suite()
     print(
         "PASS: grade node contracts, atomic HTTP edits, replay/lock/restore, parallel branch "
-        "means and their 1.120 mixer weights, browser LUT parity and real H.264 pixels"
+        "means, their 1.120 mixer weights and 1.122 per-branch blend modes, browser LUT parity "
+        "and real H.264 pixels"
     )
 
 

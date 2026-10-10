@@ -11,7 +11,7 @@ SCHEMA_VERSION = (
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.121.0"
+APP_VERSION = "1.122.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -562,11 +562,17 @@ class GradeParallel(Contract):
     weights: Annotated[list[GradeBranchWeight], Field(max_length=GRADE_BRANCH_LIMIT)] = Field(
         default_factory=list
     )
+    # 1.122：每一支先按自己的混合方式与进来的画面相合，再按权重取平均。全 normal 时相合就是原样，
+    # 于是这一版与 1.120 逐位相同；停用的一支仍是直通（它的模式不参与，不然「直通」就名不副实）。
+    blends: Annotated[list[BlendMode], Field(max_length=GRADE_BRANCH_LIMIT)] = Field(
+        default_factory=list
+    )
 
     @model_validator(mode="after")
     def matched_weights(self):
-        if self.weights and len(self.weights) != len(self.branches):
-            raise ValueError("branch weights must cover every branch or none at all")
+        for name, given in (("weights", self.weights), ("blends", self.blends)):
+            if given and len(given) != len(self.branches):
+                raise ValueError(f"branch {name} must cover every branch or none at all")
         return self
 
 
@@ -2526,6 +2532,7 @@ def capabilities(
             "grade_parallel_branches": True,
             # 并联节点的分支增益：下发这个，界面才知道那一排旋钮不是自己想象出来的。
             "grade_branch_weights": True,
+            "grade_branch_blend_modes": True,
             "timeline_marks": True,
             "range_export": True,
             "four_point_editing": True,

@@ -6,7 +6,7 @@
  * It lives apart from the component so the ordering rules can be asserted directly.
  */
 
-import { blendLabel, type GradeNode, type GradeOperation, type GradeParallel } from "./engine";
+import { blendLabel, type BlendMode, type GradeNode, type GradeOperation, type GradeParallel } from "./engine";
 
 export const NODE_NAMES: Record<GradeNode["kind"], string> = {
   curve: "色调曲线",
@@ -46,6 +46,35 @@ const CHANNEL_SHORT: Record<string, string> = { rgb: "全部", red: "红", green
  * 所以改一支、加一支、删一支都由这里补齐或撤掉，界面不许在别处再数一遍支数。全部回到 1 时交
  * `undefined`：撤掉这份表与交一串 1 是同一个均分，而前者正是 1.120 之前那份载荷。
  */
+
+/**
+ * 1.122：每一支还可以自带一个混合方式——先按它把自己与进来的画面相合，再按权重参与平均。
+ * 位置表的规矩与权重同一条：给就给全，全是 normal 就把整份撤掉（撤掉就是 1.120 那份载荷）。
+ */
+export function branchBlend(node: GradeParallel, index: number): BlendMode {
+  return alignedBlendModes(node)?.[index] ?? "normal";
+}
+
+function alignedBlendModes(node: GradeParallel): BlendMode[] | null {
+  return node.blends && node.blends.length === node.branches.length ? node.blends : null;
+}
+
+export function blendsAfterPick(node: GradeParallel, index: number, mode: BlendMode): BlendMode[] | undefined {
+  const next = node.branches.map((_, position) => branchBlend(node, position));
+  next[index] = mode;
+  return settle(next, "normal");
+}
+
+export function blendsAfterAdd(node: GradeParallel): BlendMode[] | undefined {
+  const current = alignedBlendModes(node);
+  return current ? settle([...current, "normal"], "normal") : undefined;
+}
+
+export function blendsAfterRemove(node: GradeParallel, slot: number): BlendMode[] | undefined {
+  const current = alignedBlendModes(node);
+  return current ? settle(current.filter((_, position) => position !== slot), "normal") : undefined;
+}
+
 export function branchWeight(node: GradeParallel, index: number): number {
   return alignedWeights(node)?.[index] ?? 1;
 }
@@ -54,24 +83,24 @@ function alignedWeights(node: GradeParallel): number[] | null {
   return node.weights && node.weights.length === node.branches.length ? node.weights : null;
 }
 
-function settle(kept: number[]): number[] | undefined {
-  return kept.every((entry) => entry === 1) ? undefined : kept;
+function settle<T>(kept: T[], fallback: T): T[] | undefined {
+  return kept.every((entry) => entry === fallback) ? undefined : kept;
 }
 
 export function weightsAfterWeight(node: GradeParallel, index: number, value: number): number[] | undefined {
   const next = node.branches.map((_, position) => branchWeight(node, position));
   next[index] = value;
-  return settle(next);
+  return settle(next, 1);
 }
 
 export function weightsAfterAdd(node: GradeParallel): number[] | undefined {
   const current = alignedWeights(node);
-  return current ? settle([...current, 1]) : undefined;
+  return current ? settle([...current, 1], 1) : undefined;
 }
 
 export function weightsAfterRemove(node: GradeParallel, slot: number): number[] | undefined {
   const current = alignedWeights(node);
-  return current ? settle(current.filter((_, position) => position !== slot)) : undefined;
+  return current ? settle(current.filter((_, position) => position !== slot), 1) : undefined;
 }
 
 function mixText(node: GradeOperation | GradeParallel): string {
@@ -103,10 +132,11 @@ function operationText(node: GradeNode): string {
   return parts.filter(Boolean).join(" · ");
 }
 
-function laneFor(node: GradeNode): GraphLane {
+function laneFor(node: GradeNode, blend: BlendMode = "normal"): GraphLane {
   return {
     label: NODE_NAMES[node.kind],
-    detail: operationText(node),
+    // 分支自己那个混合方式要说得出来：它改的是这一支怎么与进来的画面相合，看不出来就等于没交付。
+    detail: [operationText(node), blend === "normal" ? "" : blendLabel(blend)].filter(Boolean).join(" · "),
     enabled: node.enabled !== false,
   };
 }
@@ -125,7 +155,7 @@ export function cardsFor(nodes: GradeNode[]): GraphCard[] {
       mix: "mix" in node ? (node.mix ?? 1) : 1,
       blend: "blend" in node ? (node.blend ?? "normal") : "normal",
       enabled: node.enabled !== false,
-      lanes: parallel ? parallel.branches.map(laneFor) : [],
+      lanes: parallel ? parallel.branches.map((branch, index) => laneFor(branch, branchBlend(parallel, index))) : [],
     };
   });
 }

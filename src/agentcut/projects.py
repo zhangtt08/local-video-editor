@@ -164,6 +164,10 @@ class ProjectStore:
                 # never mentions weights keeps hashing as the payload it was.
                 if not node.get("weights"):
                     node.pop("weights", None)
+                # 1.122 gave a parallel node its branch blend modes; an empty table is the same
+                # thing as one that was never mentioned (every branch composites normally).
+                if not node.get("blends"):
+                    node.pop("blends", None)
                 for value in node.values():
                     strip_bezier_defaults(value)
             elif isinstance(node, list):

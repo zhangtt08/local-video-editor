@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 
-import { branchWeight, weightsAfterAdd, weightsAfterRemove, weightsAfterWeight } from "../gradeGraph";
-import {DEFAULT_TRANSFER, COLOR_SPACES, DEFAULT_CURVE_POINTS, DEFAULT_WHEELS, type GradeBranch, type GradeCapacity, type GradeChannel, type GradeCurvePoint, type GradeNode, type GradeOperation, type GradeParallel, type ColorSpace, BLEND_MODES, type BlendMode} from "../engine";
+import { branchBlend, branchWeight, blendsAfterAdd, blendsAfterPick, blendsAfterRemove, weightsAfterAdd, weightsAfterRemove, weightsAfterWeight } from "../gradeGraph";
+import {blendLabel, DEFAULT_TRANSFER, COLOR_SPACES, DEFAULT_CURVE_POINTS, DEFAULT_WHEELS, type GradeBranch, type GradeCapacity, type GradeChannel, type GradeCurvePoint, type GradeNode, type GradeOperation, type GradeParallel, type ColorSpace, BLEND_MODES, type BlendMode} from "../engine";
 import { applyGradeToTrack, editableProject, setClipColor, useApp, applyLut, autoGradeClip, fetchGradeCapacity } from "../store";
 import { autoGradeBlocker, gradeCapacityLine } from "../effects";
 import { NODE_NAMES, cardsFor, moveWithin } from "../gradeGraph";
@@ -418,8 +418,11 @@ export function GradeFields({ clipId }: { clipId: string }) {
   // 就补齐整份，而每一支都回到 1 时把这份表整个撤掉（撤掉与交一串 1 是同一个均分，撤掉更诚实，也不会让
   // 老工程的载荷从此多出一串没人要的数）。
   const weightsOn = Boolean(app.caps?.features?.grade_branch_weights);
+  const blendsOn = Boolean(app.caps?.features?.grade_branch_blend_modes);
   const setWeight = (node: GradeParallel, index: number, value: number) =>
     replace(active, { ...node, weights: weightsAfterWeight(node, index, value) });
+  const setBlend = (node: GradeParallel, index: number, mode: BlendMode) =>
+    replace(active, { ...node, blends: blendsAfterPick(node, index, mode) });
   // 分支只能装每通道操作：并联取各支平均，跨通道的矩阵混进去就没有一张表可塌，契约也拒。
   const replaceBranch = (node: GradeParallel, index: number, next: GradeNode) => replace(active, {
     ...node,
@@ -428,14 +431,14 @@ export function GradeFields({ clipId }: { clipId: string }) {
     )),
   });
   const addBranch = (node: GradeParallel) => {
-    replace(active, { ...node, branches: [...node.branches, newOperation("white_balance") as GradeBranch], weights: weightsAfterAdd(node) });
+    replace(active, { ...node, branches: [...node.branches, newOperation("white_balance") as GradeBranch], weights: weightsAfterAdd(node), blends: blendsAfterAdd(node) });
     setSlot(node.branches.length);
   };
   const removeBranch = (node: GradeParallel) => {
     const next = node.branches.filter((_, position) => position !== slot);
     // 删一支必须把那一格的权重一起删掉：留下的是一份长度对不上的表，而契约会把这一次写入整笔拒掉——
     // 那等于把人困在「删不掉」里，所以形状由 gradeGraph 那一处负责补齐。
-    replace(active, { ...node, branches: next, weights: weightsAfterRemove(node, slot) });
+    replace(active, { ...node, branches: next, weights: weightsAfterRemove(node, slot), blends: blendsAfterRemove(node, slot) });
     setSlot(Math.max(0, slot - 1));
   };
 
@@ -512,13 +515,22 @@ export function GradeFields({ clipId }: { clipId: string }) {
 
       {current?.kind === "parallel" ? <div className="grade-body">
         <div className="batch-actions">
-          {current.branches.map((branch, index) => <button key={index} className={`grade-pick${index === slot ? " active" : ""}`} onClick={() => setSlot(index)} aria-label={`选择第 ${index + 1} 支`}>{index + 1}. {NODE_NAMES[branch.kind]}{branch.mix === undefined || branch.mix === 1 ? "" : ` · ${Math.round(branch.mix * 100)}%`}{branchWeight(current, index) === 1 ? "" : ` · ×${branchWeight(current, index)}`}</button>)}
+          {current.branches.map((branch, index) => <button key={index} className={`grade-pick${index === slot ? " active" : ""}`} onClick={() => setSlot(index)} aria-label={`选择第 ${index + 1} 支`}>{index + 1}. {NODE_NAMES[branch.kind]}{branch.mix === undefined || branch.mix === 1 ? "" : ` · ${Math.round(branch.mix * 100)}%`}{branchWeight(current, index) === 1 ? "" : ` · ×${branchWeight(current, index)}`}{branchBlend(current, index) === "normal" ? "" : ` · ${blendLabel(branchBlend(current, index))}`}</button>)}
           <button className="btn tiny" disabled={current.branches.length >= limits.branches} onClick={() => addBranch(current)} aria-label="增加一支">+支</button>
           <button className="btn tiny danger" disabled={current.branches.length <= 1} onClick={() => removeBranch(current)} aria-label="删除本支">删支</button>
         </div>
         {shown ? <>
           <OpFields node={shown} idPrefix={`grade-b${slot}`} limits={limits} onCommit={(next) => replaceBranch(current, slot, next)} />
           <MixFields node={shown} idPrefix={`grade-b${slot}`} label="支" onCommit={(next) => replaceBranch(current, slot, next)} />
+          {blendsOn ? <>
+            <label className="mask-shape">这一支的混合方式
+              <select className="input" disabled={!shown.enabled} aria-label={`第 ${slot + 1} 支混合方式`} value={branchBlend(current, slot)}
+                onChange={(event) => setBlend(current, slot, event.target.value as BlendMode)}>
+                {BLEND_MODES.map(([value, name]) => <option key={value} value={value}>{name}</option>)}
+              </select>
+            </label>
+            <p className="hint">这一支先按所选方式与进到本节点的画面相合，再按权重参与平均；选「正常」时就是原来的加权平均。停用的一支仍是直通，所以这个下拉在停用那一支上是灰的。</p>
+          </> : null}
           {weightsOn ? <>
             <Num id={`grade-b${slot}-weight`} label="这一支的权重" value={branchWeight(current, slot)} min={0} max={limits.weightMax} step={0.05}
               onCommit={(value) => setWeight(current, slot, value)} />
