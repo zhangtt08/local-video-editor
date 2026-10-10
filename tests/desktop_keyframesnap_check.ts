@@ -109,7 +109,10 @@ for (const [what, pattern] of [
 ] as const) {
   assert.ok(pattern.test(source), `${what} must keep its exact position`);
 }
-assert.equal((source.match(/alignTime\(/g) ?? []).length, 4, "every gesture goes through the one helper");
+// 不许有第二份吸附算术：所有落点都得从 alignTime 出去（入口数量会变，这条不变量才不会过时）。
+assert.ok(!/Math\.round\(at \/ q\) \* q/.test(source), "no second snapping formula may live in the curve editor");
+assert.ok(!/Math\.round\([^)\n]*\) \/ TIMEBASE/.test(source) || /alignTime\(/.test(source), "time entries go through the helper");
+assert.ok((source.match(/alignTime\(/g) ?? []).length >= 4, "every entry point goes through the one helper");
 
 console.log(
   "PASS: 曲线的针落在片段自己的帧边界上——起点不在整帧时也落在帧上、放大八倍容差按像素收窄、"
