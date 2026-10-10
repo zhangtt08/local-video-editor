@@ -9,7 +9,7 @@ MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 15  # v15 gives each fade edge a shape; older rows read the smoothstep default
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.103.0"
+APP_VERSION = "1.104.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -474,6 +474,12 @@ class GradeLUT(Contract):
 # already the largest table worth keeping inside project state. Bigger files are resampled by the
 # importer and say so in `resampled_from` — the deal 1.63 made for oversized 1D tables.
 LUT3D_SIZE_LIMIT = 17
+# Every revision re-snapshots the whole project, and an imported table travels inside that
+# snapshot, so the budget on inline lookup samples is project-wide rather than per chain:
+# 200,000 numbers is about 1.4 MiB of project JSON (a measured 17-cube holds 14,739 numbers in
+# 101 KiB), i.e. thirteen full-size cubes or sixty-five max-size 1D tables for the whole project.
+# The interface reads it from `capabilities.grade_limits`.
+GRADE_INLINE_SAMPLE_LIMIT = 200_000
 
 
 class GradeLut3D(Contract):
@@ -2220,6 +2226,7 @@ def capabilities(
             # A 3D LUT's grid lives inline in project state, so the importer resamples anything
             # larger to this edge count and reports `resampled_from`.
             "max_lut3d_size": LUT3D_SIZE_LIMIT,
+            "max_inline_samples": GRADE_INLINE_SAMPLE_LIMIT,
             "levels_black_max": LEVELS_BLACK_MAX,
             "levels_white_min": LEVELS_WHITE_MIN,
             "levels_gamma_min": LEVELS_GAMMA_MIN,

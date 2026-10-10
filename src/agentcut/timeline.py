@@ -8,6 +8,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from .contracts import (
+    GRADE_INLINE_SAMPLE_LIMIT,
     MAX_TICKS,
     SCHEMA_VERSION,
     Asset,
@@ -290,12 +291,73 @@ def _validate_scope(project: Project) -> None:
             raise EditorError("TRANSITION_EDIT_CONFLICT", "three clips cannot overlap on one track")
 
 
+def _node_inline_samples(node) -> int:
+    """How many numbers one grade node keeps inline (parallel branches carry the same payload)."""
+    kind = getattr(node, "kind", None)
+    if kind == "lut":
+        return sum(len(channel) for channel in node.channels)
+    if kind == "lut3d":
+        return len(node.cells)
+    if kind == "parallel":
+        return sum(_node_inline_samples(branch) for branch in node.branches)
+    return 0
+
+
+def grade_inline_samples(project) -> int:
+    """The project-wide count of samples stored inside grade chains, nested sequences included."""
+
+    def walk(target) -> int:
+        total = sum(
+            _node_inline_samples(node)
+            for clip in target.clips.values()
+            for node in clip.color.grade
+        )
+        for nested in getattr(target, "sequences", {}).values():
+            total += walk(nested)
+        return total
+
+    return walk(project)
+
+
+def _grade_inline_budget(project, before: int) -> None:
+    """Refuse the edit that would push the project past its inline lookup-table budget.
+
+    Checked on the finished candidate against what the project held before the batch: an edit
+    that only renames a clip must stay possible even if the project is already at the ceiling,
+    so the budget stops growth rather than freezing the project. The numbers travel in every
+    history snapshot, so one chain at a time is the wrong unit to count — a project of a
+    hundred clips each holding a 17-cube is the thing that actually hurts.
+    The refusal hands back both totals and the worst clip, because the only way to make room
+    is to delete or shrink a table someone else placed.
+    """
+    total = grade_inline_samples(project)
+    if total <= GRADE_INLINE_SAMPLE_LIMIT or total <= before:
+        return
+    worst = max(
+        project.clips.values(),
+        key=lambda clip: sum(_node_inline_samples(node) for node in clip.color.grade),
+        default=None,
+    )
+    worst_samples = sum(_node_inline_samples(node) for node in worst.color.grade) if worst else 0
+    raise EditorError(
+        "GRADE_INLINE_BUDGET",
+        f"the project's inline lookup tables would hold {total} samples and the budget is "
+        f"{GRADE_INLINE_SAMPLE_LIMIT}",
+        422,
+        samples=total,
+        limit=GRADE_INLINE_SAMPLE_LIMIT,
+        worst_clip_id=worst.id if worst else None,
+        worst_clip_samples=worst_samples,
+    )
+
+
 def apply_commands(
     project: Project, commands: list[Command], sequence_id: str | None = None
 ) -> Project:
     root = project.model_copy(deep=True)
     root.schema_version = SCHEMA_VERSION
     candidate = sequence_view(root, sequence_id)
+    inline_before = grade_inline_samples(candidate)
     explicit_transitions = set()
     for index, command in enumerate(commands):
         try:
@@ -1013,6 +1075,7 @@ def apply_commands(
             entry.stabilization = None
     # Validate the final batch state, allowing atomic swaps with temporary overlaps.
     validate_timeline(candidate)
+    _grade_inline_budget(candidate, inline_before)
     return candidate
 
 

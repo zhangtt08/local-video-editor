@@ -2360,3 +2360,16 @@ reducer 分支；改的只是界面此前只在检查器给一个 ◇ 按钮，�
 `features.lut3d=true`、`features.lut3d_preview=false`；界面据此在节点卡片上写「仅导出生效」。
 它没有强度也没有混合方式，理由写在契约里：只有一端能执行的强度不是强度——与 1.78 的降噪同一个规矩。
 
+
+## 1.104 工程级 inline 查找表预算
+
+没有新路由。改的是「什么样的编辑会被拒」：`clip.grade`（以及任何带动表的 `clip.add`／批量命令）在
+reducer 的候选状态上算一次全工程的采样点总数——1D 节点是三条通道各一行，3D 节点是 `size³×3`，
+并联分支的每支各算，`enabled=false` 不算删除（表还随状态快照），嵌套合成里的片段同样算。
+总数超过 `capabilities.grade_limits.max_inline_samples`（当前 200000，一处主人是 contracts 的
+`GRADE_INLINE_SAMPLE_LIMIT`）**且这一步让工程更满**时，回 422 `GRADE_INLINE_BUDGET`，`details` 交出
+`samples`/`limit`/`worst_clip_id`/`worst_clip_samples`。「只拦增长」是刻意的：否则一次越界会把那份工程
+冻成只读，连删表的编辑都发不出去——而删表正是唯一的出路。
+
+MCP 没有新工具（`timeline_edit` 从契约生成，自动带上这条判断）；`POST /v1/preview-manifest` 那份候选
+工程走同一个 reducer，同一条判断。
