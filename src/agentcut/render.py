@@ -593,6 +593,10 @@ def compile_render_plan(
     # 两个空间旋钮量的是「画面」的高：预览那个框锁工程比例，成片里画面占多高由 fit 决定。
     picture_w, picture_h = picture_size(out_w, out_h, settings.width, settings.height, fit)
     focus_basis = picture_h
+    # 遮罩的坐标与羽化量的都是「画面」；补边交付时帧与画面不是一回事。
+    bar_x, bar_y = (out_w - picture_w) / 2, (out_h - picture_h) / 2
+    letterbox = (picture_w, picture_h) != (out_w, out_h)
+    mask_box = (bar_x, bar_y, picture_w, picture_h) if letterbox else None
     fps = f"{settings.frame_rate.numerator}/{settings.frame_rate.denominator}"
     rate = settings.frame_rate.numerator / settings.frame_rate.denominator
     size = f"{out_w}x{out_h}"
@@ -920,7 +924,7 @@ def compile_render_plan(
                 )
                 alpha = []
                 if clip.mask and not path_mask:
-                    alpha.append(f"({alpha_expression(clip.mask, mask_values)})")
+                    alpha.append(f"({alpha_expression(clip.mask, mask_values, mask_box)})")
                 if (
                     clip.effects.opacity != 1
                     or "opacity" in animated
@@ -1032,7 +1036,13 @@ def compile_render_plan(
                 if not path_mask:
                     plan.filters.append(f"{head},{body}")
                 else:
-                    plane_w, plane_h = raster_size(out_w, out_h)
+                    plane_w, plane_h = raster_size(picture_w, picture_h)
+                    plate_pad = (
+                        f",pad={out_w}:{out_h}:{bar_x:.0f}:{bar_y:.0f}"
+                        f":color={'white' if path_mask.inverted else 'black'}"
+                        if letterbox
+                        else ""
+                    )
                     # The outline carries its own size and anchor; a path mask's box fields are the
                     # editor's handle, so the drawn geometry (not a stale box) decides where the cut
                     # lands, and a keyframed centre moves it from exactly there.
@@ -1077,8 +1087,12 @@ def compile_render_plan(
                         f":s={plane_w}x{plane_h}:r={fps}",
                         total,
                     )
-                    anchor_x = plane_w * ((left + right) / 2 - path_mask.center_x) - patch_w / 2
-                    anchor_y = plane_h * ((top + bottom) / 2 - path_mask.center_y) - patch_h / 2
+                    anchor_x = (
+                        plane_w * ((left + right) / 2 - path_mask.center_x) - patch_w / 2 + bar_x
+                    )
+                    anchor_y = (
+                        plane_h * ((top + bottom) / 2 - path_mask.center_y) - patch_h / 2 + bar_y
+                    )
                     centre_x = expression(clip, "mask_x", "t")
                     centre_y = expression(clip, "mask_y", "t")
                     plan.filters.append(f"{head},settb=AVTB,split=2{keep}{alpha_plane}")
@@ -1087,7 +1101,7 @@ def compile_render_plan(
                     # frame-time x/y without changing its output size, while a per-frame `scale`
                     # would hand the next filter a frame whose size keeps changing (the crash 1.48
                     # fixed). So a free-form mask animates its position; shape and size stay drawn.
-                    plan.filters.append(f"[{canvas}:v]format=gray,settb=AVTB{plate}")
+                    plan.filters.append(f"[{canvas}:v]format=gray,settb=AVTB{plate_pad}{plate}")
                     # A wide feather is baked on a proportionally smaller grid inside `mask_png`,
                     # so the patch is rescaled to its plane size before it is moved.
                     plan.filters.append(

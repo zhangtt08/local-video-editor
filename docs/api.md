@@ -2317,3 +2317,23 @@ reducer 分支；改的只是界面此前只在检查器给一个 ◇ 按钮，�
 工程与交付同比例时（`fit` 是 `cover`/`stretch`，或画幅本来就一致）画面高就是帧高，字号与居中位置与改前相同；
 只有内缩那几处从 `h*0.08` 变成同值的数，所以按字符串断言的旧门禁随之更新，像素级那两组对照没有变化。
 
+
+## 1.102 遮罩的坐标：画面的百分之几，不是交付帧的
+
+`clip.mask` 的 `center_x/center_y/width/height`（以及 `mask_x/mask_y/mask_width/mask_height` 那四条曲线）
+归一化的对象一直是**画面**：浏览器把它铺在锁着工程比例的那个预览框上（`mask-image` 的 unit 图），检查器与
+向导也按这个比例换算。导出此前不是：shape 分支的 `geq` alpha 用 `X/W`、`Y/H`，而这段 alpha 跑在
+`scale=…:force_original_aspect_ratio=decrease,pad=out_w:out_h` 之后，`W/H` 是垫好的交付帧；自由路径分支把轮廓
+光栅化到 `raster_size(out_w, out_h)` 的板子上。工程与交付同比例时两者相等，`contain` 补边时差着一个比例因子。
+
+现在：
+
+- `masks.alpha_expression(mask, values=None, box=None)` 收画面框 `(offset_x, offset_y, width, height)`
+  （帧像素），把 `X/W` 折成 `(X-offset_x)/width`；`box=None`（画面填满帧）时产出的串与 1.45 以来逐字节相同。
+- 自由路径的板子按画面尺寸光栅化，然后 `pad=out_w:out_h:offset_x:offset_y:color=中性值` 垫成帧——
+  中性值取该遮罩自己的值（反相遮罩垫白、普通遮罩垫黑），所以画面带外不会凭空多出一块被保留或被削掉的区域；
+  同比例时这一步整个不出现在图里。补丁的 overlay 锚点同样加上那两个偏移。
+- 羽化（`feather`）与路径的顶点都跟着板子走，因此不需要另一次除法。
+
+契约与命令没变，工程 schema 仍是 v15；这是导出侧一次几何归位，不是新能力。
+

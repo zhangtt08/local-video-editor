@@ -24,18 +24,31 @@ FEATHER_FACTOR = 0.25
 MAX_SIGMA = 8.0
 
 
-def alpha_expression(mask: ShapeMask, values: dict[str, str] | None = None) -> str:
+def alpha_expression(
+    mask: ShapeMask,
+    values: dict[str, str] | None = None,
+    box: tuple[float, float, float, float] | None = None,
+) -> str:
     """Alpha of one pixel. `values` may replace the geometry with FFmpeg expressions of frame time.
 
     The ramp is measured inward from the box edge in box units, the same normalization the browser's
     unit mask image uses, so keyframed geometry stays one formula on both sides.
+
+    `box` is the picture box — `(offset_x, offset_y, width, height)` in the pixels the
+    expression is evaluated over. Mask coordinates are fractions of the picture the user
+    drew on, never of a padded delivery frame: with `contain` into a taller aspect, `X/W`
+    alone would stretch the shape and slide it out of the picture, which is what 1.102
+    fixes. `None` (or a frame that the picture fills) keeps
+    the 1.45-era `X/W`, byte for byte.
     """
     if mask.shape == "path":
         return ""
     taken = {name: str(getattr(mask, field)) for name, field in MASK_FIELDS.items()}
     taken.update(values or {})
-    x = f"abs((X/W-({taken['mask_x']}))*2/({taken['mask_width']}))"
-    y = f"abs((Y/H-({taken['mask_y']}))*2/({taken['mask_height']}))"
+    nx = f"((X-{box[0]:.4f})/{box[2]:.4f})" if box else "X/W"
+    ny = f"((Y-{box[1]:.4f})/{box[3]:.4f})" if box else "Y/H"
+    x = f"abs(({nx}-({taken['mask_x']}))*2/({taken['mask_width']}))"
+    y = f"abs(({ny}-({taken['mask_y']}))*2/({taken['mask_height']}))"
     if mask.shape == "ellipse":
         radius = f"sqrt(pow({x},2)+pow({y},2))"
         value = f"clip((1-{radius})/{mask.feather},0,1)" if mask.feather else f"lte({radius},1)"
