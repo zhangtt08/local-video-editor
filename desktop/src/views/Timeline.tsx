@@ -896,7 +896,7 @@ function ClipBlock({
             const at = held ? held.at : from;
             return <button
               key={`${k.property}-${k.at_ticks}`} type="button" className={`clip-keyframe${held ? " dragging" : ""}${held?.blocked ? " blocked" : ""}`}
-              style={{ left: Math.min(width - 6, Math.max(6, (at / clip.duration_ticks) * width)), bottom: 1 + (rowOf.get(k.property) ?? 0) * LANE_PITCH_PIXELS }}
+              style={{ left: Math.min(width - 6 - (hidden.length ? 16 : 0), Math.max(6, (at / clip.duration_ticks) * width)), bottom: 1 + (rowOf.get(k.property) ?? 0) * LANE_PITCH_PIXELS }}
               title={`${k.property} · ${humanDuration(from)}${held ? ` → ${humanDuration(at)}` : " · 横向拖可以改时间"}`}
               aria-label={`拖动${k.property}关键帧`}
               aria-disabled={track.locked || razor || !app.caps?.features?.keyframes}

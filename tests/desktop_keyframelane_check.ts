@@ -53,5 +53,18 @@ assert.match(source, /visible\.filter\(\(k\) => rowOf\.has\(k\.property\)\)\.map
 // 「+N」那枚牌子不许被短路成永不出现：断到它的类型与类名，而不是只断前缀。
 assert.match(source, /\{hidden\.length \? <button type="button" className="clip-keyframe-more"/, "the hidden properties get a named chip instead of an unreachable needle");
 assert.match(source, /setGraphOpen\(true\)/, "and clicking that chip opens the curve editor for this clip");
+// 针不许爬到「+N」那块牌子上：有隐藏属性时右端留出牌子的位置。
+assert.match(source, /Math\.min\(width - 6 - \(hidden\.length \? 16 : 0\)/, "needles reserve the chip's corner");
+
+// 道距必须容得下针的命中盒，否则相邻两道的矩形互相盖住——那就是这次要修的叠像素缺陷的垂直版本。
+const cssPath = ["desktop/src/styles.css", "src/styles.css"].map((part) => resolve(process.cwd(), part)).find(existsSync);
+assert.ok(cssPath, "the stylesheet must be readable from the check's working directory");
+const css = readFileSync(cssPath!, "utf8");
+const rule = css.match(/\.clip-keyframe\s*\{[^}]*\}/);
+assert.ok(rule, "the needle rule exists");
+const height = /height: *(\d+)px/.exec(rule[0]);
+assert.ok(height, "the needle box declares its height");
+assert.ok(Number(height[1]) <= 12, `the hit box (${height[1]}px) must not exceed the lane pitch (12px)`);
+assert.match(rule[0], /z-index: *5/, "the needle sits above the trim strip, which used to swallow it");
 
 console.log("PASS: 同一秒上不同属性的针各走一道、道号按第一次出现排、画不下的明说是哪几条并给出路、容量按像素算且至少一道");
