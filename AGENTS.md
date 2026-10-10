@@ -19,6 +19,15 @@
 - 1.117 是纯重构＋一条格子上的收口：把曲线编辑器「拖一下」的算术（量化 → 整组按量程与片段两头夹 → 逐枚落值）从组件里抽进 `desktop/src/curveDrag.ts`，行为与装机读数一致（0.5/0.9 两枚一起拖仍是 0.6/1.0），但落值改为再过一次这条属性的步长格子——过去带漂移的草稿（0.17499999999999999 这种）靠引擎替我们抹平，现在草稿就是落库那份。新增第 34 个壳层检查 `desktop_curvevalue_check.ts`；引擎除版本号一字未改。
 - 1.117 系列的最后一步：曲线编辑器里最后一处「只能靠读代码判断对错」的算术——数值框那条夹法——也抽进了 `desktop/src/curveDrag.ts`（`bandEntry`），行为一字不变（越界夹回、空串/乱码/Esc 不算改、同值不发命令、**打字的值不过格子**），换来的是九条行为断言 + 三条接线 + 五条能红的突变。引擎与契约未改，版本串仍是 1.117.0。
 - 「全面替代剪映 / 达芬奇 / AE」仍未达成，能力接口、README 与帮助页都没有声称它；待实现项见本节下方与 README 表格尾注。
+## 下一轮的具体入口（截至 1.117，未开工）
+
+停放点之上欠着的是一条**能力**缺口，不是交互打磨，按任务书应当先做它：
+
+1. **路径遮罩的顶点与形状动画**（README 尾注与帮助页都写着未实现，`capabilities` 里也没有对应 feature）。已核实的地基：`ShapeMask.points` 是路径顶点表；`1.50 起按曲线整体搬动`用的是 `mask_x/mask_y/mask_width/mask_height` 那四条标量曲线；导出侧 1.102 起 `alpha_expression` 收 `(偏移x,偏移y,画面宽,画面高)` 并按**画面框**折算，自由路径的板子按画面尺寸光栅化后用 `pad=…:bar_x:bar_y:color=该遮罩的中性值` 垫成帧；顶点上限由 `capabilities.limits.mask_vertex_limit` 下发。所以缺的是「每一帧的轮廓」这一维：需要一条把顶点表按时间求值成逐帧轮廓的路径（与 `animation.spatial_schedule` 那个「编译成整帧对齐的常值窗」同一手法，段数上限照 `capabilities.limits` 下发），导出与预览必须读同一份点表——照 1.100 柔焦的教训，基准要取 `render.picture_*` 而不是帧尺寸，否则补边交付时两端不一致。契约上是新命令还是 `mask.path.set` 一类，先按「一个行为只有一处权威实现」定：reducer 判合法性（顶点数、闭合、越界），客户端不得自己插值。
+2. 同一条链的验收最小集：一个 Python 子检查（真实媒体上比对「同一 tick 导出帧的遮罩 alpha」与预览读到的点表，逐帧阶梯），一个壳层检查（界面只在 `capabilities.features.*` 声明时给入口），错误码进 `contracts.py` + `desktop/src/engine.ts` 中文表并由 `tests/error_vocabulary_check.py` 配对；能力位在未实现前保持 false。
+3. 交互侧还欠着的、可以插在中间做的：时间线多针**组拖与框选**（曲线编辑器已有选区与 `keyframes.move`，时间线只有单枚针的手）；遮罩跟踪的多目标；清晰的逐帧动画（1.98 已量明为什么先不做）。
+4. 复验口径照旧：`uv run python tests/suite_check.py` 空闲机器单独跑（约 9 分钟，别在包装里加 `timeout`——1.115 那次它把 `tracking_check.py` 误报成 OSError），壳层 `uv run python tests/desktop_ts_check.py`（34 个），新断言一律配突变且**每条突变要红在自己断言的消息上**（锚点要与消息逐字对齐；否定式断言要配「两条都在」的插入型突变；断言写不变量，不写凑巧准确的数），发布物 `scripts/build_engine.py --verify` + `cd desktop && npm run dist` 后根 `AgentCut.exe` 与便携版 `cmp`，界面类改动再用打包 exe + Chromium 真点真拖。
+
 ## 开始前
 
 - 若当前会话安装了 `prompt-engineering-patterns`，先使用该技能，在内部整理执行范围，不扩大用户任务。
