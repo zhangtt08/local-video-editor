@@ -1621,6 +1621,43 @@ export function setClipColor(clipId: string, patch: Partial<ClipColor>) {
 
 /** 导入 .cube 查找表：文件内容交给引擎里唯一的解析器，回来的节点原样进调色链。
  *  index 为 null 追加到链尾；给了下标就是换一张表，强度、混合方式和启用状态都留着。 */
+/** 1.108：把这条片段的调色链套到它所在的整轨。规划与写入都在引擎那侧，界面只念报告。 */
+export async function applyGradeToTrack(clipId: string, mode: "replace" | "append") {
+  const project = state.project;
+  const clip = project?.clips[clipId];
+  if (!engine || !project || !clip) return;
+  set({ busy: "套到整轨…" });
+  try {
+    const answer = await engine.gradeApplyTrack(project.id, clip.track_id, {
+      request_id: newId("grade-apply"),
+      expected_revision: project.revision,
+      clip_id: clipId,
+      mode,
+      sequence_id: state.sequenceId,
+      apply: true,
+      dry_run: false,
+    });
+    set({ project: answer.project as Project });
+    const report = answer.grade_application;
+    const skipped = report.clips.filter((item) => item.skipped);
+    toast(
+      "info",
+      `套到整轨${mode === "append" ? "（追加）" : "（替换）"}：${report.applied} 段写入，${report.nodes} 个节点跟着走`,
+      (skipped.length
+        ? `${skipped.length} 段没套上：` + skipped.map((item) => `${item.clip_id} —— ${item.skipped}`).join("；") + "。"
+        : "这一轨上每一段都接下了这条链。") +
+        (report.room_samples < report.chain_samples
+          ? `工程的查找表额度只剩 ${report.room_samples} 个采样点，一张满格立方要 ${report.chain_samples} 个。`
+          : ""),
+    );
+  } catch (error) {
+    const { title, detail } = describe(error);
+    toast("error", title, detail);
+  } finally {
+    set({ busy: "" });
+  }
+}
+
 /** 1.107：向引擎要这份工程的查找表额度回执。渲染层只递管道，不自己算任何一个数。 */
 export async function fetchGradeCapacity(projectId: string) {
   if (!engine) return null;

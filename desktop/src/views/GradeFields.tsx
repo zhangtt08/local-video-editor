@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 
 import {DEFAULT_TRANSFER, COLOR_SPACES, DEFAULT_CURVE_POINTS, DEFAULT_WHEELS, type GradeBranch, type GradeCapacity, type GradeChannel, type GradeCurvePoint, type GradeNode, type GradeOperation, type GradeParallel, type ColorSpace, BLEND_MODES, type BlendMode} from "../engine";
-import { editableProject, setClipColor, useApp, applyLut, autoGradeClip, fetchGradeCapacity } from "../store";
+import { applyGradeToTrack, editableProject, setClipColor, useApp, applyLut, autoGradeClip, fetchGradeCapacity } from "../store";
 import { autoGradeBlocker, gradeCapacityLine } from "../effects";
 import { NODE_NAMES, cardsFor, moveWithin } from "../gradeGraph";
 
@@ -433,6 +433,10 @@ export function GradeFields({ clipId }: { clipId: string }) {
       <div className="batch-actions">
         {(["curve", "white_balance", "wheels", "levels", "matrix", "transfer", "parallel"] as const).map((kind) => <button key={kind} className="btn tiny" disabled={nodes.length >= limits.nodes} onClick={() => add(kind)}>+{NODE_NAMES[kind]}</button>)}
         {app.caps?.features.lut_import ? <button className="btn tiny" disabled={nodes.length >= limits.nodes} title="选择 .cube 文件（1D 逐通道或 3D 立方查找表），由引擎解析成调色链节点" onClick={() => pickLut(null)}>+LUT</button> : null}
+        {app.caps?.features?.grade_apply_track && nodes.length ? <>
+          <button className="btn tiny" disabled={Boolean(app.busy)} title="把这条片段现在的整条调色链套到它所在的这条轨上每一段（替换它们原有的链）。装不下的段落不会被悄悄丢掉：引擎一份份报出原因，toast 照实念。" onClick={() => applyGradeToTrack(clipId, "replace")}>套到整轨（替换）</button>
+          <button className="btn tiny" disabled={Boolean(app.busy)} title="同上，但是把这条链接到每段已有节点的后面——超过每链节点上限的段落会报出来而不是被写坏。" onClick={() => applyGradeToTrack(clipId, "append")}>套到整轨（追加）</button>
+        </> : null}
         <input ref={lutFile} type="file" accept=".cube,text/plain" hidden onChange={(event) => {
           const file = event.target.files?.[0];
           const target = lutTarget.current;

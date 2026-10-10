@@ -25,6 +25,7 @@ from .contracts import (
     EditBatch,
     FadeAdoptTrackRequest,
     FourPointRequest,
+    GradeApplyTrackRequest,
     Identifier,
     ImportRequest,
     LoudnessRequest,
@@ -356,6 +357,25 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
             f"/v1/projects/{project_id}/tracks/{track_id}/silence",
             body,
             timeout=600,
+        )
+
+    @server.tool(annotations=read)
+    async def track_grade_apply(
+        project_id: Identifier, track_id: Identifier, request: GradeApplyTrackRequest
+    ) -> dict[str, Any]:
+        """Plan copying one clip's grade chain onto every other clip of one track.
+
+        Read-only here: `apply` and `dry_run` are forced off, so nothing is written. Each entry is
+        either a clip that will take the chain (`nodes` / `added_samples`) or a refusal naming why
+        (the per-chain node cap, an audio clip, or the project's inline lookup-table budget from
+        1.104). Submit the returned `clip.grade` commands with `timeline_edit` to land the whole
+        track in one revision, or call the same endpoint with `apply=true`.
+        """
+        body = request.model_dump(mode="json") | {"apply": False, "dry_run": False}
+        return await call(
+            "POST",
+            f"/v1/projects/{project_id}/tracks/{track_id}/grade-apply",
+            body,
         )
 
     @server.tool(annotations=read)

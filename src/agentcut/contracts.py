@@ -9,7 +9,7 @@ MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 15  # v15 gives each fade edge a shape; older rows read the smoothstep default
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.107.0"
+APP_VERSION = "1.108.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -1710,6 +1710,26 @@ class LoudnessRequest(Contract):
     dry_run: bool = False
 
 
+class GradeApplyTrackRequest(Contract):
+    """Copy one clip's grade chain onto every other clip of that track, in one edit.
+
+    `apply=false` is the read-only plan: the ordinary `clip.grade` commands come back together with
+    each clip that cannot take the chain and why (node cap, audio clip, or the project's inline
+    lookup-table budget from 1.104). `apply=true` writes the same list as one batch, so a whole
+    track costs one revision and one history entry. The rules stay the reducer's; this only walks
+    the track. `mode` is `replace` (each target ends up with exactly this chain) or `append`
+    (this chain goes on the end of what the target already has).
+    """
+
+    request_id: Identifier
+    expected_revision: Revision
+    clip_id: Identifier
+    mode: Literal["replace", "append"] = "replace"
+    sequence_id: Identifier | None = None
+    apply: bool = False
+    dry_run: bool = False
+
+
 class FadeAdoptTrackRequest(Contract):
     """Move every pre-1.90 keyframe fade on one track into the edge windows, in one edit.
 
@@ -2375,6 +2395,8 @@ def capabilities(
             # `GET /v1/projects/{id}/grade-capacity` and MCP `grade_capacity` read the same
             # numbers the reducer refuses with, so usage can be asked before an edit.
             "grade_capacity": True,
+            # 一条片段的调色链能不能一次套到整轨（规划与写入同一条规矩）。
+            "grade_apply_track": True,
             "text_styling": True,
             "clip_blur": True,
             "clip_sharpen": True,

@@ -47,6 +47,7 @@ from .contracts import (
     EditorError,
     FadeAdoptTrackRequest,
     FourPointRequest,
+    GradeApplyTrackRequest,
     Identifier,
     ImportRequest,
     LoudnessRequest,
@@ -91,6 +92,7 @@ from .timeline import (
     MASK_TRACK_CURVES,
     MASK_TRACK_SIZED_CURVES,
     fade_adopt_track_plan,
+    grade_apply_track_plan,
     grade_capacity,
     mask_track_capacity,
     sequence_view,
@@ -1140,6 +1142,54 @@ def create_app(
         being refused. `sequence_id` is not needed — the budget belongs to the whole project.
         """
         return grade_capacity(projects.get(project_id))
+
+    @app.post("/v1/projects/{project_id}/tracks/{track_id}/grade-apply", dependencies=auth)
+    def grade_apply_track(
+        project_id: Identifier,
+        track_id: Identifier,
+        request: GradeApplyTrackRequest,
+        projects: Store,
+    ):
+        """Copy one clip's grade chain onto every other clip of that track.
+
+        The plan asks the reducer's own rules per clip — the per-chain node cap, "an audio clip has
+        no picture to grade", and the project's inline lookup-table budget from 1.104 — so the
+        commands it returns are exactly ones the same reducer accepts, and a clip that cannot take
+        the chain is reported with the numbers behind that. `apply=false` is the read-only plan an
+        Agent submits through `timeline_edit`; `apply=true` writes them as one batch, so a whole
+        track costs one revision and one history entry.
+        """
+        root = projects.get(project_id)
+        project = sequence_view(root, request.sequence_id)
+        if next((track for track in project.tracks if track.id == track_id), None) is None:
+            raise EditorError("NOT_FOUND", "track is not in this project", 404, track_id=track_id)
+        body = grade_apply_track_plan(project, request.clip_id, track_id, request.mode)
+        if request.apply and not body["commands"]:
+            raise EditorError(
+                "GRADE_APPLY_EMPTY_TRACK",
+                "no other clip on this track can take this grade chain",
+                422,
+                track_id=track_id,
+                clip_id=request.clip_id,
+                mode=request.mode,
+                inspected=body["targets"],
+                skipped=[
+                    {"clip_id": item["clip_id"], "reason": item["skipped"]}
+                    for item in body["clips"]
+                    if "skipped" in item
+                ],
+            )
+        if not request.apply:
+            return {"committed": False, "project": root.model_dump(), "grade_application": body}
+        batch = EditBatch(
+            request_id=request.request_id,
+            expected_revision=request.expected_revision,
+            sequence_id=request.sequence_id,
+            commands=body["commands"],  # type: ignore[arg-type]
+            dry_run=request.dry_run,
+        )
+        mutation = projects.mutate(project_id, batch).model_dump()
+        return {**mutation, "grade_application": body}
 
     @app.post("/v1/projects/{project_id}/tracks/{track_id}/fade-adopt", dependencies=auth)
     def fade_adopt_track(

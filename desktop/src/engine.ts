@@ -535,6 +535,8 @@ export class EngineError extends Error {
       INVALID_MASK: "遮罩只能用于画面轨片段，请检查轨道和遮罩范围。整批操作没有被保存。",
       INVALID_LUT: "这个 .cube 文件引擎读不了：表头、行数或关键字有问题，回复里的行号与网格大小指出是哪一行。",
       LUT3D_NO_PLAN: "3D 查找表要写成一个文件才能交给导出，编译进渲染计划时才有地方放它；这里没有作业目录，所以编不出这一级。",
+      GRADE_APPLY_NONE: "这条片段上没有任何调色节点，没有可套到整轨的东西：先给它加曲线、白平衡或一张 .cube 表再说。",
+      GRADE_APPLY_EMPTY_TRACK: "这一轨上没有别的片段接得下这条链：逐条原因就在回复的 skipped 里（每链 8 个节点的上限、音频片段没有画面可调色、或工程的查找表额度已用完）。少的那几段不是失败，是没装下——先腾出额度或删掉别段的表再套。",
       GRADE_INLINE_BUDGET: "这张表要存进工程状态，而每次修改都会整份快照一遍：全工程的查找表加起来已经超过额度，所以这一步被拒。回复里写着现在有多少个采样点、上限是多少，以及哪条片段上的表最占地方——腾地方的办法只有删掉或换小某张表。",
       INVALID_BLEND_MODE: "混合模式只能用于画面轨。整批操作没有被保存。",
       INVALID_SELECTION: "选中的片段已变化，请重新选择后操作。整组没有被修改。",
@@ -1036,6 +1038,21 @@ export class Engine {
         commands: Record<string, unknown>[];
       };
     }>("POST", `/v1/projects/${projectId}/tracks/${trackId}/silence`, body, 600000);
+  }
+
+/** 1.108：把一条片段的调色链套到整轨。只读规划与一次写入同一个端点（`apply` 决定）。 */
+  gradeApplyTrack(projectId: string, trackId: string, body: Record<string, unknown>) {
+    return this.request<{
+      committed: boolean;
+      project: Project;
+      grade_application: {
+        track_id: string; source_clip_id: string; mode: string; nodes: number;
+        chain_samples: number; targets: number; applied: number; skipped: number;
+        room_samples: number;
+        clips: { clip_id: string; skipped?: string; nodes?: number; added_samples?: number }[];
+        commands: Record<string, unknown>[];
+      };
+    }>("POST", `/v1/projects/${projectId}/tracks/${trackId}/grade-apply`, body, 600000);
   }
 
   /** 1.107：这份工程的查找表额度还剩多少（只读；数字由 `grade_capacity()` 一处算）。 */

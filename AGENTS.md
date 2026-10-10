@@ -7,6 +7,7 @@
 
 - 已交付并三方验证（源码门禁 + 发布产物 + 真实界面）：1.103 3D LUT、1.104 工程级 inline 查找表预算、1.105 `GET /v1/projects/{id}/grade-capacity` 与 MCP `grade_capacity`、1.106 回执总量不再被前 20 名视图截断。重新验证只需 `uv run python tests/suite_check.py`（空闲机器、单独跑）与 `uv run python tests/gradebudget_check.py`、`uv run python tests/lut3d_check.py`；发布产物里的引擎应自报 1.106.0。
 - 已完成的下一个增量（1.107）：把 `grade-capacity` 接进检查器——按 revision 缓存回执，在调色那节显示「已用 X / Y 个采样点，还能放 N 张 17³」，数字只准来自引擎（界面不许自己算），门禁要断那一行的数与 `grade_capacity()` 逐字相同，并用突变证明读的是回执而不是自算。再往后是「整轨套用一条调色」（`clip.grade` 批量 + 用 `room` 前置规划 + 逐片段拒绝点名）。
+- 1.108 又交付了一条：一条片段的调色链一键套到整轨（`grade-apply` 端点 + MCP `track_grade_apply` + 检查器两颗按钮），规划只问 reducer 会问的三件事，套不满的段落逐段报实数。
 - 「全面替代剪映 / 达芬奇 / AE」仍未达成，能力接口、README 与帮助页都没有声称它；待实现项见本节下方与 README 表格尾注。
 ## 开始前
 

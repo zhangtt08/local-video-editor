@@ -2401,3 +2401,14 @@ MCP 没有新工具（`timeline_edit` 从契约生成，自动带上这条判断
 就是拿一张**故意不自洽**的回执（`room` 明明还够一张立方而 `room_cubes=0`）来断这一点的。
 
 同时修掉 1.103 的一处不对称：`换一张 LUT` 那颗按钮此前只在 1D 节点上出现，3D 节点拿不到它。
+
+## 1.108 整轨套一条调色：`POST /v1/projects/{id}/tracks/{tid}/grade-apply`
+
+收 `GradeApplyTrackRequest{request_id, expected_revision, clip_id, mode, sequence_id?, apply, dry_run}`。
+`mode` 是 `replace`（每段最后就是这条链）或 `append`（接到每段已有节点后面）。
+
+回执 `grade_application`：`nodes`/`chain_samples` 是要套过去的链，`targets` 是同轨其它片段数，
+`applied`/`skipped` 是两个结果各多少段，`room_samples` 是套完后工程还剩多少查找表额度，
+`clips` 逐段给 `nodes`+`added_samples` 或给 `skipped`（中文原因 + 实数），`commands` 是可直接提交的
+普通 `clip.grade` 命令。`apply=false` 只回规划；`apply=true` 把这批命令当一次编辑写入（一个 revision、
+一条历史）。空链 → 422 `GRADE_APPLY_NONE`；一段都套不上 → 422 `GRADE_APPLY_EMPTY_TRACK`，两者 details 都点名。

@@ -1,6 +1,7 @@
 """Deterministic, side-effect-free editing. Intervals are [start, end)."""
 
 import hashlib
+import json
 from bisect import bisect_right
 from math import lcm
 from pathlib import Path
@@ -9,6 +10,7 @@ from pydantic import ValidationError
 
 from .contracts import (
     GRADE_INLINE_SAMPLE_LIMIT,
+    GRADE_NODE_LIMIT,
     LUT3D_SIZE_LIMIT,
     LUT_SAMPLE_LIMIT,
     MAX_TICKS,
@@ -359,6 +361,102 @@ def grade_capacity(project) -> dict:
         "by_clip_samples": root_samples,
         "other_clips": max(0, loaded - len(listed)),
         "nested_samples": used - root_samples,
+    }
+
+
+def grade_apply_track_plan(project, clip_id: str, track_id: str, mode: str = "replace") -> dict:
+    """One clip's grade chain, written onto every other clip of that track, as ordinary commands.
+
+    达芬奇给的是「把这条节点图复制到这一轨」，剪映给的是「把这个滤镜一键应用到全部」；两边要的
+    都是「别逼我一段一段点」。规划只问 reducer 会问的三件事：套上去的链必须仍在
+    `GRADE_NODE_LIMIT` 之内、音频片段没有画面可调色、以及 1.104 那份工程级查找表额度不许被这一批
+    越过。装不下的片段是**报出来**而不是被悄悄丢掉，剩下的命令就是同一条 `clip.grade` 写得进去的
+    命令 —— 所以「应用」只涨一个 revision，而一条套不满的轨是一次有名字的局部应用，不是整批回滚。
+    """
+    source = project.clips.get(clip_id)
+    if source is None:
+        raise EditorError("NOT_FOUND", "clip is not in this project", 404, clip_id=clip_id)
+    if source.track_id != track_id:
+        raise EditorError(
+            "NOT_FOUND",
+            "that clip is not on this track",
+            404,
+            clip_id=clip_id,
+            track_id=source.track_id,
+        )
+    chain = [json.loads(node.model_dump_json()) for node in source.color.grade]
+    if not chain:
+        raise EditorError(
+            "GRADE_APPLY_NONE",
+            "this clip has no grade nodes to copy",
+            422,
+            clip_id=clip_id,
+            track_id=track_id,
+        )
+    chain_samples = sum(_node_inline_samples(node) for node in source.color.grade)
+    room = GRADE_INLINE_SAMPLE_LIMIT - grade_inline_samples(project)
+    entries: list[dict] = []
+    commands: list[dict] = []
+    targets = sorted(
+        (
+            item
+            for item in project.clips.values()
+            if item.track_id == track_id and item.id != clip_id
+        ),
+        key=lambda item: item.position_ticks,
+    )
+    for clip in targets:
+        asset = project.assets.get(clip.asset_id)
+        current = list(clip.color.grade)
+        if asset is not None and asset.kind == "audio":
+            entries.append(
+                {"clip_id": clip.id, "skipped": "音频片段没有画面可调色", "asset_kind": asset.kind}
+            )
+            continue
+        if (len(current) if mode == "append" else 0) + len(chain) > GRADE_NODE_LIMIT:
+            entries.append(
+                {
+                    "clip_id": clip.id,
+                    "skipped": (
+                        f"已有 {len(current)} 个节点，再套 {len(chain)} 个"
+                        f"会超过每链 {GRADE_NODE_LIMIT} 个上限"
+                    ),
+                    "existing_nodes": len(current),
+                    "added_nodes": len(chain),
+                    "node_limit": GRADE_NODE_LIMIT,
+                }
+            )
+            continue
+        delta = chain_samples - (
+            0 if mode == "append" else sum(_node_inline_samples(node) for node in current)
+        )
+        if delta > 0 and room < delta:
+            entries.append(
+                {
+                    "clip_id": clip.id,
+                    "skipped": (f"工程的查找表额度只剩 {room} 个采样点，这一段还要加 {delta} 个"),
+                    "room_samples": room,
+                    "needed_samples": delta,
+                    "limit": GRADE_INLINE_SAMPLE_LIMIT,
+                }
+            )
+            continue
+        room -= delta
+        merged = [*current, *chain] if mode == "append" else list(chain)
+        entries.append({"clip_id": clip.id, "nodes": len(merged), "added_samples": delta})
+        commands.append({"op": "clip.grade", "clip_id": clip.id, "grade": merged})
+    return {
+        "track_id": track_id,
+        "source_clip_id": clip_id,
+        "mode": mode,
+        "nodes": len(chain),
+        "chain_samples": chain_samples,
+        "targets": len(targets),
+        "clips": entries,
+        "applied": len(commands),
+        "skipped": len(entries) - len(commands),
+        "room_samples": room,
+        "commands": commands,
     }
 
 
