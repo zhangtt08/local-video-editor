@@ -155,6 +155,10 @@ class ProjectStore:
                 # every receipt written before this release splits in two when it is retried.
                 if "asset_id" in node and node.get("fade") is None:
                     node.pop("fade", None)
+                # 1.118 gave a clip its outline keyframes, and an empty table is exactly the state a
+                # pre-1.118 payload had: dropping it keeps those receipts replaying.
+                if "asset_id" in node and not node.get("mask_shape_keys"):
+                    node.pop("mask_shape_keys", None)
                 for value in node.values():
                     strip_bezier_defaults(value)
             elif isinstance(node, list):

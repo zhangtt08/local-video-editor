@@ -6,6 +6,7 @@ from math import sqrt
 from .contracts import (
     FADE_SHAPE_CURVES,
     MASK_FIELDS,
+    MASK_SHAPE_SCHEDULE_MAX,
     PROPERTY_LIMITS,
     SPATIAL_SCHEDULE_MAX,
     TIMEBASE,
@@ -14,11 +15,13 @@ from .contracts import (
     ClipEffects,
     EditorError,
     Keyframe,
+    MaskShapeKeyframe,
+    MaskVertex,
     Project,
     Track,
 )
 from .grade import preview_grade
-from .masks import animated_mask_image, mask_image
+from .masks import animated_mask_image, fit_box, mask_image
 from .speed import describe, segments
 from .timeline import link_status
 from .transitions import envelopes
@@ -367,19 +370,17 @@ def property_curve(clip: Clip, prop: str) -> list[dict]:
 SPATIAL_PROPS = ("blur",)
 
 
-def spatial_schedule(clip: Clip, prop: str, quantum: int, limit: int | None = None) -> list[dict]:
-    """The windows a keyframed spatial knob actually executes — the same list at both ends.
+def frame_windows(clip: Clip, quantum: int, limit: int | None, value_at) -> list[dict]:
+    """The one frame-aligned staircase compiler: sample at each midpoint, merge the equal ones.
 
-    `gblur` has no per-frame sigma: its only time hook is `enable`, an on/off window. Letting the
-    export step while the browser interpolates smoothly is exactly why this knob refused keyframes
-    before 1.98. The answer is not to hide the staircase but to make it the single authority: the
-    curve is sampled here into frame-aligned windows, at most `limit` of them, and the exporter
-    chains one `gblur=sigma=…:enable='between(t,…)'` per window while the browser animates those
-    same windows with `steps(1, end)`. A clip shorter than `limit` frames is therefore exact at the
-    frame level, and a longer one coarsens by a number both ends can be checked against.
+    Two knobs in this app cannot be evaluated continuously by the exporter — `gblur` reads no
+    expression for its sigma, and a morphing free-form mask cannot be rasterised per frame — so both
+    compile to constant windows and both ends execute that same list. `value_at(clip, at_ticks)`
+    returns whatever is comparable and hashable for one step; merging on equality is what keeps a
+    curve that happens to be flat at one window boundary from costing two stages at both ends.
     """
     span = clip.duration_ticks
-    if span <= 0 or not points(clip, prop):
+    if span <= 0:
         return []
     ceiling = SPATIAL_SCHEDULE_MAX if limit is None else max(1, limit)
     grid = max(1, int(quantum or 1))
@@ -392,13 +393,121 @@ def spatial_schedule(clip: Clip, prop: str, quantum: int, limit: int | None = No
     start = 0
     while start < span:
         end = min(start + step, span)
-        value = round(sample(clip, prop, (start + end) // 2), 9)
+        value = value_at(clip, (start + end) // 2)
         if windows and windows[-1]["value"] == value:
             windows[-1]["to_ticks"] = end
         else:
             windows.append({"from_ticks": start, "to_ticks": end, "value": value})
         start = end
     return windows
+
+
+def spatial_schedule(clip: Clip, prop: str, quantum: int, limit: int | None = None) -> list[dict]:
+    """The windows a keyframed spatial knob actually executes — the same list at both ends.
+
+    `gblur` has no per-frame sigma: its only time hook is `enable`, an on/off window. Letting the
+    export step while the browser interpolates smoothly is exactly why this knob refused keyframes
+    before 1.98. The answer is not to hide the staircase but to make it the single authority: the
+    curve is sampled here into frame-aligned windows, at most `limit` of them, and the exporter
+    chains one `gblur=sigma=…:enable='between(t,…)'` per window while the browser animates those
+    same windows with `steps(1, end)`. A clip shorter than `limit` frames is therefore exact at the
+    frame level, and a longer one coarsens by a number both ends can be checked against.
+    """
+    if not points(clip, prop):
+        return []
+
+    def value_at(source: Clip, at: int) -> float:
+        return round(sample(source, prop, at), 9)
+
+    return frame_windows(clip, quantum, limit, value_at)
+
+
+def outline_keys(clip: Clip) -> list[MaskShapeKeyframe]:
+    return sorted(clip.mask_shape_keys, key=lambda key: key.at_ticks)
+
+
+class _Ease:
+    """One outline end, wearing the outfit `_interpolate` reads: a time, an easing, and an endpoint.
+
+    A morph is a vector, and this project has exactly one piecewise easing walker. Rather than
+    repeat the cubic and the bezier inversion for six numbers per vertex, each end of an interval is
+    handed to that walker as the pair 0 and 1, so what comes back is the eased progress itself.
+    """
+
+    __slots__ = ("at_ticks", "value", "interpolation", "bezier")
+
+    def __init__(self, key: MaskShapeKeyframe, value: float):
+        self.at_ticks = key.at_ticks
+        self.value = value
+        self.interpolation = key.interpolation
+        self.bezier = key.bezier
+
+
+def vertices_at(clip: Clip, at_ticks: int) -> list[MaskVertex]:
+    """The outline this clip draws at `at_ticks`: the shape as drawn, or the morph at that moment.
+
+    Outside the first and last outline the shape holds, the same way a scalar curve holds its end
+    values. Inside an interval every component rides one eased progress, so a vertex and its two
+    handles cannot drift apart the way six independent curves would.
+    """
+    keys = outline_keys(clip)
+    if not keys:
+        return list(clip.mask.vertices or []) if clip.mask else []
+    at = at_ticks + clip.animation_offset_ticks
+    if at <= keys[0].at_ticks:
+        return list(keys[0].vertices)
+    for first, second in zip(keys, keys[1:]):
+        if at < second.at_ticks:
+            progress = _interpolate(_Ease(first, 0.0), _Ease(second, 1.0), at)
+            return [_mix_vertex(a, b, progress) for a, b in zip(first.vertices, second.vertices)]
+    return list(keys[-1].vertices)
+
+
+def _mix_vertex(a: MaskVertex, b: MaskVertex, progress: float) -> MaskVertex:
+    def blend(low: float, high: float) -> float:
+        return round(low + (high - low) * progress, 9)
+
+    return MaskVertex(
+        x=blend(a.x, b.x),
+        y=blend(a.y, b.y),
+        handle_out=[
+            blend(a.handle_out[0], b.handle_out[0]),
+            blend(a.handle_out[1], b.handle_out[1]),
+        ],
+        handle_in=[
+            blend(a.handle_in[0], b.handle_in[0]),
+            blend(a.handle_in[1], b.handle_in[1]),
+        ],
+    )
+
+
+def mask_shape_schedule(clip: Clip, quantum: int, limit: int | None = None) -> list[dict]:
+    """The windows one morphing outline actually executes — the same list at both ends.
+
+    A free-form mask's alpha is a rasterised plate, and a plate per frame is neither affordable here
+    nor something the browser could cross-fade, so an outline compiles into frame-aligned constant
+    windows exactly as soft focus does (`frame_windows`). Each window carries the whole vertex table
+    at its midpoint: the exporter bakes that one plate, the preview issues that one outline image,
+    and neither end invents a middle. The mask's *box* keeps moving continuously on the
+    `mask_x`/`mask_y` curves it already had, so only the shape steps.
+    """
+    if clip.mask is None or clip.mask.shape != "path" or not clip.mask_shape_keys:
+        return []
+
+    def value_at(source: Clip, at: int) -> list[MaskVertex]:
+        return vertices_at(source, at)
+
+    return frame_windows(clip, quantum, limit, value_at)
+
+
+def outline_mask(clip: Clip, vertices: list[MaskVertex]):
+    """The mask as stored, with one moment's outline in it.
+
+    `model_copy` deliberately skips revalidation: a morph can pass through two coincident vertices
+    on the way between shapes, and the rasteriser already ignores a zero-area edge — refusing to
+    render the frame the person animated to would be the defect.
+    """
+    return clip.mask.model_copy(update={"vertices": vertices})
 
 
 def spatial_curve(clip: Clip, schedule: list[dict]) -> list[dict]:
@@ -480,16 +589,45 @@ def preview_manifest(
             for prop in SPATIAL_PROPS
             if points(clip, prop)
         }
+        # 1.118: a morphing outline ships as the very window list the exporter cuts its plates from
+        # — one unit image per window, plus the numbers that put that image where the plate lands.
+        # The browser only selects the window the engine named and places it with numbers it was
+        # handed, so neither end can invent a shape in between and the guide shows the outline the
+        # delivered file will actually cut.
+        mask_shape = []
+        for window in mask_shape_schedule(clip, quantum, MASK_SHAPE_SCHEDULE_MAX):
+            shape = outline_mask(clip, window["value"])
+            fitted = fit_box(shape)
+            mask_shape.append(
+                {
+                    "from_ticks": window["from_ticks"],
+                    "to_ticks": window["to_ticks"],
+                    "image": animated_mask_image(
+                        shape, project.settings.width, project.settings.height
+                    ),
+                    "vertices": [vertex.model_dump() for vertex in window["value"]],
+                    # Where this window's plate lands and how wide it is, in the exporter's own
+                    # numbers: the patch spans the outline as morphed (`width`), and the box curves
+                    # only translate it from the centre the shape was drawn at (`offset`).
+                    "width": round(fitted.width, 9),
+                    "height": round(fitted.height, 9),
+                    "offset_x": round(fitted.center_x - clip.mask.center_x, 9),
+                    "offset_y": round(fitted.center_y - clip.mask.center_y, 9),
+                }
+            )
         clips[clip.id] = {
             "spatial": spatial or None,
             "mask_image": mask_image(clip.mask, project.settings.width, project.settings.height)
             if clip.mask
             else None,
             "mask_curves": mask_curves or None,
+            "mask_shape": mask_shape or None,
+            # The unit image is the box-only answer; a clip that animates its outline gets one image
+            # per window instead, and the two would be the same bytes for the first of them.
             "mask_unit": animated_mask_image(
                 clip.mask, project.settings.width, project.settings.height
             )
-            if animated
+            if animated and not mask_shape
             else None,
             "sound_enabled": sound_enabled(clip, track),
             "speed": describe(segments(clip, quantum, project.settings.frame_ticks), TIMEBASE)

@@ -6,10 +6,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
-SCHEMA_VERSION = 15  # v15 gives each fade edge a shape; older rows read the smoothstep default
+SCHEMA_VERSION = (
+    16  # v16 lets a free-form mask morph its own outline; older rows read no outline keys
+)
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.117.0"
+APP_VERSION = "1.118.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -143,7 +145,8 @@ SpatialProperty = Literal["blur"]
 EffectField = EffectProperty | Literal["blur", "sharpen", "sharpen_radius", "denoise"]
 # Rectangle and ellipse masks keyframe in the mask's own normalized space, so the exporter and the
 # browser interpolate the same numbers. A free-form (path) mask rasterizes its outline once and can
-# be moved with mask_x/mask_y, but its drawn shape and size cannot change over time yet.
+# be moved with mask_x/mask_y; its drawn shape now animates too, but through its own table — one
+# outline per moment (`Clip.mask_shape_keys`), not a scalar curve per vertex. `MaskShapeKeyframe`.
 MaskProperty = Literal["mask_x", "mask_y", "mask_width", "mask_height"]
 MASK_FIELDS = {
     "mask_x": "center_x",
@@ -199,6 +202,15 @@ GBLUR_STEPS = 6
 # seconds of 320x180 in 0.12 s, so twenty-four is comfortably affordable while still being coarse
 # enough that a long ramp is scheduled in wide steps rather than one step per frame.
 SPATIAL_SCHEDULE_MAX = 24
+# A morphing free-form mask compiles the same way: one frame-aligned window per constant outline,
+# and both ends read that one list. The ceiling has to be smaller than the soft-focus one because a
+# window here is a rasterised plate, not a number — `masks.coverage` is a Python scanline fill, so
+# the cost of a window grows with the area the outline covers (measured below, in `docs/api.md`).
+MASK_SHAPE_SCHEDULE_MAX = 12
+# How many outlines one mask may carry. Each one is a whole vertex table in project state, so this
+# is the budget that keeps a morph affordable to save, undo, and rasterise; the interface counts it
+# out of `capabilities.limits` rather than carrying its own number.
+MASK_SHAPE_KEY_LIMIT = 32
 # A keyframed radius is bounded by the very same ceiling the static knob uses, so a curve
 # cannot reach past what one click can. It lives down here because `BLUR_LIMIT` is defined
 # after `PROPERTY_LIMITS`.
@@ -644,6 +656,32 @@ class Keyframe(Contract):
         return self
 
 
+class MaskShapeKeyframe(Contract):
+    """One outline of a free-form mask at one moment: the whole vertex table, never a scalar.
+
+    A morph is a vector, and giving every vertex coordinate its own property name would mean 256
+    curves for a 64-vertex outline — a budget the mask tracker already spends on boxes. So one
+    outline carries the table as drawn, and `animation.vertices_at` walks it component by component
+    through the very same `_interpolate` every scalar curve answers with; the easing a person picks
+    in the curve editor is the easing a morph gets.
+
+    Topology is fixed by construction: every outline on a mask has the vertex count that mask was
+    drawn with, so an outline key is a morph, not a redraw. Adding a node to a shape that is already
+    animated is a different decision, and it is refused by name rather than silently renumbered.
+    """
+
+    at_ticks: Ticks
+    vertices: PathVertices
+    interpolation: Literal["linear", "hold", "ease", "bezier"] = "linear"
+    bezier: Bezier | None = None
+
+    @model_validator(mode="after")
+    def controls_match_interpolation(self):
+        if self.bezier is not None and self.interpolation != "bezier":
+            raise ValueError("bezier controls require bezier interpolation")
+        return self
+
+
 # The text faces this build can draw with. Each entry is (Windows font file, the CSS family the
 # browser needs, the label the interface shows); `capabilities.text_fonts` publishes the list after
 # dropping any file that is not on disk, so neither the picker nor an Agent can name a face this
@@ -818,6 +856,9 @@ class Clip(Contract):
     speed_curve: SpeedCurve | None = None
     stabilization: Stabilization | None = None
     keyframes: Annotated[list[Keyframe], Field(max_length=2000)] = Field(default_factory=list)
+    mask_shape_keys: Annotated[list[MaskShapeKeyframe], Field(max_length=MASK_SHAPE_KEY_LIMIT)] = (
+        Field(default_factory=list)
+    )
     animation_offset_ticks: Ticks = 0
     transition_in: Transition | None = None
     group_id: Identifier | None = None
@@ -838,12 +879,40 @@ class Clip(Contract):
             raise ValueError("speed curve exceeds the clip duration")
         return self
 
+    def mask_shape_problem(self) -> str | None:
+        """Why this clip's outline keyframes cannot be honoured, or None when they can.
+
+        One judgment in one place: the timeline validator asks it after every mutation, the reducer
+        asks it before it writes another outline onto a clip that is already full, and the export
+        and the preview both draw the table this function signed off on.
+        """
+        if not self.mask_shape_keys:
+            return None
+        if self.mask is None or self.mask.shape != "path":
+            return "a mask outline animates only a free-form (path) mask"
+        drawn = len(self.mask.vertices or [])
+        seen = set()
+        for key in self.mask_shape_keys:
+            if len(key.vertices) != drawn:
+                return (
+                    f"an outline of {len(key.vertices)} vertices cannot morph into this "
+                    f"{drawn}-vertex mask: change the node count on the static shape first, or "
+                    "delete this mask's outline keyframes"
+                )
+            if key.at_ticks in seen:
+                return "one mask outline per time"
+            seen.add(key.at_ticks)
+        return None
+
     def mask_animation_problem(self) -> str | None:
         """Why this clip's mask keyframes cannot be honoured, or None when they can.
 
         The reducer edits a clip in place, so this is checked once by the timeline validator after
         every mutation rather than by a model validator that an in-place write would bypass.
         """
+        shape = self.mask_shape_problem()
+        if shape:
+            return shape
         if not any(key.property in MASK_FIELDS for key in self.keyframes):
             return None
         if self.mask is None:
@@ -1456,6 +1525,26 @@ class ClipMaskTrack(Contract):
         return self
 
 
+class MaskShapeSet(Contract):
+    """Record one outline of a free-form mask at one clip-local time.
+
+    The time is clip-local like every other keyframe command and the reducer folds the clip's
+    animation offset in, so trimming the head does not slide the morph. Writing over an outline that
+    already sits at that time replaces it — the same semantics `keyframe.set` has, because a second
+    command that almost replaces would give one intent two spellings.
+    """
+
+    op: Literal["mask.shape.set"]
+    clip_id: Identifier
+    keyframe: MaskShapeKeyframe
+
+
+class MaskShapeRemove(Contract):
+    op: Literal["mask.shape.remove"]
+    clip_id: Identifier
+    at_ticks: Ticks
+
+
 class ClipRippleRemove(Contract):
     op: Literal["clip.ripple_remove"]
     clip_id: Identifier
@@ -1534,7 +1623,9 @@ Command = Annotated[
     | KeyframeMove
     | KeyframesMove
     | KeyframesRemove
-    | KeyframesReplace,
+    | KeyframesReplace
+    | MaskShapeSet
+    | MaskShapeRemove,
     Field(discriminator="op"),
 ]
 
@@ -2320,6 +2411,8 @@ def capabilities(
             "keyframes.move",
             "keyframes.remove",
             "keyframes.replace",
+            "mask.shape.set",
+            "mask.shape.remove",
         ],
         "features": {
             "atomic_batch": True,
@@ -2351,6 +2444,10 @@ def capabilities(
             "shape_masks": True,
             "path_masks": True,
             "mask_animation": True,
+            # 1.118: a free-form outline can morph. The exporter executes it as frame-aligned
+            # constant windows (`animation.mask_shape_schedule`) and the preview ships that same
+            # window list, so this says "the shape steps on both ends", not "the shape is smooth".
+            "path_shape_keys": True,
             "mask_tracking": media_ready,
             "silence_detection": media_ready,
             "loudness_metering": media_ready,
@@ -2443,6 +2540,10 @@ def capabilities(
             "sharpen_radius_fraction": BLUR_LIMIT,
             "sharpen_radius_default": SHARPEN_RADIUS_DEFAULT,
             "blur_schedule_segments": SPATIAL_SCHEDULE_MAX,
+            # A morphing outline is bounded by the same kind of number: how many outlines one mask
+            # carries, and how many plates the export and the preview each execute.
+            "mask_shape_keys": MASK_SHAPE_KEY_LIMIT,
+            "mask_shape_schedule_segments": MASK_SHAPE_SCHEDULE_MAX,
             "denoise_db": DENOISE_LIMIT,
             "auto_grade_samples_max": AUTO_GRADE_SAMPLES_MAX,
             "auto_grade_percentile_max": AUTO_PERCENTILE_MAX,

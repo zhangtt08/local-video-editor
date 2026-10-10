@@ -1,4 +1,4 @@
-import type { Keyframe } from "../engine";
+import type { Keyframe, MaskShapeKeyframe } from "../engine";
 import { useEffect, useId, useRef, useState } from "react";
 
 import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionChoices, type AnimatedEffect, type Clip, type LinkStatus, type SampledValues, type ShapeMask, type TransitionKind, BLEND_MODES} from "../engine";
@@ -6,8 +6,8 @@ import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionCh
 import { Icon, Modal } from "../ui";
 import { GradeFields } from "./GradeFields";
 import { SpeedFields } from "./SpeedFields";
-import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeAdoptHint, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, readTrackingDefaults, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
-import { frameTicks, TIMEBASE, align, humanDuration, seconds, ticks } from "../time";
+import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeAdoptHint, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, INTERPOLATIONS, readTrackingDefaults, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
+import { frameTicks, TIMEBASE, align, humanDuration, seconds, timecode, ticks } from "../time";
 import {
   adoptFade,
   clearBatch,
@@ -42,6 +42,9 @@ import {
   setKeyframe,
   setGraphOpen,
   removeKeyframe,
+  recordMaskShape,
+  removeMaskShape,
+  clearMaskShapes,
   appInfo,
   copySelection,
   duplicateSelection,
@@ -462,7 +465,8 @@ function MaskFields({ clip }: { clip: Clip }) {
     <fieldset className="effects-fields" disabled={disabled}>
       <label className="mask-shape">形状 <select className="input" aria-label="遮罩形状" value={mask?.shape ?? "none"} onChange={(e) => { const shape = e.target.value; if (shape === "none") { setClipMask(clip.id, null); return; } const base = { ...(mask ?? DEFAULT_MASK), shape: shape as ShapeMask["shape"] }; setClipMask(clip.id, shape === "path" ? { ...base, vertices: base.vertices?.length ? base.vertices : DEFAULT_PATH.map((vertex) => ({ ...vertex, handle_out: [...vertex.handle_out] as [number, number], handle_in: [...vertex.handle_in] as [number, number] })) } : { ...base, vertices: null }); }}><option value="none">无</option><option value="ellipse">椭圆</option><option value="rectangle">矩形</option><option value="path">路径</option></select></label>
       {mask ? <>
-        {mask.shape === "path" ? <p className="hint">路径顶点 {mask.vertices?.length ?? 0} 个：画面中拖顶点改形状（拖动即整体搬动轮廓），拖小方块改曲线控制柄，双击在最近的那条边上加一个点，选中后方向键微调、Delete 删除，或点画面下方出现的小面板用「删除顶点 / 抹成角点 / 自动平滑」。向内羽化按画面短边折算成高斯半径。轮廓按画好的形状与大小裁切：要让它随时间移动就点「跟踪主体」，或在曲线编辑器里给「遮罩中心 X/Y」双击加关键帧；形状与大小本身还不能随时间变化。</p> : null}
+        {mask.shape === "path" ? <p className="hint">路径顶点 {mask.vertices?.length ?? 0} 个：画面中拖顶点改形状（拖动即整体搬动轮廓），拖小方块改曲线控制柄，双击在最近的那条边上加一个点，选中后方向键微调、Delete 删除，或点画面下方出现的小面板用「删除顶点 / 抹成角点 / 自动平滑」。向内羽化按画面短边折算成高斯半径。轮廓按画好的形状与大小裁切：要让它随时间移动就点「跟踪主体」，或在曲线编辑器里给「遮罩中心 X/Y」双击加关键帧。{app.caps?.features.path_shape_keys ? "轮廓本身也能随时间变形：先记一帧，之后在画面里拖顶点就是给那一刻改形状。" : "形状与大小本身还不能随时间变化。"}</p> : null}
+        {mask.shape === "path" && app.caps?.features.path_shape_keys ? <MaskShapeKeys clip={clip} mask={mask} disabled={disabled} at={at} /> : null}
         {(canAnimateMask(mask) ? maskRows(mask) : []).map(([field, label, min, max, property]) => {
           const frame = frames.find((k) => k.property === property && k.at_ticks === at + (clip.animation_offset_ticks ?? 0));
           const animated = (clip.keyframes ?? []).some((k) => k.property === property);
@@ -485,10 +489,41 @@ function MaskFields({ clip }: { clip: Clip }) {
             <input type="checkbox" checked={trackScale} disabled={mask.shape === "path"} aria-label="跟踪时让遮罩盒随远近缩放" onChange={(e) => setTrackScale(e.target.checked)} /></label> : null}
           {animatable && project ? <button className="btn tiny" disabled={disabled || Boolean(clip.stabilization)} title={clip.stabilization ? "这段画面带着一次稳定：重构图写的就是稳定占用的位移/缩放三条曲线，跑一遍会把稳定悄悄抹掉。先「取消稳定」，再重构图。" : "读取刚跟踪出来的遮罩路径，写入把主体保持在画面正中的平移与缩放曲线；竖屏裁切出货时主体不会跑出画面。放大上限 4 倍，跟不到时会说明"} onClick={() => void reframeClip(clip.id)}>主体跟随重构图</button> : null}
           <button className="btn tiny" onClick={() => setClipMask(clip.id, { ...DEFAULT_MASK, shape: mask.shape, vertices: mask.shape === "path" ? DEFAULT_PATH.map((vertex) => ({ ...vertex, handle_out: [...vertex.handle_out] as [number, number], handle_in: [...vertex.handle_in] as [number, number] })) : null })}>重置遮罩</button></div>
-        <p className="hint">遮罩随片段变换；矩形/椭圆拖中间移动、拖四角缩放，羽化占半径比例。中心与大小可按◇打关键帧，「跟踪主体」会一次写入整条路径。路径遮罩按画好的轮廓裁切，可以打「中心 X / 中心 Y」关键帧、也可以跟踪，但轮廓的形状与大小还不能随时间变化；反相遮罩不支持关键帧。声音保持原样。</p>
+        <p className="hint">遮罩随片段变换；矩形/椭圆拖中间移动、拖四角缩放，羽化占半径比例。中心与大小可按◇打关键帧，「跟踪主体」会一次写入整条路径。路径遮罩按画好的轮廓裁切，可以打「中心 X / 中心 Y」关键帧、也可以跟踪{app.caps?.features.path_shape_keys ? "，轮廓的形状还能按上面那几帧随时间变形（导出按整格阶梯执行，预览读同一份窗表）" : ""}；反相遮罩不支持盒关键帧。声音保持原样。</p>
       </> : null}
     </fieldset>
   </details>;
+}
+
+
+/** 1.118：路径遮罩的轮廓帧。界面只列引擎记下的那几帧，改的是其中一枚的形状或插值——「两帧之间怎么过渡」
+ * 由引擎算，导出与预览读同一份窗表，所以这里既不数时间也不插值。额度、名字都从 capabilities 出去。 */
+function MaskShapeKeys({ clip, mask, disabled, at }: { clip: Clip; mask: ShapeMask; disabled: boolean; at: number }) {
+  const app = useApp();
+  const limit = app.caps?.limits?.mask_shape_keys ?? 32;
+  const keys = clip.mask_shape_keys ?? [];
+  const offset = clip.animation_offset_ticks ?? 0;
+  const drawn = (mask.vertices ?? []).map((vertex) => ({ ...vertex, handle_out: [...vertex.handle_out] as [number, number], handle_in: [...vertex.handle_in] as [number, number] }));
+  const held = keys.some((key) => key.at_ticks - offset === at);
+  const full = keys.length >= limit && !held;
+  const rate = app.project?.settings.frame_rate ?? { numerator: 30, denominator: 1 };
+  return <div className="mask-shape-keys">
+    <div className="insp-actions">
+      <button className={`btn tiny${held ? " active" : ""}`} disabled={disabled || full} title={full ? `这条遮罩已经记满 ${limit} 帧轮廓：先删掉一帧，或把这段切成两个片段分别做形变` : "把画好的轮廓记在播放头这一刻（同一时刻再按一次是顶替，不是插入第二帧）。有了第一帧，之后在画面里拖顶点就是继续变形。"} onClick={() => recordMaskShape(clip.id, drawn, at)}>{held ? "更新这一帧" : "记轮廓帧"}</button>
+      {keys.length ? <button className="btn tiny subtle" disabled={disabled} title="一次删掉这条遮罩的全部轮廓帧（一批命令、一次撤销）：形状回到画出来的那一条" onClick={() => clearMaskShapes(clip.id, keys.map((key) => key.at_ticks - offset))}>清掉全部</button> : null}
+    </div>
+    {keys.length ? <>
+      <p className="hint">{`轮廓帧 ${keys.length} / ${limit}：导出与预览都按引擎那份一格一步的窗执行，界面不自己插值。要改某一帧，把播放头移到那一帧，再在画面里拖顶点。`}</p>
+      <ul className="mask-shape-list">{keys.map((key) => {
+        const local = key.at_ticks - offset;
+        return <li key={key.at_ticks}>
+          <button type="button" className="btn tiny mono" title="把播放头移到这一帧" onClick={() => { playhead.pause(); playhead.set(clip.position_ticks + local); }}>{timecode(local, rate)}</button>
+          <select className="input tiny" aria-label="这一帧轮廓的插值" value={key.interpolation} disabled={disabled} onChange={(e) => recordMaskShape(clip.id, key.vertices, local, e.target.value as MaskShapeKeyframe["interpolation"])}>{Object.entries(INTERPOLATIONS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+          <button type="button" className="btn tiny subtle" disabled={disabled} title="删掉这一帧的形状；删到一枚不剩，遮罩就用画出来的那条轮廓" onClick={() => removeMaskShape(clip.id, local)}>删除</button>
+        </li>;
+      })}</ul>
+    </> : <p className="hint">还没有轮廓帧：按上面那颗按钮起第一帧。之后播放头停在哪一刻，画面里拖顶点就改哪一刻的形状。</p>}
+  </div>;
 }
 
 
@@ -797,6 +832,8 @@ const OPS: Record<string, string> = {
   "clip.effects": "片段属性",
   "clip.mask": "调整遮罩",
   "clip.mask_track": "跟踪遮罩主体",
+  "mask.shape.set": "记录遮罩轮廓",
+  "mask.shape.remove": "删除遮罩轮廓",
   "clip.speed": "片段变速",
   "clip.color": "画面色彩",
   "clip.text": "文字内容",

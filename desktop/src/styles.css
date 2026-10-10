@@ -905,11 +905,29 @@ table.table tr.current td { background: var(--accent-soft); }
 @property --mask-h { syntax: "<number>"; inherits: false; initial-value: 1; }
 @property --mask-lw { syntax: "<number>"; inherits: false; initial-value: 1; }
 @property --mask-lh { syntax: "<number>"; inherits: false; initial-value: 1; }
+/* 1.118: a morphing outline is one engine-issued plate per window. `--shape-*` are that window's own
+   numbers — the plate's box, and how far its outline sits from the box the shape was drawn in — so
+   the box curves still move it while the shape itself steps exactly where the exporter steps. */
+@property --shape-w { syntax: "<number>"; inherits: false; initial-value: 1; }
+@property --shape-h { syntax: "<number>"; inherits: false; initial-value: 1; }
+@property --shape-ox { syntax: "<number>"; inherits: false; initial-value: 0; }
+@property --shape-oy { syntax: "<number>"; inherits: false; initial-value: 0; }
 .masked-picture.animated-mask {
   mask-repeat: no-repeat;
   mask-size: calc(var(--mask-w) * var(--mask-lw) * 1px) calc(var(--mask-h) * var(--mask-lh) * 1px);
   mask-position: calc((var(--mask-x) - var(--mask-w) / 2) * var(--mask-lw) * 1px) calc((var(--mask-y) - var(--mask-h) / 2) * var(--mask-lh) * 1px);
 }
+.masked-picture.morph-mask {
+  mask-repeat: no-repeat;
+  mask-size: calc(var(--shape-w) * var(--mask-lw) * 1px) calc(var(--shape-h) * var(--mask-lh) * 1px);
+  mask-position: calc((var(--mask-x) + var(--shape-ox) - var(--shape-w) / 2) * var(--mask-lw) * 1px) calc((var(--mask-y) + var(--shape-oy) - var(--shape-h) / 2) * var(--mask-lh) * 1px);
+}
+
+/* 轮廓帧那一节：每行一枚形状帧，时间、插值、删除。数字都来自工程状态与 capabilities。 */
+.mask-shape-keys { display: grid; gap: 6px; margin-top: 6px; }
+.mask-shape-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; max-height: 168px; overflow: auto; }
+.mask-shape-list li { display: flex; align-items: center; gap: 6px; }
+.mask-shape-list select { width: 96px; }
 
 /* 标尺上的标记：一条竖线 + 名字，点击即跳转，× 删除。颜色只是给眼睛用的分组。 */
 .ruler-marker { position: absolute; top: 0; height: 100%; display: flex; align-items: flex-start; transform: translateX(-1px); }

@@ -14,13 +14,21 @@ import os
 import re
 from dataclasses import dataclass, field
 
-from .animation import expression, fade_active, sound_enabled, spatial_schedule
+from .animation import (
+    expression,
+    fade_active,
+    mask_shape_schedule,
+    outline_mask,
+    sound_enabled,
+    spatial_schedule,
+)
 from .compositing import blend_track
 from .contracts import (
     BLUR_RADIUS_LIMIT_PX,
     DENOISE_FLOOR_DB,
     GBLUR_STEPS,
     MASK_FIELDS,
+    MASK_SHAPE_SCHEDULE_MAX,
     TEXT_FONTS,
     TIMEBASE,
     EditorError,
@@ -542,6 +550,56 @@ class RenderPlan:
         }
 
 
+def path_patch(
+    plan: "RenderPlan",
+    shape,
+    anchor,
+    plane_w: int,
+    plane_h: int,
+    bar_x: float,
+    bar_y: float,
+    total: int,
+    fps: str,
+) -> dict:
+    """The one geometry a free-form mask's plate is cut and placed with.
+
+    A path mask's alpha cannot be an expression the way a box's is, so each outline becomes one
+    tight grayscale plate that `overlay` moves: the feather is baked into a padded patch (the ramp
+    has to survive past the shape's own bounds), and `anchor` — the mask's stored box centre — is
+    the point the `mask_x`/`mask_y` expressions offset from. A morph calls this once per window, so
+    the exporter has exactly one rule for where an outline lands, whatever that outline is.
+    """
+    left, top, right, bottom = path_bounds(shape)
+    box_w = max(2, int(round(plane_w * (right - left))))
+    box_h = max(2, int(round(plane_h * (bottom - top))))
+    # A feather spreads the ramp past the outline and the patch is only as big as the outline, so
+    # the ramp is baked into a padded plate instead of being cut off at the shape's own bounds.
+    sigma = feather_sigma(box_w, box_h, shape.feather)
+    pad = int(3 * sigma) + 2
+    patch_w, patch_h = box_w + 2 * pad, box_h + 2 * pad
+    # `feather_sigma` measures the short edge, so the inset is corrected by the short edge's own
+    # ratio — otherwise a wide patch would blur the ramp too far.
+    shrink = min(box_w, box_h) / min(patch_w, patch_h)
+    png = mask_png(
+        unit_path(
+            shape.model_copy(update={"feather": shape.feather * shrink}),
+            box_w / patch_w,
+            box_h / patch_h,
+        ),
+        patch_w,
+        patch_h,
+    )
+    name = "mask-" + hashlib.sha256(png).hexdigest()[:24] + ".png"
+    plan.binary_files[name] = png
+    return {
+        "source": plan.add_still(name, total, str(fps)),
+        "patch_w": patch_w,
+        "patch_h": patch_h,
+        "anchor_x": plane_w * ((left + right) / 2 - anchor.center_x) - patch_w / 2 + bar_x,
+        "anchor_y": plane_h * ((top + bottom) / 2 - anchor.center_y) - patch_h / 2 + bar_y,
+    }
+
+
 def _entries_for_track(project: Project, track) -> list[dict]:
     clips = sorted(
         (clip for clip in project.clips.values() if clip.track_id == track.id),
@@ -1046,30 +1104,14 @@ def compile_render_plan(
                     # The outline carries its own size and anchor; a path mask's box fields are the
                     # editor's handle, so the drawn geometry (not a stale box) decides where the cut
                     # lands, and a keyframed centre moves it from exactly there.
-                    left, top, right, bottom = path_bounds(path_mask)
-                    box_w = max(2, int(round(plane_w * (right - left))))
-                    box_h = max(2, int(round(plane_h * (bottom - top))))
-                    # A feather spreads the ramp past the outline and the patch is only as big as
-                    # the outline, so the ramp is baked into a padded plate instead of being cut
-                    # off at the shape's own bounding box.
-                    sigma = feather_sigma(box_w, box_h, path_mask.feather)
-                    pad = int(3 * sigma) + 2
-                    patch_w, patch_h = box_w + 2 * pad, box_h + 2 * pad
-                    # `feather_sigma` measures the short edge, so the inset is corrected by the
-                    # short edge's own ratio — otherwise a wide patch would blur the ramp too far.
-                    shrink = min(box_w, box_h) / min(patch_w, patch_h)
-                    png = mask_png(
-                        unit_path(
-                            path_mask.model_copy(update={"feather": path_mask.feather * shrink}),
-                            box_w / patch_w,
-                            box_h / patch_h,
-                        ),
-                        patch_w,
-                        patch_h,
+                    # 1.118: an animated outline is compiled into frame-aligned windows by the same
+                    # engine function the preview reads (`animation.mask_shape_schedule`), and one
+                    # plate is cut per window below. A mask that does not morph still gets exactly
+                    # one window, so the graph this exporter emitted before outlines could move is
+                    # emitted byte for byte.
+                    outlines = mask_shape_schedule(
+                        clip, settings.frame_ticks, MASK_SHAPE_SCHEDULE_MAX
                     )
-                    name = "mask-" + hashlib.sha256(png).hexdigest()[:24] + ".png"
-                    plan.binary_files[name] = png
-                    source = plan.add_still(name, total, str(fps))
                     keep = plan.tag("maskkeep")
                     alpha_plane = plan.tag("maskalpha")
                     frame_alpha = plan.tag("maskframe")
@@ -1087,33 +1129,53 @@ def compile_render_plan(
                         f":s={plane_w}x{plane_h}:r={fps}",
                         total,
                     )
-                    anchor_x = (
-                        plane_w * ((left + right) / 2 - path_mask.center_x) - patch_w / 2 + bar_x
-                    )
-                    anchor_y = (
-                        plane_h * ((top + bottom) / 2 - path_mask.center_y) - patch_h / 2 + bar_y
-                    )
                     centre_x = expression(clip, "mask_x", "t")
                     centre_y = expression(clip, "mask_y", "t")
                     plan.filters.append(f"{head},settb=AVTB,split=2{keep}{alpha_plane}")
                     plan.filters.append(f"{alpha_plane}alphaextract,format=gray{frame_alpha}")
-                    # The patch is baked once and then *moved* over the plate: `overlay` accepts
+                    # The patch is baked and then *moved* over the plate: `overlay` accepts
                     # frame-time x/y without changing its output size, while a per-frame `scale`
                     # would hand the next filter a frame whose size keeps changing (the crash 1.48
-                    # fixed). So a free-form mask animates its position; shape and size stay drawn.
+                    # fixed). So the box keeps sliding on its curves while a morph swaps the plate
+                    # underneath it — one window at a time, on the same clock those curves read.
                     plan.filters.append(f"[{canvas}:v]format=gray,settb=AVTB{plate_pad}{plate}")
-                    # A wide feather is baked on a proportionally smaller grid inside `mask_png`,
-                    # so the patch is rescaled to its plane size before it is moved.
+                    stages = outlines or [
+                        {"from_ticks": 0, "to_ticks": clip.duration_ticks, "value": None}
+                    ]
+                    last = len(stages) - 1
+                    running = plate
+                    for index, window in enumerate(stages):
+                        drawn = (
+                            path_mask
+                            if window["value"] is None
+                            else outline_mask(clip, window["value"])
+                        )
+                        patch = path_patch(
+                            plan, drawn, path_mask, plane_w, plane_h, bar_x, bar_y, total, fps
+                        )
+                        stage_cut = cut if len(stages) == 1 else plan.tag("maskcut")
+                        stage_flat = flat if index == last else plan.tag("maskflat")
+                        # A wide feather is baked on a smaller grid inside `mask_png`, so the patch
+                        # is rescaled to its plane size before it is moved.
+                        plan.filters.append(
+                            f"[{patch['source']}:v]format=gray,settb=AVTB,"
+                            f"scale={patch['patch_w']}:{patch['patch_h']}:flags=bicubic{stage_cut}"
+                        )
+                        windowed = ""
+                        if outlines:
+                            windowed = (
+                                ":enable='between(t,"
+                                f"{sec(window['from_ticks'])},{sec(window['to_ticks'])})'"
+                            )
+                        plan.filters.append(
+                            f"{running}{stage_cut}overlay="
+                            f"x='{plane_w}*({centre_x}){patch['anchor_x']:+.6f}'"
+                            f":y='{plane_h}*({centre_y}){patch['anchor_y']:+.6f}'"
+                            f":eval=frame{windowed}{stage_flat}"
+                        )
+                        running = stage_flat
                     plan.filters.append(
-                        f"[{source}:v]format=gray,settb=AVTB,"
-                        f"scale={patch_w}:{patch_h}:flags=bicubic{cut}"
-                    )
-                    plan.filters.append(
-                        f"{plate}{cut}overlay=x='{plane_w}*({centre_x}){anchor_x:+.6f}'"
-                        f":y='{plane_h}*({centre_y}){anchor_y:+.6f}':eval=frame{flat}"
-                    )
-                    plan.filters.append(
-                        f"{flat}{frame_alpha}scale2ref=flags=bicubic{sized}{kept_alpha}"
+                        f"{running}{frame_alpha}scale2ref=flags=bicubic{sized}{kept_alpha}"
                     )
                     plan.filters.append(f"{kept_alpha}{sized}blend=all_mode=multiply{combined}")
                     plan.filters.append(f"{keep}{combined}alphamerge{merged}")

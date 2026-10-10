@@ -68,6 +68,9 @@ export const maskAnimFields = (mask?: ShapeMask | null) =>
       : MASK_ANIM_FIELDS;
 
 /** Label lookup for the keyframe list, which mixes effect and mask properties. */
+/** 插值的名字也只从一张表出去：曲线编辑器的两个下拉、轮廓帧那一行、任何将来要说「这一帧怎么过渡」的地方。 */
+export const INTERPOLATIONS = { linear: "线性", ease: "缓入缓出", hold: "保持", bezier: "贝塞尔" } as const;
+
 export const FIELD_LABEL: Record<string, string> = Object.fromEntries([
   ...[...EFFECT_FIELDS, ...MASK_ANIM_FIELDS].map((field) => [field.property, field.label]),
   ["blur", "柔焦"],

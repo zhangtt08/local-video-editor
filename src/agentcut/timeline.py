@@ -43,6 +43,13 @@ CLIP_KEYFRAME_LIMIT = next(
     for rule in Clip.model_fields["keyframes"].metadata
     if getattr(rule, "max_length", None)
 )
+# …and the same for outlines: the budget the record button counts down is the one the field holds,
+# so the interface cannot offer a 33rd outline the contract would refuse on load.
+CLIP_MASK_SHAPE_LIMIT = next(
+    int(rule.max_length)
+    for rule in Clip.model_fields["mask_shape_keys"].metadata
+    if getattr(rule, "max_length", None)
+)
 MASK_TRACK_CURVES = ("mask_x", "mask_y")
 MASK_TRACK_SIZED_CURVES = (*MASK_TRACK_CURVES, "mask_width", "mask_height")
 
@@ -1025,6 +1032,10 @@ def apply_commands(
                     if command.op == "keyframe.set":
                         clip.keyframes.append(point.model_copy(update={"at_ticks": at}))
                     clip.keyframes.sort(key=lambda k: (k.property, k.at_ticks))
+                elif command.op == "mask.shape.set":
+                    _set_mask_shape(clip, command.keyframe)
+                elif command.op == "mask.shape.remove":
+                    _remove_mask_shape(clip, command.at_ticks)
                 elif command.op == "clip.remove":
                     del candidate.clips[clip.id]
                 elif command.op == "clip.move":
@@ -1422,6 +1433,63 @@ def _apply_mask_track(clip, points, merge: bool = True) -> None:
     clip.mask = mask.model_copy(update=update)
 
 
+def _set_mask_shape(clip, keyframe) -> None:
+    """Write one outline of a free-form mask at a clip-local time, replacing the one already there.
+
+    The shape rules are `Clip.mask_shape_problem`'s alone — this asks them of the candidate state
+    before writing, so a rejection names the moment that would not have rendered rather than leaving
+    the whole batch to the timeline validator. Only two things are decided here that the validator
+    cannot see: the time is inside this clip, and an outline may not be *added* past the budget.
+    """
+    if keyframe.at_ticks > clip.duration_ticks:
+        raise EditorError(
+            "INVALID_KEYFRAME",
+            "a mask outline lies outside the clip",
+            clip_id=clip.id,
+            at_ticks=keyframe.at_ticks,
+            duration_ticks=clip.duration_ticks,
+        )
+    at = clip.animation_offset_ticks + keyframe.at_ticks
+    held = [key for key in clip.mask_shape_keys if key.at_ticks != at]
+    if len(held) >= CLIP_MASK_SHAPE_LIMIT:
+        raise EditorError(
+            "MASK_SHAPE_LIMIT",
+            f"this mask already carries {CLIP_MASK_SHAPE_LIMIT} outlines: delete one, or split the "
+            "clip and animate each part",
+            422,
+            clip_id=clip.id,
+            outlines=len(held),
+            limit=CLIP_MASK_SHAPE_LIMIT,
+            at_ticks=keyframe.at_ticks,
+        )
+    clip.mask_shape_keys = sorted(
+        held + [keyframe.model_copy(update={"at_ticks": at})], key=lambda key: key.at_ticks
+    )
+    problem = clip.mask_shape_problem()
+    if problem:
+        raise EditorError("INVALID_MASK", problem, clip_id=clip.id, vertices=len(keyframe.vertices))
+
+
+def _remove_mask_shape(clip, at_ticks: int) -> None:
+    """Drop the outline at a clip-local time, or say there is none.
+
+    Removing the last outline is not a rejection: what is left is the mask as drawn, which is
+    exactly the picture the exporter then cuts, and refusing the click would strand a person who
+    wants the static shape back.
+    """
+    at = clip.animation_offset_ticks + at_ticks
+    kept = [key for key in clip.mask_shape_keys if key.at_ticks != at]
+    if len(kept) == len(clip.mask_shape_keys):
+        raise EditorError(
+            "KEYFRAME_NOT_FOUND",
+            "no mask outline at that time",
+            404,
+            clip_id=clip.id,
+            at_ticks=at_ticks,
+        )
+    clip.mask_shape_keys = kept
+
+
 def _remove_keyframes(clip, sources):
     if len(set(sources)) != len(sources):
         raise EditorError("INVALID_SELECTION", "keyframe selection must be unique")
@@ -1657,6 +1725,11 @@ def _trim_clip(project: Project, clip: Clip, position: int, source: int, duratio
         # Extending the head freezes the first animation sample until its old start.
         clip.keyframes = [
             k.model_copy(update={"at_ticks": k.at_ticks - offset}) for k in clip.keyframes
+        ]
+        # An outline is a sample too: the same freeze, or a retracted head would slide the morph.
+        clip.mask_shape_keys = [
+            key.model_copy(update={"at_ticks": key.at_ticks - offset})
+            for key in clip.mask_shape_keys
         ]
         offset = 0
     updates: dict = {

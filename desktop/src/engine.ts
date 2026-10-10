@@ -174,6 +174,13 @@ export const DEFAULT_PATH: MaskVertex[] = [
 ];
 export type Bezier = { x1: number; y1: number; x2: number; y2: number };
 export type Keyframe = { property: Property; at_ticks: number; value: number; interpolation: "hold" | "linear" | "ease" | "bezier"; bezier?: Bezier | null };
+/** 1.118: one outline of a free-form mask at one moment. A morph is a vector, so it does not ride
+ *  the scalar `Keyframe` table — the engine interpolates the table component by component and both
+ *  ends execute the frame-aligned windows it compiles from it. */
+export type MaskShapeKeyframe = { at_ticks: number; vertices: MaskVertex[]; interpolation: "hold" | "linear" | "ease" | "bezier"; bezier?: Bezier | null };
+/** One window the engine issued for a morph: the outline it holds, the plate image the browser
+ *  masks with, and the numbers that put that plate where the exporter's overlay lands it. */
+export type MaskShapeWindow = { from_ticks: number; to_ticks: number; image: string; vertices: MaskVertex[]; width: number; height: number; offset_x: number; offset_y: number };
 export type Curve = { offset: number; value: number; easing: string }[];
 export type AnimationGraph = { property: Property; duration_ticks: number; limits: [number, number]; path: string; curve: Curve; keys: Keyframe[] };
 /** 转场种类由引擎的 capabilities.transition_kinds 下发；这里是同一份清单的类型。 */
@@ -199,7 +206,7 @@ export type TransitionEnvelope = {
   wipe: WipeChannel | null;
 };
 
-export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; grade?: GradeTables | null; sharpen?: { id: string; amount: number; bbox: [number, number] } | null; speed?: RampPiece[] | null; mask_image?: string | null; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; spatial?: Record<SpatialProperty, Curve> | null; edge_filter?: string | null; curves: Record<AnimatedEffect, Curve>; transition: TransitionEnvelope; fade?: Record<"opacity" | "gain", Curve> | null }> };
+export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; grade?: GradeTables | null; sharpen?: { id: string; amount: number; bbox: [number, number] } | null; speed?: RampPiece[] | null; mask_image?: string | null; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; mask_shape?: MaskShapeWindow[] | null; spatial?: Record<SpatialProperty, Curve> | null; edge_filter?: string | null; curves: Record<AnimatedEffect, Curve>; transition: TransitionEnvelope; fade?: Record<"opacity" | "gain", Curve> | null }> };
 
 /** 引擎给这条片段记下的那一次稳定：有了它，再按一次是换一档强度而不是叠第二遍。 */
 export type Stabilization = {
@@ -228,6 +235,7 @@ export type Clip = {
   speed_curve?: SpeedPoint[] | null;
   stabilization?: Stabilization | null;
   keyframes?: Keyframe[];
+  mask_shape_keys?: MaskShapeKeyframe[];
   animation_offset_ticks?: number;
   transition_in?: Transition | null;
   group_id?: string | null;
@@ -488,7 +496,7 @@ export type Capabilities = {
   max_commands_per_batch: number;
   commands: string[];
   features: Record<string, boolean>;
-  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; denoise_db?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number; track_max_gap_frames?: number; track_gap_default?: number; track_min_frames?: number; track_max_frames?: number };
+  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; denoise_db?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number; track_max_gap_frames?: number; track_gap_default?: number; track_min_frames?: number; track_max_frames?: number; mask_shape_keys?: number; mask_shape_schedule_segments?: number };
   render_presets: Preset[];
 };
 
@@ -533,6 +541,7 @@ export class EngineError extends Error {
       CLIP_OVERLAP: "同轨重叠需要转场。先将镜头首尾衔接，再在后一个镜头的属性面板添加转场。",
       INVALID_TRANSITION: "选择首尾衔接的两个镜头，转场需短于每个镜头。",
       INVALID_MASK: "遮罩只能用于画面轨片段，请检查轨道和遮罩范围。整批操作没有被保存。",
+      MASK_SHAPE_LIMIT: "这条遮罩的轮廓帧已经记满了。可以先删掉几帧、把这段切成两个片段分别做形变，或把不需要的帧改成同一形状。",
       INVALID_LUT: "这个 .cube 文件引擎读不了：表头、行数或关键字有问题，回复里的行号与网格大小指出是哪一行。",
       LUT3D_NO_PLAN: "3D 查找表要写成一个文件才能交给导出，编译进渲染计划时才有地方放它；这里没有作业目录，所以编不出这一级。",
       GRADE_APPLY_NONE: "这条片段上没有任何调色节点，没有可套到整轨的东西：先给它加曲线、白平衡或一张 .cube 表再说。",

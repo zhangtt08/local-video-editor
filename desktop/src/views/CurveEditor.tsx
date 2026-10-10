@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type PointerEvent } from "react";
 
 import { type AnimationGraph, type Clip, type Keyframe, type Property, type Bezier } from "../engine";
-import { EFFECT_FIELDS, FIELD_LABEL, curveBase, maskAnimFields, spatialAnimFields } from "../effects";
+import { EFFECT_FIELDS, FIELD_LABEL, INTERPOLATIONS, curveBase, maskAnimFields, spatialAnimFields } from "../effects";
 import { TIMEBASE, timecode } from "../time";
 import { keyframeTick } from "../keyframeSnap";
 import { applyShift, bandEdges, bandEntry, groupShift, quantizeToBand } from "../curveDrag";
@@ -9,7 +9,6 @@ import { copyKeys, pasteKeys, rememberCopy, copiedKeys, type CopiedKeys } from "
 import { appInfo, clearBatch, commitBatch, editAtRevision, playhead, prefs, quantum, redoStep, selectClips, setGraphOpen, setMode, toast, undo, useApp, useEdit, usePlay } from "../store";
 
 const LEFT = 58, TOP = 12, WIDTH = 924, HEIGHT = 166;
-const INTERPOLATIONS = { linear: "线性", ease: "缓入缓出", hold: "保持", bezier: "贝塞尔" } as const;
 
 const DEFAULT_BEZIER: Bezier = { x1: 1 / 3, y1: 0, x2: 2 / 3, y2: 1 };
 const interpolationPoint = (point: Keyframe, interpolation: Keyframe["interpolation"]): Keyframe => ({ ...point, interpolation, bezier: interpolation === "bezier" ? point.bezier ?? DEFAULT_BEZIER : null });

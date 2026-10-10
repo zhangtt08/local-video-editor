@@ -34,6 +34,8 @@ import type {
   SpeedPoint,
   Property,
   Marker,
+  MaskShapeKeyframe,
+  MaskVertex,
   RenderFit,
   RenderRange,
   RenderBatchItem,
@@ -1862,6 +1864,42 @@ export function commitMaskEdit(clipId: string, mask: ShapeMask, atTicks: number,
   }
   commands.push({ op: "clip.mask", clip_id: clipId, mask });
   editAtRevision(commands, projectId, revision, commands.length > 1 ? "调整遮罩关键帧" : "调整遮罩");
+}
+
+/**
+ * 把这一帧的轮廓记下来：已经形变起来的路径遮罩，拖一个顶点就是打一枚关键帧（AE 的秒表、剪映的
+ * 「添加关键帧」都是这个语义——动画留在轨迹上，改的是这一帧的形状）。形状帧只带顶点表，中心仍由
+ * `mask_x`/`mask_y` 那两条曲线走，所以一次形变不会把已经拖好的运动一起清掉。
+ *
+ * 同一时刻再记一次是**顶替**而不是插入第二枚：`mask.shape.set` 的语义与 `keyframe.set` 相同，界面
+ * 因此不必先删后加，也不会撞出一句「这里已经有帧了」。
+ */
+export function recordMaskShape(clipId: string, vertices: MaskVertex[], atTicks: number, interpolation?: MaskShapeKeyframe["interpolation"], projectId = state.project?.id, revision = state.project?.revision) {
+  if (projectId === undefined || revision === undefined) return;
+  const held = (state.project?.clips[clipId]?.mask_shape_keys ?? []).find((key) => key.at_ticks === atTicks);
+  editAtRevision([{
+    op: "mask.shape.set",
+    clip_id: clipId,
+    keyframe: {
+      at_ticks: atTicks,
+      vertices,
+      interpolation: interpolation ?? held?.interpolation ?? "linear",
+      bezier: held?.bezier ?? null,
+    },
+  }], projectId, revision, "记录遮罩轮廓");
+}
+
+/** 删掉这一时刻的轮廓；删到一枚不剩，遮罩就回到画出来的那个形状。 */
+export function removeMaskShape(clipId: string, atTicks: number, projectId = state.project?.id, revision = state.project?.revision) {
+  if (projectId === undefined || revision === undefined) return;
+  editAtRevision([{ op: "mask.shape.remove", clip_id: clipId, at_ticks: atTicks }], projectId, revision, "删除遮罩轮廓");
+}
+
+/** 一次清掉这条遮罩的全部轮廓帧：一批命令、一个 revision、一次撤销。
+ * 逐条发 would 撞上自己的 revision（每一发都读当前版本，第二发就 409）。 */
+export function clearMaskShapes(clipId: string, locals: number[], projectId = state.project?.id, revision = state.project?.revision) {
+  if (projectId === undefined || revision === undefined || !locals.length) return;
+  editAtRevision(locals.map((at) => ({ op: "mask.shape.remove", clip_id: clipId, at_ticks: at })), projectId, revision, "清掉遮罩轮廓帧");
 }
 
 export function setClipSpeedCurve(clipId: string, points: SpeedPoint[] | null, projectId = state.project?.id, revision = state.project?.revision) {

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from "react";
-import type { Clip, Curve, MaskProperty, MaskVertex, ShapeMask } from "../engine";
+import type { Clip, Curve, MaskProperty, MaskShapeWindow, MaskVertex, ShapeMask } from "../engine";
 import { TIMEBASE } from "../time";
-import { appInfo, commitMaskEdit, moveMaskCentre, playhead, setClipMask, setMaskEditing, useApp, usePlay } from "../store";
+import { appInfo, commitMaskEdit, moveMaskCentre, playhead, recordMaskShape, setClipMask, setMaskEditing, useApp, usePlay } from "../store";
 import { asCorner, asSmooth, nearestEdge, withoutVertex, withVertex } from "../maskOutline";
+import { morphArmed, outlineAt, shapeVariables, shapeWindowAt, shapeWindowIndex } from "../maskShape";
 
 const CORNERS = [[-1,-1,"左上"],[1,-1,"右上"],[-1,1,"左下"],[1,1,"右下"]] as const;
 const MASK_VARIABLE: Record<MaskProperty, string> = { mask_x: "x", mask_y: "y", mask_width: "w", mask_height: "h" };
@@ -42,7 +43,7 @@ function outline(vertices: MaskVertex[]) {
 }
 
 /** Geometry-only handles; the server compiles the actual alpha image during a gesture. */
-export function MaskPicture({ clip, image, children, editable = true, animation }: { clip: Clip; image?: string | null; children: ReactNode; editable?: boolean; animation?: { unit: string; curves: Record<MaskProperty, Curve> } | null }) {
+export function MaskPicture({ clip, image, children, editable = true, animation, shape }: { clip: Clip; image?: string | null; children: ReactNode; editable?: boolean; animation?: { unit: string | null; curves: Record<MaskProperty, Curve> } | null; shape?: MaskShapeWindow[] | null }) {
   const app = useApp(); const play = usePlay();
   const [draft, setDraft] = useState<ShapeMask | null>(null);
   const [compiled, setCompiled] = useState<{ mask: ShapeMask; image: string } | null>(null);
@@ -54,9 +55,16 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
   const picture = useRef<HTMLDivElement | null>(null);
   const maskAnimations = useRef<Animation[]>([]);
   const drag = useRef<Gesture | null>(null);
-  const mask = draft ?? clip.mask;
+  // 1.118: 播放头落在哪一窗，就画哪一窗的轮廓。引擎把形变编译成一格一步的窗，导出切的板与界面画的
+  // 图来自同一份表；界面自己不插值，所以绝不会出现导出里没有的那个形状。
+  const local = Math.max(0, Math.min(clip.duration_ticks, play.ticks - clip.position_ticks));
+  const shapeWindow = draft ? null : shape ? shapeWindowAt(shape, local) : null;
+  const mask = draft ?? (clip.mask && shapeWindow ? { ...clip.mask, vertices: shapeWindow.vertices } : clip.mask);
   const animated = animation && !draft ? animation : null;
-  const vertices = mask?.vertices ?? [];
+  // A morph places its plate by the window's own box, so the layer needs the size/position custom
+  // properties even when the mask carries no centre curves at all.
+  const placed = Boolean(animated || shapeWindow);
+  const vertices = outlineAt(shapeWindow, mask);
   const pendingBatch = app.mode === "batch" && app.batch.length > 0;
   const candidateReady = !app.dryRunError && app.candidate?.id === app.project?.id && app.candidate?.revision === (app.project?.revision ?? 0) + 1;
   const disabled = Boolean(app.busy || app.dryRunBusy || app.project?.tracks.find((t) => t.id === clip.track_id)?.locked || (pendingBatch && !candidateReady));
@@ -69,7 +77,7 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
     const element = picture.current;
     maskAnimations.current.forEach((effect) => effect.cancel());
     maskAnimations.current = [];
-    if (!element || !animated) return;
+    if (!element || !placed) return;
     const measure = () => {
       const box = element.getBoundingClientRect();
       element.style.setProperty("--mask-lw", String(Math.max(1, box.width)));
@@ -78,6 +86,7 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
+    if (!animated) return () => { observer.disconnect(); };
     const duration = clip.duration_ticks / TIMEBASE * 1000;
     maskAnimations.current = (Object.keys(animated.curves) as MaskProperty[]).map((property) => {
       const effect = element.animate(animated.curves[property].map((point) => ({
@@ -87,7 +96,7 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
       return effect;
     });
     return () => { observer.disconnect(); maskAnimations.current.forEach((running) => running.cancel()); maskAnimations.current = []; };
-  }, [animated, clip.duration_ticks]);
+  }, [animated, placed, clip.duration_ticks]);
   useEffect(() => {
     const at = Math.max(0, (play.ticks - clip.position_ticks) / TIMEBASE * 1000);
     for (const effect of maskAnimations.current) effect.currentTime = at;
@@ -201,9 +210,15 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
     const gesture = drag.current;
     return Boolean(gesture && gesture.pointerId === event.pointerId && (!gesture.captured || gesture.element.hasPointerCapture(event.pointerId)));
   };
-  const write = (value: ShapeMask) => {
+  // 已经形变起来的遮罩，拖顶点、拖控制柄、方向键微调都是「记这一帧的形状」；改节点数（双击加点、删点、
+  // 角点、自动平滑）动的是画出来的那条轮廓，所以仍写遮罩本身——那里定的是一整段形变的拓扑。
+  const write = (value: ShapeMask, morphing = false) => {
     if (disabled || !app.project) return;
-    commitMaskEdit(clip.id, value, Math.max(0, Math.min(clip.duration_ticks, play.ticks - clip.position_ticks)), app.project.id, app.project.revision);
+    if (morphing && morphArmed(clip)) {
+      recordMaskShape(clip.id, value.vertices ?? [], local, undefined, app.project.id, app.project.revision);
+      return;
+    }
+    commitMaskEdit(clip.id, value, local, app.project.id, app.project.revision);
   };
   // The cap comes from the engine and the three vertex ops say why they are dead, so a click is never
   // swallowed: before this, deleting a point needed the keyboard and hitting the cap did nothing silent.
@@ -222,14 +237,18 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
     svg.current?.focus();
     const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
     const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
-    write({ ...mask, vertices: mask.vertices.map((entry, position) => position === index ? { ...entry, x: clamp(entry.x + dx, 0, 1), y: clamp(entry.y + dy, 0, 1) } : entry) });
+    write({ ...mask, vertices: mask.vertices.map((entry, position) => position === index ? { ...entry, x: clamp(entry.x + dx, 0, 1), y: clamp(entry.y + dy, 0, 1) } : entry) }, true);
   };
   const pictureImage = draft && compiled ? compiled.image : image;
-  const pictureStyle: CSSProperties = animated
-    ? { maskImage: animated.unit, "--mask-x": mask?.center_x ?? .5, "--mask-y": mask?.center_y ?? .5, "--mask-w": mask?.width ?? 1, "--mask-h": mask?.height ?? 1 } as CSSProperties
-    : { maskImage: pictureImage ?? undefined, maskSize: "100% 100%", maskRepeat: "no-repeat" };
+  // 形变中的那一窗用自己的板框落位：中心曲线照样把它推来推去，因为导出的 overlay x 里加的是同一个
+  // offset。没有轮廓帧时，一切与 1.117 之前逐字相同。
+  const pictureStyle: CSSProperties = shapeWindow
+    ? { maskImage: shapeWindow.image, ...shapeVariables(shapeWindow), "--mask-x": mask?.center_x ?? .5, "--mask-y": mask?.center_y ?? .5 } as CSSProperties
+    : animated
+      ? { maskImage: animated.unit, "--mask-x": mask?.center_x ?? .5, "--mask-y": mask?.center_y ?? .5, "--mask-w": mask?.width ?? 1, "--mask-h": mask?.height ?? 1 } as CSSProperties
+      : { maskImage: pictureImage ?? undefined, maskSize: "100% 100%", maskRepeat: "no-repeat" };
   return <>
-    <div ref={picture} className={`layer-transform masked-picture${animated ? " animated-mask" : ""}`} style={pictureStyle}>{children}</div>
+    <div ref={picture} className={`layer-transform masked-picture${shapeWindow ? " morph-mask" : animated ? " animated-mask" : ""}`} style={pictureStyle}>{children}</div>
     {visible && mask ? <svg ref={svg} className={`mask-guide${disabled ? " locked" : ""}`} viewBox="0 0 100 100" preserveAspectRatio="none" role="group" aria-label="画面遮罩编辑器" tabIndex={0}
       style={shift.tx || shift.ty || shift.sx !== 1 || shift.sy !== 1 ? { transform: `translate(${(shift.tx * 100).toFixed(4)}%, ${(shift.ty * 100).toFixed(4)}%) scale(${shift.sx.toFixed(6)}, ${shift.sy.toFixed(6)})` } : undefined}
       onDoubleClick={(event) => {
@@ -257,7 +276,7 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
         const step = e.shiftKey ? .1 : .01; svg.current?.focus();
         write({ ...mask, center_x: clamp(mask.center_x + (e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0),0,1), center_y: clamp(mask.center_y + (e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0),0,1) });
       }} onPointerMove={(e) => { if (owns(e)) setDraft(proposed(e)); }}
-      onPointerUp={(e) => { const gesture = drag.current; if (!gesture) return; const next = proposed(e); const moved = gesture.moved; cancel(); if (moved) { svg.current?.focus(); const at = Math.max(0, Math.min(clip.duration_ticks, play.ticks - clip.position_ticks)); if (gesture.outline && (clip.keyframes ?? []).some((key) => key.property === "mask_x" || key.property === "mask_y")) { moveMaskCentre(clip.id, at, { x: mask.center_x + shift.tx + (next.center_x - mask.center_x), y: mask.center_y + shift.ty + (next.center_y - mask.center_y) }, gesture.projectId, gesture.revision); } else commitMaskEdit(clip.id,next,at,gesture.projectId,gesture.revision); } }} onPointerCancel={cancel} onLostPointerCapture={() => { if (drag.current) cancel(); }}>
+      onPointerUp={(e) => { const gesture = drag.current; if (!gesture) return; const next = proposed(e); const moved = gesture.moved; cancel(); if (moved) { svg.current?.focus(); const at = Math.max(0, Math.min(clip.duration_ticks, play.ticks - clip.position_ticks)); if (morphArmed(clip) && (gesture.vertex !== undefined || gesture.outline)) { recordMaskShape(clip.id, next.vertices ?? [], at, undefined, gesture.projectId, gesture.revision); } else if (gesture.outline && (clip.keyframes ?? []).some((key) => key.property === "mask_x" || key.property === "mask_y")) { moveMaskCentre(clip.id, at, { x: mask.center_x + shift.tx + (next.center_x - mask.center_x), y: mask.center_y + shift.ty + (next.center_y - mask.center_y) }, gesture.projectId, gesture.revision); } else commitMaskEdit(clip.id,next,at,gesture.projectId,gesture.revision); } }} onPointerCancel={cancel} onLostPointerCapture={() => { if (drag.current) cancel(); }}>
       {mask.shape === "path" ? <>
         <path className="mask-hit" d={outline(vertices)} role="button" tabIndex={0} aria-label="移动整条路径" aria-disabled={disabled}
           onPointerDown={(e) => begin(e, { outline: true })} />
@@ -289,6 +308,10 @@ export function MaskPicture({ clip, image, children, editable = true, animation 
     </svg> : null}
     {visible && mask?.shape === "path" ? <div className="mask-vertex-panel" role="group" aria-label="顶点操作">
       {atCap ? <span className="dim">顶点 {vertices.length}/{vertexLimit}，已到上限，双击不再加点</span> : null}
+      {morphArmed(clip) ? <>
+        <span className="dim" title="导出与预览都按引擎这份一格一步的窗执行：这一格里的形状就是成片与预览里的形状">{`轮廓窗 第 ${shapeWindowIndex(shape, local)} / ${shape?.length ?? 0} 格`}</span>
+        <button type="button" className="btn tiny" disabled={disabled || !shapeWindow || !app.project} title={shapeWindow ? "把现在看到的这一格轮廓记在播放头这一刻：形状不动，但从此以后可以在它前后继续改。同一时刻再记一次是顶替。" : "拖动中不能记帧：先松开鼠标"} onClick={() => { if (app.project) recordMaskShape(clip.id, vertices, local, undefined, app.project.id, app.project.revision); }}>钉住此刻的轮廓</button>
+      </> : null}
       {active !== null ? <>
         <span className="dim">选中顶点 {active + 1}</span>
         <button type="button" className="btn tiny" disabled={disabled || !withoutVertex(mask, active)} title={vertices.length <= 3 ? "只剩三个顶点，不能再删" : "删掉这个顶点"} onClick={() => applyVertex(withoutVertex(mask, active))}>删除顶点</button>
