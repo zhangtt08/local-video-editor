@@ -79,14 +79,22 @@ export type GradeOperation =
   | { kind: "matrix"; coefficients: number[]; enabled: boolean; mix?: number }
   | { kind: "transfer"; input_space: ColorSpace; output_space: ColorSpace; enabled: boolean; mix?: number; blend?: BlendMode }
   /** 导入的 1D 查找表：三个通道各一条折线，采样点由引擎解析 `.cube` 文件得到，界面不自己读文件。 */
-  | { kind: "lut"; title: string; size: number; channels: number[][]; enabled: boolean; mix?: number; blend?: BlendMode };
-/** 引擎 `/v1/lut/parse` 的回复：可直接放进调色链的节点内容（不含启用、强度等每节点默认值）。 */
-export type LutPayload = { title: string; size: number; channels: number[][]; resampled_from?: number };
+  | { kind: "lut"; title: string; size: number; channels: number[][]; enabled: boolean; mix?: number; blend?: BlendMode }
+  /** 导入的 3D 查找表：一个 size³ 的 RGB 立方，按定义跨通道，所以它像通道混合那样打断每通道的合并。
+   *  浏览器画不出它（`capabilities.features.lut3d_preview` 为 false），界面必须写「预览不生效」；
+   *  这里既没有 mix 也没有 blend，与契约同一处决定：只有一端能执行的强度不是强度。 */
+  | { kind: "lut3d"; title: string; size: number; cells: number[]; resampled_from?: number | null; enabled: boolean };
+/** 引擎 `/v1/lut/parse` 的回复：可直接放进调色链的节点内容（不含启用、强度等每节点默认值）。
+ *  哪一种 `.cube` 由文件自己的表头决定，`kind` 是回复里唯一的说法，界面不猜文件后缀。 */
+export type LutPayload =
+  | { kind: "lut"; title: string; size: number; channels: number[][]; resampled_from?: number }
+  | { kind: "lut3d"; title: string; size: number; cells: number[]; resampled_from?: number | null };
 /** A parallel branch is always a single per-channel operation, so the graph never nests -- and the
  *  mixer is excluded here exactly as the contract excludes it: averaging a cross-channel map into a
  *  table is not something either end can compile. */
 export type GradeMixer = { kind: "matrix"; coefficients: number[]; enabled: boolean; mix?: number };
-export type GradeBranch = Exclude<GradeOperation, GradeMixer>;
+// 与契约同一处排除：并联分支输出的是各支的平均，跨通道的表平均不进一张每通道表。
+export type GradeBranch = Exclude<GradeOperation, GradeMixer | { kind: "lut3d" }>;
 export type GradeParallel = { kind: "parallel"; branches: GradeBranch[]; enabled: boolean; mix?: number; blend?: BlendMode };
 export type GradeNode = GradeOperation | GradeParallel;
 export type ColorSpace =
@@ -517,7 +525,8 @@ export class EngineError extends Error {
       CLIP_OVERLAP: "同轨重叠需要转场。先将镜头首尾衔接，再在后一个镜头的属性面板添加转场。",
       INVALID_TRANSITION: "选择首尾衔接的两个镜头，转场需短于每个镜头。",
       INVALID_MASK: "遮罩只能用于画面轨片段，请检查轨道和遮罩范围。整批操作没有被保存。",
-      INVALID_LUT: "这个 .cube 文件引擎读不了：只有 1D（逐通道）查找表能用，3D 表会跨通道混合，暂不支持。",
+      INVALID_LUT: "这个 .cube 文件引擎读不了：表头、行数或关键字有问题，回复里的行号与网格大小指出是哪一行。",
+      LUT3D_NO_PLAN: "3D 查找表要写成一个文件才能交给导出，编译进渲染计划时才有地方放它；这里没有作业目录，所以编不出这一级。",
       INVALID_BLEND_MODE: "混合模式只能用于画面轨。整批操作没有被保存。",
       INVALID_SELECTION: "选中的片段已变化，请重新选择后操作。整组没有被修改。",
       NEST_LAYER_CONFLICT: "所选图层之间还有重叠镜头，请一并选择，避免预合成后改变叠放顺序。",

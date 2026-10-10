@@ -229,9 +229,9 @@ def focus_stages(
     return head
 
 
-def color_filter(clip) -> str:
+def color_filter(clip, plan=None) -> str:
     color = clip.color
-    grade = grade_filter(color)
+    grade = grade_filter(color, plan)
     if color.exposure == 0 and color.contrast == 1 and color.saturation == 1:
         return f"format=rgba,{grade}," if grade else ""
     tonal = f"clip((clip(val*{2**color.exposure},0,255)-127.5)*{color.contrast}+127.5,0,255)"
@@ -819,7 +819,7 @@ def compile_render_plan(
             index = clip_input(entry)
             label = plan.tag("v")
             source = f"[{index}:v]"
-            color = color_filter(clip)
+            color = color_filter(clip, plan)
             # The `cut` chain is a second builder for the picture, and it is where a per-clip
             # filter gets forgotten: the preview filters every layer, so this path runs the same
             # spatial stages in the same place (after the fit to output size, before the target
@@ -1022,7 +1022,7 @@ def compile_render_plan(
                 head = (
                     f"{video_source}{paced}"
                     f"{title}"
-                    f"{color_filter(clip)}"
+                    f"{color_filter(clip, plan)}"
                     f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,"
                     f"format=rgba,pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,"
                     "setsar=1"

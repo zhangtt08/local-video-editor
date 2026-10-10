@@ -17,7 +17,7 @@ from .contracts import (
     Project,
     Track,
 )
-from .grade import grade_tables
+from .grade import preview_grade
 from .masks import animated_mask_image, mask_image
 from .speed import describe, segments
 from .timeline import link_status
@@ -453,7 +453,7 @@ def preview_manifest(
         curves = {}
         for prop in ("x", "y", "scale", "rotation", "opacity", "gain"):
             curves[prop] = property_curve(clip, prop)
-        grade = grade_tables(clip.color)
+        grade = preview_grade(clip.color)
         track = tracks[clip.track_id]
         # The fade travels as its own curve because the browser multiplies nested opacity, not two
         # numbers on one element: a factor curve holding 1.0 through the middle of the clip composes

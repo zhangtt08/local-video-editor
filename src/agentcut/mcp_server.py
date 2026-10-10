@@ -131,7 +131,9 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
     @server.tool(annotations=read)
     async def lut_parse(request: LutParse) -> dict[str, Any]:
         """Read `.cube` text with the engine's only LUT parser; returns a grade node payload to put
-        in clip.color.grade. 1D tables only — a 3D LUT mixes channels and is refused by name."""
+        in clip.color.grade. The file's header decides the kind: `lut` is a per-channel 1D table
+        that both ends draw, `lut3d` is a cross-channel cube the exporter applies and the browser
+        cannot, so a clip using one previews unchanged."""
         return await call("POST", "/v1/lut/parse", request.model_dump(mode="json"))
 
     @server.tool(annotations=safe_write)

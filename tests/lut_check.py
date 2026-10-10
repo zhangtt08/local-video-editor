@@ -420,7 +420,11 @@ def http_suite(folder: Path) -> None:
             refused.status_code,
             refused.json(),
         )
-        assert "3D" in refused.json()["error"]["message"]
+        # 1.103 起这个端点两种表都认，所以这份文件被拒的理由必须是「行数不是 size³」，
+        # 而不是「这里不接受 3D」；完整的 3D 表逐段验在 tests/lut3d_check.py。
+        message = refused.json()["error"]["message"]
+        assert "expected 64 rows" in message and "cube" in message, message
+        assert "not supported" not in message, message
 
         project = client.post("/v1/projects", json={"request_id": "new", "name": "lut"}).json()[
             "project"

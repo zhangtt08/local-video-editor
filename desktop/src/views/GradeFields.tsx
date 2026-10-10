@@ -259,7 +259,15 @@ function OpFields({ node, idPrefix, limits, onReplace, onCommit }: { node: Grade
     return <div className="grade-body">
       <p className="hint">正在用「{node.title}」：三个通道各 {node.size} 个采样点，点与点之间线性插值。这张表是引擎解析 .cube 文件得到的，界面不自己读文件，预览和导出读同一组数。</p>
       {onReplace ? <button className="btn tiny" onClick={onReplace}>换一张 LUT</button> : null}
-      <p className="hint">只支持 1D（逐通道）查找表；3D LUT 会把红绿蓝互相混在一起，就不再是每通道一条曲线，引擎会当场说明不接受的原因。强度与混合方式仍然照用。</p>
+      <p className="hint">1D 表逐通道，所以预览与导出读同一张表。3D LUT（会把红绿蓝互相混在一起的那种）也支持了，但它在浏览器里没有对应的画法——导入它之后预览照旧，导出才生效，节点卡片上写着这一句。</p>
+    </div>;
+  }
+  if (node.kind === "lut3d") {
+    return <div className="grade-body">
+      <p className="hint">正在用「{node.title}」：{node.size}³ 网格、共 {node.cells.length / 3} 个 RGB 格点，导出交给 FFmpeg 的 3D LUT 滤波并按四面体插值。</p>
+      <p className="hint">这一张表按定义跨通道，浏览器没有能画它的原语，所以<b>预览不生效、导出生效</b>——与降噪一样是明说的差别，不是近似。它也没有强度与混合方式：只有一端能执行的强度不是强度。</p>
+      {node.resampled_from ? <p className="hint">原文件是 {node.resampled_from}³，超出引擎存进工程状态的网格上限，导入时已按三线性插值重采样到 {node.size}³。</p> : null}
+      {onReplace ? <button className="btn tiny" onClick={onReplace}>换一张 LUT</button> : null}
     </div>;
   }
   if (node.kind === "wheels") {
@@ -277,6 +285,10 @@ function OpFields({ node, idPrefix, limits, onReplace, onCommit }: { node: Grade
 
 /** 强度与混合方式：节点有自己的一对，并联分支也有，语义相同——都只与该支/该节点的输入比较。 */
 function MixFields({ node, idPrefix, label, onCommit }: { node: GradeNode; idPrefix: string; label: string; onCommit: (next: GradeNode) => void }) {
+  if (node.kind === "lut3d") {
+    // 契约里没有 mix 也没有 blend：这里不放控件，比放一个只有一端听的控制诚实。
+    return null;
+  }
   return <div className="grade-body">
     {node.kind === "matrix" ? <p className="hint">通道混合没有「混合方式」可选：把矩阵用非线性模式（正片叠底之类）与它的输入混合，结果不再是矩阵，两端就没有同一份数可读了。要减弱效果请用下面的强度。</p> : <label className="mask-shape">混合方式
       <select className="input" aria-label={`${label}混合方式`} value={node.blend ?? "normal"} onChange={(e) => onCommit({ ...node, blend: e.target.value as BlendMode })}>
@@ -387,7 +399,7 @@ export function GradeFields({ clipId }: { clipId: string }) {
   const replaceBranch = (node: GradeParallel, index: number, next: GradeNode) => replace(active, {
     ...node,
     branches: node.branches.map((entry, position) => (
-      position === index && next.kind !== "parallel" && next.kind !== "matrix" ? next : entry
+      position === index && next.kind !== "parallel" && next.kind !== "matrix" && next.kind !== "lut3d" ? next : entry
     )),
   });
   const addBranch = (node: GradeParallel) => {
@@ -405,7 +417,7 @@ export function GradeFields({ clipId }: { clipId: string }) {
     <fieldset className="effects-fields" disabled={locked}>
       <div className="batch-actions">
         {(["curve", "white_balance", "wheels", "levels", "matrix", "transfer", "parallel"] as const).map((kind) => <button key={kind} className="btn tiny" disabled={nodes.length >= limits.nodes} onClick={() => add(kind)}>+{NODE_NAMES[kind]}</button>)}
-        {app.caps?.features.lut_import ? <button className="btn tiny" disabled={nodes.length >= limits.nodes} title="选择 .cube 文件（1D 逐通道查找表），由引擎解析" onClick={() => pickLut(null)}>+LUT</button> : null}
+        {app.caps?.features.lut_import ? <button className="btn tiny" disabled={nodes.length >= limits.nodes} title="选择 .cube 文件（1D 逐通道或 3D 立方查找表），由引擎解析成调色链节点" onClick={() => pickLut(null)}>+LUT</button> : null}
         <input ref={lutFile} type="file" accept=".cube,text/plain" hidden onChange={(event) => {
           const file = event.target.files?.[0];
           const target = lutTarget.current;
@@ -462,7 +474,7 @@ export function GradeFields({ clipId }: { clipId: string }) {
         </Fragment>)}
         <span className="gg-wire" aria-hidden="true" />
         <span className="gg-io">输出</span>
-      </div> : <p className="hint">曝光、对比度、饱和度之后按顺序执行这些节点。曲线、白平衡、RGB 增益、色彩空间、LUT 查找表与并联都只改每通道值，预览与导出共用同一张表。</p>}
+      </div> : <p className="hint">曝光、对比度、饱和度之后按顺序执行这些节点。曲线、白平衡、RGB 增益、色彩空间、1D LUT 与并联只改每通道值，预览与导出共用同一张表；通道混合与 3D LUT 按定义跨通道，各自自成一段——其中 3D LUT 浏览器画不出，只有导出生效。</p>}
 
       {current && current.kind !== "parallel" ? <OpFields node={current} idPrefix="grade" limits={limits} onReplace={current.kind === "lut" ? () => pickLut(active) : undefined} onCommit={(next) => replace(active, next)} /> : null}
 

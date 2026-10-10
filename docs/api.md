@@ -275,7 +275,7 @@ SRT 时间量化到序列帧；原文字换行保留，基础 b/i/u/font 标记�
 |---|---|---|
 | POST /v1/preview-manifest | preview_candidate(project) | 验证完整候选 Project、返回只读预览计划，不写项目/历史/回执 |
 | POST /v1/mask/preview | — | ShapeMask 请求体，返回只读 mask_image（原生 SVG data URL），供拖动草稿 |
-| POST /v1/lut/parse | lut_parse | `LutParse{content}`（.cube 文本，≤512 KiB）请求体；引擎唯一的 LUT 解析器返回可直接放进 `clip.color.grade` 的 `GradeLUT` 载荷，只读、不写项目 |
+| POST /v1/lut/parse | lut_parse | `LutParse{content}`（.cube 文本，≤512 KiB）请求体；引擎唯一的 LUT 解析器按文件自己的表头返回可直接放进 `clip.color.grade` 的载荷（`kind` 是 `lut` 或 `lut3d`），只读、不写项目 |
 
 已提交 GET preview-manifest 与候选 POST 返回每片段 mask_image，null 表示无遮罩；动画/颜色/转场亦按候选编译。MCP timeline_edit 的 clip.mask 仍从同一契约生成，不暴露自定义 SVG、FFmpeg 参数或路径执行。服务端媒体仍使用已验证记录。capabilities 新增 shape_masks=true；尚未实现自由路径、遮罩动画/跟踪、多遮罩堆叠。
 
@@ -1251,13 +1251,13 @@ request_id 重跑会被 reducer 以 DUPLICATE_ID 拒绝而不是叠出第二条�
 `feComponentTransfer` 读同一组数——这是不做「3D LUT」的唯一原因：3D 表的输出红取决于输入的绿与蓝，
 那是跨通道矩阵，不再是每通道一条曲线，硬压成三条就是骗人。
 
-`.cube` 文本**只由引擎的 `grade.parse_1d_cube` 读一次**。客户端（桌面界面）与 Agent 都不自己解释文件：
+`.cube` 文本**只由引擎的 `grade` 解析器读一次**（1.62 时是 `parse_1d_cube`；1.103 起 `/v1/lut/parse` 走 `parse_cube`，由表头分派到 1D 或 3D）。客户端（桌面界面）与 Agent 都不自己解释文件：
 `POST /v1/lut/parse`（MCP 只读工具 `lut_parse`）收 `LutParse{content}`（1..512 KiB 文本），回
-`{title, size, channels}`，那就是一份可直接写进 `clip.color.grade` 的载荷；超过 1024 行的表按等距网格
+`{title, size, channels}`，那就是一份可直接写进 `clip.color.grade` 的载荷（1.103 起同一端点对 3D 立方表回 `{title, size, cells, resampled_from}` 并带 `kind:"lut3d"`）；超过 1024 行的表按等距网格
 重采样，并在回复里带上 `resampled_from`（原文件的行数），界面把它说给人听，不静默改数。解析规则：
 只认 `LUT_1D_SIZE`（大小写都读），`TITLE` 可带引号可含空格，`#` 注释与空行跳过，CRLF 可用，行内三个数
-按 R G B 顺序、越界值夹到 0..1；`DOMAIN_MIN/MAX` 非默认、声明行数与实际不符、`LUT_3D_SIZE`、读不出数字、
-行列数不对，各自 422 `INVALID_LUT` 并写明原因（新错误码只有这一个，走既有 EditorError 信封）。
+按 R G B 顺序、越界值夹到 0..1；`DOMAIN_MIN/MAX` 非默认、声明行数与实际不符、读不出数字、
+行列数不对，各自 422 `INVALID_LUT` 并写明原因（新错误码只有这一个，走既有 EditorError 信封）。`LUT_3D_SIZE` 从 1.103 起不再是这一串的拒绝项而是另一种表：见本文末 1.103 一节。
 `GET /v1/contracts` 现在也回 `LutParse` 的 schema。
 
 命令层不新增任何一条：写入仍然是 `clip.grade`（整串替换）或 `clip.patch` 的 `color.grade`，HTTP/MCP/界面
@@ -2336,4 +2336,27 @@ reducer 分支；改的只是界面此前只在检查器给一个 ◇ 按钮，�
 - 羽化（`feather`）与路径的顶点都跟着板子走，因此不需要另一次除法。
 
 契约与命令没变，工程 schema 仍是 v15；这是导出侧一次几何归位，不是新能力。
+
+
+## 1.103 3D LUT：`POST /v1/lut/parse` 现在两种表都认
+
+没有新路由、没有新命令，改的是那一条解析路由能说什么。`LutParse.content` 里的 `.cube` 由**文件自己的表头**决定
+回复形状：
+
+- `LUT_1D_SIZE` → `{"kind":"lut","title","size","channels":[[…],[…],[…]]}`，与 1.62 以来一字一样；
+- `LUT_3D_SIZE` → `{"kind":"lut3d","title","size","cells":[r,g,b,…],"resampled_from":int|null}`，
+  `cells` 是 `size³×3` 个 0..1 的数，红最快、蓝最慢（`.cube` 的行序），超过
+  `grade_limits.max_lut3d_size`（当前 17）的网格由引擎按三线性插值重采样，并把原始边长写进
+  `resampled_from`——不是静默降级。
+
+回复原样进 `clip.color.grade` 就是一条节点（`enabled` 自定），reducer 与契约负责拒绝：格点数与 `size³×3` 不符、
+`resampled_from` 不比存的网格大、带 `mix`/`blend`、或塞进 `parallel` 分支，都是 422。坏文件的拒绝带
+`line`/`size`/`rows`，`INVALID_LUT` 一个码不混用。
+
+导出生效、预览不生效，是这一条的边界：`grade_tables` 交出的阶段是
+`{"type":"lut3d","id","title","size","preview":false}`（表体不搬，那是 49k 个数）；界面读的 `preview_grade` 按 `preview: false` 再把这一段整个去掉，所以一条只有立方的链在 manifest 里 `grade` 是 `null`、CSS 串里没有 `url(#…)`——浏览器为收到的每个阶段画原语，留一个没有数字的滤镜就是画面消失，而不是预览不变。
+导出侧 `compile_render_plan` 把节点写成作业目录里的 `lut3d-<sha>.cube` 并产出
+`lut3d=file=lut3d-<sha>.cube:interp=tetrahedral`。`capabilities` 两条并放：
+`features.lut3d=true`、`features.lut3d_preview=false`；界面据此在节点卡片上写「仅导出生效」。
+它没有强度也没有混合方式，理由写在契约里：只有一端能执行的强度不是强度——与 1.78 的降噪同一个规矩。
 

@@ -16,6 +16,7 @@ export const NODE_NAMES: Record<GradeNode["kind"], string> = {
   matrix: "通道混合",
   transfer: "色彩空间",
   lut: "LUT 查找表",
+  lut3d: "3D LUT",
   parallel: "并联",
 };
 
@@ -39,7 +40,8 @@ export type GraphCard = {
 const CHANNEL_SHORT: Record<string, string> = { rgb: "全部", red: "红", green: "绿", blue: "蓝" };
 
 function mixText(node: GradeOperation | GradeParallel): string {
-  return node.mix === undefined || node.mix === 1 ? "" : `强度 ${Math.round(node.mix * 100)}%`;
+  // 3D 表没有强度可标（契约里就没有那个字段），所以先问它在不在。
+  return "mix" in node && node.mix !== undefined && node.mix !== 1 ? `强度 ${Math.round(node.mix * 100)}%` : "";
 }
 
 function operationText(node: GradeNode): string {
@@ -47,6 +49,12 @@ function operationText(node: GradeNode): string {
   // An imported table says which file it came from and how coarse its grid is, because that is the
   // whole of what the node knows: the card must not look like a control the user can still dial in.
   if (node.kind === "lut") parts.push(`${node.title} · ${node.size} 点`);
+  // 3D 表在卡片上就把「预览不生效」写出来：这是一张只有导出会走它的表，不是近似。
+  if (node.kind === "lut3d")
+    parts.push(
+      `${node.title} · ${node.size}³ 网格 · 仅导出生效` +
+        (node.resampled_from ? ` · 由 ${node.resampled_from}³ 重采样` : ''),
+    );
   // 色阶卡片报出自己把输入量程的哪一段拉到了满量程，人不用点开也知道这个节点在做什么。
   if (node.kind === "levels") {
     parts.push(`${CHANNEL_SHORT[node.channel] ?? node.channel} ${Math.round(node.black * 255)}→${Math.round(node.white * 255)}`);
@@ -75,7 +83,7 @@ export function cardsFor(nodes: GradeNode[]): GraphCard[] {
       detail: parallel
         ? [`${parallel.branches.length} 支`, operationText(node)].filter(Boolean).join(" · ")
         : operationText(node),
-      mix: node.mix === undefined ? 1 : node.mix,
+      mix: "mix" in node ? (node.mix ?? 1) : 1,
       blend: "blend" in node ? (node.blend ?? "normal") : "normal",
       enabled: node.enabled !== false,
       lanes: parallel ? parallel.branches.map(laneFor) : [],

@@ -76,7 +76,7 @@ from .contracts import (
     capabilities,
     render_presets,
 )
-from .grade import parse_1d_cube
+from .grade import parse_cube
 from .jobs import JobRuntime, plan_for
 from .loudness import master_plan, normalize_gain, probe_mix, volume_problem
 from .loudness import measure as measure_loudness
@@ -1738,10 +1738,12 @@ def create_app(
 
         The client uploads the text instead of interpreting it: there is exactly one meaning for a
         LUT here, so the interface and an Agent cannot disagree about a table's grid, domain or
-        channel order. A 3D LUT — which mixes channels and so is not a per-channel function — is
-        refused by name, and the reply is the payload that goes straight into `clip.color.grade`.
+        channel order. The file's own header decides which flavour comes back — `kind` is `lut`
+        for a per-channel table and `lut3d` for a cross-channel cube (whose reply also carries
+        `resampled_from` when the grid was larger than `grade_limits.max_lut3d_size`), and either
+        way the payload goes straight into `clip.color.grade`.
         """
-        return parse_1d_cube(request.content)
+        return parse_cube(request.content)
 
     @app.post("/v1/animation/curve", dependencies=auth)
     def animation_curve(clip: Clip, property: Property):

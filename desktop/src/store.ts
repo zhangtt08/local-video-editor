@@ -1628,20 +1628,32 @@ export async function applyLut(clipId: string, file: File, index: number | null)
   set({ busy: "读取 LUT…" });
   try {
     const lut = await engine.lutParse(await file.text());
-    // 换一张表只换内容：启用状态、强度和混合方式仍是用户给这个节点设的，不能被导入重置。
-    const content = { kind: "lut" as const, title: lut.title, size: lut.size, channels: lut.channels };
+    const content = lut.kind === "lut"
+      ? { kind: "lut" as const, title: lut.title, size: lut.size, channels: lut.channels }
+      : { kind: "lut3d" as const, title: lut.title, size: lut.size, cells: lut.cells, resampled_from: lut.resampled_from ?? null };
     const grade = (clip.color?.grade ?? []).slice();
     const at = index === null || index >= grade.length ? null : index;
-    if (at === null) grade.push({ ...content, enabled: true });
-    else grade[at] = { ...grade[at], ...content };
+    // 同一种表才谈「只换内容」：启用状态、强度和混合方式仍是用户给这个节点设的。换了种类就整节点
+    // 重写——契约不许一个 lut3d 节点带 channels（也不许 lut 节点带 cells），留旧字段只会让这次编辑被拒。
+    const previous = at === null ? undefined : grade[at];
+    const swapped = !!previous && previous.kind !== content.kind;
+    grade[at ?? grade.length] = previous && !swapped ? { ...previous, ...content } : { ...content, enabled: previous?.enabled ?? true };
     setClipColor(clipId, { grade });
     toast(
       "info",
       at === null ? `导入 ${lut.title}` : `第 ${at + 1} 个节点换成 ${lut.title}`,
-      `三个通道各 ${lut.size} 个采样点，预览和导出用的都是引擎算出的同一张表。` +
-        (lut.resampled_from
-          ? `原文件每通道 ${lut.resampled_from} 行，超出引擎的采样上限，已按等距网格重采样到 ${lut.size} 行。`
-          : ""),
+      (swapped
+        ? `原来是${previous?.kind === "lut" ? "逐通道（1D）" : "立方（3D）"}表，这次导入的是另一种，整个节点按新表重写，强度与混合方式随之回到默认（3D 表本来就没有这两样）。`
+        : "") +
+      (lut.kind === "lut"
+        ? `三个通道各 ${lut.size} 个采样点，预览和导出用的都是引擎算出的同一张表。` +
+          (lut.resampled_from
+            ? `原文件每通道 ${lut.resampled_from} 行，超出引擎的采样上限，已按等距网格重采样到 ${lut.size} 行。`
+            : '')
+        : `${lut.size}³ 网格、共 ${lut.cells.length / 3} 个 RGB 格点。这张表按定义跨通道，浏览器画不出它：预览看到的还是导入前的样子，导出才走它（引擎与界面都说明这一点，不假装近似）。` +
+          (lut.resampled_from
+            ? `原文件是 ${lut.resampled_from}³，超出引擎存进工程状态的网格上限，已按三线性插值重采样到 ${lut.size}³。`
+            : '')),
     );
   } catch (error) {
     const { title, detail } = describe(error);

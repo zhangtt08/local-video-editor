@@ -9,7 +9,7 @@ MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = 15  # v15 gives each fade edge a shape; older rows read the smoothstep default
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.102.0"
+APP_VERSION = "1.103.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -441,10 +441,10 @@ class GradeLUT(Contract):
 
     This is the `.cube` `LUT_1D_SIZE` flavour — the only kind that stays a per-channel function, so
     the whole grade chain still compiles to one table per channel and both renderers keep reading
-    the same data. A 3D LUT mixes channels (its output red depends on input green and blue) and is
-    refused at parse time with that sentence rather than silently flattened. Grid spacing is the
-    importer's `1/(size-1)`; the sampler interpolates linearly between samples, exactly like the
-    curve nodes' piecewise sections.
+    the same data. A 3D LUT mixes channels (its output red depends on input green and blue), so it
+    is a node of its own (`GradeLut3D`) that breaks the collapsed run instead of joining this
+    table. Grid spacing is the importer's `1/(size-1)`; the sampler interpolates linearly between
+    samples, exactly like the curve nodes' piecewise sections.
     """
 
     kind: Literal["lut"] = "lut"
@@ -467,6 +467,43 @@ class GradeLUT(Contract):
     def channels_match_size(self):
         if any(len(table) != self.size for table in self.channels):
             raise ValueError("each LUT channel must carry exactly `size` samples")
+        return self
+
+
+# A 3D LUT is stored inline, so its grid has a ceiling of its own: 17 samples per edge = 49k floats,
+# already the largest table worth keeping inside project state. Bigger files are resampled by the
+# importer and say so in `resampled_from` — the deal 1.63 made for oversized 1D tables.
+LUT3D_SIZE_LIMIT = 17
+
+
+class GradeLut3D(Contract):
+    """An imported 3D lookup table: a cube of RGB samples, cross-channel by construction.
+
+    Output red depends on green and blue too, so this node cannot join a collapsed per-channel
+    run: it breaks it as the channel matrix does, and cannot live in a parallel branch for the
+    same reason. `interp` is not a knob — the exporter always asks FFmpeg for tetrahedral
+    interpolation, which keeps a resampled 17-cube a smooth approximation rather than a poster.
+
+    There is deliberately no `mix`/`blend`: the browser cannot draw this node at all
+    (`capabilities.features.lut3d_preview` is false), so a strength would be a number that only ever
+    moves one of the two ends — the same honesty the denoise knob is held to.
+    """
+
+    kind: Literal["lut3d"] = "lut3d"
+    title: Annotated[str, Field(max_length=64)] = "3D LUT"
+    size: Annotated[int, Field(ge=2, le=LUT3D_SIZE_LIMIT)]
+    cells: Annotated[list[Annotated[float, Field(ge=0, le=1)]], Field(min_length=24)]
+    # The importer resamples an oversized grid instead of refusing it; the original edge count
+    # travels on the node, so the notice stays with the look instead of only in one reply.
+    resampled_from: Annotated[int | None, Field(default=None, ge=2)] = None
+    enabled: bool = True
+
+    @model_validator(mode="after")
+    def grid_matches_size(self):
+        if len(self.cells) != self.size**3 * 3:
+            raise ValueError("a 3D LUT needs exactly 3 * size**3 samples")
+        if self.resampled_from is not None and self.resampled_from <= self.size:
+            raise ValueError("resampled_from must be larger than the stored grid")
         return self
 
 
@@ -505,6 +542,7 @@ GradeNode = (
     | GradeMatrix
     | GradeTransfer
     | GradeLUT
+    | GradeLut3D
     | GradeParallel
 )
 
@@ -621,7 +659,8 @@ class TextStyle(Contract):
 
     What is deliberately absent: shadow blur and letter spacing. ``drawtext`` has no blur and no
     tracking, so offering them would mean a preview that shows something the delivered file does not
-    contain — the same reason the grade chain refuses a cross-channel 3D LUT. Defaults reproduce the
+    contain — the same reason a cross-channel 3D LUT is labelled 预览不生效 instead of approximated.
+    Defaults reproduce the
     1.62 rendering (4% black outline, 0.2 line spacing, 45 %-opaque black band), so an old project
     reads back with the pixels it had.
     """
@@ -2178,6 +2217,9 @@ def capabilities(
             "max_branches": GRADE_BRANCH_LIMIT,
             "max_curve_points": CURVE_POINT_LIMIT,
             "max_lut_samples": LUT_SAMPLE_LIMIT,
+            # A 3D LUT's grid lives inline in project state, so the importer resamples anything
+            # larger to this edge count and reports `resampled_from`.
+            "max_lut3d_size": LUT3D_SIZE_LIMIT,
             "levels_black_max": LEVELS_BLACK_MAX,
             "levels_white_min": LEVELS_WHITE_MIN,
             "levels_gamma_min": LEVELS_GAMMA_MIN,
@@ -2319,6 +2361,10 @@ def capabilities(
             "grade_nodes": True,
             "grade_node_mix": True,
             "lut_import": True,
+            "lut3d": True,
+            # The exporter runs a 3D LUT through FFmpeg's `lut3d`; no browser primitive
+            # can evaluate a cross-channel cube, so the UI must say the preview does not show it.
+            "lut3d_preview": False,
             "text_styling": True,
             "clip_blur": True,
             "clip_sharpen": True,

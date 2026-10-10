@@ -396,6 +396,13 @@ def grade_stages(color) -> list[dict] | None:
         del group[:]
 
     for node in color.grade:
+        if node.kind == "lut3d":
+            flush()
+            if node.enabled:
+                stages.append(
+                    {"type": "lut3d", "title": node.title, "size": node.size, "cells": node.cells}
+                )
+            continue
         if node.kind == "matrix":
             flush()
             matrix = _matrix_of(node)
@@ -433,6 +440,19 @@ def grade_tables(color) -> dict | None:
         return None
     built = []
     for stage in stages:
+        if stage["type"] == "lut3d":
+            # The browser has no primitive for a cross-channel cube, so the stage travels
+            # without its data; `preview: false` is what the interface labels 预览不生效.
+            built.append(
+                {
+                    "type": "lut3d",
+                    "id": f"d{_stage_id([stage['size'], stage['title']])}",
+                    "title": stage["title"],
+                    "size": stage["size"],
+                    "preview": False,
+                }
+            )
+            continue
         if stage["type"] == "lut":
             table = _lut_stage(stage)
             if table is None:
@@ -446,13 +466,51 @@ def grade_tables(color) -> dict | None:
     return {"id": f"g{hashlib.sha1(payload).hexdigest()[:16]}", "stages": built}
 
 
-def grade_filter(color) -> str:
-    """The FFmpeg stage list compiled from the same stages; empty when the chain is a no-op."""
+def preview_grade(color) -> dict | None:
+    """The stage list the browser can composite, or None when the chain has nothing it can draw.
+
+    `preview: false` is the engine's own flag on a cross-channel stage, and this is the one place
+    that reads it. A stage the browser cannot evaluate must not travel into the manifest at all:
+    the interface draws every stage it receives, so a cube would come out as a filter primitive
+    holding no numbers — that is a vanished picture, not the documented 预览不生效.
+    """
+    tables = grade_tables(color)
+    if tables is None:
+        return None
+    stages = [stage for stage in tables["stages"] if stage.get("preview", True)]
+    if not stages:
+        return None
+    return {**tables, "stages": stages}
+
+
+def grade_filter(color, plan=None) -> str:
+    """The FFmpeg stage list compiled from the same stages; empty when the chain is a no-op.
+
+    A 3D LUT needs a file on disk for `lut3d=file=…`, so the compiler writes the cube into the
+    job directory (the same `text_files` mechanism the oversized filter graphs already use) and
+    asks for tetrahedral interpolation. Without a plan there is nowhere to put that file, and
+    saying so beats emitting a graph that quietly drops the node.
+    """
     stages = grade_stages(color)
     if not stages:
         return ""
     parts = []
     for stage in stages:
+        if stage["type"] == "lut3d":
+            if plan is None:
+                from .contracts import EditorError
+
+                raise EditorError(
+                    "LUT3D_NO_PLAN",
+                    "a 3D LUT can only be compiled by a render plan that writes its cube file",
+                    422,
+                    title=stage["title"],
+                )
+            body = cube_text(stage["title"], stage["size"], stage["cells"])
+            name = "lut3d-" + hashlib.sha1(body.encode()).hexdigest()[:16] + ".cube"
+            plan.text_files[name] = body
+            parts.append(f"lut3d=file={name}:interp=tetrahedral")
+            continue
         if stage["type"] == "lut":
             expressions = {name: _expression(stage[name]) for name in CHANNEL_NAMES}
             if all(value == "val" for value in expressions.values()):
@@ -494,14 +552,12 @@ def parse_1d_cube(text: str, *, title_default: str = "LUT") -> dict:
                 title = words[1].strip().strip('"')[:64]
             continue
         if upper.startswith("LUT_1D_SIZE"):
-            size = _cube_int(upper.split()[1], "LUT_1D_SIZE")
+            size = _cube_int(upper.split()[1], "LUT_1D_SIZE", line=number)
             continue
         if upper.startswith("LUT_3D_SIZE"):
-            raise _cube_error(
-                "this is a 3D LUT; cross-channel tables are not supported yet", line=number
-            )
+            raise _cube_error("this is a 3D LUT; parse_cube reads it as a lut3d node", line=number)
         if upper.startswith("DOMAIN_MIN") or upper.startswith("DOMAIN_MAX"):
-            values = [_cube_float(item) for item in stripped.split()[1:]]
+            values = [_cube_float(item, line=number) for item in stripped.split()[1:]]
             if len(values) != 3:
                 raise _cube_error("DOMAIN needs three numbers", line=number)
             if upper.startswith("DOMAIN_MIN"):
@@ -512,7 +568,7 @@ def parse_1d_cube(text: str, *, title_default: str = "LUT") -> dict:
         parts = stripped.split()
         if len(parts) != 3:
             raise _cube_error(f"cannot read the row {stripped[:40]!r}", line=number)
-        samples.append(tuple(_cube_float(item) for item in parts))  # type: ignore[arg-type]
+        samples.append(tuple(_cube_float(item, line=number) for item in parts))  # type: ignore[arg-type]
     if size < 2:
         raise _cube_error("the file needs a LUT_1D_SIZE of 2 or more", size=size, rows=len(samples))
     if len(samples) != size:
@@ -562,18 +618,162 @@ def _cube_error(message: str, **details) -> Exception:
     return EditorError("INVALID_LUT", message, 422, **details)
 
 
-def _cube_int(text: str, what: str) -> int:
+def _cube_int(text: str, what: str, *, line: int) -> int:
     try:
         return int(text)
     except ValueError as error:
-        raise _cube_error(f"{what} must be a whole number") from error
+        raise _cube_error(f"{what} must be a whole number", line=line) from error
 
 
-def _cube_float(text: str) -> float:
+def _cube_float(text: str, *, line: int) -> float:
     try:
         value = float(text)
     except ValueError as error:
-        raise _cube_error(f"cannot read the number {text[:20]!r}") from error
+        raise _cube_error(f"cannot read the number {text[:20]!r}", line=line) from error
     if value != value or value in (float("inf"), float("-inf")):
-        raise _cube_error("LUT numbers must be finite")
+        raise _cube_error("LUT numbers must be finite", line=line)
     return value
+
+
+def parse_cube(text: str, *, title_default: str = "LUT") -> dict:
+    """Read any Autodesk `.cube` file and say which flavour it is.
+
+    One entry point for both kinds, so neither the interface nor an Agent has to guess from the file
+    name: the file's own header decides, and the result carries `kind` (`lut` or `lut3d`). A 1D file
+    yields `title/size/channels`; a 3D one `title/size/cells` plus `resampled_from` when its grid
+    larger than the contract's inline ceiling.
+    """
+    if "LUT_3D_SIZE" in text.upper():
+        return {"kind": "lut3d", **parse_3d_cube(text, title_default=title_default)}
+    return {"kind": "lut", **parse_1d_cube(text, title_default=title_default)}
+
+
+def parse_3d_cube(text: str, *, title_default: str = "LUT") -> dict:
+    """Parse a `LUT_3D_SIZE` cube: `size**3` rows of RGB, red varying fastest per the format.
+
+    Only the default DOMAIN 0..1 is accepted; matrices/interp keywords are refused by name, never
+    half-applied — a file that needs them is not the transform this node can hold. Samples clamp
+    onto 0..1 like the 1D path. A grid over `LUT3D_SIZE_LIMIT` is resampled trilinearly instead
+    of refused, because the table is interpolated either way; `resampled_from` carries the original
+    edge count so nothing about that is silent.
+    """
+    title = title_default
+    size = size_line = 0
+    samples: list[tuple[float, float, float]] = []
+    for number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        upper = stripped.upper()
+        if upper.startswith("TITLE"):
+            words = stripped.split(None, 1)
+            if len(words) > 1:
+                title = words[1].strip().strip('"')[:64]
+            continue
+        if upper.startswith("LUT_3D_SIZE"):
+            if size:
+                raise _cube_error("the file declares LUT_3D_SIZE twice", line=number)
+            size, size_line = _cube_int(upper.split()[1], "LUT_3D_SIZE", line=number), number
+            if size < 2:
+                raise _cube_error("LUT_3D_SIZE must be 2 or more", line=number)
+            continue
+        if upper.startswith("LUT_1D_SIZE"):
+            raise _cube_error("this is a 1D LUT; the 1D reader takes it", line=number)
+        if upper.startswith(("DOMAIN_MIN", "DOMAIN_MAX")):
+            values = [_cube_float(item, line=number) for item in stripped.split()[1:]]
+            if len(values) != 3:
+                raise _cube_error("DOMAIN needs three numbers", line=number)
+            wanted = (0.0, 0.0, 0.0) if upper.startswith("DOMAIN_MIN") else (1.0, 1.0, 1.0)
+            if tuple(values) != wanted:
+                raise _cube_error("only the default DOMAIN 0..1 is supported", line=number)
+            continue
+        if upper.split()[0] in {"INPUT_MATRIX", "OUTPUT_MATRIX", "LUT_TYPE", "VERTEX_INTERP"}:
+            raise _cube_error(f"{stripped.split()[0]} is not supported by this node", line=number)
+        parts = stripped.split()
+        if len(parts) != 3:
+            raise _cube_error(f"cannot read the row {stripped[:40]!r}", line=number)
+        if not size:
+            raise _cube_error("the file needs a LUT_3D_SIZE before its rows", line=number)
+        samples.append(tuple(_cube_float(item, line=number) for item in parts))  # type: ignore[arg-type]
+    if not size:
+        raise _cube_error("the file has no LUT_3D_SIZE header", rows=len(samples))
+    if len(samples) != size**3:
+        raise _cube_error(
+            f"expected {size**3} rows for a {size} cube but found {len(samples)}",
+            size=size,
+            rows=len(samples),
+            line=size_line,
+        )
+    cells = [_clamp(value) for row in samples for value in row]
+    from .contracts import LUT3D_SIZE_LIMIT
+
+    resampled_from = None
+    if size > LUT3D_SIZE_LIMIT:
+        cells, resampled_from = _resample_cube(cells, size, LUT3D_SIZE_LIMIT), size
+        size = LUT3D_SIZE_LIMIT
+    return {"title": title, "size": size, "cells": cells, "resampled_from": resampled_from}
+
+
+def _resample_cube(cells: list[float], size: int, target: int) -> list[float]:
+    """Trilinear resample onto a `target` grid — the same chords FFmpeg interpolates with."""
+
+    def read(index_r: int, index_g: int, index_b: int) -> tuple[float, float, float]:
+        base = 3 * (index_r + size * (index_g + size * index_b))
+        return cells[base], cells[base + 1], cells[base + 2]
+
+    def sample(r: float, g: float, b: float) -> tuple[float, float, float]:
+        lows, weights = [], []
+        for value in (r, g, b):
+            grid = value * (size - 1)
+            low = min(int(grid), size - 2)
+            lows.append(low)
+            weights.append(grid - low)
+        high = [min(low + 1, size - 1) for low in lows]
+        fr, fg, fb = weights
+        out = []
+        for channel in range(3):
+            corners = [
+                read(lows[0], lows[1], lows[2])[channel],
+                read(high[0], lows[1], lows[2])[channel],
+                read(lows[0], high[1], lows[2])[channel],
+                read(high[0], high[1], lows[2])[channel],
+                read(lows[0], lows[1], high[2])[channel],
+                read(high[0], lows[1], high[2])[channel],
+                read(lows[0], high[1], high[2])[channel],
+                read(high[0], high[1], high[2])[channel],
+            ]
+            lo_b = (
+                corners[0] * (1 - fr) + corners[1] * fr,
+                corners[2] * (1 - fr) + corners[3] * fr,
+            )
+            hi_b = (
+                corners[4] * (1 - fr) + corners[5] * fr,
+                corners[6] * (1 - fr) + corners[7] * fr,
+            )
+            mid = lo_b[0] * (1 - fg) + lo_b[1] * fg
+            top = hi_b[0] * (1 - fg) + hi_b[1] * fg
+            out.append(_clamp(mid + (top - mid) * fb))
+        return out[0], out[1], out[2]
+
+    step = 1.0 / (target - 1)
+    return [
+        value
+        for blue in range(target)
+        for green in range(target)
+        for red in range(target)
+        for value in sample(red * step, green * step, blue * step)
+    ]
+
+
+def cube_text(title: str, size: int, cells: list[float]) -> str:
+    """The node back into `.cube` text, in the file order FFmpeg's `lut3d` reads (red fastest)."""
+    rows = [
+        f"{cells[index]:.6f} {cells[index + 1]:.6f} {cells[index + 2]:.6f}"
+        for index in range(0, len(cells), 3)
+    ]
+    return (
+        f'TITLE "{title}"\n'
+        f"LUT_3D_SIZE {size}\n"
+        "DOMAIN_MIN 0.0 0.0 0.0\n"
+        "DOMAIN_MAX 1.0 1.0 1.0\n" + "\n".join(rows) + "\n"
+    )
