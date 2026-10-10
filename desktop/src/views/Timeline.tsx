@@ -737,7 +737,6 @@ function ClipBlock({
     const origin = { x: event.clientX, y: event.clientY };
     const base = picked;
     const additive = event.shiftKey;
-    const painted = paintedBoxes();
     const stop = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", stop);
@@ -747,7 +746,9 @@ function ClipBlock({
     const move = (ev: PointerEvent) => {
       const area = marqueeBox(origin, { x: ev.clientX, y: ev.clientY });
       const rect = node.getBoundingClientRect();
-      setPicked(commitPick(base, hitsInBand(painted, area), additive));
+      // 每次都重新量屏幕：Agent 与人共用这条时间线，框拖到一半时工程可以被另一边改写（实测就是这么发现的），
+      // 按下那一刻的快照会挑中一枚已经不存在的针。看得见什么就挑中什么，不允许拿着幻影去拖。
+      setPicked(commitPick(base, hitsInBand(paintedBoxes(), area), additive));
       setBand({ x0: area.x0 - rect.left, y0: area.y0 - rect.top, x1: area.x1 - rect.left, y1: area.y1 - rect.top });
     };
     const up = (ev: PointerEvent) => {

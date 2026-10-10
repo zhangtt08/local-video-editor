@@ -93,7 +93,9 @@ assert.ok((laneCapacity(NEEDLE_AREA_PIXELS) - 1) * LANE_PITCH_PIXELS + LANE_PITC
 const path = resolve(sources!, "views/Timeline.tsx");
 const source = readFileSync(path, "utf8");
 assert.match(source, /\.clip-keyframe:not\(\.ghost\)/, "a copy's ghost must not be pickable — it is where a needle wants to go, not a needle");
-assert.match(source, /const painted = paintedBoxes\(\);/, "the hit set is measured once per grab, from the nodes on screen");
+assert.match(source, /setPicked\(commitPick\(base, hitsInBand\(paintedBoxes\(\), area\), additive\)\)/,
+  "the hit set is measured again on every move: an Agent may rewrite the project while the human is mid-drag, and a snapshot taken at pointerdown would leave a phantom needle picked");
+assert.doesNotMatch(source, /const painted = paintedBoxes\(\);/, "no once-per-grab snapshot may survive — one measurement, taken live");
 assert.match(source, /const rect = node\.getBoundingClientRect\(\);[\s\S]{0,20}return \[\{ id, box: \{ x0: rect\.left/, "and the rects are the browser's own, in viewport pixels");
 assert.match(source, /data-key-id=\{id\}/, "each diamond carries the identity the band answers with");
 assert.match(source, /const id = needleId\(key\);/, "the drag and the band spell that identity the same way");
