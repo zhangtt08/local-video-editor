@@ -4164,3 +4164,23 @@ mtime/大小关系刚好没触发重编。之后的规矩是：还原之后先�
 一条值得留下的门禁教训：突变「`toggleSnap` 改成永远 set true」第一次**活了下来**——我的断言序列只翻了
 「关→开」一个方向。补上「开→关」与「翻两次回到原地」之后它才红。写 toggle 的测试必须两个方向都翻，
 否则测的是一个常量。这已经是本项目第二次撞上「绿灯不等于测到」（上一次是 bundle 没重建）。
+## 1.112 复制／粘贴：把人这边缺的手感补齐，命令语义一行不动
+
+Agent 早就有一条属性整条写回去的路（`keyframes.replace`），缺的是人在曲线编辑器里的 Ctrl+C / Ctrl+V。
+这一版全部落在客户端：`keyframeClipboard.ts` 算出该发哪些 `keyframe.set`，界面把这一批交给
+`editAtRevision` —— 一次事务、一个 revision、一条历史。契约、capabilities、HTTP、MCP 一字未改，
+所以「新增命令要同步六处」那条门禁根本不会被触发，这也是判断增量-size 的有用信号：如果一件交互优化
+需要新命令，多半说明它在客户端漏了一份权威。
+
+三条边界都是「不猜」：一次只搬一条属性；越界与撞针逐枚跳过并**报数**（不整批失败，也不像某些实现那样
+把针往旁边挪一格求成功）；复制记着 `projectId`，换了工程就失效。粘贴落点复用 `alignTime(head, false)`：
+格子照绝对帧算，但不找邻针——一把复制来的针如果正好落在已有那一格，它被跳过，而不是粘到隔壁。
+
+两处我自己的错都被工具接住了，值得记：
+- 接线时把 `if ((e.ctrlKey || e.metaKey) && key === "a")` 打成 `if (e.ctrlKey || e.metaKey && key === "a")`。
+  `&&` 结合更紧，这一改就成「按 Ctrl 就全选」。现在 `desktop_keyframecopy_check.ts` 直接断那个括号存在。
+- `pasteKeys` 的 `reason` 声明成 `string | null`，而 `toast(kind, title, detail?)` 收的是
+  `string | undefined`：tsc 报在两条 `toast` 调用上。契约里 `reason` 用空串表示「没什么要说」更干净，
+  省得每个调用点自己 `?? ""`。
+
+十三次突变逐条能红，其中「粘贴拆成一条一条发」这一条专门盯 revision 数量：一次粘贴只该涨一个。

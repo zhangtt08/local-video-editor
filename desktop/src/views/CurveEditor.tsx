@@ -4,6 +4,7 @@ import { type AnimationGraph, type Clip, type Keyframe, type Property, type Bezi
 import { EFFECT_FIELDS, curveBase, maskAnimFields, spatialAnimFields } from "../effects";
 import { TIMEBASE, timecode } from "../time";
 import { keyframeTick } from "../keyframeSnap";
+import { copyKeys, pasteKeys, rememberCopy, copiedKeys } from "../keyframeClipboard";
 import { appInfo, clearBatch, commitBatch, editAtRevision, playhead, prefs, quantum, redoStep, selectClips, setGraphOpen, setMode, toast, undo, useApp, useEdit, usePlay } from "../store";
 
 const LEFT = 58, TOP = 12, WIDTH = 924, HEIGHT = 166;
@@ -248,6 +249,23 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
         onDoubleClick={(e) => { if ((e.target as Element).closest(".curve-key,.curve-handle")) return; const p = locate(e); if (p.x < LEFT || p.x > LEFT + WIDTH || p.y < TOP || p.y > TOP + HEIGHT) return; add(start + (p.x - LEFT) / WIDTH * span, high - (p.y - TOP) / HEIGHT * valueSpan); }}
         onKeyDown={(e) => {
           if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") { e.preventDefault(); e.stopPropagation(); cancel(); chooseSelection(keys.map((k) => k.at_ticks), keys[0]?.at_ticks ?? null); return; }
+          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") {
+            e.preventDefault(); e.stopPropagation();
+            const copy = copyKeys(project.id, selectedKeys);
+            rememberCopy(copy);
+            if (copy) toast("info", `已复制 ${copy.keys.length} 枚 ${copy.property} 关键帧`, "Ctrl+V 会按播放头粘到当前片段；换了属性或换了工程就失效。");
+            else toast("warn", "没有可复制的选区", "选中同一属性上的针再复制——一次只能搬一条属性。");
+            return;
+          }
+          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") {
+            e.preventDefault(); e.stopPropagation();
+            const paste = pasteKeys(clip, copiedKeys(), alignTime(head, false), project.id);
+            if (paste.commands.length) {
+              editAtRevision(paste.commands, project.id, project.revision, "粘贴动画关键帧", app.sequenceId);
+              toast(paste.dropped ? "warn" : "info", `粘贴了 ${paste.pasted} 枚关键帧`, paste.dropped ? paste.reason : "落在播放头起的整帧上。");
+            } else toast("warn", "没有粘贴", paste.reason);
+            return;
+          }
           if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cancel(); chooseSelection([], null); return; }
           if (["Delete", "Backspace"].includes(e.key)) { e.preventDefault(); e.stopPropagation(); remove(); return; }
           if (selectedKeys.length && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
@@ -299,7 +317,7 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
         <select className="input" aria-label="选中关键帧插值" value={selectedKeys.every((k) => k.interpolation === selected.interpolation) ? selected.interpolation : ""} onChange={(e) => commitPoints(selectedKeys, selectedKeys.map((k) => interpolationPoint(k, e.target.value as Keyframe["interpolation"])))}><option value="" disabled>混合插值</option>{Object.entries(INTERPOLATIONS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
       </fieldset> : <select className="input" aria-label="曲线新关键帧插值" value={newInterpolation} onChange={(e) => setNewInterpolation(e.target.value as Keyframe["interpolation"])}>{Object.entries(INTERPOLATIONS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>}
       {zoom > 1 ? <input type="range" aria-label="曲线横向位置" min={0} max={clip.duration_ticks - span} step={1} value={start} onChange={(e) => { cancel(); setPan(Number(e.target.value)); }} /> : null}
-      <span className="spacer" /><span className="hint">{collision ? "时间已被占用，松开不会覆盖" : disabled ? "锁轨或提交中，当前不可编辑" : draft ? "候选选区 · 松开保存，Esc 取消" : "框选/Shift 多选 · 方向键微调 · Shift 锁轴/10 倍步长"}</span>
+      <span className="spacer" /><span className="hint">{collision ? "时间已被占用，松开不会覆盖" : disabled ? "锁轨或提交中，当前不可编辑" : draft ? "候选选区 · 松开保存，Esc 取消" : "框选/Shift 多选 · 方向键微调 · Shift 锁轴/10 倍步长 · Ctrl+C 复制、Ctrl+V 按播放头粘贴"}</span>
     </div>
   </>;
 }
