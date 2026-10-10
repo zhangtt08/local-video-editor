@@ -48,6 +48,10 @@ const source = readFileSync(path!, "utf8");
 assert.match(source, /needleRows\(/, "the timeline asks the shared lane splitter");
 assert.match(source, /laneCapacity\(/, "and derives how many lanes fit from pixels");
 assert.match(source, /bottom: 1 \+ \(rowOf\.get\(k\.property\) \?\? 0\) \* LANE_PITCH_PIXELS/, "each lane sits at its own bottom offset");
-assert.match(source, /hidden\.length \? <button/, "the hidden properties get a named chip instead of an unreachable needle");
+// 只画得了道的针：把 filter 去掉就会又叠回同一堆像素，所以断到链式调用的下一环。
+assert.match(source, /visible\.filter\(\(k\) => rowOf\.has\(k\.property\)\)\.map\(\(k\) => \{/, "needles of hidden properties must not be drawn at all");
+// 「+N」那枚牌子不许被短路成永不出现：断到它的类型与类名，而不是只断前缀。
+assert.match(source, /\{hidden\.length \? <button type="button" className="clip-keyframe-more"/, "the hidden properties get a named chip instead of an unreachable needle");
+assert.match(source, /setGraphOpen\(true\)/, "and clicking that chip opens the curve editor for this clip");
 
 console.log("PASS: 同一秒上不同属性的针各走一道、道号按第一次出现排、画不下的明说是哪几条并给出路、容量按像素算且至少一道");
