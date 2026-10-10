@@ -4003,3 +4003,16 @@ toast 是「2³ 网格、共 8 个 RGB 格点。这张表按定义跨通道，�
 by_clip 的次序对」），再往子合成里挂一张表（于是 nested 非零、恒等式真的把两边绑在一起）。这条补齐后
 同一个突变立刻红。教训和 1.103 那次一样：一条恒等式在两份数据上都成立时，它其实什么都没断。
 
+## 1.105 之后：把「换一张 LUT」跨种类那条量到界面上
+
+README 里那句「跨 1D↔3D 整节点重写」当时只有 tsc 与代码读起来对，没在界面里走过。补的量法有个坑：
+`+LUT` / 「换一张 LUT」都是先记下目标下标、再调那个隐藏 `input` 的 `click()` 唤起系统对话框，
+而对话框没法在这里点。做法是临时把 `HTMLInputElement.prototype.click` 换成对一个 `type=file` 空操作
+（记录被调用了一次，正好证明是这颗按钮唤起的选择框、目标下标因此被设上），然后合成 `File` +
+`dispatchEvent(new Event('change'))` 喂进去。走的是真接线，不是绕过它。
+
+结果：先交一张 1D，节点 keys 是 blend/channels/enabled/kind/mix/size/title；再按「换一张 LUT」交一张
+2³ 立方，节点数仍是 1，kind 变成 lut3d，keys 只剩 cells/enabled/kind/resampled_from/size/title，
+`channels`/`mix`/`blend` 一个不留，`enabled` 保住原值，revision 2→3 只涨一次。也就是说 1.103 那条
+「跨种类整节点重写」不是纸面规矩：契约 `extra="forbid"`，留着旧字段这一步会被拒，界面确实没留。
+
