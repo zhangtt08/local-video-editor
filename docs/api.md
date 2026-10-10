@@ -231,6 +231,8 @@ preview-manifest 给出 mixed_track_ids 与每片段 transition.picture/sound/bl
 | keyframe.set | clip_id, keyframe | property、at_ticks、value、interpolation；at_ticks 是当前片段内相对时间 |
 | keyframe.move | clip_id, from_ticks, keyframe | 原子移动已有关键帧并修改数值/插值；时间相对可见片段，目标已占用拒绝 |
 | keyframe.remove | clip_id, property, at_ticks | 删除当前片段相对位置的关键帧 |
+| mask.shape.set | clip_id, keyframe | 记一帧自由路径遮罩的轮廓：`at_ticks` 是片段内相对时间，`vertices` 是整条顶点表（与 `clip.mask.vertices` 同拓扑）；同一时刻再写是顶替，不是插入第二帧 |
+| mask.shape.remove | clip_id, at_ticks | 删掉这一刻的轮廓；删到一枚不剩，遮罩就回到画好的那条轮廓 |
 | clip.speed | clip_id, speed_percent, ripple? | 整数 25..400；默认 ripple=true，保留源范围并向下对齐结果时长；音高保持 |
 | clip.color | clip_id, color | exposure(-2..2 EV)、contrast(0..2)、saturation(0..2)，默认 0/1/1 |
 | clip.text | clip_id, text | 替换文字内容/字号/颜色，只能操作文字片段 |
@@ -2412,3 +2414,28 @@ MCP 没有新工具（`timeline_edit` 从契约生成，自动带上这条判断
 `clips` 逐段给 `nodes`+`added_samples` 或给 `skipped`（中文原因 + 实数），`commands` 是可直接提交的
 普通 `clip.grade` 命令。`apply=false` 只回规划；`apply=true` 把这批命令当一次编辑写入（一个 revision、
 一条历史）。空链 → 422 `GRADE_APPLY_NONE`；一段都套不上 → 422 `GRADE_APPLY_EMPTY_TRACK`，两者 details 都点名。
+
+
+### 1.118 自由路径遮罩的形状动画
+
+`Clip.mask_shape_keys` 是一条**矢量**关键帧表：一枚帧带整条顶点表（`{at_ticks, vertices, interpolation, bezier}`），
+不是每顶点四条标量曲线——64 个顶点会摊成 256 条曲线，还会让一个顶点与它的两条控制柄各自走各自的过渡。
+过渡的算术仍只有一处：`animation.vertices_at` 把区间两端交给 `_interpolate`（标量曲线用的同一个走法），
+所以「线性／保持／缓入缓出／贝塞尔」在形状上与在数值上意义相同。
+
+导出与预览读**同一份窗表**。`animation.mask_shape_schedule` 把这条矢量曲线编译成一格一步的窗（与柔焦 1.98
+共用同一个编译器 `frame_windows`），段数上限是 `capabilities.limits.mask_shape_schedule_segments`；导出每窗切一张灰度板，
+用 `overlay=x='…':y='…':eval=frame:enable='between(t,a,b)'` 依次叠进遮罩板，`preview_manifest` 的 `mask_shape`
+给界面同一串窗（每窗一张单位轮廓图，加上落位用的 `width/height/offset_x/offset_y`）。形状两端一起阶梯，
+而遮罩盒仍按 `mask_x`/`mask_y` 曲线连续搬动——阶梯是窗表给的，运动仍是曲线。两窗共享的那条边界属于**后一窗**
+（导出把后一张板盖在前一张上），界面按同一口径选窗；`tests/maskshape_check.py` 在成片像素上量过那一刻。
+
+判断只有一处：`Clip.mask_shape_problem()`，由 `clip.mask_animation_problem()` 第一道问，回 `INVALID_MASK`。
+它管三件事：只有自由路径遮罩能记轮廓帧、每一帧的顶点数必须等于画好的轮廓、同一时刻只能有一帧。
+拓扑不同之所以点名拒绝，是因为形变只改位置不改拓扑：加点、删点、抹角点、自动平滑改的都是那条静态轮廓。
+额度写在契约字段的 `max_length` 上（`capabilities.limits.mask_shape_keys`，reducer 用 `CLIP_MASK_SHAPE_LIMIT`
+从同一处读，两边不可能漂移），写满时回 `MASK_SHAPE_LIMIT` 并给出「删一帧／把这段切成两个片段」两条出路；
+同一时刻的顶替不算增长，所以记满之后仍能改某一帧而不必先删。
+
+兼容：未记轮廓帧的工程编译串与 1.117 逐字相同（`maskshape_check` 断这条）；新字段的空表在回执指纹里按
+「没提过」处理，所以 1.118 之前写下的请求重试仍命中自己那张回执（`blur_check`/`mask_check` 那两组常数指纹）。
