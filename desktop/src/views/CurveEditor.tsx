@@ -4,6 +4,7 @@ import { type AnimationGraph, type Clip, type Keyframe, type Property, type Bezi
 import { EFFECT_FIELDS, FIELD_LABEL, curveBase, maskAnimFields, spatialAnimFields } from "../effects";
 import { TIMEBASE, timecode } from "../time";
 import { keyframeTick } from "../keyframeSnap";
+import { applyShift, bandEdges, groupShift, quantizeToBand } from "../curveDrag";
 import { copyKeys, pasteKeys, rememberCopy, copiedKeys, type CopiedKeys } from "../keyframeClipboard";
 import { appInfo, clearBatch, commitBatch, editAtRevision, playhead, prefs, quantum, redoStep, selectClips, setGraphOpen, setMode, toast, undo, useApp, useEdit, usePlay } from "../store";
 
@@ -103,7 +104,8 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
     const points = (clip.keyframes ?? []).filter((k) => k.property === field.property).sort((a, b) => a.at_ticks-b.at_ticks);
     return points.flatMap((k, i) => k.interpolation === "bezier" && points[i+1] ? [k.value, k.value+(points[i+1].value-k.value)*(k.bezier ?? DEFAULT_BEZIER).y1, k.value+(points[i+1].value-k.value)*(k.bezier ?? DEFAULT_BEZIER).y2] : [k.value]).concat(curveBase(clip, field));
   }, [clip, field.property]);
-  const hardMin = field.min / field.factor, hardMax = field.max / field.factor;
+  const band = { min: field.min, max: field.max, step: field.step, factor: field.factor };
+  const { hardMin, hardMax } = bandEdges(band);
   const padding = Math.max((Math.max(...values) - Math.min(...values)) * .12, (hardMax - hardMin) * .04);
   const low = fit ? Math.min(...values) - padding : hardMin;
   const high = fit ? Math.max(...values) + padding : hardMax;
@@ -116,7 +118,7 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
   const y = (value: number) => TOP + (high - value) / valueSpan * HEIGHT;
   const valueLabel = (value: number) => `${(value * field.factor).toFixed(field.property === "rotation" ? 0 : 1)}${field.unit}`;
   const alignTime = (at: number, attract = true) => keyframeTick(at, { clip, quantum: q, span, plot: WIDTH }, snap, { playhead: head, keys: attract ? keys.filter((k) => !sourceTimes.has(k.at_ticks)).map((k) => k.at_ticks) : [], attract });
-  const quantizeValue = (value: number) => Math.max(hardMin, Math.min(hardMax, Math.round(value * field.factor / field.step) * field.step / field.factor));
+  const quantizeValue = (value: number) => quantizeToBand(value, band);
   const locate = (event: { clientX: number; clientY: number }) => {
     const rect = svg.current!.getBoundingClientRect();
     return { x: (event.clientX - rect.left) / rect.width * 1000, y: (event.clientY - rect.top) / rect.height * 212 };
@@ -141,11 +143,7 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
     chooseSelection(next, next.includes(at) ? at : next[next.length-1] ?? null);
     return keys.filter((k) => next.includes(k.at_ticks));
   };
-  const translate = (points: Keyframe[], dt: number, dv: number) => {
-    dt = Math.max(-Math.min(...points.map((k) => k.at_ticks)), Math.min(clip.duration_ticks-Math.max(...points.map((k) => k.at_ticks)), dt));
-    dv = Math.max(hardMin-Math.min(...points.map((k) => k.value)), Math.min(hardMax-Math.max(...points.map((k) => k.value)), dv));
-    return points.map((k) => ({ ...k, at_ticks: k.at_ticks+dt, value: Math.max(hardMin, Math.min(hardMax, k.value+dv)) }));
-  };
+  const translate = (points: Keyframe[], dt: number, dv: number) => applyShift(points, groupShift(points, band, clip.duration_ticks, dt, dv), band);
   const commitPoints = (from: Keyframe[], next: Keyframe[], revision = project.revision, projectId = project.id) => {
     if (disabled || !from.length) return;
     const fromTimes = new Set(from.map((k) => k.at_ticks)), nextTimes = new Set(next.map((k) => k.at_ticks));
