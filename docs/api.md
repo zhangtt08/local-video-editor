@@ -2492,3 +2492,45 @@ normal 时界面把整份表撤掉而不是交一串 normal，`projects._fingerp
 
 真实成片：把其中一支改成 `difference`，交付画面与正常平均差 33.0 级；换成 `screen` 时编译表与检查里那份
 独立参考 `predict` 差 ≤0.5 级。仍未做：另一段画面作为节点的**第二路输入**（连线）。
+
+### 1.123 清晰的强度与半径可以打关键帧
+
+`SpatialProperty` 从 `Literal["blur"]` 扩到 `Literal["blur", "sharpen", "sharpen_radius"]`，也就是
+`Keyframe.property` 多认两条 id；取值带与静态字段同一条带（`PROPERTY_LIMITS["sharpen"] = (0.0,
+SHARPEN_LIMIT)`、`PROPERTY_LIMITS["sharpen_radius"] = (0.0, BLUR_LIMIT)`），所以一条曲线到不了一个点击
+到不了的地方。没有新命令、没有新错误码：写的还是 `keyframe.set` / `keyframe.remove`，读的还是
+`GET /v1/projects/{id}/clips/{id}/sample`。
+
+排窗的方式与柔焦同一条，但**两颗旋钮共用一组断点**：`animation.sharpen_schedule(clip, quantum, limit)`
+把 (强度, 半径) 当成一个元组交给 `frame_windows`，任一个变了才换窗，两个都没变的相邻窗合并。各排各的
+窗就会出现「导出串了第 k 对阶段、预览却没有第 k 步」那种两端各说各话的时刻，所以这不是省代码而是这条
+不变量的唯一写法。只动强度时半径原样读静态字段（`sample` 的回退就是 `base_value`）。
+
+上限是另一个数：`capabilities.limits.sharpen_schedule_segments`（`SHARPEN_SCHEDULE_MAX = 8`）。柔焦一窗
+是一条 `gblur`，清晰一窗是 `split` 之外的一对 `gblur` + `blend`。量过（6 秒 320×180，本机 FFmpeg，
+libx264 ultrafast）：1 窗 0.47 秒、4 窗 1.35 秒、8 窗 2.53 秒、12 窗 3.68 秒、24 窗 7.18 秒——线性，
+每多一窗约 0.29 秒；1280×720 八窗 2.47 秒。八段封顶把一颗动画旋钮收在静态的约五倍以内。于是可见的
+代价是台阶更粗：4 秒 25 fps 的片段上清晰是 13 帧一跳，柔焦（24 段）是 5 帧一跳；窗边界只落在整帧上，
+曲线落在两个边界之间的跳变要到下一个边界才生效，这一点两端一致。
+
+编译串（`render.focus_stages`）：一次 `split=N+1` 把画面交给链条与 N 条模糊支路，每一窗一条
+`gblur=sigma=…:steps=6:planes=7:enable='between(t,a,b)'`，然后 N 个 `blend` 链式相接，
+`c0..c2_expr='clip(A+量*(A-B),0,255)'`、`c3_expr='A'`、同一个 `enable` 窗。成立的前提是**关掉的
+那一步原样交回第一个输入**：用确定性的片源逐帧比过，`enable='between(t,0.9,1.3)'` 之下，第 5、25、55
+帧与「强度 0」的同一张图 hash 一致，只有第 31、37 帧不同——`blend` 与 `gblur` 都带 timeline 支持。
+强度为 0 的那一窗根本不串阶段。
+
+预览：`preview_manifest` 的 `clips[*].sharpen` 有两种形状——没有曲线时还是那份 `{id, amount, bbox}`
+（一字不变），有曲线时是 `{windows, curve}`：每一窗一个内容寻址的 `<filter>`（同一对数复用同一个
+def），`curve` 逐点 `{offset, id, easing}`，强度 0 的那一格 `id` 是 `null`。界面把**外层那道包装**的
+整个 `filter` 用 `steps(1, end)` 在这些 def 与 `none` 之间切；CSS 不能只换共享 `filter` 串里的一项，
+这也是引擎在有曲线时把静态 `url(#…)` 从 `color_filter` 里拿走的同一个理由。Chromium 量过：
+`filter` 在 `none` 与 `url(#id)` 之间按 `steps(1, end)` 逐格切换（第 100 ms 读到 `none`，第 3000 ms
+读到 `url("#id")`）。
+
+真实成片：128/192 的二值棋盘（纯黑纯白一夹就顶满，量不出过冲），沿斜坡相邻像素差的均值从 40.8 涨到
+82.2，逐窗与「整段都用这一对数」的同路渲染差在 1.22 以内，零强度的两窗读到的就是原片 37.4。门禁：
+`tests/sharpenkey_check.py`（阶梯、两端同源、编译串、成片四节）与第 39 个壳层检查
+`tests/desktop_sharpenkey_check.ts`（`sharpenFrames`/`sharpenFilters`/`sharpenSteps`、属性行的上限与
+名字、九颗旋钮共用同一条判断，以及 `SpatialProperty` 在契约与界面逐字对齐）。能力位
+`capabilities.features.sharpen_keyframes`；老引擎不回这一位时，曲线编辑器与那两颗 ◇ 都不出现。

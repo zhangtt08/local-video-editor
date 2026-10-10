@@ -149,8 +149,9 @@ def both_ends_suite() -> None:
     assert caps["features"]["blur_keyframes"] is True, caps["features"]
     assert caps["limits"]["blur_schedule_segments"] == SPATIAL_SCHEDULE_MAX, caps["limits"]
     # 契约层：blur 现在是可以打关键帧的属性，而 denoise 仍然不是。
+    # （1.123 起 sharpen 与 sharpen_radius 也进来了——那条阶梯由 `sharpenkey_check` 守着。）
     Keyframe(property="blur", at_ticks=0, value=0.1, interpolation="ease")
-    for bad in ("denoise", "sharpen"):
+    for bad in ("denoise",):
         try:
             Keyframe(property=bad, at_ticks=0, value=0.1)
             raise AssertionError(f"{bad} 不该能当关键帧属性")
@@ -163,7 +164,7 @@ def both_ends_suite() -> None:
         pass
     print(
         f"   两端同源：{len(plan)} 段窗逐条出现在下发给浏览器的点表里（每段一步，不许插值）；"
-        "denoise/sharpen 仍进不了关键帧属性"
+        "denoise 仍进不了关键帧属性"
     )
 
 

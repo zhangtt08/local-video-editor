@@ -8,6 +8,7 @@ from .contracts import (
     MASK_FIELDS,
     MASK_SHAPE_SCHEDULE_MAX,
     PROPERTY_LIMITS,
+    SHARPEN_SCHEDULE_MAX,
     SPATIAL_SCHEDULE_MAX,
     TIMEBASE,
     Bezier,
@@ -422,6 +423,33 @@ def spatial_schedule(clip: Clip, prop: str, quantum: int, limit: int | None = No
     return frame_windows(clip, quantum, limit, value_at)
 
 
+SHARPEN_PROPS = ("sharpen", "sharpen_radius")
+
+
+def sharpen_schedule(clip: Clip, quantum: int, limit: int | None = None) -> list[dict]:
+    """One window table carrying both unsharp knobs, so the amount and the radius never step apart.
+
+    The unsharp step is one operation wearing two numbers: `source + amount · (source − gaussian)`
+    whose gaussian's sigma is the radius. Compiling each curve on its own would let a radius step
+    land in the middle of an amount window, and the exporter would then chain a stage the preview
+    has no step for — the two ends would deliver different pictures while both faithfully executing
+    "their" table. So one `frame_windows` pass samples the *pair* (its `value_at` may return
+    anything hashable) and merges on the pair's equality: a step changes only when at least one of
+    the two actually changes, and a clip that animates only the amount still reads its radius from
+    the static knob, because `sample` falls back to `base_value`.
+    """
+    if not any(points(clip, prop) for prop in SHARPEN_PROPS):
+        return []
+
+    def value_at(source: Clip, at: int) -> tuple[float, float]:
+        return (
+            round(sample(source, "sharpen", at), 9),
+            round(sample(source, "sharpen_radius", at), 9),
+        )
+
+    return frame_windows(clip, quantum, SHARPEN_SCHEDULE_MAX if limit is None else limit, value_at)
+
+
 def outline_keys(clip: Clip) -> list[MaskShapeKeyframe]:
     return sorted(clip.mask_shape_keys, key=lambda key: key.at_ticks)
 
@@ -523,23 +551,65 @@ def spatial_curve(clip: Clip, schedule: list[dict]) -> list[dict]:
     ]
 
 
-def sharpen_preview(clip: Clip, width: int, height: int) -> dict | None:
-    """The browser's copy of the unsharp mask: the same amount, a radius expressed in frame units.
+def sharpen_spec(amount: float, fraction: float, width: int, height: int) -> dict:
+    """One unsharp step as the browser draws it: the id, the amount, and the radius in box units.
 
     The preview filter runs in `objectBoundingBox` units, where a stdDeviation of 1 is the whole box
     — so the y fraction is the radius over the frame height and the x one over the frame width. Both
     come from `contracts.spatial_radius`, which is what the exporter hands `gblur`, so the two ends
     convolve the same Gaussian. The id is content-addressed because the `<filter>` element is shared
-    by every clip asking for the same numbers, exactly like the grade tables.
+    by every clip asking for the same numbers, exactly like the grade tables — a window that repeats
+    the static numbers reuses that one def instead of minting a second.
     """
-    if clip.effects.sharpen <= 0:
-        return None
-    fraction = clip.effects.sharpen_radius
-    spec = f"{clip.effects.sharpen:.6g}|{fraction:.6g}"
+    spec = f"{amount:.6g}|{fraction:.6g}"
     return {
         "id": "sh" + hashlib.sha256(spec.encode()).hexdigest()[:12],
-        "amount": clip.effects.sharpen,
+        "amount": amount,
         "bbox": [round(fraction * height / width, 6), round(fraction, 6)],
+    }
+
+
+def sharpen_preview(clip: Clip, width: int, height: int) -> dict | None:
+    """The browser's copy of a static unsharp mask: nothing steps, so one filter serves the clip."""
+    if clip.effects.sharpen <= 0:
+        return None
+    return sharpen_spec(clip.effects.sharpen, clip.effects.sharpen_radius, width, height)
+
+
+def sharpen_windows(
+    clip: Clip, width: int, height: int, quantum: int, limit: int | None = None
+) -> dict | None:
+    """The browser's copy of the unsharp staircase: one `<filter>` per window, steps in between.
+
+    This is the very list the exporter chains (`sharpen_schedule`), with the same `steps(1, end)`
+    easing soft focus already uses. CSS cannot animate one term of a shared filter list, so the edge
+    layer swaps its whole `filter` between this window's def and `none` — which is also why the
+    static `url(#…)` leaves `color_filter` when a curve exists, exactly as it did for an animated
+    radius beside an animated blur. A window whose amount is 0 has nothing to composite (the
+    exporter skips its stage), so it is named `id: null` and the browser shows `none`.
+    """
+    schedule = sharpen_schedule(clip, quantum, limit)
+    if not schedule:
+        return None
+    span = clip.duration_ticks
+    windows = [
+        {
+            "from_ticks": window["from_ticks"],
+            "to_ticks": window["to_ticks"],
+            **sharpen_spec(window["value"][0], window["value"][1], width, height),
+        }
+        for window in schedule
+    ]
+    return {
+        "windows": windows,
+        "curve": [
+            {
+                "offset": window["from_ticks"] / span,
+                "id": window["id"] if window["amount"] > 0 else None,
+                "easing": "steps(1, end)",
+            }
+            for window in windows
+        ],
     }
 
 
@@ -589,6 +659,9 @@ def preview_manifest(
             for prop in SPATIAL_PROPS
             if points(clip, prop)
         }
+        # 1.123: an animated unsharp mask ships the same window list the exporter chains, so the
+        # browser steps where the export steps — including which windows do nothing at all.
+        stepped = sharpen_windows(clip, project.settings.width, project.settings.height, quantum)
         # 1.118: a morphing outline ships as the very window list the exporter cuts its plates from
         # — one unit image per window, plus the numbers that put that image where the plate lands.
         # The browser only selects the window the engine named and places it with numbers it was
@@ -635,7 +708,9 @@ def preview_manifest(
             else None,
             "curves": curves,
             "duration_ms": clip.duration_ticks / TIMEBASE * 1000,
-            "sharpen": sharpen,
+            # One key, two shapes: a clip that does not step gets the single static filter the
+            # browser has always drawn, a stepped one gets the window table it animates.
+            "sharpen": stepped or sharpen,
             "color_filter": (
                 f"brightness({2**clip.color.exposure}) "
                 f"contrast({clip.color.contrast}) saturate({clip.color.saturation})"
@@ -656,9 +731,13 @@ def preview_manifest(
             # is its own element (CSS cannot animate one term of a shared filter list), and the
             # exporter's order — grade, then blur, then edge — only survives if the edge filter sits
             # on the wrapper *outside* it. Without a curve nothing moves, so the string is what it
-            # always was.
-            + ("" if spatial else (f" url(#{sharpen['id']})" if sharpen else "")),
-            "edge_filter": (f" url(#{sharpen['id']})" if sharpen and spatial else None),
+            # always was. From 1.123 an animated unsharp mask leaves it the same way, for the same
+            # reason: the wrapper animates that window table, so a static `url(#…)` here would apply
+            # the first step twice.
+            + ("" if (spatial or stepped) else (f" url(#{sharpen['id']})" if sharpen else "")),
+            "edge_filter": (
+                f" url(#{sharpen['id']})" if sharpen and spatial and not stepped else None
+            ),
             "grade": grade,
             "transition": transition_curves[clip.id],
             "fade": fade or None,

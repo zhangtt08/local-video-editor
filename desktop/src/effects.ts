@@ -1,5 +1,5 @@
 import type { GradeCapacity } from "./engine";
-import type { AnimatedEffect, Asset, Capabilities, Clip, Curve, Effects, MaskProperty, Project, ShapeMask, SpatialProperty, WipeChannel } from "./engine";
+import type { AnimatedEffect, Asset, Capabilities, Clip, Curve, Effects, MaskProperty, Project, SharpenSpec, SharpenStatic, SharpenSteps, ShapeMask, SpatialProperty, WipeChannel } from "./engine";
 import { DEFAULT_EFFECTS } from "./engine";
 import { TIMEBASE } from "./time";
 
@@ -74,16 +74,31 @@ export const INTERPOLATIONS = { linear: "线性", ease: "缓入缓出", hold: "�
 export const FIELD_LABEL: Record<string, string> = Object.fromEntries([
   ...[...EFFECT_FIELDS, ...MASK_ANIM_FIELDS].map((field) => [field.property, field.label]),
   ["blur", "柔焦"],
+  // 1.123：清晰的两颗旋钮进了可打关键帧那一族，名字也从这里出去——曲线编辑器、检查器、时间线
+  // 针的悬停说明都读这一张表，契约里那两条 id 不再当用户界面用。
+  ["sharpen", "清晰"],
+  ["sharpen_radius", "清晰半径"],
 ] as [string, string][]);
 
 /** 1.99：柔焦那条曲线也能在曲线编辑器里看与拖。上限与检查器那一行同源（`blurMaxPercent`：
  *  引擎下发的比例上限与实测过的像素带按当前画幅高折算取小），所以这里不会给出一条
- *  画得出、导出会拒的斜坡；老引擎不回 `blur_keyframes` 就没有这条曲线。 */
+ *  画得出、导出会拒的斜坡；老引擎不回 `blur_keyframes` 就没有这条曲线。
+ *  1.123：清晰的两颗旋钮同一条路，上限也同源（`sharpenLimits`）。它们不是两条各走各的曲线——
+ *  导出把这两个数编进**同一张**窗表（`animation.sharpen_schedule`），所以要么一起出现，要么都不出现。 */
 export const spatialAnimFields = (caps: Capabilities | null, frameHeight: number) => {
   const max = blurMaxPercent(caps, frameHeight);
-  return !caps?.features.blur_keyframes || max <= 0
-    ? []
-    : [{ property: "blur" as SpatialProperty, label: "柔焦", unit: "%", min: 0, max, step: 0.5, factor: 100 }];
+  const limits = sharpenLimits(caps, frameHeight);
+  const rows: {
+    property: SpatialProperty; label: string; unit: string; min: number; max: number; step: number; factor: number;
+  }[] = [];
+  if (caps?.features.blur_keyframes && max > 0) {
+    rows.push({ property: "blur", label: FIELD_LABEL.blur, unit: "%", min: 0, max, step: 0.5, factor: 100 });
+  }
+  if (caps?.features.sharpen_keyframes && limits.amount > 0) {
+    rows.push({ property: "sharpen", label: FIELD_LABEL.sharpen, unit: "%", min: 0, max: limits.amount * 100, step: 5, factor: 100 });
+    rows.push({ property: "sharpen_radius", label: FIELD_LABEL.sharpen_radius, unit: "%", min: 0, max: limits.radiusPercent, step: 0.25, factor: 100 });
+  }
+  return rows;
 };
 
 /** Every curve the editor can offer, in one vocabulary. */
@@ -363,6 +378,28 @@ export type FadeOp = { clipId: string; property: FadeProperty; side: FadeSide; t
 export function blurFrames(curve: Curve | null | undefined): { filter: string; offset: number; easing: string }[] {
   return (curve ?? []).map((point) => ({
     filter: `blur(${point.value * 100}cqh)`,
+    offset: point.offset,
+    easing: point.easing,
+  }));
+}
+
+/** 一片清晰该画几个 `<filter>`：静态那一份，或者窗表里每一窗一份。判断只写在这里——
+ *  预览组件不再自己问「这是静态还是有窗」，两处各问一遍迟早会问出不一样的一张表。 */
+export const sharpenFilters = (sharpen: SharpenSpec | null | undefined): SharpenStatic[] =>
+  !sharpen ? [] : "windows" in sharpen ? sharpen.windows : [sharpen];
+
+/** 「这一片清晰到底有没有窗」也只问这一次：动画那条路只在有窗的时候才挂上去。 */
+export const sharpenSteps = (sharpen: SharpenSpec | null | undefined): SharpenSteps | null =>
+  sharpen && "windows" in sharpen ? sharpen : null;
+
+/** 1.123：清晰那一串窗在浏览器里的动画帧。CSS 不能只换共享 filter 串里的一项，所以外层那道
+ *  包装整个 `filter` 在「这一窗的 def」与 `none` 之间一格一步地切——`none` 的那几格正是导出
+ *  不为它串阶段的零强度窗。数与导出来自同一份窗表（`animation.sharpen_windows`）。 */
+export function sharpenFrames(
+  curve: SharpenSteps["curve"] | null | undefined,
+): { filter: string; offset: number; easing: string }[] {
+  return (curve ?? []).map((point) => ({
+    filter: point.id ? `url(#${point.id})` : "none",
     offset: point.offset,
     easing: point.easing,
   }));

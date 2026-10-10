@@ -1,4 +1,4 @@
-import type { Keyframe, MaskShapeKeyframe } from "../engine";
+import type { Keyframe, MaskShapeKeyframe, SpatialProperty } from "../engine";
 import { useEffect, useId, useRef, useState } from "react";
 
 import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionChoices, type AnimatedEffect, type Clip, type LinkStatus, type SampledValues, type ShapeMask, type TransitionKind, BLEND_MODES} from "../engine";
@@ -266,6 +266,23 @@ function EffectsFields({ clip }: { clip: Clip }) {
   // 按钮亮不亮仍按 caps.features.blur_keyframes，界面不凭记忆决定哪颗旋钮能做动画。
   // 上限完全由引擎下发的两个数决定（见 effects.ts 的 blurMaxPercent），界面不自己另写一套。
   const blurMax = blurMaxPercent(app.caps, project?.settings.height ?? 0);
+  // 一颗效果旋钮（六个标量 + 柔焦 + 清晰的两颗）只有一条写法：这条属性已经有曲线，就把这一时刻的点
+  // 改掉（没有点就补一个），只有完全没曲线时才改静态字段——引擎一旦看到一个点就整体按曲线取值，
+  // 这时改静态字段画面根本不会动，界面不能给一个按了没反应的框。
+  const knobFrame = (property: AnimatedEffect | SpatialProperty) =>
+    frames.find((k) => k.property === property && k.at_ticks === at + offset);
+  const commitKnob = (property: AnimatedEffect | SpatialProperty, value: number, statics: () => void) =>
+    (clip.keyframes ?? []).some((k) => k.property === property)
+      ? setKeyframe(clip.id, { ...knobFrame(property), property, at_ticks: at, value, interpolation: knobFrame(property)?.interpolation ?? interpolation })
+      : statics();
+  // ◇ 也只有一处写法：认哪一份下发开关（`null` 表示这条本来就能打）、写哪条属性、新点从哪个数起笔，
+  // 都由调用方交进来，所以六颗标量与三颗空间旋钮的那只手是同一只。
+  const knobButton = (property: AnimatedEffect | SpatialProperty, gate: string | null, label: string, from: number, hint: string) =>
+    gate === null || app.caps?.features?.[gate] ? <button type="button" className={`keyframe-btn${knobFrame(property) ? " active" : ""}`}
+      aria-label={`${knobFrame(property) ? "删除" : "添加"}${label}关键帧`}
+      disabled={outside || play.playing || !sampleReady}
+      title={`${knobFrame(property) ? "删除" : "添加"}当前位置的${label}关键帧${hint ? `：${hint}` : ""}`}
+      onClick={() => knobFrame(property) ? removeKeyframe(clip.id, property, at) : setKeyframe(clip.id, { property, at_ticks: at, value: from, interpolation })}>◇</button> : null;
   // 降噪只有一条真实的路：导出。浏览器预览没有等价的 FFT 降噪，所以这一行必须自己说明白，
   // 上限由引擎下发（capabilities.limits.denoise_db），界面不另写一套数。
   const carriesAudio = asset?.kind === "audio"
@@ -289,30 +306,22 @@ function EffectsFields({ clip }: { clip: Clip }) {
       <button className="btn tiny subtle" disabled={locked} title="重置静态属性；保留已设置的关键帧" onClick={() => setClipEffects(clip.id, DEFAULT_EFFECTS)}>重置属性</button></div>
     <fieldset disabled={locked || !sampleReady} className="effects-fields">
       {EFFECT_FIELDS.filter((f) => asset?.kind !== "audio" || f.property === "gain").map((f) => {
-        const frame = frames.find((k) => k.property === f.property && k.at_ticks === at + offset);
+        const frame = knobFrame(f.property);
         return <div className="effect-row" key={f.property}>
           <label htmlFor={`fx-${f.property}`}>{f.label}</label>
           <EffectInput id={`fx-${f.property}`} value={(frame?.value ?? currentValues[f.property]) * f.factor} min={f.min} max={f.max} step={f.step}
-            onCommit={(value) => (clip.keyframes ?? []).some((k) => k.property === f.property) ? setKeyframe(clip.id, { ...frame, property: f.property, at_ticks: at, value: value / f.factor, interpolation: frame?.interpolation ?? interpolation }) : setClipEffects(clip.id, { [f.property]: value / f.factor })} />
+            onCommit={(value) => commitKnob(f.property, value / f.factor, () => setClipEffects(clip.id, { [f.property]: value / f.factor }))} />
           <span className="dim">{f.unit}</span>
-          <button type="button" className={`keyframe-btn${frame ? " active" : ""}`} aria-label={frame ? `删除${f.label}关键帧` : `添加${f.label}关键帧`}
-            disabled={outside || play.playing || !sampleReady}
-            title={`${frame ? "删除" : "添加"}当前位置的${f.label}关键帧`}
-            onClick={() => frame ? removeKeyframe(clip.id, f.property, at) : setKeyframe(clip.id, { property: f.property, at_ticks: at, value: currentValues[f.property], interpolation })}>◇</button>
+          {knobButton(f.property, null, f.label, currentValues[f.property], "")}
         </div>;
       })}
       {blurMax > 0 && asset?.kind !== "audio" ? (() => {
-        const frame = frames.find((k) => k.property === "blur" && k.at_ticks === at + offset);
-        const keyed = (clip.keyframes ?? []).some((k) => k.property === "blur");
-        const shown = (frame?.value ?? effects.blur ?? 0) * 100;
+        const shown = (knobFrame("blur")?.value ?? effects.blur ?? 0) * 100;
         return <div className="effect-row">
-          <label htmlFor="fx-blur">柔焦</label>
-          <EffectInput id="fx-blur" value={shown} min={0} max={blurMax} step={0.5} onCommit={(value) => keyed ? setKeyframe(clip.id, { ...frame, property: "blur", at_ticks: at, value: value / 100, interpolation: frame?.interpolation ?? interpolation }) : setClipEffects(clip.id, { blur: value / 100 })} />
+          <label htmlFor="fx-blur">{FIELD_LABEL.blur}</label>
+          <EffectInput id="fx-blur" value={shown} min={0} max={blurMax} step={0.5} onCommit={(value) => commitKnob("blur", value / 100, () => setClipEffects(clip.id, { blur: value / 100 }))} />
           <span className="dim">% 高 · ≈{((shown / 100) * (project?.settings.height ?? 0)).toFixed(1)} px</span>
-          {app.caps?.features?.blur_keyframes ? <button type="button" className={`keyframe-btn${frame ? " active" : ""}`} aria-label={frame ? "删除柔焦关键帧" : "添加柔焦关键帧"}
-            disabled={outside || play.playing || !sampleReady}
-            title={`${frame ? "删除" : "添加"}当前位置的柔焦关键帧：导出把这条曲线编译成一格一步的柔焦窗，预览走的是同一份窗表`}
-            onClick={() => frame ? removeKeyframe(clip.id, "blur", at) : setKeyframe(clip.id, { property: "blur", at_ticks: at, value: effects.blur ?? 0, interpolation })}>◇</button> : null}
+          {knobButton("blur", "blur_keyframes", FIELD_LABEL.blur, effects.blur ?? 0, "导出把这条曲线编译成一格一步的柔焦窗，预览走的是同一份窗表")}
         </div>;
       })() : null}
           {app.caps?.features?.clip_stabilize && asset?.kind !== "audio" ? <span className="stabilize-row">
@@ -332,14 +341,16 @@ function EffectsFields({ clip }: { clip: Clip }) {
           </span> : null}
             {sharpen.amount > 0 && asset?.kind !== "audio" ? <>
         <div className="effect-row">
-          <label htmlFor="fx-sharpen">清晰</label>
-          <EffectInput id="fx-sharpen" value={(effects.sharpen ?? 0) * 100} min={0} max={sharpen.amount * 100} step={5} onCommit={(value) => setClipEffects(clip.id, { sharpen: value / 100 })} />
+          <label htmlFor="fx-sharpen">{FIELD_LABEL.sharpen}</label>
+          <EffectInput id="fx-sharpen" value={(knobFrame("sharpen")?.value ?? effects.sharpen ?? 0) * 100} min={0} max={sharpen.amount * 100} step={5} onCommit={(value) => commitKnob("sharpen", value / 100, () => setClipEffects(clip.id, { sharpen: value / 100 }))} />
           <span className="dim">%</span>
+          {knobButton("sharpen", "sharpen_keyframes", FIELD_LABEL.sharpen, effects.sharpen ?? 0, "导出一格一步地锐化，预览走的是同一份窗表；这一颗与下面的半径共用那张窗表，所以它们总在同一些帧上换档")}
         </div>
         <div className="effect-row">
-          <label htmlFor="fx-sharpen-radius">清晰半径</label>
-          <EffectInput id="fx-sharpen-radius" value={(effects.sharpen_radius ?? 0) * 100} min={0} max={sharpen.radiusPercent} step={0.25} onCommit={(value) => setClipEffects(clip.id, { sharpen_radius: value / 100 })} />
-          <span className="dim">% 高 · ≈{((effects.sharpen_radius ?? 0) * (project?.settings.height ?? 0)).toFixed(1)} px</span>
+          <label htmlFor="fx-sharpen-radius">{FIELD_LABEL.sharpen_radius}</label>
+          <EffectInput id="fx-sharpen-radius" value={(knobFrame("sharpen_radius")?.value ?? effects.sharpen_radius ?? 0) * 100} min={0} max={sharpen.radiusPercent} step={0.25} onCommit={(value) => commitKnob("sharpen_radius", value / 100, () => setClipEffects(clip.id, { sharpen_radius: value / 100 }))} />
+          <span className="dim">% 高 · ≈{((knobFrame("sharpen_radius")?.value ?? effects.sharpen_radius ?? 0) * (project?.settings.height ?? 0)).toFixed(1)} px</span>
+          {knobButton("sharpen_radius", "sharpen_keyframes", FIELD_LABEL.sharpen_radius, effects.sharpen_radius ?? 0, "半径就是那一次高斯采样的宽度，与强度同进同一张窗表")}
         </div>
       </> : null}
       {carriesAudio && denoiseCeiling > 0 ? <div className="effect-row">

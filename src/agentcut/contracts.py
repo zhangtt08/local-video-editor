@@ -11,7 +11,7 @@ SCHEMA_VERSION = (
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.122.0"
+APP_VERSION = "1.123.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -138,11 +138,15 @@ EffectProperty = Literal["x", "y", "scale", "rotation", "opacity", "gain"]
 # 1.98: soft focus joins the keyable set, but through its own compiled staircase rather than through
 # the scalar-expression path above — `gblur` cannot read an expression for its sigma, so
 # `animation.spatial_schedule` turns the curve into windows that both ends consume (see
-# `SPATIAL_SCHEDULE_MAX`). Sharpen, its radius and denoise stay patch-only for now.
-SpatialProperty = Literal["blur"]
-# What `clip.patch` may write is wider than what can be keyframed: `sharpen` and `sharpen_radius`
-# have no per-frame form (see ClipEffects), so they are patchable without being animatable.
-EffectField = EffectProperty | Literal["blur", "sharpen", "sharpen_radius", "denoise"]
+# `SPATIAL_SCHEDULE_MAX`). 1.123: the unsharp mask joins the same way, with one twist — its amount
+# and its radius are two curves that have to step on the same frame, so they compile together
+# (`animation.sharpen_schedule`) into one window table. Each step of that table costs a `gblur`
+# *and* a `blend`, which measures dearer than the bare `gblur` soft focus needs, so it carries its
+# own, smaller ceiling (`SHARPEN_SCHEDULE_MAX`). `denoise` stays patch-only: the browser has no FFT
+# denoise at all, so a curve there would be a promise one end cannot keep.
+SpatialProperty = Literal["blur", "sharpen", "sharpen_radius"]
+# What `clip.patch` may write is wider than what can be keyframed: `denoise` has no per-frame form.
+EffectField = EffectProperty | SpatialProperty | Literal["denoise"]
 # Rectangle and ellipse masks keyframe in the mask's own normalized space, so the exporter and the
 # browser interpolate the same numbers. A free-form (path) mask rasterizes its outline once and can
 # be moved with mask_x/mask_y; its drawn shape now animates too, but through its own table — one
@@ -185,14 +189,14 @@ PROPERTY_LIMITS = {
 # `BLUR_LIMIT` is a quarter of the frame height because past that the picture has already averaged
 # into one color. `BLUR_RADIUS_LIMIT_PX` is the top of the measured band — the step-edge probe runs
 # out of contrast above it, so a bigger radius is refused by name rather than claimed as verified.
-# Two absences, each for the same reason: no keyframes for sharpen (`unsharp` convolves a
-# box-window kernel, not a Gaussian of the named radius, so one name would be two functions) and no
-# per-frame radius for it either. Soft focus does get keyframes from 1.98, and the way the earlier
-# refusal described is exactly the way it is done: `gblur`'s only per-frame hook is `enable`, an
-# on/off window, so an animated radius compiles to a staircase. What changed is who steps: the
-# staircase is now the single authority (`animation.spatial_schedule`) — the exporter chains
-# `gblur=sigma=…:enable='between(t,…) per step` and the browser animates the very same steps
-# (`easing: "steps(1, end)"`), so neither end quietly smooths over what the other is doing.
+# One refusal that 1.98 already answered: `gblur` has no per-frame sigma, only the on/off `enable`
+# window, so an animated radius is a staircase and the staircase is the single authority
+# (`animation.spatial_schedule`) — the exporter chains `gblur=sigma=…:enable='between(t,…)'` per
+# step and the browser animates the very same steps (`easing: "steps(1, end)"`), so neither end
+# quietly smooths over what the other is doing. The unsharp mask is now keyed the same way (1.123),
+# through `animation.sharpen_schedule`, because `blend` also honours `enable`: measured on the
+# FFmpeg this app ships, amount 3 gated to 0.9..1.3 s left frames 5, 25 and 55 bit-identical to the
+# same graph with amount 0, and changed only 31 and 37.
 BLUR_LIMIT = 0.25
 BLUR_RADIUS_LIMIT_PX = 64.0
 GBLUR_STEPS = 6
@@ -202,6 +206,15 @@ GBLUR_STEPS = 6
 # seconds of 320x180 in 0.12 s, so twenty-four is comfortably affordable while still being coarse
 # enough that a long ramp is scheduled in wide steps rather than one step per frame.
 SPATIAL_SCHEDULE_MAX = 24
+# The unsharp staircase gets its own, smaller ceiling because a step here is a pair of stages, not
+# one: `split` once for the whole chain, then a `gblur` and a `blend` per window. Measured on the
+# FFmpeg this app ships (6 s of testsrc, libx264 ultrafast, chained windows of one unsharp mask):
+# 320x180 encodes in 0.47 s with one window, 1.35 s with four, 2.53 s with eight, 3.68 s with
+# twelve, 7.18 s with twenty-four — linear, about 0.29 s per extra window at this size, and 1280x720
+# costs the same per window as 320x180 at this preset. Eight keeps one animated knob inside roughly
+# five times the static cost; past that a focus-pull ramp would be scheduled in steps too fine to
+# see and too expensive to deliver.
+SHARPEN_SCHEDULE_MAX = 8
 # A morphing free-form mask compiles the same way: one frame-aligned window per constant outline,
 # and both ends read that one list. The ceiling has to be smaller than the soft-focus one because a
 # window here is a rasterised plate, not a number — `masks.coverage` is a Python scanline fill, so
@@ -222,6 +235,11 @@ PROPERTY_LIMITS["blur"] = (0.0, BLUR_LIMIT)
 # defined against the frame, not a pixel count. Default ~4 px at 1080p: edge, not glow.
 SHARPEN_LIMIT = 2.0
 SHARPEN_RADIUS_DEFAULT = 0.004
+# A keyframed unsharp knob is bounded by the very same ceilings the static knobs use, so a curve
+# cannot reach past what one click can: the amount tops out where the slider does, and the radius
+# shares soft focus's measured band because it is the same fraction of the same frame.
+PROPERTY_LIMITS["sharpen"] = (0.0, SHARPEN_LIMIT)
+PROPERTY_LIMITS["sharpen_radius"] = (0.0, BLUR_LIMIT)
 # 音频降噪：一个旋钮，dB of broadband reduction handed straight to FFmpeg's `afftdn=nr=`.
 # 24 dB is where the filter starts eating speech on the measured fixture, so that is the ceiling.
 DENOISE_LIMIT = 24.0
@@ -276,8 +294,9 @@ class ClipEffects(Contract):
     # measured, `blend` without it wraps modulo 256 instead of clamping (255+0.8*69 read back
     # as 54). The preview runs `feGaussianBlur` + `feComposite operator="arithmetic"` with
     # k2=1+a, k3=-a, which clamps by definition; on a hard edge the two agree to <=3 levels
-    # (export 77/68/57/44, browser 74/65/54/43, plate at 100). Same restrictions as `blur`: no
-    # keyframes (there is no per-frame radius to animate), and only inside the measured band.
+    # (export 77/68/57/44, browser 74/65/54/43, plate at 100). Both knobs keyframe from 1.123,
+    # through the same compiled window table the amount and the radius share, and both stay inside
+    # the measured band.
     sharpen: Annotated[float, Field(ge=0, le=SHARPEN_LIMIT)] = 0.0
     sharpen_radius: Annotated[float, Field(ge=0, le=BLUR_LIMIT)] = SHARPEN_RADIUS_DEFAULT
     # 音频降噪只在导出里生效：浏览器预览没有等价的 FFT 降噪，宁可写明「导出才有」，也不在预览里
@@ -2556,6 +2575,9 @@ def capabilities(
             # 1.98: soft focus can be keyframed. It compiles to a bounded staircase that both ends
             # consume, so `limits.blur_schedule_segments` says how coarse the steps may get.
             "blur_keyframes": True,
+            # 1.123: so can the unsharp mask's amount and radius — together, on one frame grid, so
+            # the two curves cannot step past each other. Its own ceiling is in the same list.
+            "sharpen_keyframes": True,
         },
         "limits": {
             "max_tracks": 128,
@@ -2568,6 +2590,7 @@ def capabilities(
             "sharpen_radius_fraction": BLUR_LIMIT,
             "sharpen_radius_default": SHARPEN_RADIUS_DEFAULT,
             "blur_schedule_segments": SPATIAL_SCHEDULE_MAX,
+            "sharpen_schedule_segments": SHARPEN_SCHEDULE_MAX,
             # A morphing outline is bounded by the same kind of number: how many outlines one mask
             # carries, and how many plates the export and the preview each execute.
             "mask_shape_keys": MASK_SHAPE_KEY_LIMIT,

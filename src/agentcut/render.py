@@ -19,6 +19,7 @@ from .animation import (
     fade_active,
     mask_shape_schedule,
     outline_mask,
+    sharpen_schedule,
     sound_enabled,
     spatial_schedule,
 )
@@ -194,10 +195,13 @@ def focus_stages(
     measured, `blend` without it wraps modulo 256 rather than clamping (255 + 0.8·69 came back
     as 54). The blend's output stays unlabeled on purpose: lavfi calls a pad label followed by
     another filter "trailing garbage after a filter", so a closed pad can only end a chain, and
-    every caller here has more filters to append.
+    every caller here has more filters to append. Since 1.123 an animated unsharp mask chains one
+    of those fan-out pairs per window (`animation.sharpen_schedule`) — the same staircase soft focus
+    has used since 1.98, because `blend` honours `enable` just as `gblur` does.
     """
     schedule = spatial_schedule(clip, "blur", frame_ticks)
-    if schedule or clip.effects.blur > 0 or clip.effects.sharpen > 0:
+    steps = [window for window in sharpen_schedule(clip, frame_ticks) if window["value"][0] > 0]
+    if schedule or clip.effects.blur > 0 or clip.effects.sharpen > 0 or steps:
         if alpha:
             # `gblur` samples planes, so the cut chain only asks for the rgba form when a spatial
             # knob is actually on: with both at zero the emitted string stays what it always was,
@@ -220,7 +224,40 @@ def focus_stages(
     elif clip.effects.blur > 0:
         radius = focus_radius(clip.effects.blur, "blur", basis)
         head = f"{head},gblur=sigma={radius:.4f}:steps={GBLUR_STEPS}"
-    if clip.effects.sharpen > 0:
+    if steps:
+        # 1.123: a keyframed unsharp mask compiles to the window list the browser animates, one
+        # `gblur` + `blend` pair per step and a single `split` fanning the whole chain. Both stages
+        # carry the same `enable` gate because both are measured to honour it: a disabled `blend`
+        # hands back its first input untouched, so the picture entering window k's blend is still
+        # the original however many windows sit in front of it, and a disabled `gblur` keeps the
+        # expensive convolution off frames this window does not own. A window whose amount is 0
+        # gets no stage at all — same deal the soft-focus staircase makes.
+        def gate(window: dict) -> str:
+            return f":enable='between(t,{sec(window['from_ticks'])},{sec(window['to_ticks'])})'"
+
+        chain = plan.tag("sharp")
+        sources = [plan.tag("toblu") for _ in steps]
+        hazy = [plan.tag("blurd") for _ in steps]
+        joined = [plan.tag("sharw") for _ in steps[:-1]]
+        plan.filters.append(f"{head},split={len(steps) + 1}{chain}{''.join(sources)}")
+        for window, source, out in zip(steps, sources, hazy, strict=True):
+            sigma = focus_radius(window["value"][1], "sharpen_radius", basis)
+            plan.filters.append(
+                f"{source}gblur=sigma={sigma:.4f}:steps={GBLUR_STEPS}:planes=7{gate(window)}{out}"
+            )
+        for index, (window, out) in enumerate(zip(steps, hazy, strict=True)):
+            expression = f"clip(A+{window['value'][0]}*(A-B),0,255)"
+            blend = (
+                f"{chain}{out}blend="
+                + ":".join(f"c{plane}_expr='{expression}'" for plane in (0, 1, 2))
+                + f":c3_expr='A'{gate(window)}"
+            )
+            if index == len(steps) - 1:
+                head = blend
+            else:
+                plan.filters.append(f"{blend}{joined[index]}")
+                chain = joined[index]
+    elif clip.effects.sharpen > 0:
         amount = clip.effects.sharpen
         sigma = focus_radius(clip.effects.sharpen_radius, "sharpen_radius", basis)
         original, to_blur, blurred = plan.tag("sharp"), plan.tag("toblu"), plan.tag("blurd")
