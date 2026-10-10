@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 
+import { branchWeight, weightsAfterAdd, weightsAfterRemove, weightsAfterWeight } from "../gradeGraph";
 import {DEFAULT_TRANSFER, COLOR_SPACES, DEFAULT_CURVE_POINTS, DEFAULT_WHEELS, type GradeBranch, type GradeCapacity, type GradeChannel, type GradeCurvePoint, type GradeNode, type GradeOperation, type GradeParallel, type ColorSpace, BLEND_MODES, type BlendMode} from "../engine";
 import { applyGradeToTrack, editableProject, setClipColor, useApp, applyLut, autoGradeClip, fetchGradeCapacity } from "../store";
 import { autoGradeBlocker, gradeCapacityLine } from "../effects";
@@ -12,6 +13,7 @@ const BLUE_YELLOW = [0.40824829, 0.40824829, -0.81649758];
 const FALLBACK_NODES = 8;
 const FALLBACK_POINTS = 16;
 const FALLBACK_BRANCHES = 4;
+const FALLBACK_WEIGHT = 2;
 const FALLBACK_LEVELS = { blackMax: 0.9, whiteMin: 0.1, gammaMin: 0.1, gammaMax: 10 };
 const FALLBACK_MATRIX_LIMIT = 4;
 /** 通道混合的三行三列与几个起手式：预设只是把九个框填成一组常用数，改完仍然是普通节点。 */
@@ -27,6 +29,7 @@ export type GradeLimits = {
   nodes: number;
   points: number;
   branches: number;
+  weightMax: number;
   blackMax?: number;
   whiteMin?: number;
   gammaMin?: number;
@@ -349,6 +352,7 @@ export function GradeFields({ clipId }: { clipId: string }) {
     nodes: app.caps?.grade_limits?.max_nodes ?? FALLBACK_NODES,
     points: app.caps?.grade_limits?.max_curve_points ?? FALLBACK_POINTS,
     branches: app.caps?.grade_limits?.max_branches ?? FALLBACK_BRANCHES,
+    weightMax: app.caps?.grade_limits?.branch_weight_max ?? FALLBACK_WEIGHT,
     blackMax: app.caps?.grade_limits?.levels_black_max ?? FALLBACK_LEVELS.blackMax,
     whiteMin: app.caps?.grade_limits?.levels_white_min ?? FALLBACK_LEVELS.whiteMin,
     gammaMin: app.caps?.grade_limits?.levels_gamma_min ?? FALLBACK_LEVELS.gammaMin,
@@ -410,6 +414,12 @@ export function GradeFields({ clipId }: { clipId: string }) {
   // Clamped here instead of in an effect, so a stale slot from another node can never edit the wrong branch.
   const slot = Math.min(branchSlot, Math.max(0, branches.length - 1));
   const shown = branches[slot] ?? null;
+  // 1.120：并联节点的混频台。权重按位置覆盖每一支——契约要「给就给全」，所以这里从不留半份表：动一支
+  // 就补齐整份，而每一支都回到 1 时把这份表整个撤掉（撤掉与交一串 1 是同一个均分，撤掉更诚实，也不会让
+  // 老工程的载荷从此多出一串没人要的数）。
+  const weightsOn = Boolean(app.caps?.features?.grade_branch_weights);
+  const setWeight = (node: GradeParallel, index: number, value: number) =>
+    replace(active, { ...node, weights: weightsAfterWeight(node, index, value) });
   // 分支只能装每通道操作：并联取各支平均，跨通道的矩阵混进去就没有一张表可塌，契约也拒。
   const replaceBranch = (node: GradeParallel, index: number, next: GradeNode) => replace(active, {
     ...node,
@@ -418,12 +428,14 @@ export function GradeFields({ clipId }: { clipId: string }) {
     )),
   });
   const addBranch = (node: GradeParallel) => {
-    replace(active, { ...node, branches: [...node.branches, newOperation("white_balance") as GradeBranch] });
+    replace(active, { ...node, branches: [...node.branches, newOperation("white_balance") as GradeBranch], weights: weightsAfterAdd(node) });
     setSlot(node.branches.length);
   };
   const removeBranch = (node: GradeParallel) => {
     const next = node.branches.filter((_, position) => position !== slot);
-    replace(active, { ...node, branches: next });
+    // 删一支必须把那一格的权重一起删掉：留下的是一份长度对不上的表，而契约会把这一次写入整笔拒掉——
+    // 那等于把人困在「删不掉」里，所以形状由 gradeGraph 那一处负责补齐。
+    replace(active, { ...node, branches: next, weights: weightsAfterRemove(node, slot) });
     setSlot(Math.max(0, slot - 1));
   };
 
@@ -500,16 +512,22 @@ export function GradeFields({ clipId }: { clipId: string }) {
 
       {current?.kind === "parallel" ? <div className="grade-body">
         <div className="batch-actions">
-          {current.branches.map((branch, index) => <button key={index} className={`grade-pick${index === slot ? " active" : ""}`} onClick={() => setSlot(index)} aria-label={`选择第 ${index + 1} 支`}>{index + 1}. {NODE_NAMES[branch.kind]}{branch.mix === undefined || branch.mix === 1 ? "" : ` · ${Math.round(branch.mix * 100)}%`}</button>)}
+          {current.branches.map((branch, index) => <button key={index} className={`grade-pick${index === slot ? " active" : ""}`} onClick={() => setSlot(index)} aria-label={`选择第 ${index + 1} 支`}>{index + 1}. {NODE_NAMES[branch.kind]}{branch.mix === undefined || branch.mix === 1 ? "" : ` · ${Math.round(branch.mix * 100)}%`}{branchWeight(current, index) === 1 ? "" : ` · ×${branchWeight(current, index)}`}</button>)}
           <button className="btn tiny" disabled={current.branches.length >= limits.branches} onClick={() => addBranch(current)} aria-label="增加一支">+支</button>
           <button className="btn tiny danger" disabled={current.branches.length <= 1} onClick={() => removeBranch(current)} aria-label="删除本支">删支</button>
         </div>
         {shown ? <>
           <OpFields node={shown} idPrefix={`grade-b${slot}`} limits={limits} onCommit={(next) => replaceBranch(current, slot, next)} />
           <MixFields node={shown} idPrefix={`grade-b${slot}`} label="支" onCommit={(next) => replaceBranch(current, slot, next)} />
+          {weightsOn ? <>
+            <Num id={`grade-b${slot}-weight`} label="这一支的权重" value={branchWeight(current, slot)} min={0} max={limits.weightMax} step={0.05}
+              onCommit={(value) => setWeight(current, slot, value)} />
+            {current.weights?.length ? <button className="btn tiny" onClick={() => setWeight(current, slot, 1)}
+              title="把这一支拧回 1。每一支都是 1 时这份权重表整个撤掉，回到均分。">这一支回 1</button> : null}
+          </> : null}
           <label className="grade-switch"><input type="checkbox" checked={shown.enabled} onChange={(e) => replaceBranch(current, slot, { ...shown, enabled: e.target.checked })} />启用本支</label>
         </> : null}
-        <p className="hint">并联的每一支都从本节点的输入重新开始算，节点输出取各支的平均值；停用一支等于那支直通，不会改变支数。平均的对象仍然是每通道函数，所以整个并联节点还是一张表，预览与导出共用。</p>
+        <p className="hint">并联的每一支都从本节点的输入重新开始算，节点输出取各支的加权平均（没给权重就是均分，与不设权重逐位相同）；停用一支等于那支直通，不会改变支数。权重全部拧到 0 时这一节不改画面，而不是交一帧黑。平均的对象仍然是每通道函数，所以整个并联节点还是一张表，预览与导出共用。</p>
       </div> : null}
 
       {current ? <MixFields node={current} idPrefix="grade" label="节点" onCommit={(next) => replace(active, next)} /> : null}

@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from agentcut.animation import preview_manifest
-from agentcut.contracts import SCHEMA_VERSION, ClipColor, EditBatch, Project
+from agentcut.contracts import SCHEMA_VERSION, ClipColor, EditBatch, Project, capabilities
 from agentcut.contracts import TIMEBASE as T
 from agentcut.grade import grade_filter, grade_tables
 from agentcut.http_api import create_app
@@ -137,11 +137,20 @@ def predict(nodes: list[dict], index: int) -> list[float]:
         if node["kind"] == "parallel":
             # Resolve semantics: each branch re-reads the node's input, the node outputs the mean,
             # and a bypassed branch contributes that input (so it never renumbers the others).
+            # 1.120: `weights` are that mixer's knobs — absent means every branch counts the same,
+            # which is the mean above; all zero means the node adds nothing at all, so it leaves
+            # this channel alone (None), because there is nothing left to divide by.
             parts = []
             for branch in node["branches"]:
                 out = node_step(branch, value)
                 parts.append(value if out is None else out)
-            return sum(parts) / len(parts)
+            weights = list(node.get("weights") or [])
+            if not weights:
+                return sum(parts) / len(parts)
+            total = sum(weights)
+            if not total:
+                return None
+            return sum(part * weight for part, weight in zip(parts, weights, strict=True)) / total
         return clamp(
             max(value, 0.0) ** (1 / node["gamma"][index]) * node["gain"][index]
             + node["lift"][index]
@@ -947,6 +956,168 @@ def parallel_http_suite(folder: Path) -> None:
         )
 
 
+def weight_math_suite(folder: Path) -> None:
+    """1.120：并联节点的分支权重——不给就是 1.119 那份均分，给全了就是达芬奇那排混频旋钮。
+
+    断的四件事：默认一字不改（不给权重与全 1 逐位相同，老工程的表不会因这一版抖一下）；权重把结果
+    拉到被加权那一支那边去（2:0 与单独那一条分支**逐位相同**，这不是近似而是同一条映射）；全 0 是
+    「这一节不改画面」而不是黑场；权重只由形状约束——覆盖不全、超出 0..2 都在契约层就拒。
+    """
+    source = banded_source(folder)
+    lift = {
+        "kind": "curve",
+        "channel": "rgb",
+        "points": [{"x": 0.0, "y": 0.25}, {"x": 1.0, "y": 1.0}],
+    }
+    crush = {
+        "kind": "wheels",
+        "lift": [0.0, 0.0, 0.0],
+        "gamma": [0.45, 0.6, 0.8],
+        "gain": [0.9, 1.0, 1.1],
+    }
+
+    def tables(nodes: list[dict]) -> dict | None:
+        return lut_stage(make_project(source, nodes).clips["c"].color)
+
+    def graph(weights=None, branches=(lift, crush)) -> dict:
+        made = {"kind": "parallel", "branches": [dict(branch) for branch in branches]}
+        if weights is not None:
+            made["weights"] = list(weights)
+        return made
+
+    def drift(left: dict, right: dict, name: str) -> float:
+        return max(abs(left[name][key] - right[name][key]) * 255 for key in range(256))
+
+    plain, ones = tables([graph()]), tables([graph([1.0, 1.0])])
+    assert plain is not None and ones is not None
+    for name in CHANNELS:
+        assert plain[name] == ones[name], (
+            f"不给权重必须与全 1 逐位相同，{name} 差了 {drift(plain, ones, name)}"
+        )
+
+    tilted, alone = tables([graph([2.0, 0.0])]), tables([lift])
+    for name in CHANNELS:
+        assert tilted[name] == alone[name], (
+            f"2:0 就是只剩那一支：{name} 最大差 {drift(tilted, alone, name)}"
+        )
+    flipped = tables([graph([0.0, 2.0])])
+    assert flipped is not None and alone is not None
+    for name in CHANNELS:
+        assert drift(flipped, alone, name) > 8.0, f"反过来加权必须看得见差别：{name} 几乎没有动"
+
+    pulled = tables([graph([1.0, 2.0])])
+    assert pulled is not None
+    for index, name in enumerate(CHANNELS):
+        reference = predict([graph([1.0, 2.0])], index)
+        worst = max(abs(pulled[name][key] - reference[key]) * 255 for key in range(256))
+        assert worst <= 0.5, f"{name} 与独立参考表差 {worst}，加权平均不是这么算的"
+
+    assert tables([graph([0.0, 0.0])]) is None, "全 0 权重必须整节不改画面，而不是编译出一张黑表"
+
+    for label, weights in (
+        ("只覆盖一支", [1.0]),
+        ("多出格来", [1.0, 1.0, 1.0]),
+        ("超出上限", [3.0, 0.0]),
+        ("负数", [-0.5, 1.0]),
+    ):
+        try:
+            make_project(source, [graph(weights)])
+        except ValidationError:
+            continue
+        raise AssertionError(
+            f"{label}的权重（{weights}）被收下了，它会写进一份两端算不出同一结果的工程"
+        )
+
+    unweighted = make_project(source, [graph()]).clips["c"].color.grade[0]
+    assert unweighted.weights == [], f"1.119 那份载荷读进来应当没有权重：{unweighted.weights}"
+    assert capabilities(True, False, [])["features"]["grade_branch_weights"] is True
+    print(
+        "   weights: default==all-one bit for bit, 2:0 equals the lone branch, all-zero is a no-op"
+    )
+
+
+def weight_media_suite(folder: Path) -> None:
+    """权重走到真实成片：同一条并联节点，2:0 与 0:2 交付的灰阶带必须各自落在被加权那一支那边。"""
+    source = banded_source(folder)
+    lift = {
+        "kind": "curve",
+        "channel": "rgb",
+        "points": [{"x": 0.0, "y": 0.25}, {"x": 1.0, "y": 1.0}],
+    }
+    crush = {
+        "kind": "wheels",
+        "lift": [0.0, 0.0, 0.0],
+        "gamma": [0.45, 0.6, 0.8],
+        "gain": [0.9, 1.0, 1.1],
+    }
+
+    def levels(weights) -> list[list[float]]:
+        graph = {"kind": "parallel", "branches": [dict(lift), dict(crush)]}
+        if weights is not None:
+            graph["weights"] = list(weights)
+        return band_levels(render(make_project(source, [graph]), folder, f"weight-{weights}.mp4"))
+
+    mean, first, second = levels(None), levels([2.0, 0.0]), levels([0.0, 2.0])
+
+    def apart(left: list[list[float]], right: list[list[float]]) -> float:
+        return max(
+            abs(a - b)
+            for row_left, row_right in zip(left, right, strict=True)
+            for a, b in zip(row_left, row_right, strict=True)
+        )
+
+    assert apart(mean, first) > 2.0, (
+        f"2:0 交回来的画面与均分只差 {apart(mean, first)}：加权没走到成片"
+    )
+    assert apart(mean, second) > 2.0, (
+        f"0:2 交回来的画面与均分只差 {apart(mean, second)}：加权没走到成片"
+    )
+    assert apart(first, second) > 2.0, "两个极端权重交出同一幅画：这一节其实没在听权重"
+    dark = 0
+    assert first[dark][0] > mean[dark][0] > second[dark][0], (
+        f"暗带该按权重偏置：lift 重的交出 {first[dark][0]}，均分 {mean[dark][0]}，"
+        f"wheels 重的 {second[dark][0]}"
+    )
+    print(
+        "   weights: the delivered dark band reads "
+        f"{first[dark][0]} at 2:0, {mean[dark][0]} as the mean, {second[dark][0]} at 0:2"
+    )
+
+
+def weight_receipt_suite() -> None:
+    """1.120 给并联节点加的这份默认字段不许把老回执劈成两半。"""
+    command = {
+        "op": "clip.patch",
+        "clip_id": "c",
+        "color": {
+            "grade": [
+                {
+                    "kind": "parallel",
+                    "branches": [
+                        {
+                            "kind": "curve",
+                            "channel": "rgb",
+                            "points": [{"x": 0.0, "y": 0.0}, {"x": 1.0, "y": 1.0}],
+                        }
+                    ],
+                }
+            ]
+        },
+    }
+    with_empty = dict(command)
+    with_empty["color"] = {
+        **command["color"],
+        "grade": [{**command["color"]["grade"][0], "weights": []}],
+    }
+    first = EditBatch(request_id="same", expected_revision=1, commands=[command])
+    second = EditBatch(request_id="same", expected_revision=1, commands=[with_empty])
+    assert ProjectStore._fingerprint("edit", first) == ProjectStore._fingerprint("edit", second), (
+        "带 `weights: []` 的同一份载荷与不提权重的载荷必须命中同一张回执，"
+        "否则 1.120 之前写下的请求一重试就变成第二次写入"
+    )
+    print("   weights: an empty table hashes as a payload that never mentioned one")
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="agentcut-grade-") as scratch:
         folder = Path(scratch)
@@ -957,9 +1128,12 @@ def main():
         parallel_math_suite(folder)
         parallel_media_suite(folder)
         parallel_http_suite(folder)
+        weight_math_suite(folder)
+        weight_media_suite(folder)
+        weight_receipt_suite()
     print(
         "PASS: grade node contracts, atomic HTTP edits, replay/lock/restore, parallel branch "
-        "means, browser LUT parity and real H.264 pixels"
+        "means and their 1.120 mixer weights, browser LUT parity and real H.264 pixels"
     )
 
 

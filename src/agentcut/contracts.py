@@ -11,7 +11,7 @@ SCHEMA_VERSION = (
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.119.0"
+APP_VERSION = "1.120.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -317,6 +317,12 @@ class GradeCurvePoint(Contract):
 
 # Every node blends its own result with its input by this strength, like Resolve's Mix slider.
 GradeMix = Annotated[float, Field(ge=0, le=1)]
+# 并联节点混频台上的一路增益。上限 2 而不是 1：达芬奇那排旋钮能把一路拉过另一路，
+# 只给 0..1 就压不出「这一条分支说了算」的那种偏置。
+# 接口的上限与 `capabilities.grade_limits` 下发的是同一个数——界面 clamp 自己的输入框、
+# 契约拒绝写入，两端永远是一个数。
+GRADE_BRANCH_WEIGHT_MAX = 2.0
+GradeBranchWeight = Annotated[float, Field(ge=0, le=GRADE_BRANCH_WEIGHT_MAX)]
 
 
 ColorSpace = Literal["linear", "srgb", "gamma18", "gamma20", "gamma22", "gamma24", "rec709"]
@@ -550,6 +556,18 @@ class GradeParallel(Contract):
     enabled: bool = True
     mix: GradeMix = 1.0
     blend: BlendMode = "normal"
+    # 1.120：混频台那一排旋钮。分支本身就是操作（`GradeBranch` 是这些类的联合），权重不能挂在分支上
+    # ——那会让串联的曲线也长出一个没意义的旋钮。它按位置挂在节点上：给就必须给全，不给就是均分。
+    # 全 0 是「这一节不改画面」而不是黑场：分支是对进来的画面做的那一映射，都不加权重就是不加。
+    weights: Annotated[list[GradeBranchWeight], Field(max_length=GRADE_BRANCH_LIMIT)] = Field(
+        default_factory=list
+    )
+
+    @model_validator(mode="after")
+    def matched_weights(self):
+        if self.weights and len(self.weights) != len(self.branches):
+            raise ValueError("branch weights must cover every branch or none at all")
+        return self
 
 
 GradeNode = (
@@ -2332,6 +2350,7 @@ def capabilities(
         "grade_limits": {
             "max_nodes": GRADE_NODE_LIMIT,
             "max_branches": GRADE_BRANCH_LIMIT,
+            "branch_weight_max": GRADE_BRANCH_WEIGHT_MAX,
             "max_curve_points": CURVE_POINT_LIMIT,
             "max_lut_samples": LUT_SAMPLE_LIMIT,
             # A 3D LUT's grid lives inline in project state, so the importer resamples anything
@@ -2505,6 +2524,8 @@ def capabilities(
             "clip_auto_grade": media_ready,
             "grade_node_blend_modes": True,
             "grade_parallel_branches": True,
+            # 并联节点的分支增益：下发这个，界面才知道那一排旋钮不是自己想象出来的。
+            "grade_branch_weights": True,
             "timeline_marks": True,
             "range_export": True,
             "four_point_editing": True,

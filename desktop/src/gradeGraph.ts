@@ -39,6 +39,41 @@ export type GraphCard = {
 
 const CHANNEL_SHORT: Record<string, string> = { rgb: "全部", red: "红", green: "绿", blue: "蓝" };
 
+/**
+ * 1.120：并联节点混频台的形状判断，只有这一处。
+ *
+ * 契约要权重「给就给全」，因为它是按位置覆盖每一支的：一份长度对不上的表，两端算不出同一个结果。
+ * 所以改一支、加一支、删一支都由这里补齐或撤掉，界面不许在别处再数一遍支数。全部回到 1 时交
+ * `undefined`：撤掉这份表与交一串 1 是同一个均分，而前者正是 1.120 之前那份载荷。
+ */
+export function branchWeight(node: GradeParallel, index: number): number {
+  return alignedWeights(node)?.[index] ?? 1;
+}
+
+function alignedWeights(node: GradeParallel): number[] | null {
+  return node.weights && node.weights.length === node.branches.length ? node.weights : null;
+}
+
+function settle(kept: number[]): number[] | undefined {
+  return kept.every((entry) => entry === 1) ? undefined : kept;
+}
+
+export function weightsAfterWeight(node: GradeParallel, index: number, value: number): number[] | undefined {
+  const next = node.branches.map((_, position) => branchWeight(node, position));
+  next[index] = value;
+  return settle(next);
+}
+
+export function weightsAfterAdd(node: GradeParallel): number[] | undefined {
+  const current = alignedWeights(node);
+  return current ? settle([...current, 1]) : undefined;
+}
+
+export function weightsAfterRemove(node: GradeParallel, slot: number): number[] | undefined {
+  const current = alignedWeights(node);
+  return current ? settle(current.filter((_, position) => position !== slot)) : undefined;
+}
+
 function mixText(node: GradeOperation | GradeParallel): string {
   // 3D 表没有强度可标（契约里就没有那个字段），所以先问它在不在。
   return "mix" in node && node.mix !== undefined && node.mix !== 1 ? `强度 ${Math.round(node.mix * 100)}%` : "";
@@ -48,6 +83,10 @@ function operationText(node: GradeNode): string {
   const parts = [mixText(node)];
   // An imported table says which file it came from and how coarse its grid is, because that is the
   // whole of what the node knows: the card must not look like a control the user can still dial in.
+  if (node.kind === "parallel" && node.weights && node.weights.length === node.branches.length) {
+    // 卡片要说这张表真的存在：均分时没有表，有表就一定不为 1 的某一支在偏置。
+    parts.push(`加权 ${node.weights.map((weight) => `×${weight}`).join("/")}`);
+  }
   if (node.kind === "lut") parts.push(`${node.title} · ${node.size} 点`);
   // 3D 表在卡片上就把「预览不生效」写出来：这是一张只有导出会走它的表，不是近似。
   if (node.kind === "lut3d")

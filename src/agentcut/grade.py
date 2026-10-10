@@ -229,9 +229,13 @@ def step_function(node, index: int):
 def node_function(node, index: int):
     """Per-channel mapping of one node, or None when the node leaves this channel untouched.
 
-    A parallel node outputs the mean of its branch results. A bypassed branch — or one that does
-    not touch this channel at all — contributes its input, so disabling a branch fades the average
-    toward the remaining branches instead of renumbering them.
+    A parallel node outputs the **weighted** mean of its branch results (1.120): with no weights
+    given, every branch counts the same, which is the mean this code has always produced. A
+    bypassed branch — or one that does not touch this channel at all — contributes its input, so
+    disabling a branch fades the average toward the remaining branches instead of renumbering them.
+    Weights are positional and the contract makes them cover every branch or none, so a slot can
+    never be silently dropped from the sum. Every weight at 0 means nothing is being added: that is
+    this node leaving the picture alone, not a black frame, so it returns None.
     """
     if node.kind != "parallel":
         return _op_function(node, index)
@@ -240,10 +244,21 @@ def node_function(node, index: int):
     ]
     if not any(steps):
         return None
-    count = len(steps)
+    weights = list(node.weights) if node.weights else [1.0] * len(steps)
+    total = sum(weights)
+    if total <= 0:
+        return None
 
     def average(value: float) -> float:
-        return sum(step(value) if step is not None else value for step in steps) / count
+        # 一份加权平均，没有第二条路：乘 1.0 在二进制里是精确的，所以没给权重时这一句算出来的就是
+        # 1.119 那条均分——兼容性由 `gradeweight_check` 逐位钉住，而不是靠这里多写一条分支。
+        return (
+            sum(
+                (step(value) if step is not None else value) * weight
+                for step, weight in zip(steps, weights, strict=True)
+            )
+            / total
+        )
 
     return average
 
