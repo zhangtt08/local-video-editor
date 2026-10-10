@@ -804,7 +804,8 @@ function ClipBlock({
       if (ev.type === "pointercancel") return;
       if (Math.abs(ev.clientX - event.clientX) < 2) {
         // 没拖动就还是「点一下跳过去」；按住 Alt 点则是删掉这一枚，走的仍是带 expected_revision 的那条链。
-        if (duplicate) editAtRevision([planNeedleRemoval(clip, key)], project.id, project.revision, "删除关键帧", app.sequenceId);
+        if (duplicate) editAtRevision([planNeedleRemoval(clip, group)], project.id, project.revision, group.length > 1 ? `删除 ${group.length} 枚关键帧` : "删除关键帧", app.sequenceId);
+        setPicked([]);
         playhead.pause(); playhead.set(clip.position_ticks + from); return;
       }
       const next = plan(ev.clientX);
@@ -981,7 +982,7 @@ function ClipBlock({
             const at = target ? target.at : from;
             const label = FIELD_LABEL[k.property] ?? k.property;
             const hint = picked.includes(id)
-              ? `这一枚在挑中的 ${picked.length} 枚里，拖它就是整组一起走；Shift 点一下从组里摘出去，按住 Alt 点一下只删这一枚`
+              ? `这一枚在挑中的 ${picked.length} 枚里，拖它就是整组一起走；Shift 点一下从组里摘出去，按住 Alt 点一下把这 ${picked.length} 枚一起删掉`
               : "横向拖可以改时间，按住 Alt 拖是复制一枚，按住 Alt 点一下是删掉这一枚，Shift 点一下是加进一组针";
             return <button
               key={`${k.property}-${k.at_ticks}`} data-key-id={id} type="button"

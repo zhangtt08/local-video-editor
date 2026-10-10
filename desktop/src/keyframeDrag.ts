@@ -48,17 +48,22 @@ export type KeyframeDragPlan =
   | { kind: "blocked"; at_ticks: number; reason: string };
 
 /**
- * Alt + 点一下（没有拖动）就是删掉这一枚：Premiere 的那只手。交出去的仍是普通 `keyframe.remove`，
- * 刻度按**片段本地**交（与拖动同一口径，reducer 自己加回偏移）。之所以在时间线上给这一条，是因为
- * 撞针那句拒绝原本只能把人支到动画曲线里去——「按住 Alt 点掉那一枚」就在眼前，出路得落在原地。
+ * Alt + 点一下（没有拖动）就是删掉这一枚，或删掉挑中的这一组：Premiere 的那只手，加上 1.119 那组针。
+ * 交出去的仍是普通 `keyframe.remove` / `keyframes.remove`，刻度按**片段本地**交（与拖动同一口径，reducer
+ * 自己加回偏移）。之所以在时间线上给这一条，是因为撞针那句拒绝原本只能把人支到动画曲线里去——
+ * 「按住 Alt 点掉那一枚」就在眼前，出路得落在原地。重复的那一格先去掉：reducer 对重复的选区回
+ * `INVALID_SELECTION`，而指针一次只会点在一枚上。
  */
-export function planNeedleRemoval(clip: Clip, key: Keyframe): Command {
-  return {
-    op: "keyframe.remove",
-    clip_id: clip.id,
-    property: key.property,
-    at_ticks: key.at_ticks - (clip.animation_offset_ticks ?? 0),
-  };
+export function planNeedleRemoval(clip: Clip, keys: Keyframe[]): Command {
+  const unique = new Map<string, { property: Property; at_ticks: number }>();
+  for (const key of keys) {
+    unique.set(needleId(key), { property: key.property, at_ticks: key.at_ticks - (clip.animation_offset_ticks ?? 0) });
+  }
+  const positions = [...unique.values()];
+  if (positions.length === 1) {
+    return { op: "keyframe.remove", clip_id: clip.id, property: positions[0].property, at_ticks: positions[0].at_ticks };
+  }
+  return { op: "keyframes.remove", clip_id: clip.id, keyframes: positions };
 }
 
 const seconds = (ticks: number) => (ticks / TIMEBASE).toFixed(3);

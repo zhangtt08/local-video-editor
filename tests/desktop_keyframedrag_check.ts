@@ -137,10 +137,11 @@ assert.equal((source.match(/editAtRevision\(/g) ?? []).length, 2, "the needle pa
 // 没拖动就还是「点一下跳过去」，而按住 Alt 点一下是删掉这一枚——两条都断到同一个分支里，
 // 因为把删除接在另一个入口上就等于在时间线上开第二条写路径。
 assert.match(source,
-  /if \(Math\.abs\(ev\.clientX - event\.clientX\) < 2\) \{[\s\S]{0,240}if \(duplicate\) editAtRevision\(\[planNeedleRemoval\(clip, key\)\], project\.id, project\.revision, "删除关键帧", app\.sequenceId\);[\s\S]{0,160}playhead\.pause\(\); playhead\.set\(clip\.position_ticks \+ from\); return;[\s\S]{0,40}\}/,
-  "the tap still jumps to the needle, and Alt + tap removes it through the very same edit chain");
+  /if \(Math\.abs\(ev\.clientX - event\.clientX\) < 2\) \{[\s\S]{0,240}if \(duplicate\) editAtRevision\(\[planNeedleRemoval\(clip, group\)\], project\.id, project\.revision, group\.length > 1 \? `删除 \$\{group\.length} 枚关键帧` : "删除关键帧", app\.sequenceId\);[\s\S]{0,80}setPicked\(\[\]\);[\s\S]{0,160}playhead\.pause\(\); playhead\.set\(clip\.position_ticks \+ from\); return;[\s\S]{0,40}\}/,
+  "the tap still jumps to the needle, and Alt + tap removes the grabbed group through the very same edit chain, then drops the selection");
 assert.equal((source.match(/removeKeyframe\(/g) ?? []).length, 0, "the timeline must not open store's own delete path as a second write chain");
 assert.match(source, /按住 Alt 点一下是删掉这一枚/, "and the needle says so on hover");
+assert.match(source, /按住 Alt 点一下把这 \$\{picked\.length} 枚一起删掉/, "and a picked diamond promises the group removal in its own hover text");
 assert.match(source, /onPointerDown=\{\(event\) => startKey\(event, k\)\}/, "the diamond carries the gesture instead of a click handler");
 assert.equal((source.match(/onClick=\{\(event\) => \{ event\.stopPropagation\(\); selectClip\(clip\.id\)/g) ?? []).length, 0, "the old click-only needle must be gone");
 assert.ok(!/Math\.round\([^)\n]*\/ *q\) *\* *q/.test(source), "no second snapping formula may live in the timeline");
@@ -167,13 +168,23 @@ const plain = drag(held, onThird, [held], null);
 assert.equal((plain as { commands: { op: string }[] }).commands[0].op, "keyframe.move", "no Alt, no add");
 
 // Alt 点一下是删：命令是普通 `keyframe.remove`，刻度按片段本地交（与拖动同一口径），不碰工程里那份记录。
-const removal = planNeedleRemoval(clipOf([held, sameRow]), held) as { op: string; clip_id: string; property: string; at_ticks: number };
+const removal = planNeedleRemoval(clipOf([held, sameRow]), [held]) as { op: string; clip_id: string; property: string; at_ticks: number };
 assert.equal(removal.op, "keyframe.remove", "the tap deletes through the ordinary command, no new op");
 assert.deepEqual(Object.keys(removal).sort(), ["at_ticks", "clip_id", "op", "property"], "and carries nothing but the documented shape");
 assert.equal(removal.clip_id, "clip-key", "it names this clip");
 assert.equal(removal.property, "opacity", "and this property, so a neighbour on another curve survives");
 assert.equal(removal.at_ticks, 30_000, "the offset is folded exactly once, the same clock the move command uses");
 assert.equal(held.at_ticks, OFFSET + 30_000, "planning does not mutate project state");
+// 1.121：Alt 点掉挑中的那一组——多条针走的是引擎本来就有的 `keyframes.remove`，一次点一个 revision。
+const groupRemoval = planNeedleRemoval(clipOf([held, sameRow]), [held, sameRow]) as unknown as { op: string; clip_id: string; keyframes: { property: string; at_ticks: number }[] };
+assert.equal(groupRemoval.op, "keyframes.remove", "a picked group is removed with the engine's own batch op, not N single removes");
+assert.deepEqual(Object.keys(groupRemoval).sort(), ["clip_id", "keyframes", "op"], "and it carries nothing but the documented batch shape");
+assert.deepEqual(groupRemoval.keyframes, [{ property: "opacity", at_ticks: 30_000 }, { property: "opacity", at_ticks: 8_000_000 }], "each tick is clip-local, folded exactly once, in the order they were grabbed");
+const doubled = planNeedleRemoval(clipOf([held, sameRow]), [held, held]) as { op: string; property: string };
+assert.equal(doubled.op, "keyframe.remove", "a needle listed twice is still one needle — the reducer refuses a duplicated selection outright");
+assert.deepEqual((planNeedleRemoval(clipOf([held, sameRow]), [held, sameRow, held]) as unknown as { keyframes: unknown[] }).keyframes.length, 2, "the batch dedupes too, so the same grab never trips INVALID_SELECTION");
+assert.equal(held.at_ticks, OFFSET + 30_000, "planning a removal still does not touch the project's own record");
+
 
 // ---- 1.119：一次抓一组（框选挑中的那几枚一起走）----------------------------------------------
 // 三枚针分属两条属性：不透明度两枚（本地 2 帧、5 帧）加位置一枚（3 帧）。这一节关的是「整组」那三条
@@ -278,5 +289,6 @@ assert.match(source, /\$\{duplicate \? "复制" : "拖动"\} \$\{group\.length} 
 console.log(
   "PASS: 时间线上拖针写的是普通 `keyframe.move`——偏移折掉一次、只改时间、回到原格就是 noop、"
     + "同属性邻居占格在松手前就点名（不同属性照吸）、容差跟着屏幕像素走、越界永远夹回可写区间；"
-    + "1.119 起一次抓一组走同一条算术：整组被自己两头夹、撞针逐条属性判、一枚一条命令、复制那组把原针也算占位",
+    + "1.119 起一次抓一组走同一条算术：整组被自己两头夹、撞针逐条属性判、一枚一条命令、复制那组把原针也算占位；"
+    + "1.121 起 Alt 点一下删掉挑中的那一组（一批一条 `keyframes.remove`，重复的那格先去掉）",
 );
