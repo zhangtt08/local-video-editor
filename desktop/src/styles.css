@@ -334,7 +334,12 @@ textarea.input { resize: vertical; line-height: 1.5; }
 .clip-keyframe[aria-disabled="true"] { cursor: not-allowed; opacity: .5; }
 .clip-keyframe.ghost { pointer-events: none; opacity: .6; z-index: 6; }
 .clip-keyframe.dragging { color: #fff; font-size: 11px; }
+.clip-keyframe.selected { color: #7df3e1; text-shadow: 0 0 5px rgba(80, 201, 196, .8); }
 .clip-keyframe.blocked { color: #ff9a9a; }
+/* 针道空处是框选的手：左右让开修剪柄（最外 7px）与淡角柄（9..18px），高度就是留给针的那 37px。
+   这两个数由 keyframeMarquee.ts / keyframeLanes.ts 下发到内联样式，这里只留不可移动的那一半。 */
+.clip-needles { position: absolute; bottom: 0; z-index: 1; cursor: crosshair; }
+.clip-marquee { position: absolute; border: 1px dashed var(--accent); background: #50c9c41f; pointer-events: none; z-index: 2; }
 .clip-keyframe-more { position: absolute; right: 9px; bottom: 1px; z-index: 5; font-size: 9px; color: #ffe3a3; background: transparent; border: 0; cursor: pointer; padding: 2px 3px; }
 .key-readout { position: absolute; top: 1px; left: 50%; transform: translateX(-50%); font-size: 9.5px; padding: 1px 5px; border-radius: 3px; color: var(--accent-deep); background: var(--accent-soft); white-space: nowrap; z-index: 5; pointer-events: none; }
 .key-readout.blocked { color: #ffdada; background: #5a1f24; }

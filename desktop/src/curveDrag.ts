@@ -44,6 +44,18 @@ export function quantizeToBand(value: number, band: ValueBand): number {
 export type CurvePoint = { at_ticks: number; value: number };
 
 /**
+ * 整组在**时间**上能走多远：一组里最左的那枚不能走出片头，最右的那枚不能走出片尾。
+ *
+ * 这一句是曲线编辑器（1.117）和时间线（1.119）共用的唯一一份夹法——两处都拖整组，两处都不能让某一枚
+ * 越出片段，因为引擎那句 `INVALID_KEYFRAME`（`keyframe lies outside the clip`）按整组里最大的那个数判。
+ * 写成单独一条而不是埋在 `groupShift` 里面，是为了让时间线不必为了夹时间而假造一条数值带。
+ */
+export function clampGroupTimeShift(times: number[], durationTicks: number, dt: number): number {
+  if (!times.length) return 0;
+  return Math.max(-Math.min(...times), Math.min(durationTicks - Math.max(...times), dt));
+}
+
+/**
  * 整组能走多远，由**这一组自己**的两头决定：时间上不能越出片段，数值上不能越出量程。
  * 抓的那一枚想去 1.4 不重要——旁边那枚只剩 0.1 的余量，整组就只走 0.1。
  */
@@ -53,7 +65,7 @@ export function groupShift(points: CurvePoint[], band: ValueBand, durationTicks:
   const values = points.map((point) => point.value);
   const { hardMin, hardMax } = bandEdges(band);
   return {
-    dt: Math.max(-Math.min(...times), Math.min(durationTicks - Math.max(...times), dt)),
+    dt: clampGroupTimeShift(times, durationTicks, dt),
     dv: Math.max(hardMin - Math.min(...values), Math.min(hardMax - Math.max(...values), dv)),
   };
 }

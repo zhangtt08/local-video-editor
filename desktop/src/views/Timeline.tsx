@@ -5,7 +5,8 @@ import { TIMEBASE, align, frameTicks, humanDuration, timecode } from "../time";
 import { transitionLabel } from "../engine";
 import type { Clip, Keyframe, Marker, Project, Track } from "../engine";
 import { planKeyframeDrag, planNeedleRemoval } from "../keyframeDrag";
-import { LANE_PITCH_PIXELS, NEEDLE_AREA_PIXELS, laneCapacity, needleRows } from "../keyframeLanes";
+import { LANE_PITCH_PIXELS, NEEDLE_AREA_PIXELS, laneCapacity, needleId, needleRows } from "../keyframeLanes";
+import { MARQUEE_INSET_PIXELS, type PixelBox, commitPick, draggedEnough, hitsInBand, marqueeBox, togglePick } from "../keyframeMarquee";
 import {
   addLibraryItemToTimeline,
   addTrack,
@@ -53,6 +54,13 @@ const HEAD = 112;
 const ROW = 56;
 
 type DragMode = "move" | "trim-l" | "trim-r" | "roll-l" | "roll-r";
+
+/**
+ * 拖动中那几枚针的落点（刻度都是**片段本地**，与 `planKeyframeDrag` 交出去的同一口径）。
+ * `targets` 只装真的在走的那几枚：按住 Alt 复制时原针一格也不动，就不许看起来在动（1.114 定的那条），
+ * 而 `blocked` 时只有被抓的那一枚被画到它想去却去不了的那一格上。
+ */
+type NeedleHeld = { anchor: string; at: number; blocked: boolean; duplicate: boolean; targets: { id: string; from: number; at: number }[] };
 type Drag = {
   clipId: string;
   mode: DragMode;
@@ -705,28 +713,87 @@ function ClipBlock({
   };
 
   // 时间线上直接拖针：几何与动画曲线共用同一份 keyframeSnap（绝对帧格子 + 像素容差 + 找播放头/找邻居），
-  // 落库的仍是一条普通 `keyframe.move`。移动不到两像素就还是原来的「点一下跳过去」，所以不新增快捷键、
-  // 也不新增命令；撞针在这里提前认出来（reducer 的 KEYFRAME_COLLISION 是同一条判断的权威说法）。
-  const [keyDrag, setKeyDrag] = useState<{ property: string; from: number; at: number; blocked: boolean; duplicate: boolean } | null>(null);
+  // 落库的仍是一条普通 `keyframe.move`（挑中一组则是 `keyframes.move`，一次抓取仍只有一条命令、一个 revision）。
+  // 移动不到两像素就还是原来的「点一下跳过去」，所以不新增快捷键、也不新增命令；撞针在这里提前认出来
+  // （reducer 的 KEYFRAME_COLLISION 是同一条判断的权威说法）。
+  const [keyDrag, setKeyDrag] = useState<NeedleHeld | null>(null);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [band, setBand] = useState<PixelBox | null>(null);
+
+  /** 屏幕上真画出来的那几枚针的矩形——框选挑中的必须是点得到的，画不下的那几属性压根不在这里。 */
+  const paintedBoxes = (): { id: string; box: PixelBox }[] => Array.from(
+    box.current?.querySelectorAll<HTMLElement>(".clip-keyframe:not(.ghost)") ?? [],
+  ).flatMap((node) => {
+    const id = node.dataset.keyId;
+    if (!id) return [];
+    const rect = node.getBoundingClientRect();
+    return [{ id, box: { x0: rect.left, y0: rect.top, x1: rect.right, y1: rect.bottom } }];
+  });
+
+  const startMarquee = (event: React.PointerEvent) => {
+    if (razor || event.button !== 0 || track.locked || !box.current || !app.caps?.features?.keyframes) return;
+    event.stopPropagation();
+    const node = box.current;
+    const origin = { x: event.clientX, y: event.clientY };
+    const base = picked;
+    const additive = event.shiftKey;
+    const painted = paintedBoxes();
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      setBand(null);
+    };
+    const move = (ev: PointerEvent) => {
+      const area = marqueeBox(origin, { x: ev.clientX, y: ev.clientY });
+      const rect = node.getBoundingClientRect();
+      setPicked(commitPick(base, hitsInBand(painted, area), additive));
+      setBand({ x0: area.x0 - rect.left, y0: area.y0 - rect.top, x1: area.x1 - rect.left, y1: area.y1 - rect.top });
+    };
+    const up = (ev: PointerEvent) => {
+      // 没拉开就还是「点了一下针道」：整组清掉（按住 Shift 点空处等于什么都没加），并把这条片段选中，
+      // 与以前 pointerdown 落在片段身上那一笔的行为对齐——少一个入口不算改手感。
+      if (!draggedEnough(origin, { x: ev.clientX, y: ev.clientY })) {
+        stop();
+        setPicked(additive ? base : []);
+        selectClip(clip.id);
+        return;
+      }
+      stop();
+      move(ev);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+  };
+
   const startKey = (event: React.PointerEvent, key: Keyframe) => {
     event.stopPropagation();
     if (razor || event.button !== 0 || track.locked || !box.current || !app.caps?.features?.keyframes) return;
     event.preventDefault();
     const node = box.current;
-    const from = key.at_ticks - (clip.animation_offset_ticks ?? 0);
+    const id = needleId(key);
+    if (event.shiftKey) { setPicked(togglePick(picked, id)); return; }
+    const group = picked.includes(id) ? (clip.keyframes ?? []).filter((member) => picked.includes(needleId(member))) : [key];
+    if (!picked.includes(id)) setPicked([id]);
+    const offset = clip.animation_offset_ticks ?? 0;
+    const from = key.at_ticks - offset;
     // 贴边的针为了看得见会被画在离边 6px 处，画的位置与它真正的时间不是一回事：抓住时记住这一点
     // 偏差，松手就按它落回去，否则「抓最左边那枚针」会把它瞬移到画出来的位置上。
     const grab = ((event.clientX - box.current.getBoundingClientRect().left) / px) * TIMEBASE - from;
     const duplicate = event.altKey;
     const plan = (clientX: number) => planKeyframeDrag({
-      clip, key, px, snap, quantum: q, duplicate,
+      clip, key, group, px, snap, quantum: q, duplicate,
       pointer_ticks: ((clientX - node.getBoundingClientRect().left) / px) * TIMEBASE - grab,
       playhead_ticks: playhead.value - clip.position_ticks,
     });
-    const move = (ev: PointerEvent) => {
-      const next = plan(ev.clientX);
-      setKeyDrag({ property: key.property, from, at: "at_ticks" in next ? next.at_ticks : from, blocked: next.kind === "blocked", duplicate });
-    };
+    const held = (next: ReturnType<typeof planKeyframeDrag>): NeedleHeld => next.kind === "noop"
+      ? { anchor: id, at: from, blocked: false, duplicate, targets: [] }
+      : next.kind === "blocked"
+        ? { anchor: id, at: next.at_ticks, blocked: true, duplicate, targets: [{ id, from, at: next.at_ticks }] }
+        : { anchor: id, at: next.at_ticks, blocked: false, duplicate,
+          targets: next.shifts.map((member, index) => ({ id: needleId(group[index]), from: member.from, at: member.at })) };
+    const move = (ev: PointerEvent) => setKeyDrag(held(plan(ev.clientX)));
     const stop = (ev: PointerEvent) => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", stop);
@@ -741,8 +808,10 @@ function ClipBlock({
       }
       const next = plan(ev.clientX);
       if (next.kind === "noop") { if (duplicate) toast("warn", "没有多出一枚针", "复制的落点就在原针那一格上，先往旁边挪一点再松手。"); return; }
-      if (next.kind === "blocked") { toast("warn", "那一格已经有一枚针", next.reason); return; }
-      editAtRevision([next.command], project.id, project.revision, duplicate ? "复制关键帧" : "拖动关键帧", app.sequenceId);
+      if (next.kind === "blocked") { toast("warn", group.length > 1 ? `这一组 ${group.length} 枚走不到那里` : "那一格已经有一枚针", next.reason); return; }
+      // 一次抓取只交一次：一组针落在同一条命令（或同一批次）里，撤销一步就整组回来。
+      editAtRevision(next.commands, project.id, project.revision, group.length > 1 ? `${duplicate ? "复制" : "拖动"} ${group.length} 枚关键帧` : duplicate ? "复制关键帧" : "拖动关键帧", app.sequenceId);
+      setPicked([]);
       playhead.pause(); playhead.set(clip.position_ticks + next.at_ticks);
     };
     window.addEventListener("pointermove", move);
@@ -894,31 +963,45 @@ function ClipBlock({
         // 画不下的属性宁可不画，也不许叠回去——改成一枚 +N 的牌子把人带回动画曲线。
         const visible = (clip.keyframes ?? []).filter((k) => k.at_ticks >= (clip.animation_offset_ticks ?? 0) && k.at_ticks <= (clip.animation_offset_ticks ?? 0) + clip.duration_ticks);
         const { rowOf, hidden } = needleRows(visible, laneCapacity(NEEDLE_AREA_PIXELS));
+        const painted = visible.filter((k) => rowOf.has(k.property));
+        const laneOf = new Map(painted.map((k) => [needleId(k), rowOf.get(k.property) ?? 0]));
+        // 针与它的影子共用这一句夹法：贴边那枚要看得见，右端那 16px 永远留给「+N」牌子。
+        const needleX = (at: number) => Math.min(width - 6 - (hidden.length ? 16 : 0), Math.max(6, (at / clip.duration_ticks) * width));
         return <>
-          {visible.filter((k) => rowOf.has(k.property)).map((k) => {
+          {painted.length ? <span className="clip-needles" style={{ left: MARQUEE_INSET_PIXELS, right: MARQUEE_INSET_PIXELS, height: NEEDLE_AREA_PIXELS }}
+            title="在针道的空处拉一个框，框里的针一起挑中：整组拖就是同时改同一份时间差。按住 Shift 点一枚是加进这一组或从组里摘出去。"
+            onPointerDown={startMarquee} /> : null}
+          {band ? <span className="clip-marquee" style={{ left: band.x0, top: band.y0, width: Math.max(0, band.x1 - band.x0), height: Math.max(0, band.y1 - band.y0) }} aria-hidden="true" /> : null}
+          {painted.map((k) => {
             const from = k.at_ticks - (clip.animation_offset_ticks ?? 0);
-            const held = keyDrag && keyDrag.property === k.property && keyDrag.from === from ? keyDrag : null;
-            const at = held && !held.duplicate ? held.at : from;
+            const id = needleId(k);
+            const target = keyDrag && !keyDrag.duplicate ? keyDrag.targets.find((item) => item.id === id) : undefined;
+            const refused = Boolean(keyDrag?.blocked && (keyDrag.anchor === id || keyDrag.targets.some((item) => item.id === id)));
+            const at = target ? target.at : from;
             const label = FIELD_LABEL[k.property] ?? k.property;
+            const hint = picked.includes(id)
+              ? `这一枚在挑中的 ${picked.length} 枚里，拖它就是整组一起走；Shift 点一下从组里摘出去，按住 Alt 点一下只删这一枚`
+              : "横向拖可以改时间，按住 Alt 拖是复制一枚，按住 Alt 点一下是删掉这一枚，Shift 点一下是加进一组针";
             return <button
-              key={`${k.property}-${k.at_ticks}`} type="button" className={`clip-keyframe${held && !held.duplicate ? " dragging" : ""}${held?.blocked ? " blocked" : ""}`}
-              style={{ left: Math.min(width - 6 - (hidden.length ? 16 : 0), Math.max(6, (at / clip.duration_ticks) * width)), bottom: 1 + (rowOf.get(k.property) ?? 0) * LANE_PITCH_PIXELS }}
-              title={`${label} · ${humanDuration(from)}${held ? ` → ${humanDuration(at)}` : " · 横向拖可以改时间，按住 Alt 拖是复制一枚，按住 Alt 点一下是删掉这一枚"}`}
+              key={`${k.property}-${k.at_ticks}`} data-key-id={id} type="button"
+              className={`clip-keyframe${target ? " dragging" : ""}${refused ? " blocked" : ""}${picked.includes(id) ? " selected" : ""}`}
+              style={{ left: needleX(at), bottom: 1 + (rowOf.get(k.property) ?? 0) * LANE_PITCH_PIXELS }}
+              title={`${label} · ${humanDuration(from)}${keyDrag ? ` → ${humanDuration(at)}` : ` · ${hint}`}`}
               aria-label={`拖动${label}关键帧`}
               aria-disabled={track.locked || razor || !app.caps?.features?.keyframes}
               onPointerDown={(event) => startKey(event, k)}>◆</button>;
           })}
-          {keyDrag && keyDrag.duplicate && keyDrag.at !== keyDrag.from ? <span
-            className={`clip-keyframe ghost${keyDrag.blocked ? " blocked" : ""}`}
-            style={{ left: Math.min(width - 6, Math.max(6, (keyDrag.at / clip.duration_ticks) * width)) }}
-            aria-hidden="true">◆</span> : null}
+          {keyDrag?.duplicate ? keyDrag.targets.filter((item) => item.at !== item.from).map((item) => <span
+            key={item.id} className={`clip-keyframe ghost${keyDrag.blocked ? " blocked" : ""}`}
+            style={{ left: needleX(item.at), bottom: 1 + (laneOf.get(item.id) ?? 0) * LANE_PITCH_PIXELS }}
+            aria-hidden="true">◆</span>) : null}
           {hidden.length ? <button type="button" className="clip-keyframe-more" aria-label={`${hidden.length} 条属性的针没有画在这里`}
             title={`画不下的针：${hidden.map((property) => FIELD_LABEL[property] ?? property).join("、")}——点开进动画曲线看这条片段的全部针`}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={() => { selectClip(clip.id); setGraphOpen(true); }}>+{hidden.length}</button> : null}
         </>;
       })()}
-      {keyDrag ? <span className={`key-readout mono${keyDrag.blocked ? " blocked" : ""}`}>{(keyDrag.at / TIMEBASE).toFixed(3)}s{keyDrag.blocked ? " 已占用" : ""}</span> : null}
+      {keyDrag ? <span className={`key-readout mono${keyDrag.blocked ? " blocked" : ""}`}>{(keyDrag.at / TIMEBASE).toFixed(3)}s{keyDrag.blocked ? " 已占用" : ""}{keyDrag.targets.length > 1 ? ` ×${keyDrag.targets.length} 枚` : ""}</span> : null}
       {(["opacity", "gain"] as FadeProperty[]).flatMap((property) => (["in", "out"] as FadeSide[]).map((side) => {
         const length = shownFade(property, side);
         if (!length) return null;

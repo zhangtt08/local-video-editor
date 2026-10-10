@@ -8,7 +8,7 @@
  * 曲线——宁可少画，也不留一枚点不到的针。
  */
 
-import type { Property } from "./engine";
+import type { Keyframe, Property } from "./engine";
 
 export const LANE_PITCH_PIXELS = 12;
 /** 片段底部留给针道的像素高（`.clip` 的上下内边距之外），界面不许在别处再数一遍。 */
@@ -29,3 +29,10 @@ export function needleRows(keys: { property: Property }[], capacity: number): Ne
 export function laneCapacity(availablePixels: number, pitch = LANE_PITCH_PIXELS): number {
   return Math.max(1, Math.floor(availablePixels / pitch));
 }
+
+/**
+ * 一组的身份：针属于「哪条曲线的哪一格」，所以选中标识用工程里存的那个刻度，不用画出来的像素。
+ * 拖动之后刻度会变，一次抓取落库就把这一组清掉——留着那串旧刻度，下一次框选会挑中一枚已经不在那儿的针。
+ */
+export const needleId = (key: Keyframe): string => `${key.property}|${key.at_ticks}`;
+

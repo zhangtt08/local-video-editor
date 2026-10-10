@@ -51,8 +51,10 @@ const source = readFileSync(path!, "utf8");
 assert.match(source, /needleRows\(/, "the timeline asks the shared lane splitter");
 assert.match(source, /laneCapacity\(/, "and derives how many lanes fit from pixels");
 assert.match(source, /bottom: 1 \+ \(rowOf\.get\(k\.property\) \?\? 0\) \* LANE_PITCH_PIXELS/, "each lane sits at its own bottom offset");
-// 只画得了道的针：把 filter 去掉就会又叠回同一堆像素，所以断到链式调用的下一环。
-assert.match(source, /visible\.filter\(\(k\) => rowOf\.has\(k\.property\)\)\.map\(\(k\) => \{/, "needles of hidden properties must not be drawn at all");
+// 只画得了道的针：把 filter 去掉就会又叠回同一堆像素。1.119 起这一份「画出来的那几枚」还要给框选当命中集，
+// 所以它先落成一个名字，界面与框选读的都是它——断到那一行本身，去掉 filter 它就变了。
+assert.match(source, /const painted = visible\.filter\(\(k\) => rowOf\.has\(k\.property\)\);/, "needles of hidden properties must not be drawn at all");
+assert.match(source, /painted\.map\(\(k\) => \{/, "and the diamonds come from that painted set, one name for one fact");
 // 「+N」那枚牌子不许被短路成永不出现：断到它的类型与类名，而不是只断前缀。
 assert.match(source, /\{hidden\.length \? <button type="button" className="clip-keyframe-more"/, "the hidden properties get a named chip instead of an unreachable needle");
 assert.match(source, /setGraphOpen\(true\)/, "and clicking that chip opens the curve editor for this clip");

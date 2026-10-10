@@ -15,6 +15,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { planKeyframeDrag, planNeedleRemoval } from "../desktop/src/keyframeDrag";
+import { clampGroupTimeShift, groupShift } from "../desktop/src/curveDrag";
+import { FIELD_LABEL } from "../desktop/src/effects";
 import type { Clip, Keyframe } from "../desktop/src/engine";
 
 const TIMEBASE = 70_560_000;
@@ -39,7 +41,7 @@ const clipOf = (keys: Keyframe[]): Clip => ({
 } as unknown as Clip);
 
 /** 拖一次：`pointer` 是片段本地刻度，`head` 是播放头的绝对刻度（null 表示不在播放头上）。 */
-const drag = (held: Keyframe, pointer: number, keys: Keyframe[], head: number | null, px = PX, snap = true, duplicate = false) => planKeyframeDrag({ duplicate,
+const drag = (held: Keyframe, pointer: number, keys: Keyframe[], head: number | null, px = PX, snap = true, duplicate = false, group?: Keyframe[]) => planKeyframeDrag({ duplicate, group,
   clip: clipOf(keys), key: held, pointer_ticks: pointer, playhead_ticks: head === null ? -1 : head - POSITION, px, snap, quantum: FRAME,
 });
 
@@ -49,19 +51,23 @@ const onLine = key("opacity", OFFSET + PHASE);           // 已经在格线上�
 // 落库的是普通命令，而刻度是**片段本地**的：偏移必须折掉，reducer 会自己加回来。
 const moved = drag(held, 30_000 + PHASE / 2, [held], null);
 assert.ok(moved.kind === "move", "a dragged needle produces a move");
-assert.equal(moved.command.op, "keyframe.move", "the timeline must not invent a second keyframe command");
-assert.deepEqual(Object.keys(moved.command).sort(), ["clip_id", "from_ticks", "keyframe", "op"], "the command carries nothing but the ordinary shape");
-assert.equal(moved.command.clip_id, "clip-key");
-assert.equal(moved.command.from_ticks, 30_000, "from_ticks is clip-local: the offset was subtracted exactly once");
+assert.equal(moved.commands.length, 1, "one grabbed needle is one command, not one per property it shares");
+assert.equal(moved.commands[0].op, "keyframe.move", "the timeline must not invent a second keyframe command");
+assert.equal(moved.shifts.length, 1, "and it reports exactly one needle's landing back to the view");
+assert.equal(moved.shifts[0].property, "opacity", "the report names the property so the view can match the diamond");
+assert.equal(moved.shifts[0].from, 30_000, "the report's start is clip-local, the same clock as the command");
+assert.deepEqual(Object.keys(moved.commands[0]).sort(), ["clip_id", "from_ticks", "keyframe", "op"], "the command carries nothing but the ordinary shape");
+assert.equal((moved.commands[0] as { clip_id: string }).clip_id, "clip-key");
+assert.equal((moved.commands[0] as { from_ticks: number }).from_ticks, 30_000, "from_ticks is clip-local: the offset was subtracted exactly once");
 assert.equal(moved.at_ticks, PHASE, "the drop lands on the clip's own frame line, not on local zero");
 assert.ok((POSITION + PHASE) % FRAME === 0, "and that tick is a real output frame");
-assert.ok(moved.kind === "move" && moved.command.keyframe.at_ticks === moved.at_ticks, "the command and the report agree");
+assert.ok(moved.kind === "move" && (moved.commands[0] as { keyframe: Keyframe }).keyframe.at_ticks === moved.at_ticks, "the command and the report agree");
 
 // 除了时间，一个字段都不许动：值、插值、贝塞尔控制柄原样带走。
 const bezier = key("scale", OFFSET + 30_000, { value: 1.25, interpolation: "bezier", bezier: { x1: 0.2, y1: 0, x2: 0.8, y2: 1 } });
 const dragged = drag(bezier, 30_000 + PHASE / 2, [bezier], null);
 assert.ok(dragged.kind === "move");
-assert.deepEqual(dragged.command.keyframe, { ...bezier, at_ticks: PHASE }, "only the time changed");
+assert.deepEqual((dragged.commands[0] as { keyframe: Keyframe }).keyframe, { ...bezier, at_ticks: PHASE }, "only the time changed");
 
 // 松手回原格就是 noop：不许有一次没有意义的网络往返。
 assert.equal(drag(onLine, PHASE, [onLine], null).kind, "noop", "back to its own frame line is a no-op");
@@ -125,7 +131,9 @@ assert.match(source, /const grab = \(\(event\.clientX - box\.current\.getBoundin
 assert.match(source, /pointer_ticks: \(\(clientX - node\.getBoundingClientRect\(\)\.left\) \/ px\) \* TIMEBASE - grab/, "and the drag must subtract it, so a needle clamped at the edge does not teleport to where it is painted");
 assert.match(source, /playhead_ticks: playhead\.value - clip\.position_ticks/, "and the playhead must be handed over in the same local clock");
 // 落库只允许是那一行：不许在它前面挂第二个副作用，也不许绕开带 expected_revision 的那条链。
-assert.match(source, /^\s{6}editAtRevision\(\[next\.command\], project\.id, project\.revision, duplicate \? "复制关键帧" : "拖动关键帧", app\.sequenceId\);$/m, "the write is exactly that call through the ordinary edit chain, and the history line says which gesture it was");
+// 1.119 起交出去的是 `next.commands`（一枚时它只有一条），历史那一行按抓了几枚分开写。
+assert.match(source, /^\s{6}editAtRevision\(next\.commands, project\.id, project\.revision, group\.length > 1 \? `\$\{duplicate \? "复制" : "拖动"} \$\{group\.length} 枚关键帧` : duplicate \? "复制关键帧" : "拖动关键帧", app\.sequenceId\);$/m, "the write is exactly that one call through the ordinary edit chain, and the history line counts the needles it moved");
+assert.equal((source.match(/editAtRevision\(/g) ?? []).length, 2, "the needle path has exactly two writes: the drag and the Alt + tap removal, and no second side effect");
 // 没拖动就还是「点一下跳过去」，而按住 Alt 点一下是删掉这一枚——两条都断到同一个分支里，
 // 因为把删除接在另一个入口上就等于在时间线上开第二条写路径。
 assert.match(source,
@@ -142,7 +150,8 @@ assert.ok(!/Math\.round\([^)\n]*\/ *q\) *\* *q/.test(source), "no second snappin
 const onThird = PHASE + 3 * FRAME;                        // 这一格本来就在格线上
 const dup = drag(held, onThird, [held], null, PX, true, true);
 assert.equal(dup.kind, "add", "an Alt drag plans an added needle, not a move");
-const dupCommand = (dup as { command: { op: string; clip_id: string; keyframe: Keyframe } }).command;
+assert.equal(dup.commands.length, 1, "copying one needle is one command");
+const dupCommand = (dup as { commands: { op: string; clip_id: string; keyframe: Keyframe }[] }).commands[0];
 assert.equal(dupCommand.op, "keyframe.set", "the copy is an ordinary keyframe.set");
 assert.equal(dupCommand.clip_id, "clip-key", "and it goes to this clip");
 assert.equal(dupCommand.keyframe.at_ticks, onThird, "it lands on the frame line the pointer asked for");
@@ -155,7 +164,7 @@ assert.ok(clash.kind === "blocked" && /复制/.test((clash as { reason: string }
   `the refusal must say a copy needs a free second: ${clash.kind}`);
 // 普通拖动不许被复制的分支污染：没有 Alt 就还是 keyframe.move。
 const plain = drag(held, onThird, [held], null);
-assert.equal((plain as { command: { op: string } }).command.op, "keyframe.move", "no Alt, no add");
+assert.equal((plain as { commands: { op: string }[] }).commands[0].op, "keyframe.move", "no Alt, no add");
 
 // Alt 点一下是删：命令是普通 `keyframe.remove`，刻度按片段本地交（与拖动同一口径），不碰工程里那份记录。
 const removal = planNeedleRemoval(clipOf([held, sameRow]), held) as { op: string; clip_id: string; property: string; at_ticks: number };
@@ -166,7 +175,108 @@ assert.equal(removal.property, "opacity", "and this property, so a neighbour on 
 assert.equal(removal.at_ticks, 30_000, "the offset is folded exactly once, the same clock the move command uses");
 assert.equal(held.at_ticks, OFFSET + 30_000, "planning does not mutate project state");
 
+// ---- 1.119：一次抓一组（框选挑中的那几枚一起走）----------------------------------------------
+// 三枚针分属两条属性：不透明度两枚（本地 2 帧、5 帧）加位置一枚（3 帧）。这一节关的是「整组」那三条
+// 只靠读代码判断对错的算术：夹余量、逐条属性判撞针、以及抓几枚就交几条落点。吸附先关掉，指针读数
+// 就是它报的那一格，免得把夹法的功劳记到格线头上。
+const F = FRAME;
+const a1 = key("opacity", OFFSET + 2 * F);
+const a2 = key("opacity", OFFSET + 5 * F);
+const b1 = key("x", OFFSET + 3 * F);
+const trio = [a1, a2, b1];
+const gdrag = (anchor: Keyframe, pointer: number, keys: Keyframe[], group: Keyframe[], duplicate = false) => planKeyframeDrag({
+  clip: clipOf(keys), key: anchor, group, pointer_ticks: pointer, playhead_ticks: -1, px: PX, snap: false, quantum: F, duplicate,
+});
+
+const together = gdrag(a1, 6 * F, trio, trio);
+assert.ok(together.kind === "move", "three picked needles still plan one gesture");
+assert.equal(together.shifts.length, 3, "one landing reported per needle, so the third is not silently left behind");
+assert.equal(together.commands.length, 1, "one grab is one command, so undo takes the whole group back in one step");
+assert.equal(together.commands[0].op, "keyframes.move", "more than one needle uses the engine's own batch move, not N single moves");
+const batch = (together.commands[0] as { op: string; clip_id: string; moves: { from_ticks: number; keyframe: Keyframe }[] });
+assert.deepEqual(Object.keys(batch).sort(), ["clip_id", "moves", "op"], "and carries nothing but the documented batch shape");
+assert.equal(batch.moves.length, 3, "every needle in the group is carried, none silently dropped");
+assert.deepEqual(batch.moves.map((move) => move.keyframe.property), ["opacity", "opacity", "x"], "the group may span properties, each move keeps its own");
+assert.deepEqual(batch.moves.map((move) => move.from_ticks), [2 * F, 5 * F, 3 * F], "each needle's start is its own clip-local tick");
+assert.deepEqual(batch.moves.map((move) => move.keyframe.at_ticks), [6 * F, 9 * F, 7 * F], "the same delta lands on all three");
+assert.deepEqual(batch.moves.map((move) => move.keyframe.value), [0.4, 0.4, 0.4], "values ride along untouched");
+assert.equal(together.shifts.length, 3, "the view is told three landings, in the order it handed them over");
+assert.deepEqual(together.shifts.map((shift) => shift.at), [6 * F, 9 * F, 7 * F], "and the report is the same numbers the command writes");
+assert.deepEqual(together.shifts.map((shift) => shift.from), [2 * F, 5 * F, 3 * F], "each with its own start, so only the moving diamonds look like they move");
+
+// 整组的余量由这一组自己的两头决定：抓的那一枚想去 598 帧，可 5 帧那枚先撞上片尾（这条片段是 599.4 帧长，
+// 所以尾巴那一格不是整数帧——夹的是真边界，不是「凑整后的帧数」）。
+const rightEdge = gdrag(a1, 598 * F, trio, trio);
+assert.ok(rightEdge.kind === "move");
+assert.equal(rightEdge.at_ticks, DURATION - 3 * F, "the anchor is reported where the group can actually land, not where the pointer wished");
+assert.deepEqual((rightEdge as { kind: "move" }).shifts.map((shift) => shift.at), [DURATION - 3 * F, DURATION, DURATION - 2 * F], "the last of them stops exactly on the clip's own end");
+const leftEdge = gdrag(a1, -1 * F, trio, trio);
+assert.ok(leftEdge.kind === "move" && leftEdge.at_ticks === 0 && leftEdge.shifts[2].at === F, "and the head is the same wall on the other side");
+
+// 顶在片段尾巴上的一组：一格也走不了，那就是 noop，不是「拒绝」。
+const wall = [key("opacity", OFFSET + DURATION - F), key("opacity", OFFSET + DURATION)];
+assert.equal(gdrag(wall[0], DURATION, wall, wall).kind, "noop", "a group pressed against the end does not emit a round trip that changes nothing");
+
+// 撞针逐条属性判：另一条曲线上的邻居不算占位，同一条曲线上的邻居算，而且明说是这一组走不过去。
+const onOther = [a1, a2, b1, key("gain", OFFSET + 6 * F)];
+assert.ok(gdrag(a1, 6 * F, onOther, [a1, a2]).kind === "move", "a neighbour on another curve may share that tick with a moved group");
+const blocker = [a1, a2, b1, key("opacity", OFFSET + 9 * F)];
+const refused = gdrag(a1, 6 * F, blocker, trio);
+assert.ok(refused.kind === "blocked", "a neighbour on the same curve as one of the moved needles is refused before the round trip");
+if (refused.kind === "blocked") {
+  assert.ok(refused.reason.includes("3 枚一起走"), `the refusal says a group was moving: ${refused.reason}`);
+  assert.ok(refused.reason.includes("不透明度"), `and which curve it tripped on, in Chinese: ${refused.reason}`);
+  assert.ok(refused.reason.includes((9 * F / TIMEBASE).toFixed(3)), `and the occupied second: ${refused.reason}`);
+  assert.ok(!refused.reason.includes("opacity"), `the contract id must not leak into that sentence: ${refused.reason}`);
+  assert.match(refused.reason, /按住 Alt 点掉/, "and the in-place exit is still named");
+}
+// 撞的是组里**另一条曲线**上那枚：红字得点名那一条，而不是被抓的这一条。判错属性就会把人支去删一枚无辜的针。
+const otherCurve = [a1, a2, b1, key("x", OFFSET + 7 * F)];
+const refusedX = gdrag(b1, 7 * F, otherCurve, trio);
+assert.ok(refusedX.kind === "blocked" && refusedX.reason.includes(FIELD_LABEL.x) && !refusedX.reason.includes("不透明度"),
+  `the refusal names the curve that is actually occupied (${FIELD_LABEL.x}), not the grabbed one: ${refusedX.kind} / ${JSON.stringify(refusedX)}`);
+// 同一件事的反面：抓的是不透明度那一枚，撞的却是组里位置那一条。判属性时若拿「抓的那一条」去比整组，
+// 这一枚就悄悄走过去、由引擎回一条红字——界面前置判断的意义就没了。
+const crossedGroup = [a1, a2, b1, key("x", OFFSET + 8 * F)];
+const refusedCross = gdrag(a1, 7 * F, crossedGroup, trio);
+assert.ok(refusedCross.kind === "blocked" && refusedCross.reason.includes(FIELD_LABEL.x),
+  `a group is refused by the curve one of ITS needles lands on: ${refusedCross.kind} / ${JSON.stringify(refusedCross)}`);
+
+// 复制一组：原针一枚都不动，所以组里自己的那几枚也算占了格。
+const copied = gdrag(a1, 6 * F, trio, [a1, a2], true);
+assert.ok(copied.kind === "add" && copied.commands.length === 2, "copying two picked needles writes two copies");
+assert.deepEqual((copied as { commands: { op: string }[] }).commands.map((command) => command.op), ["keyframe.set", "keyframe.set"], "each an ordinary keyframe.set, the same command the checker's paste uses");
+assert.deepEqual((copied as { commands: { keyframe: Keyframe }[] }).commands.map((command) => command.keyframe.at_ticks), [6 * F, 9 * F], "landing on the delta, originals untouched");
+assert.equal(a1.at_ticks, OFFSET + 2 * F, "planning a copy still does not move the project's own needle");
+const ontoItself = gdrag(a1, 5 * F, trio, [a1, a2], true);
+assert.ok(ontoItself.kind === "blocked", "a copy may not land on a needle that is staying put — even one from its own group");
+assert.match((ontoItself as { reason: string }).reason, /复制/, "and it says a copy needs a free second");
+
+// 夹余量只许有一处权威：曲线编辑器 1.117 那份 groupShift 的时间分支，就是时间线现在用的这一句。
+const BAND = { min: 0, max: 100, step: 5, factor: 100 };
+const points = [{ at_ticks: 2 * F, value: 0.3 }, { at_ticks: 5 * F, value: 0.6 }, { at_ticks: 3 * F, value: 1 }];
+for (const want of [-900_000, -2 * F, 0, 4 * F, 596 * F, 700 * F]) {
+  assert.equal(groupShift(points, BAND, DURATION, want, 0).dt, clampGroupTimeShift(points.map((point) => point.at_ticks), DURATION, want),
+    `the curve editor and the timeline must clamp the same group the same way at ${want}`);
+}
+
+// 接上线：时间线把手上那一整组交给同一个 planner，画影子只画 planner 说了会走的那几枚。
+assert.match(source, /clip, key, group, px, snap, quantum: q, duplicate/, "the timeline hands the whole picked group to the shared planner");
+assert.match(source, /const group = picked\.includes\(id\) \? \(clip\.keyframes \?\? \[\]\)\.filter\(\(member\) => picked\.includes\(needleId\(member\)\)\) : \[key\]/,
+  "the group comes from the project's own needles, not from what happens to be on screen");
+assert.match(source, /if \(!picked\.includes\(id\)\) setPicked\(\[id\]\)/, "grabbing a needle outside the group makes it the group, the way AE does");
+assert.match(source, /if \(event\.shiftKey\) \{ setPicked\(togglePick\(picked, id\)\); return; \}/, "Shift + click joins or leaves the group instead of dragging");
+assert.match(source, /targets: next\.shifts\.map\(\(member, index\) => \(\{ id: needleId\(group\[index\]\), from: member\.from, at: member\.at \}\)\)/,
+  "every landing the planner reports is drawn, in the order the group was handed over");
+assert.match(source, /const target = keyDrag && !keyDrag\.duplicate \? keyDrag\.targets\.find\(\(item\) => item\.id === id\) : undefined/, "a copy's source diamonds must not look like they move");
+assert.match(source, /bottom: 1 \+ \(laneOf\.get\(item\.id\) \?\? 0\) \* LANE_PITCH_PIXELS/, "and a copy's ghost rides its own needle's lane, not lane zero");
+assert.equal((source.match(/Math\.min\(width - 6 - \(hidden\.length \? 16 : 0\)/g) ?? []).length, 1, "needles and ghosts share one clamp, so a ghost can never sit on the +N chip");
+assert.match(source, /picked\.includes\(id\) \? " selected" : ""/, "the picked needles are the ones that look picked");
+assert.equal((source.match(/keyDrag\.property/g) ?? []).length, 0, "the drag state no longer pretends one needle is the whole gesture");
+assert.match(source, /\$\{duplicate \? "复制" : "拖动"\} \$\{group\.length} 枚关键帧/, "the history line counts the needles that moved");
+
 console.log(
   "PASS: 时间线上拖针写的是普通 `keyframe.move`——偏移折掉一次、只改时间、回到原格就是 noop、"
-    + "同属性邻居占格在松手前就点名（不同属性照吸）、容差跟着屏幕像素走、越界永远夹回可写区间",
+    + "同属性邻居占格在松手前就点名（不同属性照吸）、容差跟着屏幕像素走、越界永远夹回可写区间；"
+    + "1.119 起一次抓一组走同一条算术：整组被自己两头夹、撞针逐条属性判、一枚一条命令、复制那组把原针也算占位",
 );

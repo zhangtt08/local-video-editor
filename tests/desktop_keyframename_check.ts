@@ -75,7 +75,8 @@ const inspector = read(["desktop/src/views/Inspector.tsx", "src/views/Inspector.
 assert.match(inspector, /aria-label=\{`\$\{FIELD_LABEL\[k\.property\] \?\? k\.property\}关键帧插值`\}/, "the easing dropdown beside each needle is named in Chinese too");
 
 const drag = read(["desktop/src/keyframeDrag.ts", "src/keyframeDrag.ts"]);
-assert.match(drag, /reason: `\$\{FIELD_LABEL\[drag\.key\.property\] \?\? drag\.key\.property\}/, "the refusal is built from the same table");
+assert.match(drag, /const label = FIELD_LABEL\[clash\.property\] \?\? clash\.property;/, "the refusal is built from the same table");
+assert.match(drag, /const one = `\$\{label\} 在第 /, "and it says that label first, before anything else in the sentence");
 assert.equal((drag.match(/`\$\{drag\.key\.property\}/g) ?? []).length, 0, "and never from the contract id");
 
 // 一处权威：界面不许再自带第二份属性名表（`desktop_blurcurve_check.ts` 已经断过这张表的柔焦那格）。
