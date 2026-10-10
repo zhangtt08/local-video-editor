@@ -181,6 +181,33 @@ def boundary_suite() -> None:
     assert any(track.id == "v9" for track in untouched.tracks)
     shrunk = run(over, [{"op": "clip.grade", "clip_id": "c0", "grade": []}])
     assert grade_inline_samples(shrunk) == fits * CUBE_SAMPLES, grade_inline_samples(shrunk)
+    # 界面里的「复制片段」发的是普通 clip.add（命令表里没有 copy/paste 这一对），所以「×片段数」
+    # 这条乘法归同一处管：粘贴两张立方越过额度，一样得整批拒。
+    pasted = project({f"c{index}": [cube_node()] for index in range(fits - 1)})
+    kept_paste = pasted.model_copy(deep=True)
+    try:
+        run(
+            pasted,
+            [
+                {
+                    "op": "clip.add",
+                    "clip": {
+                        "id": f"p{index}",
+                        "asset_id": "a",
+                        "track_id": "v1",
+                        "position_ticks": (fits + index) * T,
+                        "duration_ticks": T,
+                        "color": {"grade": [dict(cube_node())]},
+                    },
+                }
+                for index in range(2)
+            ],
+        )
+    except Exception as error:  # noqa: BLE001
+        assert getattr(error, "code", "") == "GRADE_INLINE_BUDGET", error
+        assert pasted == kept_paste, "被拒的粘贴不该留下半个片段"
+    else:
+        raise AssertionError("粘贴越过额度本该整批拒")
     print(
         f"   边界：{fits} 张立方恰好装得下（额度 {GRADE_INLINE_SAMPLE_LIMIT} 个采样点），"
         "再多塞一张就拒；"
