@@ -25,9 +25,15 @@ from agentcut.animation import (
     preview_manifest,
     vertices_at,
 )
-from agentcut.contracts import MASK_SHAPE_KEY_LIMIT, EditorError
+from agentcut.contracts import (
+    MASK_SHAPE_KEY_LIMIT,
+    Clip,
+    EditBatch,
+    EditorError,
+    Project,
+    VerifiedMedia,
+)
 from agentcut.contracts import TIMEBASE as T
-from agentcut.contracts import Clip, EditBatch, Project, VerifiedMedia
 from agentcut.http_api import create_app
 from agentcut.masks import raster_size
 from agentcut.render import compile_render_plan
@@ -132,7 +138,7 @@ def with_media(project: Project, path: Path) -> Project:
 
 
 def geometry_suite() -> None:
-    """The morph answers on the render clock, and the window list is the only thing both ends see."""
+    """The morph answers on the render clock; the window list is all both ends see."""
     clip = picture(clip_payload(mask_shape_keys=shape_keys())).clips["c"]
     # Ends hold, and the middle is the linear walk between the two outlines.
     assert vertices_at(clip, 0)[0].x == 0.05
@@ -374,7 +380,10 @@ def http_suite(folder: Path) -> None:
     ) as client:
         caps = client.get("/v1/capabilities").json()
         assert caps["features"]["path_shape_keys"] is True
-        assert caps["limits"]["mask_shape_keys"] == CLIP_MASK_SHAPE_LIMIT
+        assert caps["limits"]["mask_shape_keys"] == MASK_SHAPE_KEY_LIMIT == CLIP_MASK_SHAPE_LIMIT, (
+            "the field's own max_length and the reducer's count must be the same number, or a "
+            "batch the reducer accepts dies in validation with a different error than it names"
+        )
         assert caps["limits"]["mask_shape_schedule_segments"] == MASK_SHAPE_SCHEDULE_MAX
         assert "mask.shape.set" in caps["commands"] and "mask.shape.remove" in caps["commands"]
 
@@ -697,17 +706,18 @@ def media_suite(folder: Path) -> None:
         later["value"][0].x
     )
     print(
-        f"   maskshape: {len(windows)} steps measured in the delivered file, each one the table the "
-        "preview was handed"
+        f"   maskshape: {len(windows)} steps measured in the delivered file, each one the table "
+        "the preview was handed"
     )
 
 
 def agent_suite() -> None:
     """The Agent reaches the same command through the MCP schema the contract generates.
 
-    `timeline_edit` takes an `EditBatch`, and FastMCP publishes that model's JSON schema verbatim, so
-    a discriminator that names the two outline commands is what makes them writable without an Agent
-    guessing at a payload — and the vertex table has to be described, or a client cannot fill it.
+    `timeline_edit` takes an `EditBatch`, and FastMCP publishes that model's JSON schema verbatim,
+    so a discriminator that names the two outline commands is what makes them writable without an
+    Agent guessing at a payload — and the vertex table has to be described, or a client
+    cannot fill it.
     """
     schema = json.dumps(EditBatch.model_json_schema())
     assert "mask.shape.set" in schema and "mask.shape.remove" in schema, schema[:400]
