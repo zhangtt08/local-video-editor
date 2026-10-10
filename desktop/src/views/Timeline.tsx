@@ -4,7 +4,7 @@ import { Icon, IconBtn } from "../ui";
 import { TIMEBASE, align, frameTicks, humanDuration, timecode } from "../time";
 import { transitionLabel } from "../engine";
 import type { Clip, Keyframe, Marker, Project, Track } from "../engine";
-import { planKeyframeDrag } from "../keyframeDrag";
+import { planKeyframeDrag, planNeedleRemoval } from "../keyframeDrag";
 import { LANE_PITCH_PIXELS, NEEDLE_AREA_PIXELS, laneCapacity, needleRows } from "../keyframeLanes";
 import {
   addLibraryItemToTimeline,
@@ -734,7 +734,11 @@ function ClipBlock({
       setKeyDrag(null);
       selectClip(clip.id);
       if (ev.type === "pointercancel") return;
-      if (Math.abs(ev.clientX - event.clientX) < 2) { playhead.pause(); playhead.set(clip.position_ticks + from); return; }
+      if (Math.abs(ev.clientX - event.clientX) < 2) {
+        // 没拖动就还是「点一下跳过去」；按住 Alt 点则是删掉这一枚，走的仍是带 expected_revision 的那条链。
+        if (duplicate) editAtRevision([planNeedleRemoval(clip, key)], project.id, project.revision, "删除关键帧", app.sequenceId);
+        playhead.pause(); playhead.set(clip.position_ticks + from); return;
+      }
       const next = plan(ev.clientX);
       if (next.kind === "noop") { if (duplicate) toast("warn", "没有多出一枚针", "复制的落点就在原针那一格上，先往旁边挪一点再松手。"); return; }
       if (next.kind === "blocked") { toast("warn", "那一格已经有一枚针", next.reason); return; }
@@ -899,7 +903,7 @@ function ClipBlock({
             return <button
               key={`${k.property}-${k.at_ticks}`} type="button" className={`clip-keyframe${held && !held.duplicate ? " dragging" : ""}${held?.blocked ? " blocked" : ""}`}
               style={{ left: Math.min(width - 6 - (hidden.length ? 16 : 0), Math.max(6, (at / clip.duration_ticks) * width)), bottom: 1 + (rowOf.get(k.property) ?? 0) * LANE_PITCH_PIXELS }}
-              title={`${label} · ${humanDuration(from)}${held ? ` → ${humanDuration(at)}` : " · 横向拖可以改时间，按住 Alt 拖是复制一枚"}`}
+              title={`${label} · ${humanDuration(from)}${held ? ` → ${humanDuration(at)}` : " · 横向拖可以改时间，按住 Alt 拖是复制一枚，按住 Alt 点一下是删掉这一枚"}`}
               aria-label={`拖动${label}关键帧`}
               aria-disabled={track.locked || razor || !app.caps?.features?.keyframes}
               onPointerDown={(event) => startKey(event, k)}>◆</button>;

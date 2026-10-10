@@ -34,6 +34,20 @@ export type KeyframeDragPlan =
   | { kind: "noop" }
   | { kind: "blocked"; at_ticks: number; reason: string };
 
+/**
+ * Alt + 点一下（没有拖动）就是删掉这一枚：Premiere 的那只手。交出去的仍是普通 `keyframe.remove`，
+ * 刻度按**片段本地**交（与拖动同一口径，reducer 自己加回偏移）。之所以在时间线上给这一条，是因为
+ * 撞针那句拒绝原本只能把人支到动画曲线里去——「按住 Alt 点掉那一枚」就在眼前，出路得落在原地。
+ */
+export function planNeedleRemoval(clip: Clip, key: Keyframe): Command {
+  return {
+    op: "keyframe.remove",
+    clip_id: clip.id,
+    property: key.property,
+    at_ticks: key.at_ticks - (clip.animation_offset_ticks ?? 0),
+  };
+}
+
 const seconds = (ticks: number) => (ticks / TIMEBASE).toFixed(3);
 
 export function planKeyframeDrag(drag: KeyframeDrag): KeyframeDragPlan {
@@ -54,7 +68,7 @@ export function planKeyframeDrag(drag: KeyframeDrag): KeyframeDragPlan {
     return {
       kind: "blocked",
       at_ticks: at,
-      reason: `${FIELD_LABEL[drag.key.property] ?? drag.key.property} 在第 ${seconds(at)} 秒已经有一枚针，${drag.duplicate ? "复制就得先松到一个空格上" : "先松到空格上或在动画曲线里删掉那一枚"}。`,
+      reason: `${FIELD_LABEL[drag.key.property] ?? drag.key.property} 在第 ${seconds(at)} 秒已经有一枚针，${drag.duplicate ? "复制就得先松到一个空格上" : "先松到空格上，或按住 Alt 点掉那一枚"}。`,
     };
   }
   // 复制落在原针那一格等于给自己盖一层：什么都不加，但也不算「没动」。

@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { planKeyframeDrag } from "../desktop/src/keyframeDrag";
+import { planKeyframeDrag, planNeedleRemoval } from "../desktop/src/keyframeDrag";
 import type { Clip, Keyframe } from "../desktop/src/engine";
 
 const TIMEBASE = 70_560_000;
@@ -92,6 +92,8 @@ if (blocked.kind === "blocked") {
   assert.ok(blocked.reason.includes((8_000_000 / TIMEBASE).toFixed(3)), `the reason must name the occupied second: ${blocked.reason}`);
   assert.ok(blocked.reason.includes("不透明度"), `the reason must name the property in Chinese: ${blocked.reason}`);
   assert.ok(!blocked.reason.includes("opacity"), `the contract id must not leak into that sentence: ${blocked.reason}`);
+  // 拒绝得当场给一条走得了的路：这句过去把人支到动画曲线里，现在「按住 Alt 点掉那一枚」就在这条时间线上。
+  assert.match(blocked.reason, /按住 Alt 点掉/, `the refusal must name the in-place exit: ${blocked.reason}`);
 }
 const other = key("gain", OFFSET + 8_000_000);
 const crossed = drag(held, 8_000_000 + 100_000, [held, other], POSITION + 8_000_000);
@@ -124,8 +126,13 @@ assert.match(source, /pointer_ticks: \(\(clientX - node\.getBoundingClientRect\(
 assert.match(source, /playhead_ticks: playhead\.value - clip\.position_ticks/, "and the playhead must be handed over in the same local clock");
 // 落库只允许是那一行：不许在它前面挂第二个副作用，也不许绕开带 expected_revision 的那条链。
 assert.match(source, /^\s{6}editAtRevision\(\[next\.command\], project\.id, project\.revision, duplicate \? "复制关键帧" : "拖动关键帧", app\.sequenceId\);$/m, "the write is exactly that call through the ordinary edit chain, and the history line says which gesture it was");
-// 没拖动就还是「点一下跳过去」：那条判断必须在，且落在 from 上。
-assert.match(source, /if \(Math\.abs\(ev\.clientX - event\.clientX\) < 2\) \{ playhead\.pause\(\); playhead\.set\(clip\.position_ticks \+ from\)/, "the tap still jumps to the needle");
+// 没拖动就还是「点一下跳过去」，而按住 Alt 点一下是删掉这一枚——两条都断到同一个分支里，
+// 因为把删除接在另一个入口上就等于在时间线上开第二条写路径。
+assert.match(source,
+  /if \(Math\.abs\(ev\.clientX - event\.clientX\) < 2\) \{[\s\S]{0,240}if \(duplicate\) editAtRevision\(\[planNeedleRemoval\(clip, key\)\], project\.id, project\.revision, "删除关键帧", app\.sequenceId\);[\s\S]{0,160}playhead\.pause\(\); playhead\.set\(clip\.position_ticks \+ from\); return;[\s\S]{0,40}\}/,
+  "the tap still jumps to the needle, and Alt + tap removes it through the very same edit chain");
+assert.equal((source.match(/removeKeyframe\(/g) ?? []).length, 0, "the timeline must not open store's own delete path as a second write chain");
+assert.match(source, /按住 Alt 点一下是删掉这一枚/, "and the needle says so on hover");
 assert.match(source, /onPointerDown=\{\(event\) => startKey\(event, k\)\}/, "the diamond carries the gesture instead of a click handler");
 assert.equal((source.match(/onClick=\{\(event\) => \{ event\.stopPropagation\(\); selectClip\(clip\.id\)/g) ?? []).length, 0, "the old click-only needle must be gone");
 assert.ok(!/Math\.round\([^)\n]*\/ *q\) *\* *q/.test(source), "no second snapping formula may live in the timeline");
@@ -149,6 +156,15 @@ assert.ok(clash.kind === "blocked" && /复制/.test((clash as { reason: string }
 // 普通拖动不许被复制的分支污染：没有 Alt 就还是 keyframe.move。
 const plain = drag(held, onThird, [held], null);
 assert.equal((plain as { command: { op: string } }).command.op, "keyframe.move", "no Alt, no add");
+
+// Alt 点一下是删：命令是普通 `keyframe.remove`，刻度按片段本地交（与拖动同一口径），不碰工程里那份记录。
+const removal = planNeedleRemoval(clipOf([held, sameRow]), held) as { op: string; clip_id: string; property: string; at_ticks: number };
+assert.equal(removal.op, "keyframe.remove", "the tap deletes through the ordinary command, no new op");
+assert.deepEqual(Object.keys(removal).sort(), ["at_ticks", "clip_id", "op", "property"], "and carries nothing but the documented shape");
+assert.equal(removal.clip_id, "clip-key", "it names this clip");
+assert.equal(removal.property, "opacity", "and this property, so a neighbour on another curve survives");
+assert.equal(removal.at_ticks, 30_000, "the offset is folded exactly once, the same clock the move command uses");
+assert.equal(held.at_ticks, OFFSET + 30_000, "planning does not mutate project state");
 
 console.log(
   "PASS: 时间线上拖针写的是普通 `keyframe.move`——偏移折掉一次、只改时间、回到原格就是 noop、"
