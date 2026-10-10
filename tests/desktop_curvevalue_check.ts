@@ -94,6 +94,18 @@ for (const point of landed) {
 assert.deepEqual(groupShift([], OPACITY, DURATION, TIMEBASE, 0.5), { dt: 0, dv: 0 }, "an empty selection shifts nothing");
 
 // 接上线：组件读这个模块，且不许留下第二份算术。
+// 方向键微调走的是同一条式子（`translate(points, ±q, ±step/factor)`），装机量到过：0.5 那枚连按 7 次
+// ↑ 存回的是 `0.57`，时间一格没动。这里把那一幕钉成断言：一格一格走七次，结果仍须等于把自己量化后的值。
+let stepped = [{ at_ticks: 3 * TIMEBASE, value: 0.5 }];
+for (let press = 0; press < 7; press++) {
+  stepped = applyShift(stepped, groupShift(stepped, OPACITY, DURATION, 0, 1 / 100), OPACITY);
+}
+assert.equal(stepped[0].value, 0.57, "seven single-percent nudges land on 57 %, not 0.5700000000000001");
+assert.equal(stepped[0].value, quantizeToBand(stepped[0].value, OPACITY), "and the landed value is on its own grid");
+// Shift 是 10 倍步长：同一条路上也必须是格子上的数。
+const big = applyShift(pair.slice(0, 1), groupShift(pair.slice(0, 1), OPACITY, DURATION, 0, 10 / 100), OPACITY);
+assert.equal(big[0].value, 0.6, "ten percent at a time");
+
 const path = ["desktop/src/views/CurveEditor.tsx", "src/views/CurveEditor.tsx"].map((part) => resolve(process.cwd(), part)).find(existsSync);
 assert.ok(path, "the curve editor must be readable from the check's working directory");
 const source = readFileSync(path!, "utf8");
