@@ -66,7 +66,7 @@ def contract_suite() -> None:
     assert all(item["label"] for item in caps["fade_shapes"]), caps["fade_shapes"]
     assert FadeEnvelope().opacity_shape == "ease_in_out", "默认必须是 1.95 之前唯一的形状"
     assert FadeEnvelope().gain_shape == "ease_in_out"
-    assert SCHEMA_VERSION == 15, SCHEMA_VERSION
+    assert SCHEMA_VERSION == 16, SCHEMA_VERSION  # v16 = 轮廓帧；淡的形状是 v15
     print(f"   契约：{len(SHAPES)} 个形状，Literal 与表点名同一组 id，默认是缓入缓出")
 
 

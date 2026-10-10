@@ -33,6 +33,7 @@ from agentcut.animation import (
 )
 from agentcut.contracts import TIMEBASE as T
 from agentcut.contracts import (
+    SCHEMA_VERSION,
     Bezier,
     Clip,
     CreateProject,
@@ -462,7 +463,8 @@ def reducer_suite() -> None:
 
     caps = capabilities(True, False, [])
     assert caps["features"]["clip_fade_envelopes"] is True, caps["features"]
-    assert caps["project_schema_version"] == 15, caps["project_schema_version"]
+    assert caps["project_schema_version"] == SCHEMA_VERSION == 16, caps["project_schema_version"]
+    assert Project.model_validate({**one_clip().model_dump(), "schema_version": 15}).clips["c"].mask_shape_keys == [], "v15 的工程读进来没有轮廓帧"
     old = one_clip().model_dump()
     old["schema_version"] = 13
     assert Project.model_validate(old).clips["c"].fade is None, "a v13 row reads as 'no envelope'"
