@@ -4,7 +4,7 @@ import { type AnimationGraph, type Clip, type Keyframe, type Property, type Bezi
 import { EFFECT_FIELDS, curveBase, maskAnimFields, spatialAnimFields } from "../effects";
 import { TIMEBASE, timecode } from "../time";
 import { keyframeTick } from "../keyframeSnap";
-import { copyKeys, pasteKeys, rememberCopy, copiedKeys } from "../keyframeClipboard";
+import { copyKeys, pasteKeys, rememberCopy, copiedKeys, type CopiedKeys } from "../keyframeClipboard";
 import { appInfo, clearBatch, commitBatch, editAtRevision, playhead, prefs, quantum, redoStep, selectClips, setGraphOpen, setMode, toast, undo, useApp, useEdit, usePlay } from "../store";
 
 const LEFT = 58, TOP = 12, WIDTH = 924, HEIGHT = 166;
@@ -202,8 +202,15 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
     editAtRevision([{ op: "keyframes.remove", clip_id: clip.id, keyframes: selectedKeys.map((k) => ({ property: k.property, at_ticks: k.at_ticks })) }], project.id, project.revision, "删除动画选区", app.sequenceId);
     setSelection([]); setSelectedAt(null);
   };
-  const atHead = () => {
-    // 播放头本身就落在格子上（标尺按同一份量子吸附），所以这里写的就是看到的那个位置：
+  const [copied, setCopied] = useState<CopiedKeys | null>(copiedKeys());
+  // 粘贴只有一处实现：按钮和 Ctrl+V 走同一个函数，落点、跳过与回执都是同一条判断。
+  const pasteNow = () => {
+    const paste = pasteKeys(clip, copied, alignTime(head, false), project.id);
+    if (!paste.commands.length) { toast("warn", "没有粘贴", paste.reason); return; }
+    editAtRevision(paste.commands, project.id, project.revision, "粘贴动画关键帧", app.sequenceId);
+    toast(paste.dropped ? "warn" : "info", `粘贴了 ${paste.pasted} 枚关键帧`, paste.dropped ? paste.reason : "落在播放头起的整帧上。");
+  };
+  const atHead = () => {    // 播放头本身就落在格子上（标尺按同一份量子吸附），所以这里写的就是看到的那个位置：
     // 吸附不参与，否则相邻的针会把新针拽走，采到的值与落下的时间就对不上了。
     void appInfo.engine()?.animationSample(clip, head).then((sample) => {
       add(head, sample.values[field.property], false);
@@ -228,6 +235,7 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
       <button className="btn tiny" disabled={!keys.length} onClick={() => jump(-1)}>上一关键帧</button><button className="btn tiny" disabled={!keys.length} onClick={() => jump(1)}>下一关键帧</button>
       <button className="btn tiny" disabled={disabled || (app.mode === "batch" && app.batch.length > 0)} onClick={atHead}>播放头添加</button>
       <button className="btn tiny" disabled={disabled || !selectedKeys.length} onClick={remove}>{selectedKeys.length > 1 ? `删除 ${selectedKeys.length} 点` : "删除关键帧"}</button>
+      <button className="btn tiny" disabled={disabled || !copied || copied.property !== field.property} title={copied ? `把复制的 ${copied.keys.length} 枚 ${copied.property} 针按播放头粘到当前片段；落在片段之外或已有针那一格的会跳过` : "先选中同一条属性上的针，按 Ctrl+C 或点上面的复制"} onClick={pasteNow}>粘贴 {copied ? copied.keys.length : 0} 枚</button>
       <label title="与时间线的磁吸是同一个开关（状态栏那颗吸铁石、快捷键 S）：关掉两处一起关。拖到的位置落在整帧上，并会找播放头与这条曲线上没被拖动的针；数值框与「播放头添加」照精确位置写。"><input type="checkbox" checked={snap} onChange={(e) => prefs.setSnap(e.target.checked)} />时间吸附</label>
       <span className="spacer" />
       <button className="btn tiny" disabled={zoom === 1} onClick={() => zoomTo(.5)}>缩小曲线</button><button className="btn tiny" disabled={zoom === 64} onClick={() => zoomTo(2)}>放大曲线</button>
@@ -252,18 +260,15 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
           if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") {
             e.preventDefault(); e.stopPropagation();
             const copy = copyKeys(project.id, selectedKeys);
-            rememberCopy(copy);
+            rememberCopy(copy); setCopied(copy);
+            svg.current?.focus();   // 针上还留着焦点时，紧跟的 Ctrl+V 会被 Chromium 当成页面粘贴吃掉：复制完把焦点交回画布
             if (copy) toast("info", `已复制 ${copy.keys.length} 枚 ${copy.property} 关键帧`, "Ctrl+V 会按播放头粘到当前片段；换了属性或换了工程就失效。");
             else toast("warn", "没有可复制的选区", "选中同一属性上的针再复制——一次只能搬一条属性。");
             return;
           }
           if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") {
             e.preventDefault(); e.stopPropagation();
-            const paste = pasteKeys(clip, copiedKeys(), alignTime(head, false), project.id);
-            if (paste.commands.length) {
-              editAtRevision(paste.commands, project.id, project.revision, "粘贴动画关键帧", app.sequenceId);
-              toast(paste.dropped ? "warn" : "info", `粘贴了 ${paste.pasted} 枚关键帧`, paste.dropped ? paste.reason : "落在播放头起的整帧上。");
-            } else toast("warn", "没有粘贴", paste.reason);
+            pasteNow();
             return;
           }
           if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cancel(); chooseSelection([], null); return; }

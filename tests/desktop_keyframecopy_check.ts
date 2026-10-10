@@ -69,9 +69,14 @@ const path = ["desktop/src/views/CurveEditor.tsx", "src/views/CurveEditor.tsx"].
 assert.ok(path, "the curve editor must be readable from the check's working directory");
 const curve = readFileSync(path!, "utf8");
 assert.match(curve, /copyKeys\(project\.id, selectedKeys\)/, "Ctrl+C copies the current selection");
-assert.match(curve, /pasteKeys\(clip, copiedKeys\(\), alignTime\(head, false\), project\.id\)/, "Ctrl+V pastes at the playhead, on the shared lattice, without needle attraction");
+assert.match(curve, /const pasteNow = \(\) => \{[\s\S]{0,140}pasteKeys\(clip, copied, alignTime\(head, false\), project\.id\)/, "paste is one function: playhead落点、走共享格子、不找邻针");
 assert.match(curve, /editAtRevision\(paste\.commands, project\.id, project\.revision, "粘贴动画关键帧", app\.sequenceId\)/, "the whole paste is one ordinary batch");
-assert.match(curve, /if \(\(e\.ctrlKey \|\| e\.metaKey\) && e\.key\.toLowerCase\(\) === "a"\)/, "the select-all guard keeps its parentheses");
+// 量出来的那条：复制完焦点还留在针上，紧跟的 Ctrl+V 会被浏览器吃掉，所以复制必须把焦点交回画布。
+assert.match(curve, /rememberCopy\(copy\);[\s\S]{0,40}svg\.current\?\.focus\(\);/, "copy hands focus back to the plot so the very next Ctrl+V lands");
+// 鼠标必须也有一条路：自动化里 Chromium 会吃掉 Ctrl+V（实测一次到达、一次不到达），快捷键不能是唯一入口。
+assert.match(curve, /onClick=\{pasteNow\}>粘贴/, "a paste button must exist next to the chord");
+assert.match(curve, /disabled=\{disabled \|\| !copied \|\| copied\.property !== field\.property\}/, "and it is grey unless a same-property copy is in hand");
+assert.equal((curve.match(/粘贴动画关键帧/g) ?? []).length, 1, "the chord and the button share one implementation");
 assert.equal((curve.match(/key\.toLowerCase\(\) === "[cav]"/g) ?? []).length, 3, "copy, paste and select-all are the three chord entries");
 
 console.log("PASS: 复制／粘贴搬的是节奏——一次一条属性、跨片段照粘、越界与撞针逐枚跳过并报数、"
