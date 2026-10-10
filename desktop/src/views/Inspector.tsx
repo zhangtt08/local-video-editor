@@ -354,7 +354,7 @@ function EffectsFields({ clip }: { clip: Clip }) {
         <button onClick={() => { playhead.pause(); playhead.set(clip.position_ticks + k.at_ticks - offset); }}>
           <span className="keyframe-dot">◇</span>{FIELD_LABEL[k.property] ?? k.property}<span className="mono">{((k.at_ticks - offset) / TIMEBASE).toFixed(2)}s</span>
         </button>
-        <select aria-label={`${k.property}关键帧插值`} disabled={locked} value={k.interpolation} onChange={(e) => setKeyframe(clip.id, { ...k, at_ticks: k.at_ticks - offset, interpolation: e.target.value as Keyframe["interpolation"], bezier: e.target.value === "bezier" ? k.bezier : null })}><option value="linear">线性</option><option value="ease">缓入缓出</option><option value="hold">保持</option><option value="bezier">贝塞尔</option></select>
+        <select aria-label={`${FIELD_LABEL[k.property] ?? k.property}关键帧插值`} disabled={locked} value={k.interpolation} onChange={(e) => setKeyframe(clip.id, { ...k, at_ticks: k.at_ticks - offset, interpolation: e.target.value as Keyframe["interpolation"], bezier: e.target.value === "bezier" ? k.bezier : null })}><option value="linear">线性</option><option value="ease">缓入缓出</option><option value="hold">保持</option><option value="bezier">贝塞尔</option></select>
         <button aria-label="删除关键帧" disabled={locked} onClick={() => removeKeyframe(clip.id, k.property, k.at_ticks - offset)}>×</button>
       </div>)}
     </div>

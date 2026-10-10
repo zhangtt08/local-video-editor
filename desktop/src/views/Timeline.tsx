@@ -46,7 +46,7 @@ import {
   splitAtMarkers,
   setFadeWindowsForClips,
 } from "../store";
-import { EMPTY_TRACK_HINT, trackToolBlocker, fadeDragBatch, fadeDragTicks, fadeProperties, fadeWindows, type FadeProperty, type FadeSide } from "../effects";
+import { EMPTY_TRACK_HINT, FIELD_LABEL, trackToolBlocker, fadeDragBatch, fadeDragTicks, fadeProperties, fadeWindows, type FadeProperty, type FadeSide } from "../effects";
 import { selectionQuantum, timelineTracks } from "../selection";
 
 const HEAD = 112;
@@ -895,11 +895,12 @@ function ClipBlock({
             const from = k.at_ticks - (clip.animation_offset_ticks ?? 0);
             const held = keyDrag && keyDrag.property === k.property && keyDrag.from === from ? keyDrag : null;
             const at = held && !held.duplicate ? held.at : from;
+            const label = FIELD_LABEL[k.property] ?? k.property;
             return <button
               key={`${k.property}-${k.at_ticks}`} type="button" className={`clip-keyframe${held && !held.duplicate ? " dragging" : ""}${held?.blocked ? " blocked" : ""}`}
               style={{ left: Math.min(width - 6 - (hidden.length ? 16 : 0), Math.max(6, (at / clip.duration_ticks) * width)), bottom: 1 + (rowOf.get(k.property) ?? 0) * LANE_PITCH_PIXELS }}
-              title={`${k.property} · ${humanDuration(from)}${held ? ` → ${humanDuration(at)}` : " · 横向拖可以改时间，按住 Alt 拖是复制一枚"}`}
-              aria-label={`拖动${k.property}关键帧`}
+              title={`${label} · ${humanDuration(from)}${held ? ` → ${humanDuration(at)}` : " · 横向拖可以改时间，按住 Alt 拖是复制一枚"}`}
+              aria-label={`拖动${label}关键帧`}
               aria-disabled={track.locked || razor || !app.caps?.features?.keyframes}
               onPointerDown={(event) => startKey(event, k)}>◆</button>;
           })}
@@ -908,7 +909,8 @@ function ClipBlock({
             style={{ left: Math.min(width - 6, Math.max(6, (keyDrag.at / clip.duration_ticks) * width)) }}
             aria-hidden="true">◆</span> : null}
           {hidden.length ? <button type="button" className="clip-keyframe-more" aria-label={`${hidden.length} 条属性的针没有画在这里`}
-            title={`画不下的针：${hidden.join("、")}——点开进动画曲线看这条片段的全部针`}
+            title={`画不下的针：${hidden.map((property) => FIELD_LABEL[property] ?? property).join("、")}——点开进动画曲线看这条片段的全部针`}
+            onPointerDown={(event) => event.stopPropagation()}
             onClick={() => { selectClip(clip.id); setGraphOpen(true); }}>+{hidden.length}</button> : null}
         </>;
       })()}

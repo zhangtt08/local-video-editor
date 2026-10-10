@@ -8,6 +8,7 @@
  */
 
 import { type Clip, type Command, type Keyframe } from "./engine";
+import { FIELD_LABEL } from "./effects";
 import { keyframeTick } from "./keyframeSnap";
 import { TIMEBASE } from "./time";
 
@@ -53,7 +54,7 @@ export function planKeyframeDrag(drag: KeyframeDrag): KeyframeDragPlan {
     return {
       kind: "blocked",
       at_ticks: at,
-      reason: `${drag.key.property} 在第 ${seconds(at)} 秒已经有一枚针，${drag.duplicate ? "复制就得先松到一个空格上" : "先松到空格上或在动画曲线里删掉那一枚"}。`,
+      reason: `${FIELD_LABEL[drag.key.property] ?? drag.key.property} 在第 ${seconds(at)} 秒已经有一枚针，${drag.duplicate ? "复制就得先松到一个空格上" : "先松到空格上或在动画曲线里删掉那一枚"}。`,
     };
   }
   // 复制落在原针那一格等于给自己盖一层：什么都不加，但也不算「没动」。

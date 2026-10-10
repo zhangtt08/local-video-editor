@@ -90,7 +90,8 @@ if (blocked.kind === "blocked") {
   assert.equal(blocked.at_ticks, 8_000_000, "the needle it tried to land on is reported back");
   assert.match(blocked.reason, /[一-鿿]/, "the refusal must be Chinese");
   assert.ok(blocked.reason.includes((8_000_000 / TIMEBASE).toFixed(3)), `the reason must name the occupied second: ${blocked.reason}`);
-  assert.ok(blocked.reason.includes("opacity"), `the reason must name the property: ${blocked.reason}`);
+  assert.ok(blocked.reason.includes("不透明度"), `the reason must name the property in Chinese: ${blocked.reason}`);
+  assert.ok(!blocked.reason.includes("opacity"), `the contract id must not leak into that sentence: ${blocked.reason}`);
 }
 const other = key("gain", OFFSET + 8_000_000);
 const crossed = drag(held, 8_000_000 + 100_000, [held, other], POSITION + 8_000_000);

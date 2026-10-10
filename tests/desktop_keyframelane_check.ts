@@ -7,6 +7,9 @@
 
  这里断的是分道本身：道号由属性第一次出现的顺序定、同一秒的不同属性必得不同道、容量按像素算、
  超出容量的属性进 hidden（界面据此少画并说明），以及界面真的用上了这两个函数。
+ 1.115 在这一版里又补了一条只有真点一下才暴露的：那枚牌子把 pointerdown 喂给了片段自己的拖动手势，
+ click 因此永远落不到它身上——写在 tooltip 里的那条出路（「点开进动画曲线」）是空的。现在牌子自己收下
+ 这次按下，门禁断的就是这条交接。
  */
 
 import assert from "node:assert/strict";
@@ -53,6 +56,10 @@ assert.match(source, /visible\.filter\(\(k\) => rowOf\.has\(k\.property\)\)\.map
 // 「+N」那枚牌子不许被短路成永不出现：断到它的类型与类名，而不是只断前缀。
 assert.match(source, /\{hidden\.length \? <button type="button" className="clip-keyframe-more"/, "the hidden properties get a named chip instead of an unreachable needle");
 assert.match(source, /setGraphOpen\(true\)/, "and clicking that chip opens the curve editor for this clip");
+// 「点开进动画曲线」必须真的点得开：片段根节点自己吃了 onPointerDown（那是拖动整条片段的手势），
+// 牌子若不把指针交回自己，click 就落在片段上，出路只剩一句提示。装机实测过它点了没反应。
+assert.match(source, /onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}[\s\S]{0,60}onClick=\{\(\) => \{ selectClip\(clip\.id\); setGraphOpen\(true\)/,
+  "the chip must keep its own click instead of feeding the clip's move gesture");
 // 针不许爬到「+N」那块牌子上：有隐藏属性时右端留出牌子的位置。
 assert.match(source, /Math\.min\(width - 6 - \(hidden\.length \? 16 : 0\)/, "needles reserve the chip's corner");
 

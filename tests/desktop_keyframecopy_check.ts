@@ -80,6 +80,9 @@ assert.equal((curve.match(/粘贴动画关键帧/g) ?? []).length, 1, "the chord
 // 复制、粘贴、全选是这一层的三个和弦入口；Ctrl+A 那个守卫的括号必须留着，
 // 否则 `a || b && c` 的结合顺序会变成「按一下 Ctrl 就全选」。
 assert.match(curve, /if \(\(e\.ctrlKey \|\| e\.metaKey\) && e\.key\.toLowerCase\(\) === "a"\)/, "the select-all guard keeps its parentheses");
+// 同一类错误有三个入口，所以三个都断：漏掉括号的就是 `a || (b && c)`，按一下 Ctrl 就全选／全复制／全粘贴。
+assert.equal((curve.match(/if \(\(e\.ctrlKey \|\| e\.metaKey\) && e\.key\.toLowerCase\(\) === "[acv]"\)/g) ?? []).length, 3,
+  "all three chords must guard with parentheses");
 assert.equal((curve.match(/key\.toLowerCase\(\) === "[cav]"/g) ?? []).length, 3, "copy, paste and select-all are the three chord entries");
 
 console.log("PASS: 复制／粘贴搬的是节奏——一次一条属性、跨片段照粘、越界与撞针逐枚跳过并报数、"

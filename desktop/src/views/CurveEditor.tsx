@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type PointerEvent } from "react";
 
 import { type AnimationGraph, type Clip, type Keyframe, type Property, type Bezier } from "../engine";
-import { EFFECT_FIELDS, curveBase, maskAnimFields, spatialAnimFields } from "../effects";
+import { EFFECT_FIELDS, FIELD_LABEL, curveBase, maskAnimFields, spatialAnimFields } from "../effects";
 import { TIMEBASE, timecode } from "../time";
 import { keyframeTick } from "../keyframeSnap";
 import { copyKeys, pasteKeys, rememberCopy, copiedKeys, type CopiedKeys } from "../keyframeClipboard";
@@ -235,7 +235,7 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
       <button className="btn tiny" disabled={!keys.length} onClick={() => jump(-1)}>上一关键帧</button><button className="btn tiny" disabled={!keys.length} onClick={() => jump(1)}>下一关键帧</button>
       <button className="btn tiny" disabled={disabled || (app.mode === "batch" && app.batch.length > 0)} onClick={atHead}>播放头添加</button>
       <button className="btn tiny" disabled={disabled || !selectedKeys.length} onClick={remove}>{selectedKeys.length > 1 ? `删除 ${selectedKeys.length} 点` : "删除关键帧"}</button>
-      <button className="btn tiny" disabled={disabled || !copied || copied.property !== field.property} title={copied ? `把复制的 ${copied.keys.length} 枚 ${copied.property} 针按播放头粘到当前片段；落在片段之外或已有针那一格的会跳过` : "先选中同一条属性上的针，按 Ctrl+C 或点上面的复制"} onClick={pasteNow}>粘贴 {copied ? copied.keys.length : 0} 枚</button>
+      <button className="btn tiny" disabled={disabled || !copied || copied.property !== field.property} title={copied ? `把复制的 ${copied.keys.length} 枚 ${FIELD_LABEL[copied.property] ?? copied.property} 针按播放头粘到当前片段；落在片段之外或已有针那一格的会跳过` : "先选中同一条属性上的针，按 Ctrl+C 或点上面的复制"} onClick={pasteNow}>粘贴 {copied ? copied.keys.length : 0} 枚</button>
       <label title="与时间线的磁吸是同一个开关（状态栏那颗吸铁石、快捷键 S）：关掉两处一起关。拖到的位置落在整帧上，并会找播放头与这条曲线上没被拖动的针；数值框与「播放头添加」照精确位置写。"><input type="checkbox" checked={snap} onChange={(e) => prefs.setSnap(e.target.checked)} />时间吸附</label>
       <span className="spacer" />
       <button className="btn tiny" disabled={zoom === 1} onClick={() => zoomTo(.5)}>缩小曲线</button><button className="btn tiny" disabled={zoom === 64} onClick={() => zoomTo(2)}>放大曲线</button>
@@ -262,7 +262,7 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
             const copy = copyKeys(project.id, selectedKeys);
             rememberCopy(copy); setCopied(copy);
             svg.current?.focus();   // 针上还留着焦点时，紧跟的 Ctrl+V 会被 Chromium 当成页面粘贴吃掉：复制完把焦点交回画布
-            if (copy) toast("info", `已复制 ${copy.keys.length} 枚 ${copy.property} 关键帧`, "Ctrl+V 会按播放头粘到当前片段；换了属性或换了工程就失效。");
+            if (copy) toast("info", `已复制 ${copy.keys.length} 枚 ${FIELD_LABEL[copy.property] ?? copy.property} 关键帧`, "Ctrl+V 会按播放头粘到当前片段；换了属性或换了工程就失效。");
             else toast("warn", "没有可复制的选区", "选中同一属性上的针再复制——一次只能搬一条属性。");
             return;
           }
