@@ -1,4 +1,5 @@
-import type { AnimatedEffect, Asset, Capabilities, Clip, Curve, MaskProperty, Project, ShapeMask, WipeChannel } from "./engine";
+import type { AnimatedEffect, Asset, Capabilities, Clip, Curve, Effects, MaskProperty, Project, ShapeMask, SpatialProperty, WipeChannel } from "./engine";
+import { DEFAULT_EFFECTS } from "./engine";
 import { TIMEBASE } from "./time";
 
 /**
@@ -33,7 +34,8 @@ export function sharpenLimits(
   };
 }
 
-// The animatable set, not `keyof Effects`: `blur` is a static radius the exporter cannot animate.
+// The six curves the exporter evaluates frame by frame. `blur` sits beside them only through
+// `spatialAnimFields` below: it is a window schedule, not a per-frame sigma.
 export const EFFECT_FIELDS: { property: AnimatedEffect; label: string; unit: string; min: number; max: number; step: number; factor: number }[] = [
   { property: "x", label: "位置 X", unit: "%", min: -200, max: 200, step: 1, factor: 100 },
   { property: "y", label: "位置 Y", unit: "%", min: -200, max: 200, step: 1, factor: 100 },
@@ -65,9 +67,33 @@ export const maskAnimFields = (mask?: ShapeMask | null) =>
       : MASK_ANIM_FIELDS;
 
 /** Label lookup for the keyframe list, which mixes effect and mask properties. */
-export const FIELD_LABEL: Record<string, string> = Object.fromEntries(
-  [...EFFECT_FIELDS, ...MASK_ANIM_FIELDS].map((field) => [field.property, field.label]),
-);
+export const FIELD_LABEL: Record<string, string> = Object.fromEntries([
+  ...[...EFFECT_FIELDS, ...MASK_ANIM_FIELDS].map((field) => [field.property, field.label]),
+  ["blur", "柔焦"],
+] as [string, string][]);
+
+/** 1.99：柔焦那条曲线也能在曲线编辑器里看与拖。上限与检查器那一行同源（`blurMaxPercent`：
+ *  引擎下发的比例上限与实测过的像素带按当前画幅高折算取小），所以这里不会给出一条
+ *  画得出、导出会拒的斜坡；老引擎不回 `blur_keyframes` 就没有这条曲线。 */
+export const spatialAnimFields = (caps: Capabilities | null, frameHeight: number) => {
+  const max = blurMaxPercent(caps, frameHeight);
+  return !caps?.features.blur_keyframes || max <= 0
+    ? []
+    : [{ property: "blur" as SpatialProperty, label: "柔焦", unit: "%", min: 0, max, step: 0.5, factor: 100 }];
+};
+
+/** Every curve the editor can offer, in one vocabulary. */
+export type CurveField =
+  | (typeof EFFECT_FIELDS)[number]
+  | (typeof MASK_ANIM_FIELDS)[number]
+  | ReturnType<typeof spatialAnimFields>[number];
+
+/** 曲线的起笔就是检查器里现在的那个数：新点按它落，纵轴按它定标。柔焦是 1.99 才进编辑器的，
+ *  这一处若只读那六个标量属性，滑杆推到 12% 再按「播放头添加」写的会是 0——用户看到的是曲线把柔焦关了。 */
+export const curveBase = (clip: Pick<Clip, "effects" | "mask">, field: CurveField): number =>
+  "field" in field
+    ? clip.mask?.[field.field] ?? 0
+    : (clip.effects ?? DEFAULT_EFFECTS)[field.property as keyof Effects] ?? 0;
 
 /** The three curves the stabiliser writes, plus rotation — the same set the engine guards. */
 const STABILIZED = ["x", "y", "rotation", "scale"] as const;

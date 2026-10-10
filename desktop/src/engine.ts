@@ -48,7 +48,7 @@ export type MaskProperty = "mask_x" | "mask_y" | "mask_width" | "mask_height";
 /** 1.98: 柔焦可以打关键帧，但走的是引擎编译出的阶梯（`spatial_schedule`），不是这六个标量属性那条式子。 */
 export type SpatialProperty = "blur";
 export type Property = AnimatedEffect | MaskProperty | SpatialProperty;
-export type SampledValues = Record<AnimatedEffect, number> & { mask_x: number; mask_y: number; mask_width: number; mask_height: number };
+export type SampledValues = Record<AnimatedEffect, number> & { blur: number; mask_x: number; mask_y: number; mask_width: number; mask_height: number };
 export const DEFAULT_EFFECTS: Effects = { x: 0, y: 0, scale: 1, rotation: 0, opacity: 1, gain: 1, blur: 0, sharpen: 0, sharpen_radius: 0.004, denoise: 0 };
 export type GradeChannel = "rgb" | "red" | "green" | "blue";
 export type GradeCurvePoint = { x: number; y: number };

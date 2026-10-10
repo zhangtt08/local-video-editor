@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type PointerEvent } from "react";
 
-import { DEFAULT_EFFECTS, type AnimatedEffect, type AnimationGraph, type Clip, type Keyframe, type Property, type Bezier } from "../engine";
-import { EFFECT_FIELDS, maskAnimFields } from "../effects";
+import { type AnimationGraph, type Clip, type Keyframe, type Property, type Bezier } from "../engine";
+import { EFFECT_FIELDS, curveBase, maskAnimFields, spatialAnimFields } from "../effects";
 import { TIMEBASE, timecode } from "../time";
 import { appInfo, clearBatch, commitBatch, editAtRevision, playhead, quantum, redoStep, selectClips, setGraphOpen, setMode, toast, undo, useApp, usePlay } from "../store";
 
@@ -44,8 +44,7 @@ export function CurveEditor() {
 
 function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; disabled: boolean }) {
   const app = useApp(); const play = usePlay(); const project = app.project!;
-  const options = [...EFFECT_FIELDS.filter((f) => !audio || f.property === "gain"), ...maskAnimFields(clip.mask)];
-  const baseOf = (f: (typeof options)[number]) => "field" in f ? clip.mask?.[f.field] ?? 0 : (clip.effects ?? DEFAULT_EFFECTS)[f.property as AnimatedEffect];
+  const options = [...EFFECT_FIELDS.filter((f) => !audio || f.property === "gain"), ...maskAnimFields(clip.mask), ...(audio ? [] : spatialAnimFields(app.caps, project.settings.height))];
   const [property, setProperty] = useState<Property>(() => audio ? "gain" : clip.keyframes?.[0]?.property ?? "opacity");
   const field = options.find((f) => f.property === property) ?? options[0];
   const [selectedAt, setSelectedAt] = useState<number | null>(null);
@@ -100,7 +99,7 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
   // Keep the value scale fixed while dragging so a moving point cannot move its own ruler.
   const values = useMemo(() => {
     const points = (clip.keyframes ?? []).filter((k) => k.property === field.property).sort((a, b) => a.at_ticks-b.at_ticks);
-    return points.flatMap((k, i) => k.interpolation === "bezier" && points[i+1] ? [k.value, k.value+(points[i+1].value-k.value)*(k.bezier ?? DEFAULT_BEZIER).y1, k.value+(points[i+1].value-k.value)*(k.bezier ?? DEFAULT_BEZIER).y2] : [k.value]).concat(baseOf(field));
+    return points.flatMap((k, i) => k.interpolation === "bezier" && points[i+1] ? [k.value, k.value+(points[i+1].value-k.value)*(k.bezier ?? DEFAULT_BEZIER).y1, k.value+(points[i+1].value-k.value)*(k.bezier ?? DEFAULT_BEZIER).y2] : [k.value]).concat(curveBase(clip, field));
   }, [clip, field.property]);
   const hardMin = field.min / field.factor, hardMax = field.max / field.factor;
   const padding = Math.max((Math.max(...values) - Math.min(...values)) * .12, (hardMax - hardMin) * .04);
