@@ -469,6 +469,16 @@ def capacity_suite() -> None:
     assert seen["nested_samples"] == CUBE_SAMPLES, seen
     assert seen["clips_with_tables"] == 3, seen
     assert sum(seen["by_clip"].values()) + seen["nested_samples"] == seen["samples"], seen
+    # by_clip 只是「前 20 名」的视图。一过 20 条带表的片段，拿它的部分和去对总数就是错的——
+    # 恒等式因此改用 by_clip_samples（全量根片段），并用 other_clips 说出还有几条没列出来。
+    many = project({f"c{index}": [one_d_node()] for index in range(25)})
+    tallied = grade_capacity(many)
+    assert len(tallied["by_clip"]) == 20 and tallied["other_clips"] == 5, tallied["other_clips"]
+    assert tallied["clips_with_tables"] == 25, tallied
+    assert tallied["by_clip_samples"] == 25 * 3 * 1024, tallied
+    assert sum(tallied["by_clip"].values()) < tallied["by_clip_samples"], tallied
+    assert tallied["by_clip_samples"] + tallied["nested_samples"] == tallied["samples"], tallied
+    assert tallied["worst_clip_id"] == "c0" and tallied["worst_clip_samples"] == 3 * 1024, tallied
 
     token = "capacity-token-0123456789abcdef0123456789"
     with tempfile.TemporaryDirectory(prefix="agentcut-capacity-") as scratch:

@@ -334,15 +334,19 @@ def grade_capacity(project) -> dict:
     used = grade_inline_samples(project)
     ranked = sorted(by_clip.items(), key=lambda item: (-item[1], item[0]))
     listed = dict(item for item in ranked[:20] if item[1])
+    loaded = sum(1 for value in by_clip.values() if value)
+    root_samples = sum(by_clip.values())
     return {
         "samples": used,
         "limit": GRADE_INLINE_SAMPLE_LIMIT,
         "room": max(0, GRADE_INLINE_SAMPLE_LIMIT - used),
-        "clips_with_tables": sum(1 for value in by_clip.values() if value),
+        "clips_with_tables": loaded,
         "worst_clip_id": ranked[0][0] if listed else None,
         "worst_clip_samples": ranked[0][1] if listed else 0,
         "by_clip": listed,
-        "nested_samples": used - sum(by_clip.values()),
+        "by_clip_samples": root_samples,
+        "other_clips": max(0, loaded - len(listed)),
+        "nested_samples": used - root_samples,
     }
 
 

@@ -2383,7 +2383,9 @@ MCP 没有新工具（`timeline_edit` 从契约生成，自动带上这条判断
 - `room`：`max(0, limit - samples)`；一张 17³ 是 14739 个，所以 `room < 14739` 就是说「再挂一张必被拒」；
 - `clips_with_tables`、`worst_clip_id`、`worst_clip_samples`：哪条片段最占地方，腾地方的时候知道动谁；
 - `by_clip`：前 20 个真有表的片段（按占用从大到小、同值按 id 排，所以同一个工程两次问答案一样）；
-- `nested_samples`：嵌套合成里贡献的份额，满足 `sum(by_clip) + nested_samples == samples`。
+- `by_clip`：占用最高的前 20 条真有表的片段（按占用降序、同值按 id，所以同一个工程两次问逐字相同）；它只是视图，**不要**拿它的部分和去对总数；
+- `by_clip_samples`：**全部**根片段上的表加起来是多少（不截断），`other_clips` 说清还有几条带表的片段没列进 `by_clip`；
+- `nested_samples`：嵌套合成贡献的份额。恒等式是 `by_clip_samples + nested_samples == samples`。
 
 `sequence_id` 不接受——额度属于整份工程，不属于某一条时间线。未知的工程 id 按既有规矩点名回 404 并带回
 它收到的 id。

@@ -3985,7 +3985,7 @@ toast 是「2³ 网格、共 8 个 RGB 格点。这张表按定义跨通道，�
 额度的 `grade_inline_samples()` 与 `_node_inline_samples()`。读到的数与被拒时的数不可能不一致，
 因为它们是同一行代码。分项也补齐了：`by_clip` 只列前 20 个真有表的片段（排序键是「占用从大到小、
 同值按 id」，所以同一个工程问两次答案逐字相同），嵌套合成贡献的份额单独记在 `nested_samples`，
-于是 `sum(by_clip) + nested_samples == samples` 这条恒等式可以被门禁直接断。
+于是这条恒等式可以被门禁直接断（后来发现它在超过 20 条片段时会自己断掉，见下一节）。
 
 门禁那段把「预告准不准」量成了两句话：装到第 13 张时 `samples` 是 191607、`room` 是 8393，
 小于一张表的 14739——于是紧接着那一次「再挂一张」确实被拒（422 `GRADE_INLINE_BUDGET`）；
@@ -4015,4 +4015,20 @@ README 里那句「跨 1D↔3D 整节点重写」当时只有 tsc 与代码读�
 2³ 立方，节点数仍是 1，kind 变成 lut3d，keys 只剩 cells/enabled/kind/resampled_from/size/title，
 `channels`/`mix`/`blend` 一个不留，`enabled` 保住原值，revision 2→3 只涨一次。也就是说 1.103 那条
 「跨种类整节点重写」不是纸面规矩：契约 `extra="forbid"`，留着旧字段这一步会被拒，界面确实没留。
+
+## 1.106 自己写的回执自己得能证伪：by_clip 截断到 20，恒等式就只剩 20
+
+1.105 交出去之后回头读那段话，越读越不对：文档写的是「分项加起来等于总数」，而 `by_clip` 只列前 20 名。
+也就是说到第 21 条带表的片段起，`sum(by_clip) + nested_samples` 就小于 `samples` —— 一条我在文档里
+承诺过、门禁却没覆盖的恒等式（用例最多 4 张表）。这不是假设：代码摆在那儿，截断就在 return 上一行。
+
+修法是给回执一个不被视图污染的总量：`by_clip_samples`（全部根片段的和）与 `other_clips`（还有几条没列出来），
+恒等式改成 `by_clip_samples + nested_samples == samples`；`by_clip` 保持前 20 名的便利视图，
+但文档明说拿它的部分和对总数是错的。门禁补了一段 25 条带 1D 表的工程：`len(by_clip)==20`、
+`other_clips==5`、`clips_with_tables==25`、`by_clip_samples==25×3072`，并且**故意**断
+`sum(by_clip) < by_clip_samples` —— 这条一旦哪天变成相等，就说明截断没了或者 20 这个数被动过。
+突变确认能红：把 `by_clip_samples` 写成 `sum(listed.values())`（也就是回到截断的和）门禁立刻红。
+
+教训接在 1.103、1.105 那两条后面：一条恒等式要在**它能被破坏的那个数上**断，视图就老老实实叫视图；
+文档里写「等于总数」之前先问一句截断在哪。
 
