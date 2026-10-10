@@ -208,6 +208,7 @@ def main():
                 "speed_curve",
                 "stabilization",  # 1.69: a clip that never mentions one is older
                 "fade",  # 1.90: a clip that never mentions a fade window is older
+                "mask_shape_keys",  # 1.118: 没提过轮廓帧的载荷就是 1.118 之前写的
             ):
                 old_clip.pop(field)
             old_clip["color"].pop("grade", None)
