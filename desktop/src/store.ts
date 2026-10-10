@@ -1621,6 +1621,16 @@ export function setClipColor(clipId: string, patch: Partial<ClipColor>) {
 
 /** 导入 .cube 查找表：文件内容交给引擎里唯一的解析器，回来的节点原样进调色链。
  *  index 为 null 追加到链尾；给了下标就是换一张表，强度、混合方式和启用状态都留着。 */
+/** 1.107：向引擎要这份工程的查找表额度回执。渲染层只递管道，不自己算任何一个数。 */
+export async function fetchGradeCapacity(projectId: string) {
+  if (!engine) return null;
+  try {
+    return await engine.gradeCapacity(projectId);
+  } catch {
+    return null;
+  }
+}
+
 export async function applyLut(clipId: string, file: File, index: number | null) {
   const project = state.project;
   const clip = project?.clips[clipId];

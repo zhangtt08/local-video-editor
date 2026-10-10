@@ -2389,3 +2389,15 @@ MCP 没有新工具（`timeline_edit` 从契约生成，自动带上这条判断
 
 `sequence_id` 不接受——额度属于整份工程，不属于某一条时间线。未知的工程 id 按既有规矩点名回 404 并带回
 它收到的 id。
+
+## 1.107 那一行额度读数：界面只念引擎给的字
+
+`GET /v1/projects/{id}/grade-capacity` 的回执多了四个字段，全部由 `grade_capacity()` 一处算：
+`room_cubes`、`room_tables`（还放得下几张满格 3D 立方 / 满格 1D 表）、`cube_samples`、`table_samples`
+（一张满格表是多少采样点，取自 `LUT3D_SIZE_LIMIT` 与 `LUT_SAMPLE_LIMIT`）。
+
+检查器调色那一节按 `project.revision` 取一次回执并显示这一行；版本一变就清空重取，所以显示的数要么属于
+当前这份工程、要么整行不出现。渲染层没有任何一处对 `room` 做除法——`tests/desktop_gradecapacity_check.ts`
+就是拿一张**故意不自洽**的回执（`room` 明明还够一张立方而 `room_cubes=0`）来断这一点的。
+
+同时修掉 1.103 的一处不对称：`换一张 LUT` 那颗按钮此前只在 1D 节点上出现，3D 节点拿不到它。

@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 
-import {DEFAULT_TRANSFER, COLOR_SPACES, DEFAULT_CURVE_POINTS, DEFAULT_WHEELS, type GradeBranch, type GradeChannel, type GradeCurvePoint, type GradeNode, type GradeOperation, type GradeParallel, type ColorSpace, BLEND_MODES, type BlendMode} from "../engine";
-import { editableProject, setClipColor, useApp, applyLut, autoGradeClip } from "../store";
-import { autoGradeBlocker } from "../effects";
+import {DEFAULT_TRANSFER, COLOR_SPACES, DEFAULT_CURVE_POINTS, DEFAULT_WHEELS, type GradeBranch, type GradeCapacity, type GradeChannel, type GradeCurvePoint, type GradeNode, type GradeOperation, type GradeParallel, type ColorSpace, BLEND_MODES, type BlendMode} from "../engine";
+import { editableProject, setClipColor, useApp, applyLut, autoGradeClip, fetchGradeCapacity } from "../store";
+import { autoGradeBlocker, gradeCapacityLine } from "../effects";
 import { NODE_NAMES, cardsFor, moveWithin } from "../gradeGraph";
 
 const CHANNELS: [GradeChannel, string][] = [["rgb", "主色"], ["red", "红"], ["green", "绿"], ["blue", "蓝"]];
@@ -327,6 +327,21 @@ export function GradeFields({ clipId }: { clipId: string }) {
   const [hover, setHover] = useState<number | null>(null);
   const pending = useRef<number | null>(null);
   const dragging = useRef<number | null>(null);
+  // 1.107：额度那一行读的是引擎算好的回执，并绑在当前 revision 上——数与版本对不上就不显示，
+  //  宁可不写，也不写一个上一次的数。
+  const [capacity, setCapacity] = useState<{ value: GradeCapacity; revision: number } | null>(null);
+  const capacityProjectId = app.project?.id;
+  const capacityRevision = app.project?.revision;
+  useEffect(() => {
+    if (!capacityProjectId || capacityRevision === undefined) { setCapacity(null); return; }
+    let live = true;
+    const wanted = capacityRevision;
+    void fetchGradeCapacity(capacityProjectId).then((value) => {
+      if (live && value) setCapacity({ value, revision: wanted });
+    });
+    return () => { live = false; };
+  }, [capacityProjectId, capacityRevision]);
+  const capacityLine = gradeCapacityLine(capacity, capacityRevision);
   const clip = project?.clips[clipId];
   const nodes = clip?.color?.grade ?? [];
   // 上限由引擎下发（1.55 的同一课）：界面不自己数一遍，就不会出现界面允许、引擎拒绝的节点。
@@ -475,8 +490,9 @@ export function GradeFields({ clipId }: { clipId: string }) {
         <span className="gg-wire" aria-hidden="true" />
         <span className="gg-io">输出</span>
       </div> : <p className="hint">曝光、对比度、饱和度之后按顺序执行这些节点。曲线、白平衡、RGB 增益、色彩空间、1D LUT 与并联只改每通道值，预览与导出共用同一张表；通道混合与 3D LUT 按定义跨通道，各自自成一段——其中 3D LUT 浏览器画不出，只有导出生效。</p>}
+      {capacityLine ? <p className="hint">{capacityLine}</p> : null}
 
-      {current && current.kind !== "parallel" ? <OpFields node={current} idPrefix="grade" limits={limits} onReplace={current.kind === "lut" ? () => pickLut(active) : undefined} onCommit={(next) => replace(active, next)} /> : null}
+      {current && current.kind !== "parallel" ? <OpFields node={current} idPrefix="grade" limits={limits} onReplace={current.kind === "lut" || current.kind === "lut3d" ? () => pickLut(active) : undefined} onCommit={(next) => replace(active, next)} /> : null}
 
       {current?.kind === "parallel" ? <div className="grade-body">
         <div className="batch-actions">

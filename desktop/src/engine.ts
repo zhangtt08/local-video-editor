@@ -115,6 +115,14 @@ export type GradeTables = { id: string; stages: GradeStage[] };
 export type GradeStage =
   | { id: string; type: "lut"; r: number[]; g: number[]; b: number[] }
   | { id: string; type: "matrix"; m: number[] };
+/** 1.107：一份工程的查找表额度回执。「还够放几张表」这类换算全在引擎里，界面不许再除一遍。 */
+export type GradeCapacity = { samples: number; limit: number; room: number; room_cubes: number;
+  room_tables: number; cube_samples: number; table_samples: number; clips_with_tables: number;
+  worst_clip_id: string | null; worst_clip_samples: number; by_clip: Record<string, number>;
+  by_clip_samples: number; other_clips: number; nested_samples: number };
+/** 随回执一起记住它属于哪个 revision：数与 revision 不是同一份了就不许再显示。 */
+export type GradeCapacityCache = { value: GradeCapacity; revision: number } | null;
+
 /** feColorMatrix 要 20 个数：把 3x3 摆成 RGBA 行，alpha 原样通过。滤镜上已写
  *  color-interpolation-filters="sRGB"，所以矩阵作用在和导出一样的存储值上，不是线性光。 */
 export const feColorMatrixValues = (m: number[]): number[] => [
@@ -1028,6 +1036,11 @@ export class Engine {
         commands: Record<string, unknown>[];
       };
     }>("POST", `/v1/projects/${projectId}/tracks/${trackId}/silence`, body, 600000);
+  }
+
+  /** 1.107：这份工程的查找表额度还剩多少（只读；数字由 `grade_capacity()` 一处算）。 */
+  gradeCapacity(projectId: string) {
+    return this.request<GradeCapacity>("GET", `/v1/projects/${projectId}/grade-capacity`);
   }
 
   /** 1.97：走一遍这条轨，把 1.90 之前写成关键帧的淡排成普通的 `clip.fade_adopt` 命令。只读。 */

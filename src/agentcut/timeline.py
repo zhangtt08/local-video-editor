@@ -9,6 +9,8 @@ from pydantic import ValidationError
 
 from .contracts import (
     GRADE_INLINE_SAMPLE_LIMIT,
+    LUT3D_SIZE_LIMIT,
+    LUT_SAMPLE_LIMIT,
     MAX_TICKS,
     SCHEMA_VERSION,
     Asset,
@@ -336,10 +338,20 @@ def grade_capacity(project) -> dict:
     listed = dict(item for item in ranked[:20] if item[1])
     loaded = sum(1 for value in by_clip.values() if value)
     root_samples = sum(by_clip.values())
+    # Two units of the same remaining room, divided here rather than by every caller: a
+    # screen that recomputes `room // 14739` is a screen that can disagree with the rule
+    # it is quoting, and 17/1024 are the engine's ceilings, not the interface's.
+    cube_samples = LUT3D_SIZE_LIMIT**3 * 3
+    table_samples = LUT_SAMPLE_LIMIT * 3
+    room = max(0, GRADE_INLINE_SAMPLE_LIMIT - used)
     return {
         "samples": used,
         "limit": GRADE_INLINE_SAMPLE_LIMIT,
-        "room": max(0, GRADE_INLINE_SAMPLE_LIMIT - used),
+        "room": room,
+        "room_cubes": room // cube_samples,
+        "room_tables": room // table_samples,
+        "cube_samples": cube_samples,
+        "table_samples": table_samples,
         "clips_with_tables": loaded,
         "worst_clip_id": ranked[0][0] if listed else None,
         "worst_clip_samples": ranked[0][1] if listed else 0,

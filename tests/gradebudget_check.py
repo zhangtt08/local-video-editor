@@ -479,6 +479,10 @@ def capacity_suite() -> None:
     assert sum(tallied["by_clip"].values()) < tallied["by_clip_samples"], tallied
     assert tallied["by_clip_samples"] + tallied["nested_samples"] == tallied["samples"], tallied
     assert tallied["worst_clip_id"] == "c0" and tallied["worst_clip_samples"] == 3 * 1024, tallied
+    # 界面那一行念的是引擎算好的单位（渲染层那一侧由 tests/desktop_gradecapacity_check.ts 断）。
+    assert view["cube_samples"] == 17**3 * 3 and view["table_samples"] == 1024 * 3, view
+    assert view["room_cubes"] == view["room"] // view["cube_samples"], view
+    assert view["room_tables"] == view["room"] // view["table_samples"], view
 
     token = "capacity-token-0123456789abcdef0123456789"
     with tempfile.TemporaryDirectory(prefix="agentcut-capacity-") as scratch:
@@ -550,6 +554,7 @@ def capacity_suite() -> None:
             assert read["limit"] == limit, read
             assert read["room"] == limit - fits * CUBE_SAMPLES, read
             assert 0 < read["room"] < CUBE_SAMPLES, read
+            assert read["room_cubes"] == 0 and read["room_tables"] == 2, read
             assert (
                 read["worst_clip_samples"] == CUBE_SAMPLES and read["clips_with_tables"] == fits
             ), read
