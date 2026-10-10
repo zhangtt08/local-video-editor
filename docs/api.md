@@ -2472,8 +2472,8 @@ MCP 没有新工具（`timeline_edit` 从契约生成，自动带上这条判断
   编译结果里根本没有这一节（`node_function` 此时返回 None）。
 
 没有新的错误码，所以 `error_vocabulary_check` 那张中文词表不必动；能力位是 `capabilities.features.grade_branch_weights`
-加 `capabilities.grade_limits.branch_weight_max`，界面两个都读到才摆出这一排旋钮。真实成片一侧，同一条并联节点在
-2:0 与 0:2 下交回的暗带明显不同、且都不同于均分（那一行 print 报的就是这三个数）。
+加 `capabilities.grade_limits.branch_weight_max`，界面两个都读到才摆出这一排旋钮。真实成片一侧，同一条并联节点把暗带的红值从均分的 43 推到 2:0 的 87、拉到 0:2 的 2（`weight_media_suite`
+那行 print 报的就是这三个数）。
 
 仍未做：另一段画面作为节点的**第二路输入**（连线）。导出侧怎么把两支画面喂进同一个 FFmpeg 阶段已经量过并记在
 `AGENTS.md`，但那要把「一条链塌成一张每通道表」这个不变量换掉，属于架构改动，不在这一版假装交付。
