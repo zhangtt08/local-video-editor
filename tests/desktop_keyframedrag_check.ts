@@ -118,7 +118,8 @@ assert.ok(path, "the timeline must be readable from the check's working director
 const source = readFileSync(path!, "utf8");
 assert.match(source, /planKeyframeDrag\(\{/, "the timeline must ask the shared planner where the needle lands");
 // 指针读数必须由「片段自己的左边」与「当前缩放」两个量决定：少掉 px 就等于在别的缩放层级上拖不准。
-assert.match(source, /pointer_ticks: \(\(clientX - node\.getBoundingClientRect\(\)\.left\) \/ px\) \* TIMEBASE/, "the pointer must be read through the zoom");
+assert.match(source, /const grab = \(\(event\.clientX - box\.current\.getBoundingClientRect\(\)\.left\) \/ px\) \* TIMEBASE - from/, "the grip must be measured at pointerdown, in ticks");
+assert.match(source, /pointer_ticks: \(\(clientX - node\.getBoundingClientRect\(\)\.left\) \/ px\) \* TIMEBASE - grab/, "and the drag must subtract it, so a needle clamped at the edge does not teleport to where it is painted");
 assert.match(source, /playhead_ticks: playhead\.value - clip\.position_ticks/, "and the playhead must be handed over in the same local clock");
 // 落库只允许是那一行：不许在它前面挂第二个副作用，也不许绕开带 expected_revision 的那条链。
 const write = source.split("\n").find((row) => row.trim().startsWith("editAtRevision([next.command]"));

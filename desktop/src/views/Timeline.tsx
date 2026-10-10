@@ -712,9 +712,12 @@ function ClipBlock({
     event.preventDefault();
     const node = box.current;
     const from = key.at_ticks - (clip.animation_offset_ticks ?? 0);
+    // 贴边的针为了看得见会被画在离边 6px 处，画的位置与它真正的时间不是一回事：抓住时记住这一点
+    // 偏差，松手就按它落回去，否则「抓最左边那枚针」会把它瞬移到画出来的位置上。
+    const grab = ((event.clientX - box.current.getBoundingClientRect().left) / px) * TIMEBASE - from;
     const plan = (clientX: number) => planKeyframeDrag({
       clip, key, px, snap, quantum: q,
-      pointer_ticks: ((clientX - node.getBoundingClientRect().left) / px) * TIMEBASE,
+      pointer_ticks: ((clientX - node.getBoundingClientRect().left) / px) * TIMEBASE - grab,
       playhead_ticks: playhead.value - clip.position_ticks,
     });
     const move = (ev: PointerEvent) => {
