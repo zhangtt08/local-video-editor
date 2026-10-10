@@ -114,32 +114,48 @@ def _rgb(color: str) -> tuple[int, int, int]:
 GRAPH_SCRIPT_LIMIT = 12_000
 
 
-def focus_radius(fraction: float, knob: str, out_h: int) -> float:
-    """A fraction of the frame height turned into pixels, inside the band that was measured.
+def picture_height(out_w: int, out_h: int, frame_width: int, frame_height: int, fit: str) -> int:
+    """The height the composition's picture actually occupies inside the delivered frame.
+
+    Both spatial knobs are fractions of the picture, and the browser measures exactly
+    that: its preview box is locked to the composition's aspect, so `1cqh` there is
+    one percent of the picture. `contain` keeps that aspect and bars the rest, so a 16:9
+    timeline delivered to a square or vertical frame shows a picture that is *not*
+    `out_h` tall — measuring the radius against the frame would blur it harder than the
+    preview by exactly the letterboxing factor. `cover` and `stretch`
+    fill the frame, so there the two numbers are the same.
+    """
+    if fit != "contain" or frame_width <= 0:
+        return out_h
+    return max(1, min(out_h, round(out_w * frame_height / frame_width)))
+
+
+def focus_radius(fraction: float, knob: str, basis: int) -> float:
+    """A fraction of the picture's height turned into pixels, inside the band that was measured.
 
     Both spatial knobs share the ceiling because both go through the same `gblur` sampling; past it
     the export/preview agreement is claimed nowhere, so the exporter refuses by name instead of
     letting FFmpeg quietly clamp the kernel.
     """
-    radius = spatial_radius(fraction, out_h)
+    radius = spatial_radius(fraction, basis)
     if radius > BLUR_RADIUS_LIMIT_PX:
         raise EditorError(
             "BLUR_OUT_OF_RANGE",
-            f"{knob} {fraction} is a {radius:.0f} px radius at {out_h} px tall, and the "
+            f"{knob} {fraction} is a {radius:.0f} px radius on a {basis} px picture, and the "
             f"export/preview radius match is only verified to {BLUR_RADIUS_LIMIT_PX:.0f} px; the "
-            f"most this frame carries is {BLUR_RADIUS_LIMIT_PX / out_h:.4f}",
+            f"most this picture carries is {BLUR_RADIUS_LIMIT_PX / basis:.4f}",
             422,
             **{
                 knob: fraction,
                 "radius": radius,
-                "max_radius_fraction": BLUR_RADIUS_LIMIT_PX / out_h,
+                "max_radius_fraction": BLUR_RADIUS_LIMIT_PX / basis,
             },
         )
     return radius
 
 
 def focus_stages(
-    plan, head: str, clip, out_h: int, *, frame_ticks: int, alpha: bool = False
+    plan, head: str, clip, basis: int, *, frame_ticks: int, alpha: bool = False
 ) -> str:
     """The layer's soft focus and unsharp mask, applied once the picture sits at output size.
 
@@ -168,7 +184,7 @@ def focus_stages(
         for window in schedule:
             if window["value"] <= 0:
                 continue
-            radius = focus_radius(window["value"], "blur", out_h)
+            radius = focus_radius(window["value"], "blur", basis)
             start = sec(window["from_ticks"])
             stop = sec(window["to_ticks"])
             head = (
@@ -176,11 +192,11 @@ def focus_stages(
                 f":enable='between(t,{start},{stop})'"
             )
     elif clip.effects.blur > 0:
-        radius = focus_radius(clip.effects.blur, "blur", out_h)
+        radius = focus_radius(clip.effects.blur, "blur", basis)
         head = f"{head},gblur=sigma={radius:.4f}:steps={GBLUR_STEPS}"
     if clip.effects.sharpen > 0:
         amount = clip.effects.sharpen
-        sigma = focus_radius(clip.effects.sharpen_radius, "sharpen_radius", out_h)
+        sigma = focus_radius(clip.effects.sharpen_radius, "sharpen_radius", basis)
         original, to_blur, blurred = plan.tag("sharp"), plan.tag("toblu"), plan.tag("blurd")
         expression = f"clip(A+{amount}*(A-B),0,255)"
         plan.filters.append(f"{head},split=2{original}{to_blur}")
@@ -556,6 +572,8 @@ def compile_render_plan(
     preset = preset_by_id(preset_id)
     settings = project.settings
     out_w, out_h = preview_size or preset["scale"] or (settings.width, settings.height)
+    # 两个空间旋钮量的是「画面」的高：预览那个框锁工程比例，成片里画面占多高由 fit 决定。
+    focus_basis = picture_height(out_w, out_h, settings.width, settings.height, fit)
     fps = f"{settings.frame_rate.numerator}/{settings.frame_rate.denominator}"
     rate = settings.frame_rate.numerator / settings.frame_rate.denominator
     size = f"{out_w}x{out_h}"
@@ -795,7 +813,7 @@ def compile_render_plan(
                 plan,
                 f"{source}{paced}{color}{fit_pre}",
                 clip,
-                out_h,
+                focus_basis,
                 frame_ticks=settings.frame_ticks,
                 alpha=True,
             )
@@ -984,7 +1002,7 @@ def compile_render_plan(
                     f"format=rgba,pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,"
                     "setsar=1"
                 )
-                head = focus_stages(plan, head, clip, out_h, frame_ticks=settings.frame_ticks)
+                head = focus_stages(plan, head, clip, focus_basis, frame_ticks=settings.frame_ticks)
                 body = (
                     f"{transform}"
                     f"tpad=start_duration={sec(clip.position_ticks)}:start_mode=add:color=black@0,"

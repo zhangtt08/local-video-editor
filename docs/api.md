@@ -2287,3 +2287,18 @@ reducer 分支；改的只是界面此前只在检查器给一个 ◇ 按钮，�
 写进去之后仍然按 1.98 那一条走：`preview-manifest` 里的 `spatial.blur` 与 `compile_render_plan` 里那一串
 `gblur=…:enable='between(t,a,b)'` 出自同一张整帧对齐的窗表，两端不是近似而是同一份点表。
 
+
+## 1.100 柔焦与清晰的基准是画面高，不是交付帧高
+
+这不是新命令、新字段或新错误码：`effects.blur` / `effects.sharpen_radius` 的语义本来就是「画面高的
+百分比」，`capabilities.limits.blur_fraction` 与 `blur_radius_px` 也是按这个语义下发的。改的是导出侧那一次
+除法——它此前除的是交付帧的高。
+
+对调用方意味着两件事：
+
+- 同一颗旋钮在竖屏 / 方画幅（`fit="contain"`）交付里，成片画面现在与预览一样柔；`cover` 与 `stretch` 铺满
+  帧，所以数值不变。工程与交付同比例时，编译出的滤镜串与改前一字不差。
+- `BLUR_OUT_OF_RANGE` 现在按画面高判：`details.max_radius_fraction` 是 `64 / 画面高`，拒绝的句子点名的是
+  画面（`… px radius on a 608 px picture …`）。1920x1080 工程交付 1080x1920（contain）时画面高 608 px，
+  界面按工程高允许的 5% 现在导得出去；11% 仍被拒绝。
+
