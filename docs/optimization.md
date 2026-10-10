@@ -3919,3 +3919,15 @@ SHA-256 比对。
 （`Client network socket disconnected`，直连 `curl` 同一 URL 回 302），把 `HTTP(S)_PROXY` 清空就好；
 复检目录 `engine/` 若不清空，`request_id` 的去重回执会把第二次运行撞成 `IDEMPOTENCY_CONFLICT`。
 
+## 1.103 界面那一步：把「预览不生效」量出来，而不是说出来
+
+打包引擎 + 静态渲染层起一份真工程，选中片段，点「+LUT」把一张 2³ 红蓝对调立方交给界面。量到的四件事：
+toast 是「2³ 网格、共 8 个 RGB 格点。这张表按定义跨通道，浏览器画不出它：预览看到的还是导入前的样子，
+导出才走它」；节点提示写着 FFmpeg 的 3D LUT 与四面体插值；工程状态里落库的节点是 `kind=lut3d`、24 个数、
+没有 `mix` 与 `blend`（revision 从 1 走到 2）；最关键的是预览那一层的 `filter` 计算串是
+`brightness(1) contrast(1) saturate(1)`——**没有 `url(#…)`**。这一条是 `preview_grade` 的直接证据：
+少了它，这里会挂一个没有任何原语的 `<filter>`，画面整块消失，而门禁当时只看引擎的意图。
+
+用合成 `File` + `dispatchEvent(new Event('change'))` 喂那个隐藏的 `<input type=file>`，比走操作系统的
+文件对话框可靠；片段选中要先把 `setPointerCapture` 置空再派发 pointer 序列，否则在这台机器上合成事件会抛。
+
