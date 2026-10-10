@@ -2538,6 +2538,11 @@ export function useEdit(): EditPrefs {
   );
 }
 
+/** 渲染之外读同一份偏好（快捷键表、自检脚本），不另开第二条状态。 */
+export function editPrefs(): EditPrefs {
+  return edit;
+}
+
 export const prefs = {
   setZoom(value: number) {
     setEdit({ pxPerSec: Math.min(320, Math.max(16, Math.round(value))) });
@@ -2547,6 +2552,10 @@ export const prefs = {
   },
   toggleSnap() {
     setEdit({ snap: !edit.snap });
+  },
+  /** 复选框给的是目标值而不是「翻一下」：时间线磁吸与动画曲线共用这一处开关。 */
+  setSnap(value: boolean) {
+    setEdit({ snap: value });
   },
   toggleLinkedSelection() { setEdit({ linkedSelection: !edit.linkedSelection }); if (edit.linkedSelection) selectClips(state.selectedClips); },
   toggleTicks() {

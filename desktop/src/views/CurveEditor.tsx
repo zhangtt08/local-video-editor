@@ -4,7 +4,7 @@ import { type AnimationGraph, type Clip, type Keyframe, type Property, type Bezi
 import { EFFECT_FIELDS, curveBase, maskAnimFields, spatialAnimFields } from "../effects";
 import { TIMEBASE, timecode } from "../time";
 import { keyframeTick } from "../keyframeSnap";
-import { appInfo, clearBatch, commitBatch, editAtRevision, playhead, quantum, redoStep, selectClips, setGraphOpen, setMode, toast, undo, useApp, usePlay } from "../store";
+import { appInfo, clearBatch, commitBatch, editAtRevision, playhead, prefs, quantum, redoStep, selectClips, setGraphOpen, setMode, toast, undo, useApp, useEdit, usePlay } from "../store";
 
 const LEFT = 58, TOP = 12, WIDTH = 924, HEIGHT = 166;
 const INTERPOLATIONS = { linear: "线性", ease: "缓入缓出", hold: "保持", bezier: "贝塞尔" } as const;
@@ -56,7 +56,7 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
   const [result, setResult] = useState<{ base: Clip; property: string; graph: AnimationGraph } | null>(null);
   const [error, setError] = useState("");
   const [zoom, setZoom] = useState(1); const [pan, setPan] = useState(0);
-  const [fit, setFit] = useState(true); const [snap, setSnap] = useState(true);
+  const [fit, setFit] = useState(true); const edit = useEdit(); const snap = edit.snap;
   const [newInterpolation, setNewInterpolation] = useState<Keyframe["interpolation"]>("ease");
   const svg = useRef<SVGSVGElement | null>(null);
   const drag = useRef<{ point: Keyframe; points: Keyframe[]; x: number; y: number; revision: number; projectId: string; moved: boolean; element: SVGCircleElement; pointerId: number; clientX: number; clientY: number; handle?: 0 | 1; right?: Keyframe } | null>(null);
@@ -227,7 +227,7 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
       <button className="btn tiny" disabled={!keys.length} onClick={() => jump(-1)}>上一关键帧</button><button className="btn tiny" disabled={!keys.length} onClick={() => jump(1)}>下一关键帧</button>
       <button className="btn tiny" disabled={disabled || (app.mode === "batch" && app.batch.length > 0)} onClick={atHead}>播放头添加</button>
       <button className="btn tiny" disabled={disabled || !selectedKeys.length} onClick={remove}>{selectedKeys.length > 1 ? `删除 ${selectedKeys.length} 点` : "删除关键帧"}</button>
-      <label title="拖到的位置落在整帧上，并会找播放头与这条曲线上没被拖动的针；数值框与「播放头添加」照精确位置写。"><input type="checkbox" checked={snap} onChange={(e) => setSnap(e.target.checked)} />时间吸附</label>
+      <label title="与时间线的磁吸是同一个开关（状态栏那颗吸铁石、快捷键 S）：关掉两处一起关。拖到的位置落在整帧上，并会找播放头与这条曲线上没被拖动的针；数值框与「播放头添加」照精确位置写。"><input type="checkbox" checked={snap} onChange={(e) => prefs.setSnap(e.target.checked)} />时间吸附</label>
       <span className="spacer" />
       <button className="btn tiny" disabled={zoom === 1} onClick={() => zoomTo(.5)}>缩小曲线</button><button className="btn tiny" disabled={zoom === 64} onClick={() => zoomTo(2)}>放大曲线</button>
       <button className={`btn tiny${fit ? " active" : ""}`} aria-pressed={fit} onClick={() => { cancel(); setFit(!fit); }}>适合数值</button>
