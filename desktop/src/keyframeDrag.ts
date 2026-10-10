@@ -23,10 +23,13 @@ export type KeyframeDrag = {
   px: number;
   snap: boolean;
   quantum: number;
+  /** Alt 按住就是复制：原针留在原地，落点上一枚新的（AE / 达芬奇 的那只手）。 */
+  duplicate?: boolean;
 };
 
 export type KeyframeDragPlan =
   | { kind: "move"; at_ticks: number; command: Command }
+  | { kind: "add"; at_ticks: number; command: Command }
   | { kind: "noop" }
   | { kind: "blocked"; at_ticks: number; reason: string };
 
@@ -45,17 +48,17 @@ export function planKeyframeDrag(drag: KeyframeDrag): KeyframeDragPlan {
     drag.snap,
     { playhead: drag.playhead_ticks, keys: siblings, attract: true },
   );
-  if (at === from) return { kind: "noop" };
+  if (at === from && !drag.duplicate) return { kind: "noop" };
   if (siblings.includes(at)) {
     return {
       kind: "blocked",
       at_ticks: at,
-      reason: `${drag.key.property} 在第 ${seconds(at)} 秒已经有一枚针，先松到空格上或在动画曲线里删掉那一枚。`,
+      reason: `${drag.key.property} 在第 ${seconds(at)} 秒已经有一枚针，${drag.duplicate ? "复制就得先松到一个空格上" : "先松到空格上或在动画曲线里删掉那一枚"}。`,
     };
   }
-  return {
-    kind: "move",
-    at_ticks: at,
-    command: { op: "keyframe.move", clip_id: drag.clip.id, from_ticks: from, keyframe: { ...drag.key, at_ticks: at } },
-  };
+  // 复制落在原针那一格等于给自己盖一层：什么都不加，但也不算「没动」。
+  if (drag.duplicate && at === from) return { kind: "noop" };
+  return drag.duplicate
+    ? { kind: "add", at_ticks: at, command: { op: "keyframe.set", clip_id: drag.clip.id, keyframe: { ...drag.key, at_ticks: at } } }
+    : { kind: "move", at_ticks: at, command: { op: "keyframe.move", clip_id: drag.clip.id, from_ticks: from, keyframe: { ...drag.key, at_ticks: at } } };
 }

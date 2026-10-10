@@ -707,7 +707,7 @@ function ClipBlock({
   // 时间线上直接拖针：几何与动画曲线共用同一份 keyframeSnap（绝对帧格子 + 像素容差 + 找播放头/找邻居），
   // 落库的仍是一条普通 `keyframe.move`。移动不到两像素就还是原来的「点一下跳过去」，所以不新增快捷键、
   // 也不新增命令；撞针在这里提前认出来（reducer 的 KEYFRAME_COLLISION 是同一条判断的权威说法）。
-  const [keyDrag, setKeyDrag] = useState<{ property: string; from: number; at: number; blocked: boolean } | null>(null);
+  const [keyDrag, setKeyDrag] = useState<{ property: string; from: number; at: number; blocked: boolean; duplicate: boolean } | null>(null);
   const startKey = (event: React.PointerEvent, key: Keyframe) => {
     event.stopPropagation();
     if (razor || event.button !== 0 || track.locked || !box.current || !app.caps?.features?.keyframes) return;
@@ -717,14 +717,15 @@ function ClipBlock({
     // 贴边的针为了看得见会被画在离边 6px 处，画的位置与它真正的时间不是一回事：抓住时记住这一点
     // 偏差，松手就按它落回去，否则「抓最左边那枚针」会把它瞬移到画出来的位置上。
     const grab = ((event.clientX - box.current.getBoundingClientRect().left) / px) * TIMEBASE - from;
+    const duplicate = event.altKey;
     const plan = (clientX: number) => planKeyframeDrag({
-      clip, key, px, snap, quantum: q,
+      clip, key, px, snap, quantum: q, duplicate,
       pointer_ticks: ((clientX - node.getBoundingClientRect().left) / px) * TIMEBASE - grab,
       playhead_ticks: playhead.value - clip.position_ticks,
     });
     const move = (ev: PointerEvent) => {
       const next = plan(ev.clientX);
-      setKeyDrag({ property: key.property, from, at: "at_ticks" in next ? next.at_ticks : from, blocked: next.kind === "blocked" });
+      setKeyDrag({ property: key.property, from, at: "at_ticks" in next ? next.at_ticks : from, blocked: next.kind === "blocked", duplicate });
     };
     const stop = (ev: PointerEvent) => {
       window.removeEventListener("pointermove", move);
@@ -735,9 +736,9 @@ function ClipBlock({
       if (ev.type === "pointercancel") return;
       if (Math.abs(ev.clientX - event.clientX) < 2) { playhead.pause(); playhead.set(clip.position_ticks + from); return; }
       const next = plan(ev.clientX);
-      if (next.kind === "noop") return;
+      if (next.kind === "noop") { if (duplicate) toast("warn", "没有多出一枚针", "复制的落点就在原针那一格上，先往旁边挪一点再松手。"); return; }
       if (next.kind === "blocked") { toast("warn", "那一格已经有一枚针", next.reason); return; }
-      editAtRevision([next.command], project.id, project.revision, "拖动关键帧", app.sequenceId);
+      editAtRevision([next.command], project.id, project.revision, duplicate ? "复制关键帧" : "拖动关键帧", app.sequenceId);
       playhead.pause(); playhead.set(clip.position_ticks + next.at_ticks);
     };
     window.addEventListener("pointermove", move);
@@ -893,15 +894,19 @@ function ClipBlock({
           {visible.filter((k) => rowOf.has(k.property)).map((k) => {
             const from = k.at_ticks - (clip.animation_offset_ticks ?? 0);
             const held = keyDrag && keyDrag.property === k.property && keyDrag.from === from ? keyDrag : null;
-            const at = held ? held.at : from;
+            const at = held && !held.duplicate ? held.at : from;
             return <button
               key={`${k.property}-${k.at_ticks}`} type="button" className={`clip-keyframe${held ? " dragging" : ""}${held?.blocked ? " blocked" : ""}`}
               style={{ left: Math.min(width - 6 - (hidden.length ? 16 : 0), Math.max(6, (at / clip.duration_ticks) * width)), bottom: 1 + (rowOf.get(k.property) ?? 0) * LANE_PITCH_PIXELS }}
-              title={`${k.property} · ${humanDuration(from)}${held ? ` → ${humanDuration(at)}` : " · 横向拖可以改时间"}`}
+              title={`${k.property} · ${humanDuration(from)}${held ? ` → ${humanDuration(at)}` : " · 横向拖可以改时间，按住 Alt 拖是复制一枚"}`}
               aria-label={`拖动${k.property}关键帧`}
               aria-disabled={track.locked || razor || !app.caps?.features?.keyframes}
               onPointerDown={(event) => startKey(event, k)}>◆</button>;
           })}
+          {keyDrag && keyDrag.duplicate && keyDrag.at !== keyDrag.from ? <span
+            className={`clip-keyframe ghost${keyDrag.blocked ? " blocked" : ""}`}
+            style={{ left: Math.min(width - 6, Math.max(6, (keyDrag.at / clip.duration_ticks) * width)) }}
+            aria-hidden="true">◆</span> : null}
           {hidden.length ? <button type="button" className="clip-keyframe-more" aria-label={`${hidden.length} 条属性的针没有画在这里`}
             title={`画不下的针：${hidden.join("、")}——点开进动画曲线看这条片段的全部针`}
             onClick={() => { selectClip(clip.id); setGraphOpen(true); }}>+{hidden.length}</button> : null}

@@ -332,6 +332,7 @@ textarea.input { resize: vertical; line-height: 1.5; }
 .zoom-ctrl { margin-left: auto; }
 .clip-keyframe { position: absolute; bottom: 1px; transform: translateX(-50%); color: #ffe3a3; font-size: 9px; height: 12px; line-height: 12px; padding: 0 4px; z-index: 5; border: 0; background: transparent; cursor: ew-resize; }
 .clip-keyframe[aria-disabled="true"] { cursor: not-allowed; opacity: .5; }
+.clip-keyframe.ghost { pointer-events: none; opacity: .6; z-index: 6; }
 .clip-keyframe.dragging { color: #fff; font-size: 11px; }
 .clip-keyframe.blocked { color: #ff9a9a; }
 .clip-keyframe-more { position: absolute; right: 9px; bottom: 1px; z-index: 5; font-size: 9px; color: #ffe3a3; background: transparent; border: 0; cursor: pointer; padding: 2px 3px; }

@@ -39,7 +39,7 @@ const clipOf = (keys: Keyframe[]): Clip => ({
 } as unknown as Clip);
 
 /** 拖一次：`pointer` 是片段本地刻度，`head` 是播放头的绝对刻度（null 表示不在播放头上）。 */
-const drag = (held: Keyframe, pointer: number, keys: Keyframe[], head: number | null, px = PX, snap = true) => planKeyframeDrag({
+const drag = (held: Keyframe, pointer: number, keys: Keyframe[], head: number | null, px = PX, snap = true, duplicate = false) => planKeyframeDrag({ duplicate,
   clip: clipOf(keys), key: held, pointer_ticks: pointer, playhead_ticks: head === null ? -1 : head - POSITION, px, snap, quantum: FRAME,
 });
 
@@ -122,13 +122,32 @@ assert.match(source, /const grab = \(\(event\.clientX - box\.current\.getBoundin
 assert.match(source, /pointer_ticks: \(\(clientX - node\.getBoundingClientRect\(\)\.left\) \/ px\) \* TIMEBASE - grab/, "and the drag must subtract it, so a needle clamped at the edge does not teleport to where it is painted");
 assert.match(source, /playhead_ticks: playhead\.value - clip\.position_ticks/, "and the playhead must be handed over in the same local clock");
 // 落库只允许是那一行：不许在它前面挂第二个副作用，也不许绕开带 expected_revision 的那条链。
-const write = source.split("\n").find((row) => row.trim().startsWith("editAtRevision([next.command]"));
-assert.equal(write?.trim(), 'editAtRevision([next.command], project.id, project.revision, "拖动关键帧", app.sequenceId);', "the write is exactly that call through the ordinary edit chain");
+assert.match(source, /^\s{6}editAtRevision\(\[next\.command\], project\.id, project\.revision, duplicate \? "复制关键帧" : "拖动关键帧", app\.sequenceId\);$/m, "the write is exactly that call through the ordinary edit chain, and the history line says which gesture it was");
 // 没拖动就还是「点一下跳过去」：那条判断必须在，且落在 from 上。
 assert.match(source, /if \(Math\.abs\(ev\.clientX - event\.clientX\) < 2\) \{ playhead\.pause\(\); playhead\.set\(clip\.position_ticks \+ from\)/, "the tap still jumps to the needle");
 assert.match(source, /onPointerDown=\{\(event\) => startKey\(event, k\)\}/, "the diamond carries the gesture instead of a click handler");
 assert.equal((source.match(/onClick=\{\(event\) => \{ event\.stopPropagation\(\); selectClip\(clip\.id\)/g) ?? []).length, 0, "the old click-only needle must be gone");
 assert.ok(!/Math\.round\([^)\n]*\/ *q\) *\* *q/.test(source), "no second snapping formula may live in the timeline");
+
+
+// Alt 拖是复制：原针不动、落点上一枚新的；落在原针那一格不算「多出一枚」，落在别人身上按撞针拒并说是复制。
+const onThird = PHASE + 3 * FRAME;                        // 这一格本来就在格线上
+const dup = drag(held, onThird, [held], null, PX, true, true);
+assert.equal(dup.kind, "add", "an Alt drag plans an added needle, not a move");
+const dupCommand = (dup as { command: { op: string; clip_id: string; keyframe: Keyframe } }).command;
+assert.equal(dupCommand.op, "keyframe.set", "the copy is an ordinary keyframe.set");
+assert.equal(dupCommand.clip_id, "clip-key", "and it goes to this clip");
+assert.equal(dupCommand.keyframe.at_ticks, onThird, "it lands on the frame line the pointer asked for");
+assert.equal(dupCommand.keyframe.value, held.value, "value, easing and handles ride along");
+assert.equal(dupCommand.keyframe.interpolation, held.interpolation, "the copy is the same shape");
+assert.equal(held.at_ticks, OFFSET + 30_000, "the original stays exactly where it was");
+assert.equal(drag(held, 30_000, [held], null, PX, false, true).kind, "noop", "duplicating onto the original second adds nothing");
+const clash = drag(held, 8_025_000, [held, key("opacity", OFFSET + 8_000_000)], null, PX, true, true);
+assert.ok(clash.kind === "blocked" && /复制/.test((clash as { reason: string }).reason),
+  `the refusal must say a copy needs a free second: ${clash.kind}`);
+// 普通拖动不许被复制的分支污染：没有 Alt 就还是 keyframe.move。
+const plain = drag(held, onThird, [held], null);
+assert.equal((plain as { command: { op: string } }).command.op, "keyframe.move", "no Alt, no add");
 
 console.log(
   "PASS: 时间线上拖针写的是普通 `keyframe.move`——偏移折掉一次、只改时间、回到原格就是 noop、"
