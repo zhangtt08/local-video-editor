@@ -77,6 +77,9 @@ assert.match(curve, /rememberCopy\(copy\);[\s\S]{0,40}svg\.current\?\.focus\(\);
 assert.match(curve, /onClick=\{pasteNow\}>粘贴/, "a paste button must exist next to the chord");
 assert.match(curve, /disabled=\{disabled \|\| !copied \|\| copied\.property !== field\.property\}/, "and it is grey unless a same-property copy is in hand");
 assert.equal((curve.match(/粘贴动画关键帧/g) ?? []).length, 1, "the chord and the button share one implementation");
+// 复制、粘贴、全选是这一层的三个和弦入口；Ctrl+A 那个守卫的括号必须留着，
+// 否则 `a || b && c` 的结合顺序会变成「按一下 Ctrl 就全选」。
+assert.match(curve, /if \(\(e\.ctrlKey \|\| e\.metaKey\) && e\.key\.toLowerCase\(\) === "a"\)/, "the select-all guard keeps its parentheses");
 assert.equal((curve.match(/key\.toLowerCase\(\) === "[cav]"/g) ?? []).length, 3, "copy, paste and select-all are the three chord entries");
 
 console.log("PASS: 复制／粘贴搬的是节奏——一次一条属性、跨片段照粘、越界与撞针逐枚跳过并报数、"
