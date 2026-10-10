@@ -3,6 +3,7 @@ import { useEffect, useId, useMemo, useRef, useState, type PointerEvent } from "
 import { type AnimationGraph, type Clip, type Keyframe, type Property, type Bezier } from "../engine";
 import { EFFECT_FIELDS, curveBase, maskAnimFields, spatialAnimFields } from "../effects";
 import { TIMEBASE, timecode } from "../time";
+import { keyframeTick } from "../keyframeSnap";
 import { appInfo, clearBatch, commitBatch, editAtRevision, playhead, quantum, redoStep, selectClips, setGraphOpen, setMode, toast, undo, useApp, usePlay } from "../store";
 
 const LEFT = 58, TOP = 12, WIDTH = 924, HEIGHT = 166;
@@ -113,7 +114,7 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
   const x = (at: number) => LEFT + (at - start) / span * WIDTH;
   const y = (value: number) => TOP + (high - value) / valueSpan * HEIGHT;
   const valueLabel = (value: number) => `${(value * field.factor).toFixed(field.property === "rotation" ? 0 : 1)}${field.unit}`;
-  const alignTime = (at: number) => Math.max(0, Math.min(clip.duration_ticks, snap ? Math.round(at / q) * q : Math.round(at)));
+  const alignTime = (at: number, attract = true) => keyframeTick(at, { clip, quantum: q, span, plot: WIDTH }, snap, { playhead: head, keys: attract ? keys.filter((k) => !sourceTimes.has(k.at_ticks)).map((k) => k.at_ticks) : [], attract });
   const quantizeValue = (value: number) => Math.max(hardMin, Math.min(hardMax, Math.round(value * field.factor / field.step) * field.step / field.factor));
   const locate = (event: { clientX: number; clientY: number }) => {
     const rect = svg.current!.getBoundingClientRect();
@@ -185,9 +186,9 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
     if (Math.abs(event.clientX - gesture.clientX) + Math.abs(event.clientY - gesture.clientY) > 3) gesture.moved = true;
     return translate(gesture.points, alignTime(gesture.point.at_ticks + dx / WIDTH * span)-gesture.point.at_ticks, quantizeValue(gesture.point.value - dy / HEIGHT * valueSpan)-gesture.point.value);
   };
-  const add = (at: number, value: number) => {
+  const add = (at: number, value: number, attract = true) => {
     if (disabled) return;
-    at = alignTime(at);
+    at = attract ? alignTime(at) : Math.max(0, Math.min(clip.duration_ticks, Math.round(at)));
     if (keys.some((k) => k.at_ticks === at)) { selectPoint(at); seek(at); return; }
     editAtRevision([{ op: "keyframe.set", clip_id: clip.id, keyframe: { property: field.property, at_ticks: at, value: quantizeValue(value), interpolation: newInterpolation } }], project.id, project.revision, "编辑动画曲线", app.sequenceId);
     rememberEdit([], [{ property: field.property, at_ticks: at, value: quantizeValue(value), interpolation: newInterpolation, bezier: null }]);
@@ -201,8 +202,10 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
     setSelection([]); setSelectedAt(null);
   };
   const atHead = () => {
-    void appInfo.engine()?.animationSample(clip, alignTime(head)).then((sample) => {
-      add(head, sample.values[field.property]);
+    // 播放头本身就落在格子上（标尺按同一份量子吸附），所以这里写的就是看到的那个位置：
+    // 吸附不参与，否则相邻的针会把新针拽走，采到的值与落下的时间就对不上了。
+    void appInfo.engine()?.animationSample(clip, head).then((sample) => {
+      add(head, sample.values[field.property], false);
     }).catch(() => toast("error", "当前位置采样失败"));
   };
   const zoomTo = (factor: number) => {
@@ -224,7 +227,7 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
       <button className="btn tiny" disabled={!keys.length} onClick={() => jump(-1)}>上一关键帧</button><button className="btn tiny" disabled={!keys.length} onClick={() => jump(1)}>下一关键帧</button>
       <button className="btn tiny" disabled={disabled || (app.mode === "batch" && app.batch.length > 0)} onClick={atHead}>播放头添加</button>
       <button className="btn tiny" disabled={disabled || !selectedKeys.length} onClick={remove}>{selectedKeys.length > 1 ? `删除 ${selectedKeys.length} 点` : "删除关键帧"}</button>
-      <label><input type="checkbox" checked={snap} onChange={(e) => setSnap(e.target.checked)} />时间吸附</label>
+      <label title="拖到的位置落在整帧上，并会找播放头与这条曲线上没被拖动的针；数值框与「播放头添加」照精确位置写。"><input type="checkbox" checked={snap} onChange={(e) => setSnap(e.target.checked)} />时间吸附</label>
       <span className="spacer" />
       <button className="btn tiny" disabled={zoom === 1} onClick={() => zoomTo(.5)}>缩小曲线</button><button className="btn tiny" disabled={zoom === 64} onClick={() => zoomTo(2)}>放大曲线</button>
       <button className={`btn tiny${fit ? " active" : ""}`} aria-pressed={fit} onClick={() => { cancel(); setFit(!fit); }}>适合数值</button>
@@ -240,7 +243,7 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
         onPointerUp={(e) => { const m = marquee.current; if (!m) return; const p = locate(e); if (Math.abs(e.clientX-m.clientX)+Math.abs(e.clientY-m.clientY)>3) {
           const next = [...new Set([...m.base, ...keys.filter((k) => k.at_ticks >= start && k.at_ticks <= start+span && x(k.at_ticks)>=Math.min(m.x,p.x) && x(k.at_ticks)<=Math.max(m.x,p.x) && y(k.value)>=Math.min(m.y,p.y) && y(k.value)<=Math.max(m.y,p.y)).map((k) => k.at_ticks)])];
           chooseSelection(next, next[0] ?? null);
-        } else { chooseSelection(m.base, m.base[0] ?? null); seek(alignTime(start+(p.x-LEFT)/WIDTH*span)); } cancel(); }}
+        } else { chooseSelection(m.base, m.base[0] ?? null); seek(alignTime(start+(p.x-LEFT)/WIDTH*span, false)); } cancel(); }}
         onPointerCancel={cancel} onLostPointerCapture={() => { if (marquee.current) cancel(); }}
         onDoubleClick={(e) => { if ((e.target as Element).closest(".curve-key,.curve-handle")) return; const p = locate(e); if (p.x < LEFT || p.x > LEFT + WIDTH || p.y < TOP || p.y > TOP + HEIGHT) return; add(start + (p.x - LEFT) / WIDTH * span, high - (p.y - TOP) / HEIGHT * valueSpan); }}
         onKeyDown={(e) => {
@@ -291,7 +294,7 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
     <div className="curve-footer">
       <span className="mono">{point ? `${(point.at_ticks / TIMEBASE).toFixed(3)}s · ${valueLabel(point.value)}` : `${keys.length} 个关键帧`}</span>
       {selected ? <fieldset disabled={disabled || Boolean(draft)} className="curve-fields">
-        <label>时间 <CurveNumber label="关键帧时间（秒）" value={selected.at_ticks / TIMEBASE} step={q / TIMEBASE} min={0} max={clip.duration_ticks / TIMEBASE} onCommit={(value) => commitPoints(selectedKeys, translate(selectedKeys, alignTime(value*TIMEBASE)-selected.at_ticks, 0))} /></label>
+        <label>时间 <CurveNumber label="关键帧时间（秒）" value={selected.at_ticks / TIMEBASE} step={q / TIMEBASE} min={0} max={clip.duration_ticks / TIMEBASE} onCommit={(value) => commitPoints(selectedKeys, translate(selectedKeys, alignTime(value*TIMEBASE, false)-selected.at_ticks, 0))} /></label>
         <label>数值 <CurveNumber label="关键帧数值" value={selected.value * field.factor} step={field.step} min={field.min} max={field.max} onCommit={(value) => commitPoints(selectedKeys, translate(selectedKeys, 0, value/field.factor-selected.value))} /></label>
         <select className="input" aria-label="选中关键帧插值" value={selectedKeys.every((k) => k.interpolation === selected.interpolation) ? selected.interpolation : ""} onChange={(e) => commitPoints(selectedKeys, selectedKeys.map((k) => interpolationPoint(k, e.target.value as Keyframe["interpolation"])))}><option value="" disabled>混合插值</option>{Object.entries(INTERPOLATIONS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
       </fieldset> : <select className="input" aria-label="曲线新关键帧插值" value={newInterpolation} onChange={(e) => setNewInterpolation(e.target.value as Keyframe["interpolation"])}>{Object.entries(INTERPOLATIONS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>}
