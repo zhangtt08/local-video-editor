@@ -32,6 +32,10 @@
    - **`blend` 的表达式里 A/B 是 0..255 的原始采样值，不是归一化的**。`all_expr='clip(A+B,0,255)'` 与 `all_mode=addition` 逐字节相同（223,62,222）；按归一化写的 `1-(1-A)*(1-B)` 出 (255,126,189)（错得离谱但不报错），而把结果留在 0..1 的 `1-(1-A/255)*(1-B/255)` 直接出 **(0,0,0)**——写错尺度是**静默出黑画**，不是报错。所以模式清单与算式都得引擎持有，界面不许自己拼 expr。
    - **两支尺寸必须预先对齐**：`[4x4][2x2]blend` 在 configure 阶段就死（`bottom parameters (size 2x2)`），而且只在真跑 FFmpeg 时才报——所以第二路输入进 reducer 时就要把尺寸/格式对齐当作写入条件，不能推到导出时才试。
    动契约之前剩下的只有一条没量：预览侧（浏览器）拿什么复现这些模式——CSS `mix-blend-mode` 的名字与 FFmpeg `blend` 的名字不是一一对应（例如 overlay/difference 的 Alpha 处理不同），这条要在 `preview_manifest` 出面之前先逐模式量过，量不齐的模式就别下发（与「滑动的『滑』故意不做」同一口径）。
+   **这条也量过了（同一对实色，浏览器 canvas `globalCompositeOperation` 逐模式读回像素，与 FFmpeg 那份对照）**：
+   - 先做一次**空量**钉住量法本身的偏差：`color=` 那片实色经 PNG 再读回来是 (191,32,31)／(32,30,191)／(254,127,0)——每通道差 0..2；而 `blend(x,self)` 用 `lighten` 原样返回同一组数，所以偏差在**夹具的取色路径**上，不在 blend 上。上面那张表要先按这个还原再看。
+   - 还原之后两端一致：screen 两端都是 (200,60,200)；FFmpeg `addition` 与浏览器 `lighter` 都是 (224,64,224)（两端都在 255 饱和）；multiply (24,4,24)；overlay (145,8,48)；difference (160,0,160)；min/darken (32,32,32)。**所以模式清单可以两端共一份**：引擎下发 id 与 FFmpeg 的 `all_mode=` 名，界面把同一个 id 映到同名的 canvas/CSS 复合词；没逐端对过数字的那几个（color-dodge、hard-light 这类）不下发。
+   - 一条还没量的边界留着：第二路**带透明度**时两端是否还一致——1.94 那条「两层一叠就把 (192,32,32) 与 (32,32,192) 叠成 (222,61,220) 的亮边」的前车之鉴就是预乘 Alpha，这条要在支持半透明第二路之前先量。
 2. **多目标跟踪**与**清晰的逐帧动画**：后者 1.98 已量明为什么先不做（`unsharp` 没有逐帧形式），要做就得先给出两端都认的算式。
 3. 复验口径照旧：`uv run python tests/suite_check.py` 空闲机器单独跑，壳层 `uv run python tests/desktop_ts_check.py`（数目以它的输出为准，不靠记忆），新断言一律配突变且**每条突变要红在自己断言的消息上**；突变脚本改完源码要**按字节还原**（这些 `.ts`/`.tsx`/`.css` 是 CRLF，Python 文本模式写回会把整份文件换成 LF），跑完再逐条重跑一次确认恢复；发布物 `uv run python scripts/build_engine.py --verify` + `cd desktop && npm run dist` 后根 `AgentCut.exe` 与便携版 `cmp`，界面类改动再用打包 exe + Chromium 真点真拖。
 
