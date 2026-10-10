@@ -4,7 +4,7 @@ import { type AnimationGraph, type Clip, type Keyframe, type Property, type Bezi
 import { EFFECT_FIELDS, FIELD_LABEL, curveBase, maskAnimFields, spatialAnimFields } from "../effects";
 import { TIMEBASE, timecode } from "../time";
 import { keyframeTick } from "../keyframeSnap";
-import { applyShift, bandEdges, groupShift, quantizeToBand } from "../curveDrag";
+import { applyShift, bandEdges, bandEntry, groupShift, quantizeToBand } from "../curveDrag";
 import { copyKeys, pasteKeys, rememberCopy, copiedKeys, type CopiedKeys } from "../keyframeClipboard";
 import { appInfo, clearBatch, commitBatch, editAtRevision, playhead, prefs, quantum, redoStep, selectClips, setGraphOpen, setMode, toast, undo, useApp, useEdit, usePlay } from "../store";
 
@@ -329,8 +329,8 @@ function CurveNumber({ label, value, step, min, max, onCommit }: { label: string
   const [text, setText] = useState(String(Number(value.toFixed(6)))); const cancelled = useRef(false);
   useEffect(() => setText(String(Number(value.toFixed(6)))), [value]);
   return <input className="input mono" aria-label={label} type="number" value={text} step={step} min={min} max={max} onChange={(e) => setText(e.target.value)} onBlur={() => {
-    const next = Number(text);
-    if (!cancelled.current && text.trim() && Number.isFinite(next)) { const bounded = Math.max(min, Math.min(max, next)); if (bounded !== value) onCommit(bounded); }
+    const next = bandEntry(text, value, { min, max }, cancelled.current);
+    if (next !== null) onCommit(next);
     cancelled.current = false; setText(String(Number(value.toFixed(6))));
   }} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { cancelled.current = true; e.currentTarget.blur(); } }} />;
 }

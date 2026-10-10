@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { applyShift, bandEdges, groupShift, quantizeToBand } from "../desktop/src/curveDrag";
+import { applyShift, bandEdges, bandEntry, groupShift, quantizeToBand } from "../desktop/src/curveDrag";
 
 const TIMEBASE = 70_560_000;
 // 检查器里那条「不透明度」那一行下发的带：0–100 %，步长 1，存的是 0..1。
@@ -106,10 +106,23 @@ assert.equal(stepped[0].value, quantizeToBand(stepped[0].value, OPACITY), "and t
 const big = applyShift(pair.slice(0, 1), groupShift(pair.slice(0, 1), OPACITY, DURATION, 0, 10 / 100), OPACITY);
 assert.equal(big[0].value, 0.6, "ten percent at a time");
 
+// 数值框那条路：手敲的数在交给引擎之前只剩一个判断——`bandEntry`。
+assert.equal(bandEntry("150", 50, { min: 0, max: 100 }), 100, "typing past the ceiling lands on the ceiling, not on 150");
+assert.equal(bandEntry("-5", 50, { min: 0, max: 100 }), 0, "and below the floor on the floor");
+assert.equal(bandEntry("-500", 0, { min: -360, max: 360 }), -360, "rotation clamps to its own band");
+assert.equal(bandEntry("", 50, { min: 0, max: 100 }), null, "an emptied box is not an edit");
+assert.equal(bandEntry("abc", 50, { min: 0, max: 100 }), null, "neither is garbage");
+assert.equal(bandEntry("50", 50, { min: 0, max: 100 }), null, "and re-typing the same number sends nothing");
+assert.equal(bandEntry("75", 50, { min: 0, max: 100 }, true), null, "Esc then leaving the field is not an edit");
+// 打字进来的数**不**过格子：手敲要的就是打的那个值（格子只属于拖，1.109 定的口径）。
+assert.equal(bandEntry("57.4", 50, { min: 0, max: 100 }), 57.4, "a typed off-grid value is honoured exactly");
+
 const path = ["desktop/src/views/CurveEditor.tsx", "src/views/CurveEditor.tsx"].map((part) => resolve(process.cwd(), part)).find(existsSync);
 assert.ok(path, "the curve editor must be readable from the check's working directory");
 const source = readFileSync(path!, "utf8");
-assert.match(source, /import \{ applyShift, bandEdges, groupShift, quantizeToBand \} from "\.\.\/curveDrag";/, "the editor reads the one module");
+assert.match(source, /import \{ applyShift, bandEdges, bandEntry, groupShift, quantizeToBand \} from "\.\.\/curveDrag";/, "the editor reads the one module");
+assert.match(source, /const next = bandEntry\(text, value, \{ min, max \}, cancelled\.current\);/, "and the numeric box hands its decision over");
+assert.ok(!/Math\.max\(min, Math\.min\(max, next\)\)/.test(source), "with no second copy of that clamp left in the widget");
 assert.match(source, /const translate = \(points: Keyframe\[\], dt: number, dv: number\) => applyShift\(points, groupShift\(points, band, clip\.duration_ticks, dt, dv\), band\);/, "the drag goes through group-then-apply, in that order");
 assert.match(source, /const quantizeValue = \(value: number\) => quantizeToBand\(value, band\);/, "and the value grid is the module's");
 assert.ok(!/Math\.max\(hardMin-Math\.min\(/.test(source), "no second copy of the band clamp may live in the editor");

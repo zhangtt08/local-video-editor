@@ -8,6 +8,24 @@
  * 一起只走 0.1。这就是这条链子上唯一的夹法：先量化（步长）、再整组夹（量程与片段两头）、最后逐枚落值。
  */
 
+/**
+ * 数值框 / 时间框里的字要交出去之前的一步判断：空串、乱码、NaN 都不算改；按 Esc 之后离开焦点不算改；
+ * 越出这条属性的带就先夹回来（`min`/`max` 是**界面上说的那个单位**，除法仍由调用方做）；与当前值一样的
+ * 就不发命令。返回 `null` 表示「什么都别写」。打字进来的数**不**过格子——手敲要的就是打的那个值，
+ * 格子只属于拖（1.109 定的口径）。
+ */
+export function bandEntry(
+  text: string,
+  current: number,
+  band: { min: number; max: number },
+  cancelled = false,
+): number | null {
+  if (cancelled || !text.trim()) return null;
+  const typed = Number(text);
+  if (!Number.isFinite(typed)) return null;
+  const bounded = Math.max(band.min, Math.min(band.max, typed));
+  return bounded === current ? null : bounded;
+}
 /** 一条属性的数值带，全部来自 `EFFECT_FIELDS` / `MASK_ANIM_FIELDS` 那几个字段，不另起数。 */
 export type ValueBand = { min: number; max: number; step: number; factor: number };
 
