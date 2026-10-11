@@ -1976,7 +1976,10 @@ async function reviveClipboard(
 function placeCopied(copied: ClipClipboard, at: number, direction = 0) {
   const project = state.project; if (!project || !copied.clips.length) return;
   const plan = pasteCommands(project, copied, at, direction, state.sequenceId);
-  if (plan.commands.length > 100) { toast("warn", "这一组的新素材与轨道过多", "先将素材导入目标工程，或分组粘贴。"); return; }
+  // 一批能装多少条是引擎说的数（以前这里自己写了个 100，于是界面挡得不一定等于引擎挡的）；
+  // 能力表还没回来就不猜，让引擎自己去拒——它那句一定比这句准。
+  const cap = state.caps?.max_commands_per_batch;
+  if (cap !== undefined && plan.commands.length > cap) { toast("warn", `这一组要 ${plan.commands.length} 条命令，一批装不下（上限 ${cap} 条）`, "先把素材导入目标工程，或分几次贴这一组：每次少选几个片段，粘完再选下一批。"); return; }
   submit(plan.commands, `粘贴 ${copied.clips.length} 个片段`, { selectAfter: plan.ids });
 }
 

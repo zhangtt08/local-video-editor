@@ -11,7 +11,7 @@ SCHEMA_VERSION = (
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.125.0"
+APP_VERSION = "1.126.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -1727,10 +1727,19 @@ class CreateProject(Contract):
     settings: SequenceSettings = Field(default_factory=SequenceSettings)
 
 
+# 一批编辑命令的上限。以前的 100 在三个地方各写了一遍同一个字面量（契约、能力表、界面），
+# 而它挡住的正好是「粘一大组」这种真会做的事。量过的曲线（本机，一次写入 + 一次读回整份工程）：
+# 250 条 0.05s、1000 条 0.21s、2500 条 0.57s，
+# 5000 条要 1.32s；累计到 8750 段时工程 JSON 是 5.7 MiB。
+# 取 2500 是把「一次动作写完读回还在一秒内」那一格落成数字。
+# 数只在这里写一次：能力表与界面读的都是它，不许再抄第二份。
+MAX_COMMANDS_PER_BATCH = 2_500
+
+
 class EditBatch(Contract):
     request_id: Identifier
     expected_revision: Revision
-    commands: Annotated[list[Command], Field(min_length=1, max_length=100)]
+    commands: Annotated[list[Command], Field(min_length=1, max_length=MAX_COMMANDS_PER_BATCH)]
     dry_run: bool = False
     sequence_id: Identifier | None = None
 
@@ -2451,7 +2460,7 @@ def capabilities(
         "app_version": APP_VERSION,
         "project_schema_version": SCHEMA_VERSION,
         "timebase": TIMEBASE,
-        "max_commands_per_batch": 100,
+        "max_commands_per_batch": MAX_COMMANDS_PER_BATCH,
         "commands": [
             "sequence.nest",
             "sequence.add",

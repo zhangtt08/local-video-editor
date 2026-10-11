@@ -7,8 +7,11 @@ import tempfile
 from array import array
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from agentcut.animation import preview_manifest, sample
 from agentcut.contracts import (
+    MAX_COMMANDS_PER_BATCH,
     TIMEBASE,
     CreateProject,
     EditBatch,
@@ -16,6 +19,7 @@ from agentcut.contracts import (
     Project,
     RenderJob,
     SequenceSettings,
+    capabilities,
 )
 from agentcut.jobs import JobRuntime
 from agentcut.projects import ProjectStore
@@ -32,7 +36,30 @@ def batch(commands):
     ).commands
 
 
+def batch_cap_suite() -> None:
+    """一批能装多少条命令：契约、能力表与界面读的是同一个数，而那个数是量出来的。
+
+    1.126 之前这个数在三处各写了一遍字面量 100（契约的 `max_length`、能力表、界面那句
+    「新素材与轨道过多」）——界面挡得不等于引擎挡的，就是那份「怎么填都不行」的来历。
+    量过的曲线：250 条 0.05s、1000 条 0.21s、2500 条 0.57s、5000 条 1.32s（写一次并读回整份工程）。
+    """
+    published = capabilities()["max_commands_per_batch"]
+    assert published == MAX_COMMANDS_PER_BATCH, (published, MAX_COMMANDS_PER_BATCH)
+    one = {"op": "track.add", "track": {"id": "t", "kind": "audio", "name": "声"}}
+    exact = [{**one, "track": {**one["track"], "id": f"t{index}"}} for index in range(published)]
+    assert len(batch(exact)) == published, "整批到上限必须收"
+    try:
+        batch([*exact, one])
+    except ValidationError as error:
+        located = [item for item in error.errors() if item["loc"] == ("commands",)]
+        assert located and str(published) in str(located), (published, located)
+    else:
+        raise AssertionError("多一条就该被契约拒掉")
+    print(f"   批上限：{published} 条，契约与能力表同一个数，到上限收、多一条点名拒")
+
+
 def main():
+    batch_cap_suite()
     project = Project.model_validate(
         {
             "schema_version": 2,
