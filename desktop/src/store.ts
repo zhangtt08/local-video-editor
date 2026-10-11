@@ -437,18 +437,18 @@ export async function refreshProjects() {
   if (!engine) return;
   try {
     const result = await engine.projects();
-    // 列表接口只给 id/名称/版本；主页要显示真实时长与片段数，所以逐条取回摘要。
-    const summaries = await Promise.all(
-      result.projects.slice(0, 40).map(async (item): Promise<ProjectSummary> => {
-        try {
-          const project = await engine!.project(item.id);
-          return { ...item, clips: Object.keys(project.clips).length, durationTicks: timelineEnd(project), assets: Object.keys(project.assets).length };
-        } catch {
-          return { ...item, clips: 0, durationTicks: 0, assets: 0 };
-        }
-      })
-    );
-    set({ projects: summaries });
+    // 1.132：列表自己带着数字来（引擎写库时把摘要与文档一起落下）。以前这里逐条取回整份工程
+    // 只为数片段——两万段的工程一份 12 MB，主页一次要拉四十份，而那正是界面卡死的那一下。
+    set({
+      projects: result.projects.map((item) => ({
+        id: item.id,
+        name: item.name,
+        revision: item.revision,
+        clips: item.clips,
+        assets: item.assets,
+        durationTicks: item.content_ticks,
+      })),
+    });
   } catch (error) {
     const { title, detail } = describe(error);
     toast("error", title, detail);

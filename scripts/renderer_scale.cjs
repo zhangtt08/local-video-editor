@@ -10,9 +10,22 @@
 //
 // Exit code is 0 only when the page painted at least one clip and stayed answerable; anything else
 // prints the sample timeline and exits 1, so a regression here cannot be mistaken for a green run.
+//
+// Three things this ruler used to get wrong, all of them found by a run that reported "painted 3
+// clips in 2 ms" for a 20,000-clip deep link:
+//   * the DevTools port was picked by `Date.now() % 97`. Two of my own earlier headless Edges were
+//     sitting on the same port (9816 twice), so `/json/list` answered with a stranger's page.
+//     Now the port has to bind before the browser is spawned, and the attached target's URL must
+//     equal `--url` byte for byte — the app never rewrites its own query string.
+//   * the process sample was "the biggest msedge renderer on the machine", which counted every
+//     browser the user has open. Now it is the spawned browser plus its own children.
+//   * nothing tied the page to the engine, so a stale page and a real one looked alike. Now the
+//     engine is read over HTTP first and its clip count and wire size are printed next to the
+//     page's own answer.
 
 const { spawn, execFileSync, execSync } = require("node:child_process");
 const fs = require("node:fs");
+const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const http = require("node:http");
@@ -28,12 +41,67 @@ if (!URL_TO_LOAD) {
   console.error("usage: node scripts/renderer_scale.cjs --url <renderer url> [--budget seconds]");
   process.exit(2);
 }
-const PORT = Number(flag("port", 9800 + (Date.now() % 97)));
+const WANTED_PORT = Number(flag("port", 0));
 const PROFILE = path.join(os.tmpdir(), "agentcut-scale-" + Date.now().toString(36));
 const EDGE =
   flag("edge", "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe") ||
   "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+let PORT = 0;
+
+function listenable(port) {
+  return new Promise((resolve) => {
+    const probe = net.createServer();
+    probe.once("error", () => resolve(false));
+    probe.once("listening", () => probe.close(() => resolve(true)));
+    probe.listen(port, "127.0.0.1");
+  });
+}
+
+// A port taken by a headless browser from an earlier run is the whole reason this file exists in
+// its current shape: `/json/list` on that port answers with the stranger's page, and the stranger
+// looks healthy.
+async function pickPort() {
+  if (WANTED_PORT) return WANTED_PORT;
+  for (let candidate = 9800 + (Date.now() % 97); candidate < 9800 + 400; candidate += 1) {
+    if (await listenable(candidate)) return candidate;
+  }
+  throw new Error("no free DevTools port under 10200");
+}
+
+function request(url, headers) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(url, { headers: headers || {} }, (res) => {
+      const chunks = [];
+      res.on("data", (chunk) => chunks.push(chunk));
+      res.on("end", () => resolve({ status: res.statusCode, body: Buffer.concat(chunks) }));
+    });
+    req.on("error", reject);
+    req.setTimeout(60000, () => req.destroy(new Error("engine read timed out")));
+    req.end();
+  });
+}
+
+// What the engine says the project holds. Printed next to what the page says it painted.
+async function engineFacts() {
+  const page = new URL(URL_TO_LOAD);
+  const base = page.searchParams.get("engine");
+  const token = page.searchParams.get("token");
+  const id = page.searchParams.get("project");
+  if (!base || !token || !id) return { skipped: "the url has no engine/token/project" };
+  const headers = { Authorization: `Bearer ${token}` };
+  const project = await request(`${base.replace(/\/$/, "")}/v1/projects/${id}`, headers);
+  const info = await request(`${base.replace(/\/$/, "")}/v1/info`, headers);
+  const body = JSON.parse(project.body.toString("utf8"));
+  return {
+    http: project.status,
+    clips: (body.clips || []).length,
+    wire_bytes: project.body.length,
+    instance: JSON.parse(info.body.toString("utf8")).instance,
+    app_version: JSON.parse(info.body.toString("utf8")).app_version,
+  };
+}
 
 function listTargets() {
   return new Promise((resolve, reject) => {
@@ -51,25 +119,40 @@ function listTargets() {
 const PS = path.join(os.tmpdir(), "agentcut-scale.ps1");
 fs.writeFileSync(
   PS,
-  "Get-CimInstance Win32_Process -Filter \"Name='msedge.exe'\" | ForEach-Object { $p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue;" +
-    " if ($p) { [pscustomobject]@{Id=$_.ProcessId; User=[math]::Round($_.UserModeTime/1e7,2); Work=[math]::Round($p.WorkingSet64/1MB,0);" +
-    " R=[bool]($_.CommandLine -match '--type=renderer')} } } | Sort-Object Work -Descending | Select-Object -First 3 | ConvertTo-Json -Compress",
+  "param([string]$Profile)\n" +
+    "$rows = @(Get-CimInstance Win32_Process -Filter \"Name='msedge.exe'\" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($Profile) } | ForEach-Object {" +
+    " $p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue;" +
+    " if ($p) { [pscustomobject]@{Id=$_.ProcessId; User=[math]::Round($_.UserModeTime/1e7,2); Work=[math]::Round($p.WorkingSet64/1MB,0)} } })\n" +
+    "[pscustomobject]@{top=($rows | Sort-Object Work -Descending | Select-Object -First 1); total_mb=[math]::Round(($rows | Measure-Object Work -Sum).Sum,0);" +
+    " total_cpu=[math]::Round(($rows | Measure-Object User -Sum).Sum,2); n=$rows.Count} | ConvertTo-Json -Compress",
   "utf8"
 );
 
+// Only the processes started from this run's profile directory. Chromium's renderers carry the
+// browser's `--user-data-dir` in their own command line, so the profile's random suffix is the
+// reliable label — matched on the suffix because the same directory is spelled with an 8.3 prefix
+// by the launcher and in full form by the children. ParentProcessId is not reliable (it missed the
+// renderers and reported the 176 MB browser while the renderer was growing past a gigabyte), and
+// "the biggest msedge on the machine" was worse still: that is the user's browser, not this
+// measurement.
 function biggestRenderer() {
   try {
-    const raw = execFileSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", PS], { encoding: "utf8", timeout: 90000 }).trim();
-    const list = JSON.parse(raw);
-    const rows = Array.isArray(list) ? list : [list];
-    const top = rows[0] || {};
-    return { id: top.Id, work_mb: top.Work, cpu_seconds: top.User };
+    const raw = execFileSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", PS, "-Profile", path.basename(PROFILE)], {
+      encoding: "utf8",
+      timeout: 90000,
+    }).trim();
+    if (!raw) return { n: 0 };
+    const row = JSON.parse(raw);
+    return { n: row.n, own_total_mb: row.total_mb, own_total_cpu: row.total_cpu, top_id: row.top ? row.top.Id : null, top_mb: row.top ? row.top.Work : null };
   } catch (error) {
     return { error: String(error.message).slice(0, 60) };
   }
 }
 
 async function main() {
+  PORT = await pickPort();
+  const engine = await engineFacts();
+  console.log("engine says: " + JSON.stringify(engine));
   const edge = spawn(
     EDGE,
     ["--headless=new", `--remote-debugging-port=${PORT}`, "--disable-gpu", "--no-first-run", "--no-default-browser-check", `--user-data-dir=${PROFILE}`, URL_TO_LOAD],
@@ -84,11 +167,17 @@ async function main() {
     let target = null;
     for (let attempt = 0; attempt < 120 && !target; attempt += 1) {
       await sleep(500);
+      let pages = [];
       try {
-        target = (await listTargets()).find((item) => item.type === "page" && item.url.includes("index.html"));
+        pages = (await listTargets()).filter((item) => item.type === "page");
       } catch {}
+      target = pages.find((item) => item.url === URL_TO_LOAD);
+      if (!target && pages.length) {
+        const foreign = pages.map((item) => item.url).join(" ").slice(0, 160);
+        if (attempt > 20) throw new Error(`this browser never opened the asked-for page; its tabs are: ${foreign}`);
+      }
     }
-    if (!target) throw new Error("the packaged renderer never opened a page target");
+    if (!target) throw new Error("the packaged renderer never opened a page target for this url");
 
     socket = new WebSocket(target.webSocketDebuggerUrl);
     await new Promise((resolve, reject) => {
@@ -159,7 +248,7 @@ async function main() {
     } catch {}
 
     const probe =
-      "JSON.stringify({clips: document.querySelectorAll('.clip').length, nodes: document.getElementsByTagName('*').length," +
+      "JSON.stringify({href: location.href, clips: document.querySelectorAll('.clip').length, nodes: document.getElementsByTagName('*').length," +
       " lanes: document.querySelectorAll('.tl-lane').length, note: (document.querySelector('.tl-window-note')||{}).textContent||null})";
     while (Date.now() - started < BUDGET * 1000) {
       const began = Date.now();
@@ -170,8 +259,12 @@ async function main() {
       } catch (error) {
         failure = "TIMEOUT";
       }
+      if (answer && answer.href !== URL_TO_LOAD) {
+        failure = "WRONG_PAGE";
+        answer = null;
+      }
       const alive = await listTargets().catch(() => []);
-      const page = alive.find((item) => item.type === "page");
+      const page = alive.find((item) => item.url === URL_TO_LOAD);
       samples.push({ at_ms: Date.now() - started, probe_ms: Date.now() - began, answer, failure, target: page ? "alive" : "GONE", proc: biggestRenderer() });
       console.log(JSON.stringify(samples[samples.length - 1]));
       if (answer && answer.clips > 0) {
@@ -198,11 +291,12 @@ async function main() {
       samples: samples.length,
       seconds: Math.round((Date.now() - started) / 1000),
       painted,
+      engine,
       watched: watched.filter((row) => row[0] === "resp" || row[0] === "console" || row[0] === "throw").slice(0, 40),
       big_responses: watched.filter((row) => row[0] === "done" && row[2] > 1_000_000).length,
       nodes: last.answer ? last.answer.nodes : null,
       note: last.answer ? last.answer.note : null,
-      worst_process: samples.map((item) => item.proc).filter(Boolean).sort((a, b) => (b.work_mb || 0) - (a.work_mb || 0))[0],
+      own_process_peak: samples.map((item) => item.proc).filter(Boolean).sort((a, b) => (b.own_total_mb || 0) - (a.own_total_mb || 0))[0],
     })
   );
   process.exit(verdict === "painted" ? 0 : 1);

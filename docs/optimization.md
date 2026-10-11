@@ -4417,3 +4417,36 @@ renderer bundle 里读得到七句人话与 `clip.color_manage`。四条突变�
 「两万段能用」这句话现在仍然不能说，能说的是：它已经有一个会说话的判据，下一次改动
 要么让 `renderer_scale.cjs` 退出码变 0，要么写下它为什么不变。
 
+## 1.132 首页的数从引擎来；那把量界面的尺被修到可以说真话
+
+改的三处：
+
+- `src/agentcut/projects.py`：`projects` 表加 `clips`/`assets`/`content_ticks` 三列，`_persist` 写文档时一并刷新，
+  `_add_summary_columns` + `_backfill_summaries` 在开库时把老行（`clips IS NULL`）数一遍补上，`PRAGMA user_version` 2→3。
+  `list_projects` 交 `COALESCE(...,0)` 三格。判断只有一处来源（`project_content_ticks`），列表与单份工程读的是同一个函数。
+- `desktop/src/store.ts`：`refreshProjects()` 从「列表 + 每个工程整份读一遍」改成一次请求；注释写的是它换掉的那笔账
+  （两万段那份工程 12,103,211 字节 × 列表里每一行）。
+- `desktop/src/engine.ts`：`projects()` 的类型带出 `clips`/`assets`/`content_ticks`，界面不许再自己数。
+
+门禁 `tests/projects_summary_check.py`（六节：摘要与整份工程一致、迁移、写入刷新、列表载荷 vs 单份载荷、HTTP、渲染层）。
+打印出来的数：`list row: big clips=300 assets=1 content=21168000000 ticks (revision 1)`、
+`traffic: the list of two projects is 260 bytes, one 301-clip project alone is 201712 bytes`、
+`migration: legacy rows are counted once at open, user_version=3`、`renderer: refreshProjects asks once, and its type says so`。
+5 条突变逐条红在自己那条断言的消息上。
+
+装机复核跑出来的是**这次最有价值的东西**：那把尺在说谎。
+
+1. `scripts/renderer_scale.cjs` 原先按 `Date.now()%97` 挑 DevTools 端口。本轮留下的两个僵留 headless Edge 实例
+   在同一个 9816 上，新起的浏览器 bind 不上，`/json/list` 答的是别人的标签页——它报「2 ms 答 clips:3、退出码 0」，
+   量的是上一次那个三段对照页。现在：端口先 bind 成功才用；附着的页 URL 必须与 `--url` 逐字相同（这个应用不改写自己的
+   query）；否则明确报「这个浏览器从没打开过所要的那一页，它的标签页是…」。
+2. 进程取样原先是「全机工作集最大的 msedge」，这台机器上开着别的浏览器，1.131 记下的 2,923 MB / 1,821 MB 两个数就是这么
+   来的（已在 README 与 AGENTS 就地撤回）。现在只算本次 profile 那一棵进程树（按命令行里的 profile 随机后缀认，
+   因为 8.3 前缀与全写前缀在同一棵树里混着用），并同时打印引擎侧的片段数与线上字节。
+3. 重测的真数：对照页 3 段在 6.7 s 画出 `clips:3 nodes:410`（本次树 14 个进程 742 MB、最大 180 MB）；
+   两万段那一页 11.7 s 时 2,994 MB（渲染进程 2,370 MB / 10.41 s CPU），随后渲染进程消失（14→8、换 pid、CPU 从 2.04 s
+   重新起算），此后 108 s 里 12 次求值全部超时。`big_responses:1` —— 启动那份 12,103,211 字节的工程现在只取一次。
+4. 根因用调试器中断抓到：未压缩 bundle（`npx vite build --minify false --sourcemap --outDir ../dist/debug`）上
+   `Debugger.pause` 四轮停在同一串栈 `(anon)<(anon)<TrackRow<…react…`。`view` 在第一次渲染时还是 null，
+   而 1.131 的 `laneTicks` 规矩是「没量到视口就不裁」——首帧把两万张卡片建完，第二次渲染才裁到 14 张。
+   这一版没有动那条规矩（改动只在引擎侧与首页），但把它记成 1.133 的第一件事：**首帧就有界，并删掉那条不裁的分支**。

@@ -20,6 +20,7 @@ from .contracts import (
     Project,
     ProjectUpdate,
     RestoreProject,
+    project_content_ticks,
 )
 from .masks import fit_box
 from .timeline import apply_commands, validate_timeline
@@ -53,7 +54,7 @@ class ProjectStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2):
+            if version not in (0, 1, 2, 3):
                 raise RuntimeError(f"Unsupported database version: {version}")
             db.execute("PRAGMA journal_mode=WAL")
             db.executescript("""
@@ -72,8 +73,38 @@ class ProjectStore:
                     fingerprint TEXT NOT NULL, response TEXT NOT NULL,
                     PRIMARY KEY(scope, request_id)
                 );
-                PRAGMA user_version=2;
+                PRAGMA user_version=3;
             """)
+            self._add_summary_columns(db)
+            self._backfill_summaries(db)
+
+    # 1.132：主页要的「几段、几个素材、多长」是摘要，不是整份工程。摘要写在文档旁边，
+    # 列表一次就能给全；浏览器不必为了数一数而把每一份都下载回来。
+    @staticmethod
+    def _add_summary_columns(db) -> None:
+        columns = {row[1] for row in db.execute("PRAGMA table_info(projects)")}
+        for column in ("clips", "assets", "content_ticks"):
+            if column not in columns:
+                db.execute(f"ALTER TABLE projects ADD COLUMN {column} INTEGER")
+
+    @staticmethod
+    def _summary_of(project: Project) -> tuple[int, int, int]:
+        return len(project.clips), len(project.assets), project_content_ticks(project)
+
+    @staticmethod
+    def _backfill_summaries(db) -> None:
+        """Count the rows that predate the summary columns, once, at open.
+
+        The alternative is what the browser used to do on every home-page visit: download each
+        whole project to count its clips. One read per legacy row here is cheaper, and it
+        happens where the document already is.
+        """
+        for row in db.execute("SELECT id,document FROM projects WHERE clips IS NULL").fetchall():
+            project = Project.model_validate_json(row["document"])
+            db.execute(
+                "UPDATE projects SET clips=?, assets=?, content_ticks=? WHERE id=?",
+                (*ProjectStore._summary_of(project), row["id"]),
+            )
 
     @contextmanager
     def connection(self, write: bool = False):
@@ -346,9 +377,10 @@ class ProjectStore:
     ):
         document = project.model_dump_json()
         db.execute(
-            "INSERT INTO projects(id,document) VALUES(?,?) "
-            "ON CONFLICT(id) DO UPDATE SET document=excluded.document",
-            (project.id, document),
+            "INSERT INTO projects(id,document,clips,assets,content_ticks) VALUES(?,?,?,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET document=excluded.document, clips=excluded.clips, "
+            "assets=excluded.assets, content_ticks=excluded.content_ticks",
+            (project.id, document, *ProjectStore._summary_of(project)),
         )
         db.execute(
             "INSERT INTO history(project_id,revision,document,request_id,operation,payload) "
@@ -386,7 +418,9 @@ class ProjectStore:
         with self.connection() as db:
             rows = db.execute(
                 "SELECT id,json_extract(document,'$.name') AS name,"
-                "json_extract(document,'$.revision') AS revision "
+                "json_extract(document,'$.revision') AS revision,"
+                "COALESCE(clips,0) AS clips, COALESCE(assets,0) AS assets,"
+                "COALESCE(content_ticks,0) AS content_ticks "
                 "FROM projects ORDER BY id LIMIT ? OFFSET ?",
                 (limit, offset),
             )

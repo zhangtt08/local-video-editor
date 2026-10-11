@@ -782,7 +782,9 @@ export class Engine {
   }
 
   projects() {
-    return this.request<{ projects: { id: string; name: string; revision: number }[] }>(
+    return this.request<{
+      projects: { id: string; name: string; revision: number; clips: number; assets: number; content_ticks: number }[];
+    }>(
       "GET",
       "/v1/projects?limit=100"
     );
