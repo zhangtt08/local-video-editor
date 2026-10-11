@@ -43,6 +43,7 @@ import type {
 import { FIT_MODES, verifiedFromProbe, type TransitionKind, type VerifiedMedia } from "./engine";
 import { align, frameTicks, sampleTicks, ticks, TIMEBASE } from "./time";
 import { clipboardAssetsToReprobe, copyClips, pasteCommands, relatedClips, reviveClipboardAssets, selectionQuantum, timelineTracks, type ClipClipboard } from "./selection";
+import { linkSplitTrim } from "./splitTrim";
 import { CLIP_KEY, MARKS_KEY, isClipClipboard, isSourceMarks, readBrowser, writeBrowser, type SourceMark } from "./clipboardStore";
 import type { FadeOp, FadeProperty, FadeShape, FadeSide } from "./effects";
 import { fadeAdoptSummary } from "./effects";
@@ -2087,10 +2088,18 @@ export function trimClip(clipId: string, sourceIn: number, duration: number, pos
   const track = project.tracks.find((item) => item.id === clip?.track_id);
   if (!clip || !track) return;
   const q = selectionQuantum(project, selectionFor([clipId], bypass, true));
-  submit([{ ...clipTrim(clipId, Math.max(0, Math.round(sourceIn)), align(duration, q, 0)),
-    op: edit.linkedSelection && !bypass && clip.link_id ? "clip.trim_linked" : "clip.trim",
-    ...(position === undefined ? {} : { position_ticks: align(position, q, 0) }),
-    ...(ripple ? { ripple: true } : {}) }], "修剪片段", {
+  const source = Math.max(0, Math.round(sourceIn));
+  const length = align(duration, q, 0);
+  const placed = position === undefined ? undefined : align(position, q, 0);
+  // Alt on a linked member's edge is a J/L cut: ask for it by name whenever the drag really is a
+  // single-edge move, and fall back to the ordinary trim when it is not.
+  const split = !ripple && bypass && clip.link_id ? linkSplitTrim(clip, source, length, placed) : null;
+  submit([split
+    ? { op: "clip.link_split_trim", clip_id: clipId, edge: split.edge, delta_ticks: split.delta_ticks }
+    : { ...clipTrim(clipId, source, length),
+      op: edit.linkedSelection && !bypass && clip.link_id ? "clip.trim_linked" : "clip.trim",
+      ...(placed === undefined ? {} : { position_ticks: placed }),
+      ...(ripple ? { ripple: true } : {}) }], split ? "分边修剪（J/L cut）" : "修剪片段", {
     quiet: true,
   });
 }

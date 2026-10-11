@@ -1019,8 +1019,8 @@ function ClipBlock({
         title={`拖着角柄走：这段${primary === "gain" ? "音量" : "画面"}淡${side === "in" ? "入" : "出"}多久，拖回边上取消（现在 ${(fades[primary][side] / TIMEBASE).toFixed(2)} 秒）。${fadeOptions.length > 1 ? "Shift 拖同时淡画面与音量。" : ""}修剪请拖最外面的边。`}
         onPointerDown={(event) => startFade(event, side)}
       />) : null}
-      <span className="trim-handle left" title="拖动改变源入点（从素材的哪一秒开始）；Shift 涟漪修剪，Ctrl 滚动剪辑" onPointerDown={(event) => start(event, "trim-l")} />
-      <span className="trim-handle right" title="拖动改变时长；Shift 涟漪修剪，Ctrl 滚动剪辑" onPointerDown={(event) => start(event, "trim-r")} />
+      <span className="trim-handle left" title="拖动改变源入点（从素材的哪一秒开始）；Shift 涟漪修剪，Ctrl 滚动剪辑；Alt 只动这一边（音画链接时就是 J/L cut）" onPointerDown={(event) => start(event, "trim-l")} />
+      <span className="trim-handle right" title="拖动改变时长；Shift 涟漪修剪，Ctrl 滚动剪辑；Alt 只动这一边（音画链接时就是 J/L cut）" onPointerDown={(event) => start(event, "trim-r")} />
     </div>
   );
 }

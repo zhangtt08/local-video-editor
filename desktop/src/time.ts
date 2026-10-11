@@ -40,6 +40,19 @@ export function humanDuration(value: number): string {
   return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`;
 }
 
+/**
+ * 一段差值的一句话：够一帧就按时间码念，不足一帧就按毫秒／微秒念。
+ *
+ * 时间码会把不足一帧的差读成 `00:00:00:00`，那是「什么都没差」——而音频按采样走，音频比画面
+ * 差半帧这种事是真的会发生（1.128 装机实测就量到 32.3 毫秒）。差值句子里不许说零。
+ */
+export function offsetWords(value: number, rate: Fraction): string {
+  const magnitude = Math.abs(value);
+  if (magnitude >= frameTicks(rate)) return timecode(value, rate);
+  const ms = seconds(magnitude) * 1000;
+  return ms >= 1 ? `${ms.toFixed(1)} 毫秒` : `${Math.round(ms * 1000)} 微秒`;
+}
+
 export function rateLabel(rate: Fraction): string {
   const value = rate.numerator / rate.denominator;
   return Math.abs(value - Math.round(value)) < 0.001

@@ -12,6 +12,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import { linkOffsetParts, linkOffsetSentence } from "../desktop/src/linkOffset";
+import { linkSplitTrim, type SplitTrim } from "../desktop/src/splitTrim";
+import { offsetWords } from "../desktop/src/time";
 import type { LinkStatus } from "../desktop/src/engine";
 
 const SECOND = 70_560_000;
@@ -139,6 +141,69 @@ for (const op of ["clip.link_split_trim", "clips.link_reconcile"]) {
   assert.ok(contract.includes(`"${op}"`), `契约里要有 ${op}：界面不许发一条引擎不认的命令`);
 }
 
+// —— ④ 一把抓的 J/L cut：拖一条链接的边，只有一次单边的移动才算分边修剪 ————————————
+// The drag already knows the window it wants; this is the only place that reads an edge and a
+// signed movement back out of it, and it refuses whenever the window is not a single-edge move.
+const dragged = { position_ticks: 70, duration_ticks: 140, source_in_ticks: 200 } as unknown as Parameters<typeof linkSplitTrim>[0];
+const windows: { title: string; args: [number, number, number?]; expected: SplitTrim | null }[] = [
+  { title: "尾巴剪短 40", args: [200, 100], expected: { edge: "tail", delta_ticks: -40 } },
+  { title: "尾巴放长 40", args: [200, 180], expected: { edge: "tail", delta_ticks: 40 } },
+  { title: "片头向左让 20", args: [180, 160, 50], expected: { edge: "head", delta_ticks: -20 } },
+  { title: "片头向右进 20", args: [220, 120, 90], expected: { edge: "head", delta_ticks: 20 } },
+  { title: "片头动了但源没跟着走", args: [200, 160, 50], expected: null },
+  { title: "两头一起动", args: [200, 180, 50], expected: null },
+  { title: "一格没动", args: [200, 140], expected: null },
+  { title: "只是划动源窗口", args: [220, 140], expected: null },
+  { title: "源动了、时长也动了，但没说片头去哪了", args: [220, 120], expected: null },
+];
+for (const item of windows) {
+  assert.deepEqual(linkSplitTrim(dragged, ...item.args), item.expected, `${item.title}：不是单边移动就不许叫分边修剪`);
+}
+
+const timeline = readFileSync("desktop/src/views/Timeline.tsx", "utf8");
+assert.match(
+  timeline,
+  /trimClip\(clip\.id, final\.source_in_ticks, final\.duration_ticks, final\.position_ticks, event\.altKey, event\.shiftKey\)/,
+  "Alt 这只手真的要把 bypass 交到 trimClip，否则 Help 上那行是空的",
+);
+assert.equal(
+  (timeline.match(/Alt 只动这一边（音画链接时就是 J\/L cut）/g) ?? []).length,
+  2,
+  "两个边把手都要自己说得出 Alt 这一只手，不该只在快捷键页里找",
+);
+assert.equal((store.match(/linkSplitTrim\(/g) ?? []).length, 1, "边到命令的换算只许有一处");
+assert.equal((store.match(/"clip\.link_split_trim"/g) ?? []).length, 1, "这条 op 在渲染层只许出现一处");
+assert.match(store, /!ripple && bypass && clip\.link_id/, "涟漪与整对移动不许被读成分边修剪");
+assert.match(store, /"分边修剪（J\/L cut）"/, "历史里念得出这一次是什么");
+const help = readFileSync("desktop/src/views/Help.tsx", "utf8");
+assert.match(help, /按住 Alt 直接拖链接片段的某一边/, "快捷键页说的是这一只手，不是两步的替代路径");
+assert.doesNotMatch(module, /linkedSelection|bypass/, "linkOffset 只管念数，选不选联动不归它");
+assert.doesNotMatch(readFileSync("desktop/src/splitTrim.ts", "utf8"), /70_?560_?000|linkedSelection/, "换算不许自带时基，也不许自己判联动");
+
+// —— ⑤ 差值的说法不许念零：音频按采样走，比画面差半帧是真的会发生
+const FPS30 = { numerator: 30, denominator: 1 } as const;
+const offsets: { value: number; want: string; title: string }[] = [
+  { value: 70_560_000, want: "00:00:01:00", title: "整一秒按时间码念" },
+  { value: 2_275_560, want: "32.3 毫秒", title: "装机实测那一次：不足一帧" },
+  { value: -2_275_560, want: "32.3 毫秒", title: "负的一样按大小念，方向由句子给" },
+  { value: 1_470, want: "21 微秒", title: "一个采样也不能说成零" },
+];
+for (const item of offsets) {
+  assert.equal(offsetWords(item.value, FPS30), item.want, `${item.title}`);
+  assert.doesNotMatch(offsetWords(item.value, FPS30), /00:00:00:00/, `${item.title}：不足一帧不许念成 00:00:00:00`);
+}
+assert.equal(
+  view.split("offsetWords(value, project.settings.frame_rate)").length - 1,
+  1,
+  "差值句子用的是那个永不念零的格式化",
+);
+assert.equal(
+  view.split("timecode(value, project.settings.frame_rate)").length - 1,
+  0,
+  "同一句里不许留着会念零的那一个",
+);
+
 console.log(
-  `PASS: 链接的差值只有一处说法（${cases.length} 个轴各一条，界面读引擎的四个数，拉回同步一条命令）`,
+  `PASS: 链接的差值只有一处说法（${cases.length} 个轴各一条，界面读引擎的四个数，拉回同步一条命令；` +
+    `单边移动 ${windows.length} 种窗口各判各的，Alt 那只手交的是 bypass）`,
 );
