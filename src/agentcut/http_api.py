@@ -84,7 +84,7 @@ from .loudness import measure as measure_loudness
 from .masks import mask_image
 from .media import ALLOWED_SUFFIXES, PROXY_WIDTHS, MediaService
 from .projects import ProjectStore
-from .render import compile_render_plan, text_fonts_available
+from .render import text_fonts_available
 from .speed import consumed_source_ticks
 from .subtitles import export_srt
 from .timeline import (
@@ -1968,8 +1968,15 @@ def create_app(
         if job.status in ("queued", "running"):
             try:
                 project = projects.get(job.project_id, job.revision)
-                plan = compile_render_plan(
-                    project, job.preset_id, sequence_id=job.sequence_id, fit=job.fit
+                # Through `plan_for`, with the job's own range and matte: a plan shown beside a job
+                # has to be the plan that job will render, not one rebuilt with the defaults.
+                plan = plan_for(
+                    project,
+                    job.preset_id,
+                    sequence_id=job.sequence_id,
+                    fit=job.fit,
+                    range_mode=job.range,
+                    transparent=job.transparent,
                 ).as_dict()
             except EditorError:
                 plan = None

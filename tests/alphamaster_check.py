@@ -99,6 +99,44 @@ def source(folder: Path) -> Path:
     return target
 
 
+def portrait_source(folder: Path) -> Path:
+    """竖着的 180x320 片源：只有素材自己的比例与交付帧不同时，`contain` 才真的补出边来。"""
+    target = folder / "alpha-portrait.mp4"
+    run(
+        [
+            str(FFMPEG),
+            "-v",
+            "error",
+            "-y",
+            "-nostdin",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=0xFF00FF:s=180x320:r=30:d=2,format=yuv444p,"
+            "drawbox=x=30:y=120:w=80:h=60:color=0x00FF00:t=fill",
+            "-f",
+            "lavfi",
+            "-i",
+            f"sine=frequency={TONE}:sample_rate=48000:duration=2",
+            "-map",
+            "0:v",
+            "-map",
+            "1:a",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv444p",
+            "-crf",
+            "10",
+            "-c:a",
+            "aac",
+            "-shortest",
+            str(target),
+        ]
+    )
+    return target
+
+
 def probe(path: Path, entries: str, stream: str | None = None) -> dict:
     argv = [str(FFPROBE), "-v", "error"]
     if stream:
@@ -212,14 +250,24 @@ def contract_suite() -> None:
     prores = output_args(presets[ALPHA_PRESET], 48_000, 30.0, transparent=True)
     assert prores[prores.index("-profile:v") + 1] == "4", prores
     assert prores[prores.index("-pix_fmt") + 1] == "yuva444p10le", prores
-    assert prores == output_args(presets[ALPHA_PRESET], 48_000, 30.0), "the flag changed a knob it "\
-        "should not touch"
+    # The flag decides whether a matte is requested; it does not silently resteer an encoder that
+    # was already going to write the same pixels.
+    same = output_args(presets[ALPHA_PRESET], 48_000, 30.0)
+    assert prores == same, (prores, same)
 
     # The internal flag for nested sequences must stay internal: the public one skips timeline
     # validation in the child only because the parent already validated it.
     render_src = (ROOT / "src/agentcut/render.py").read_text(encoding="utf-8")
     assert "_transparent=True," in render_src, "nesting lost its own flag"
     assert "alpha_out = transparent or _transparent" in render_src, "the two flags did not merge"
+    # Every surface that prints a plan prints the same one: the job view goes through `plan_for`
+    # with the job's own range and matte instead of rebuilding it from the defaults.
+    api_src = (ROOT / "src/agentcut/http_api.py").read_text(encoding="utf-8")
+    block = api_src[api_src.index("def get_job") : api_src.index("def list_jobs")]
+    assert "plan_for(" in block, "the job view went around plan_for again"
+    assert "transparent=job.transparent" in block, block
+    assert "range_mode=job.range" in block, block
+    assert "compile_render_plan(" not in block, "the job view rebuilt the plan on defaults"
     print(f"   {len(flagged)} presets carry alpha; every other one is refused by name: {exits}")
 
 
@@ -326,6 +374,20 @@ def media_suite(folder: Path) -> dict:
         )
         # plan_for (the HTTP/MCP dry-run path) reaches the same compiler.
         assert plan_for(project, ALPHA_PRESET, transparent=True).summary["transparent"] is True
+        # 换一个画幅交付：补边发生在合成那一层，用的就是 black@0，所以补出来的黑带不会偷偷变不透明。
+        # 这条只说清来源；真正作证的是下面那两个文件读数（同形状不透明导出读到的是 255）。
+        barred = compile_render_plan(
+            project, ALPHA_PRESET, preview_size=(180, 320), transparent=True
+        )
+        assert barred.mode == "layered", barred.mode
+        assert any("pad=" in item and "color=black@0" in item for item in barred.filters), (
+            barred.filters[:4]
+        )
+        # 反向也要断：轨道链那层先铺的黑板过去就是在这里把补边压回不透明的。
+        assert not any("pad=" in item and "color=black," in item for item in barred.filters), [
+            item for item in barred.filters if "pad=" in item
+        ]
+        assert "format=rgba[vout]" in vout(barred), vout(barred)
         print(
             "   the transparent plan paints over a black@0 canvas and ends in rgba; "
             "the same preset without the flag ends in yuva444p10le"
@@ -396,16 +458,22 @@ def media_suite(folder: Path) -> dict:
         outputs[ALPHA_WEB_PRESET] = Path(web["output_path"])
         assert matte["transparent"] is True, matte
         assert control["transparent"] is False, control
+        # What the container says about the stream. ProRes states its alpha plane in the metadata;
+        # WebM/VP9 does not (measured: `pix_fmt` reads yuv420p there even though the matte is in the
+        # file), which is exactly why the byte measurement below, not this probe, is the evidence.
         expected = {
             "matte": ("prores", "yuva444p10le"),
             "control": ("prores", "yuva444p10le"),
-            "web": ("vp9", "yuva420p"),
+            "web": ("vp9", None),
         }
         for name, job in (("matte", matte), ("control", control), ("web", web)):
             got = probe(Path(job["output_path"]), "stream=index,codec_name,pix_fmt", "v:0")[
                 "streams"
             ][0]
-            assert (got["codec_name"], got["pix_fmt"]) == expected[name], (name, got)
+            codec, pix_fmt = expected[name]
+            assert got["codec_name"] == codec, (name, got)
+            if pix_fmt:
+                assert got["pix_fmt"] == pix_fmt, (name, got)
 
         measured = {
             name: {
@@ -419,8 +487,9 @@ def media_suite(folder: Path) -> dict:
         assert measured["matte"]["empty"] <= 2, measured
         assert measured["matte"]["solid"] >= 250, measured
         assert 118 <= measured["matte"]["half"] <= 138, measured
-        # VP9 alpha survives its own reference-frame machinery only because -auto-alt-ref 0 was
-        # added; the lossy coder still gets to spread the edge a little.
+        # VP9 is lossy and its matte rides in a side channel, so the bands are wider here: the
+        # reading still says the alpha survived the whole round trip (the native decoder cannot
+        # even unfold it — see `_plane`).
         assert measured["web"]["empty"] <= 8, measured
         assert measured["web"]["solid"] >= 245, measured
         assert 105 <= measured["web"]["half"] <= 150, measured
@@ -480,9 +549,9 @@ def media_suite(folder: Path) -> dict:
             },
         )
         assert batch.status_code == 200, batch.text
-        flags = [item["job"]["transparent"] for item in batch.json()["jobs"]]
+        flags = [item["transparent"] for item in batch.json()["jobs"]]
         assert flags == [True, False], flags
-        plans = [item["plan"]["transparent"] for item in batch.json()["jobs"]]
+        plans = [item["transparent"] for item in batch.json()["plans"]]
         assert plans == [True, False], plans
         refused_batch = client.post(
             path + "/renders/batch",
@@ -506,6 +575,88 @@ def media_suite(folder: Path) -> dict:
         # All-or-nothing: the batch that refused its second item queued neither file.
         queued = client.get(path + "/jobs?limit=50").json()["jobs"]
         assert len(queued) == len(jobs_before) + 3, [item["job"]["id"] for item in queued]
+
+        # ---- 换一个画幅：补出来的边在透明母版里也得是空的（量的文件，不是量的滤镜串）
+        pclip = portrait_source(folder)
+        probe2 = client.post("/v1/media/import", json={"path": str(pclip)}).json()
+        portrait = client.post(
+            "/v1/projects",
+            json={
+                "request_id": "portrait",
+                "name": "竖着要透明",
+                "settings": {
+                    "width": 180,
+                    "height": 320,
+                    "frame_rate": {"numerator": 30, "denominator": 1},
+                },
+            },
+        ).json()["project"]
+        ppath = f"/v1/projects/{portrait['id']}"
+        pseed = client.post(
+            ppath + "/edits",
+            json={
+                "request_id": "portrait-seed",
+                "expected_revision": 0,
+                "commands": [
+                    {"op": "track.add", "track": {"id": "v1", "kind": "video", "name": "v1"}},
+                    {
+                        "op": "asset.import",
+                        "asset_id": "p",
+                        "label": "p",
+                        "probe_id": probe2["id"],
+                        "verified": probe2["verified"],
+                    },
+                    {
+                        "op": "clip.add",
+                        "clip": {
+                            "id": "cp",
+                            "asset_id": "p",
+                            "track_id": "v1",
+                            "position_ticks": 15 * FRAME,
+                            "duration_ticks": 30 * FRAME,
+                        },
+                    },
+                ],
+            },
+        )
+        assert pseed.status_code == 200, pseed.text
+        presion = pseed.json()["project"]["revision"]
+        with_bars = render(
+            client,
+            ppath,
+            presion,
+            {
+                "request_id": "ship-bars",
+                "expected_revision": presion,
+                "preset_id": ALPHA_WEB_PRESET,
+                "filename": "透明竖屏.webm",
+                "fit": "contain",
+                "transparent": True,
+            },
+        )
+        no_bars = render(
+            client,
+            ppath,
+            presion,
+            {
+                "request_id": "ship-bars-flat",
+                "expected_revision": presion,
+                "preset_id": ALPHA_WEB_PRESET,
+                "filename": "同一竖屏不透明.webm",
+                "fit": "contain",
+            },
+        )
+        bar_alpha = alpha_byte(Path(with_bars["output_path"]), TIMES["solid"], 0.02, 0.5)
+        pic_alpha = alpha_byte(Path(with_bars["output_path"]), TIMES["solid"], 0.5, 0.5)
+        flat_bar = alpha_byte(Path(no_bars["output_path"]), TIMES["solid"], 0.02, 0.5)
+        assert bar_alpha <= 8, (bar_alpha, pic_alpha, flat_bar)
+        assert pic_alpha >= 245, (bar_alpha, pic_alpha, flat_bar)
+        # 不透明那一条边上读到的就是 255 的黑板——这一行说明上面那个 0 是补边的功劳，不是没补。
+        assert flat_bar >= 250, (bar_alpha, pic_alpha, flat_bar)
+        print(
+            f"   竖屏 9:16 进 16:9 的透明交付：pillarbox 边 {bar_alpha}、画面中间 {pic_alpha}，"
+            f"同一条不透明导出的边是 {flat_bar}"
+        )
 
         # ---- the MCP adapter asks the same question with the same words
         server = create_mcp("http://127.0.0.1:1", token)
@@ -546,11 +697,24 @@ def media_suite(folder: Path) -> dict:
         assert "range=marks" in plan_call[1], plan_call
         start_body = captured[-1][2]
         assert start_body["transparent"] is True, start_body
-        # The query the adapter builds is the query the API answers: replayed for real here.
-        query = plan_call[1].split("?", 1)[1]
+        # The query the adapter builds is the query the API answers: replayed for real here. A
+        # `range=marks` string is checked above (this timeline has no marks, and the engine is
+        # right to refuse one), so the replay asks with the range the project actually has.
+        asyncio.run(
+            tools["render_plan"].fn(
+                project_id=created["id"],
+                preset_id=ALPHA_PRESET,
+                revision=revision,
+                transparent=True,
+            )
+        )
+        replayable = [item for item in captured if "render-plan" in item[1]][-1]
+        assert "transparent=true" in replayable[1], replayable
+        assert "range" not in replayable[1], replayable
+        query = replayable[1].split("?", 1)[1]
         answered = client.get(f"/v1/projects/{created['id']}/render-plan?{query}").json()
         assert answered["plan"]["transparent"] is True, answered["plan"]
-        print(f"   MCP dry-run builds {plan_call[1]} and the API answers it with a matte")
+        print(f"   MCP dry-run builds {plan_call[1]} and the API answers {replayable[1]}")
         return outputs
 
 

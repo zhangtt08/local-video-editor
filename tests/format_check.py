@@ -198,6 +198,7 @@ def contract_suite() -> None:
         assert preset["container"] in OUTPUT_CONTAINERS, preset
         assert preset["codec"] in OUTPUT_CODECS, preset
         assert preset["audio_codec"] in OUTPUT_AUDIO_CODECS, preset
+        assert preset["alpha"] == str(preset["pixel_format"] or "").startswith("yuva"), preset
         assert set(preset) == {
             "id",
             "label",
@@ -211,6 +212,7 @@ def contract_suite() -> None:
             "profile",
             "quality",
             "scale",
+            "alpha",
         }, sorted(preset)
     argv = {preset_id: output_args(preset, 48000, 25.0) for preset_id, preset in presets.items()}
     for preset_id, args in argv.items():

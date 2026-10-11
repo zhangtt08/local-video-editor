@@ -450,6 +450,15 @@ export function presetIsAudio(preset: Preset | null): boolean {
   return preset !== null && preset.codec === null;
 }
 
+/**
+ * 「背景透明」这一勾此刻到底生不生效：预设自己说装不装得下透明度（引擎那句拒绝读的就是同一个
+ * 字段），音频交付根本没有画面。界面那个勾、待发清单、竖屏副本要不要让路、以及真正发出去的那
+ * 个值，全问这一处——所以不会出现「看着勾上了，发出去的却是另一套」。
+ */
+export function matteAllowed(preset: Preset | null, audioOnly: boolean, requested: boolean): boolean {
+  return requested && !audioOnly && Boolean(preset?.alpha);
+}
+
 /** 引擎给的是 FFmpeg 的编码器名，这一层只负责念给人听；不认识的名字原样显示，不猜。 */
 export const CODEC_NAMES: Record<string, string> = {
   libx264: "H.264",

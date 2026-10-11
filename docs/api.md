@@ -214,7 +214,7 @@ preview-manifest 给出 mixed_track_ids 与每片段 transition.picture/sound/bl
 | GET /v1/assets/{asset_id}/stream?project_id= | — | 工程内素材的源文件流，需 `sig` |
 | GET /v1/projects/{id}/asset-urls | project_asset_urls | 一次性给出全部素材的签名播放地址 |
 | GET /v1/render-presets | render_presets_read | 受控输出预设（调用方只能选，不能传编码器参数） |
-| GET /v1/projects/{id}/render-plan?preset_id=&revision= | render_plan | 只读编译 RenderPlan 与 FFmpeg 参数预览 |
+| GET /v1/projects/{id}/render-plan?preset_id=&revision=&fit=&range=&transparent= | render_plan | 只读编译 RenderPlan 与 FFmpeg 参数预览（1.136：`transparent=true` 问的就是真导出会用的那组词，回包 `plan.transparent` 原样答） |
 | POST /v1/projects/{id}/renders | render_start | 按 `expected_revision` 排队渲染（revision 不符返回 409）；同一 `request_id` 重放返回原 job，换 payload 返回 409 IDEMPOTENCY_CONFLICT |
 | GET /v1/jobs/{job_id} | job_status | 状态 `queued/running/succeeded/failed/cancelled` + 进度 |
 | GET /v1/projects/{id}/jobs | job_list | 该工程最近的任务 |
@@ -2580,3 +2580,45 @@ def），`curve` 逐点 `{offset, id, easing}`，强度 0 的那一格 `id` 是 
 预览那一端一张都不进 `preview_manifest`，几张都是；界面上每张立方各写一张卡片（`N³ 网格 · 仅导出生效`，
 重采样过的还说 `由 M³ 重采样`），卡片上没有强度可标——`GradeLut3D` 契约里就没有 `mix` 字段，
 `features.lut3d_preview` 为假就是这件事的原因。
+
+## 1.136 透明通道母版：`transparent` 是请求里的一词，不是滤镜串里的一句承诺
+
+引擎早就会在内部把画面按 alpha 合成（嵌套子合成必须这样），但人想要一张能叠进 AE / DaVinci / 网页
+的透明母版时，没有任何公开的入口。现在有了：**预设自己声明装不装得下透明度，请求要，编译器把整条
+画面链按 alpha 走完，落盘的 alpha 平面是被量过的**。
+
+- `contracts._preset(..., alpha: bool = False)` 是「装得下」唯一的一处说法。带 `alpha` 的两条：
+  `prores-4444-alpha`（mov / prores_ks / profile 4 / `yuva444p10le` / pcm_s24le）与
+  `vp9-1080p-web-alpha`（webm / libvpx-vp9 / `yuva420p` / opus 128k / 1920×1080）。
+  `capabilities.alpha_presets` 就是这张表筛出来的那份 id 列表，界面那个勾与引擎那句拒绝读的是同一处。
+- `RenderRequest.transparent` / `RenderBatchItem.transparent`（默认 `false`）→ `RenderJob.transparent`
+  → worker 到点重编计划时按它渲染。`GET /v1/projects/{id}/render-plan?transparent=true` 回包
+  `plan.transparent` 原样答，MCP 的 `render_plan` 也把 `transparent` 与 `range` 一起带上（此前它连
+  `range` 都没问，于是「干跑是绿的、真导出不是那个东西」有一条真实的路）。
+- 拒得干脆：`output_args` 见到 `transparent` 而预设没有 alpha 平面，直接 422
+  `TRANSPARENT_NEEDS_ALPHA`，句子把那几条能装的预设念出来（音频预设也算——它根本没有画面轨）。
+  这不是「提示一下」：H.264 的 `yuv420p` 里没有地方放 matting，答应了只会悄悄导出一块黑底。
+- 指纹与回执：`transparent` 只在为真时进入去重指纹（与 1.39 的 `range` 同一个办法），所以旧
+  `request_id` 继续原样重放，而把同一个 id 从不透明改成透明会得到 409。
+
+量过的数（`tests/alphamaster_check.py`，真走 job worker 导出再用 FFmpeg 把 alpha 平面读成灰度字节）：
+同一条时间线（0.5–1.5s 一段满不透明、1.6–2.0s 一段 `effects.opacity=0.5`、开头 0.2s 处是空的）——
+ProRes 4444 透明母版在空处读到 **0**、片段底下 **255**、半透明那段 **128**；WebM/VP9 那一条是
+**0 / 255 / 127**；**同一预设不带这个勾的对照导出三处都是 255**（黑底板是不透明的），这组对照才是
+前面那些数字有意义的原因。亮度也一起量了：片段底下 149、空板处 0，于是「alpha 说这里有画」与
+「这里真有画」是两次独立的读数。
+
+换交付比例那一半也量过：把一段 180×320 的竖屏片源按 `contain` 进 1920×1080 的透明交付，**pillarbox 的
+边读到 alpha 0、画面中间 255**，同一条不透明导出的边读到 255。合成层的补边用的就是 `black@0`，所以
+「空白处留空」不会因为改了交付比例而变成一条带底的黑板——这一条是按文件量的，不是按滤镜串推的。
+
+WebM 这一条还量出两件必须写下来的事：**ffprobe 在流那一层报的是 `yuv420p`**（透明度挂在每个 block
+后面的附带通道里，容器元数据不反映它），而 FFmpeg 的**原生 vp9 解不出 alpha 平面**
+（`alphaextract` 报 `Requested planes not available`），要 `-c:v libvpx-vp9` 才拿得到。复检因此是按
+字节量的，不是按 `pix_fmt` 字符串量的——`-auto-alt-ref 0` 那类「据说必须」的开关也不写进参数表，
+除非有一行断言能证明它真的改变了落盘的文件。
+
+界面那侧只有一条路：`engine.matteAllowed(preset, audioOnly, requested)` 决定那个勾此刻算不算生效，
+勾、待发清单、干跑按钮、开始导出按钮、以及竖屏副本要不要让路，问的都是这一个函数（竖屏那条是
+H.264，装不下透明度，于是整条被让掉并在悬停里说清为什么）。第 47 个壳层检查
+`tests/desktop_alphamaster_check.ts` 跑真的 `Engine`（假 `fetch` 收请求）断这些行为。

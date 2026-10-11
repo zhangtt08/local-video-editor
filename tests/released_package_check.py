@@ -49,8 +49,18 @@ RENDERER_SENTENCES = (
     "色彩管理套叠",
     "两端都选了线性：这一对什么都不转",
     " 个盖过章的转换节点，不成一对",  # a template literal ships as its static parts
+    # 1.136：透明母版在人眼前就是这三句话——那个勾、它灰掉时的出路、以及引擎拒绝后的中文说明。
+    "背景透明",
+    "空白处留透明",
+    "装不下透明度",
+    "ProRes 4444 透明母版",
 )
-RENDERER_LITERALS = ("clip.color_manage", '"color_manage"')
+RENDERER_LITERALS = (
+    "clip.color_manage",
+    '"color_manage"',
+    # The code the desktop must translate, still present as the key it is looked up by.
+    "TRANSPARENT_NEEDS_ALPHA",
+)
 
 
 def digest(path: Path) -> str:

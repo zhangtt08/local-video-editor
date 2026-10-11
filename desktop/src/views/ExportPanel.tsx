@@ -16,7 +16,7 @@ import {
   timelineEnd,
   useApp,
 } from "../store";
-import { codecText, presetIsAudio, FIT_MODES, type RenderFit, type RenderRange } from "../engine";
+import { codecText, matteAllowed, presetIsAudio, FIT_MODES, type RenderFit, type RenderRange } from "../engine";
 
 const POLL_MS = 1500;
 
@@ -115,7 +115,7 @@ export function ExportPanel(): JSX.Element {
   // 引擎那边会拒。所以这里算的是「这一次导出真正带的值」，界面念的、发出去的、存进方案的
   // 都是它，不再是两处各写一份。
   const alphaIds = presets.filter((item) => item.alpha).map((item) => item.id);
-  const matte = !audioOnly && transparent && Boolean(preset?.alpha);
+  const matte = matteAllowed(preset, audioOnly, transparent);
   const matteHint = audioOnly
     ? "这条交付只有声音，没有画面，也就没有背景一说"
     : !preset?.alpha
