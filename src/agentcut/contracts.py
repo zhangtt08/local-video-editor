@@ -11,7 +11,7 @@ SCHEMA_VERSION = (
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.126.0"
+APP_VERSION = "1.127.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -1352,6 +1352,40 @@ class ClipTrimLinked(ClipTrim):
     op: Literal["clip.trim_linked"]
 
 
+class ClipLinkSplitTrim(Contract):
+    """Move one member's edge of an audio/video link on its own: a J or L cut.
+
+    `clip.trim_linked` moves both sides of the pair together, which is what trimming linked
+    sound and picture normally means. Here only the named member's `edge` moves, by
+    `delta_ticks` to the right, and the partner keeps both of its edges: that is the shape
+    of a J/L cut, the sound running past the picture (or the picture past the sound).
+
+    The link record survives on purpose. The pair then reads as deliberately out of sync
+    in `link_status`, with the offset counted in ticks, and `clips.link_reconcile` is the
+    one step back. An edge that would land between two of that track's own quanta is
+    refused by name instead of being quietly rounded.
+    """
+
+    op: Literal["clip.link_split_trim"]
+    clip_id: Identifier
+    edge: Literal["head", "tail"]
+    # Signed movement of that one edge along the timeline, in ticks.
+    delta_ticks: Annotated[int, Field(gt=-MAX_TICKS, lt=MAX_TICKS)]
+
+
+class ClipsLinkReconcile(Contract):
+    """Pull every member of a link back onto the anchor's window.
+
+    The anchor is the same clip `link_status` reports, and each member keeps the source
+    phase it was given when the link was made (`link_source_offset_ticks`), so reconciling
+    after a J/L cut restores the sound under the picture without inventing a sync point.
+    A member whose source cannot reach that window is refused by name, not clipped to fit.
+    """
+
+    op: Literal["clips.link_reconcile"]
+    link_id: Identifier
+
+
 class ClipsGroup(Contract):
     op: Literal["clips.group"]
     clip_ids: Annotated[list[Identifier], Field(min_length=1, max_length=20_000)]
@@ -1683,6 +1717,8 @@ Command = Annotated[
     | ClipsLink
     | ClipTrim
     | ClipTrimLinked
+    | ClipLinkSplitTrim
+    | ClipsLinkReconcile
     | ClipRoll
     | ClipSplit
     | ClipSlip
@@ -2484,6 +2520,8 @@ def capabilities(
             "clips.link",
             "clip.trim",
             "clip.trim_linked",
+            "clip.link_split_trim",
+            "clips.link_reconcile",
             "clip.roll",
             "clip.split",
             "clip.slip",

@@ -8,6 +8,7 @@ import { GradeFields } from "./GradeFields";
 import { SpeedFields } from "./SpeedFields";
 import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeAdoptHint, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, INTERPOLATIONS, readTrackingDefaults, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
 import { frameTicks, TIMEBASE, align, humanDuration, seconds, timecode, ticks } from "../time";
+import { linkOffsetSentence } from "../linkOffset";
 import {
   adoptFade,
   clearBatch,
@@ -51,6 +52,7 @@ import {
   removeSelection,
   groupSelection,
   linkSelection,
+  reconcileLink,
   prefs,
   setClipMask,
   setMaskEditing,
@@ -238,8 +240,8 @@ function AssociationFields() {
   return <section className="insp-section"><div className="row-title"><span className="panel-label">组合与链接</span><button className={`btn tiny subtle${edit.linkedSelection ? " active" : ""}`} aria-pressed={edit.linkedSelection} onClick={() => prefs.toggleLinkedSelection()}>联动{edit.linkedSelection ? "开" : "关"}</button></div>
     <div className="insp-actions"><button className="btn tiny" disabled={clips.length < 2} onClick={() => groupSelection()}>组合</button><button className="btn tiny" disabled={!clips.some((c) => c.group_id)} onClick={() => groupSelection(true)}>取消组合</button></div>
     <div className="insp-actions"><button className="btn tiny" disabled={!canLink} title="先对齐视频与音频的开始、时长和速度；当前源入点差值作为同步基准。" onClick={() => linkSelection()}>链接音画</button><button className="btn tiny" disabled={!linkIds.length} onClick={() => linkSelection(true)}>解除链接</button></div>
-    <p className="hint">组合保存在工程里。链接联动移动、分割与修剪；Alt 点选可单选，关闭联动可独立编辑。</p>
-    {linkIds.map((id) => { const link = current?.[id!]; return <div key={id} className={`link-status${link && !link.synchronized ? " out-of-sync" : ""}`} role="status">{!link ? current ? "同步状态不可用，请重新打开工程。" : "正在检查同步…" : link.synchronized ? `音画同步 · ${link.clip_ids.length} 段` : "音画已失步：位置、源入点、时长或速度不同。撤销独立改动，或解除链接后重新对齐。"}</div>; })}
+    <p className="hint">组合保存在工程里。链接联动移动、分割与修剪；Alt 点选可单选，关闭联动可独立编辑。只修链接的一边就是 J/L cut：Alt 单选那一路再拖它自己的边（Agent 用一条 clip.link_split_trim），下面的同步状态会说清差了多久，「拉回同步」一次拉回。</p>
+    {linkIds.map((id) => { const link = current?.[id!]; return <div key={id} className={`link-status${link && !link.synchronized ? " out-of-sync" : ""}`} role="status">{!link ? current ? "同步状态不可用，请重新打开工程。" : "正在检查同步…" : link.synchronized ? `音画同步 · ${link.clip_ids.length} 段` : <>{linkOffsetSentence(link, (clipId) => { const member = project.clips[clipId]; const asset = member ? project.assets[member.asset_id] : undefined; return `${asset?.kind === "audio" ? "声音" : "画面"} ${asset?.label || clipId}`; }, (value) => timecode(value, project.settings.frame_rate))}<button className="btn tiny" title="把这一对的其他成员拉回基准片段的窗口，各自保留原来的源入点差值。" onClick={() => reconcileLink(id!)}>拉回同步</button></>}</div>; })}
   </section>;
 }
 
@@ -838,6 +840,8 @@ const OPS: Record<string, string> = {
   "clips.group": "持久组合",
   "clips.link": "音画链接",
   "clip.trim_linked": "联动修剪",
+  "clip.link_split_trim": "分边修剪（J/L cut）",
+  "clips.link_reconcile": "拉回音画同步",
   "transition.set": "镜头转场",
   "transition.remove": "移除转场",
   "clip.effects": "片段属性",

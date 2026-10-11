@@ -19,6 +19,8 @@ from .contracts import (
     Clip,
     ClipColor,
     ClipEffects,
+    ClipLinkSplitTrim,
+    ClipsLinkReconcile,
     Command,
     EditorError,
     FadeEnvelope,
@@ -237,25 +239,14 @@ def _validate_scope(project: Project) -> None:
                 for other in project.clips.values()
             ):
                 raise EditorError("INVALID_SPEED", "a speed clip cannot feed a transition")
-            source_end = clip.source_in_ticks + consumed_source_ticks(
-                clip,
-                project.settings.frame_ticks
-                if track.kind == "video"
-                else project.settings.timebase // project.settings.sample_rate,
-            )
-        else:
-            source_end = clip.source_in_ticks + base_source_ticks(clip)
+        source_end = clip_source_end(project, clip)
         if end > MAX_TICKS or source_end > MAX_TICKS:
             raise EditorError("TIME_OVERFLOW", "time exceeds exact JSON integer range")
         if asset.duration_ticks is not None and source_end > asset.duration_ticks:
             raise EditorError(
                 "SOURCE_OUT_OF_BOUNDS", "clip exceeds registered source duration", clip_id=clip.id
             )
-        quantum = (
-            project.settings.frame_ticks
-            if track.kind == "video"
-            else project.settings.timebase // project.settings.sample_rate
-        )
+        quantum = track_quantum(project.settings, track.kind)
         if clip.position_ticks % quantum or clip.duration_ticks % quantum:
             raise EditorError(
                 "TIME_NOT_ALIGNED",
@@ -696,6 +687,8 @@ def apply_commands(
                         explicit_transitions.add(clip.id)
             elif command.op in {"clips.group", "clips.link"}:
                 _associate(candidate, command)
+            elif command.op == "clips.link_reconcile":
+                _link_reconcile(candidate, command)
             elif command.op in {"clips.move", "clips.remove", "clips.split"}:
                 clips = _selected_clips(candidate, command.clip_ids)
                 if command.op == "clips.split":
@@ -1072,6 +1065,8 @@ def apply_commands(
                     )
                 elif command.op == "clip.slide":
                     _slide_clip(candidate, clip, command.delta_ticks)
+                elif command.op == "clip.link_split_trim":
+                    _link_split_trim(candidate, clip, command)
                 elif command.op in {"clip.trim", "clip.trim_linked"}:
                     members = [clip]
                     if command.op == "clip.trim_linked" and clip.link_id:
@@ -1612,6 +1607,221 @@ def _nest(project: Project, command) -> None:
     )
 
 
+def _clip_track(project: Project, clip: Clip):
+    """The track a clip plays on, named when it is not there.
+
+    The validator already answers `MISSING_REFERENCE` for a clip without a track, but a
+    split trim or a reconcile needs the track *during* the batch, so it has to give the same
+    named answer instead of letting a bare lookup raise StopIteration out of the reducer.
+    """
+
+    track = next((item for item in project.tracks if item.id == clip.track_id), None)
+    if track is None:
+        raise EditorError(
+            "MISSING_REFERENCE", "clip requires an existing asset and track", clip_id=clip.id
+        )
+    return track
+
+
+def track_quantum(settings, kind: str) -> int:
+    """The grid this track's clips have to land on: video frames, audio samples.
+
+    The validator, a split trim and a reconcile all have to agree on which positions the
+    engine accepts for the same clip, so this is the only place that answers.
+    """
+
+    if kind == "video":
+        return settings.frame_ticks
+    return settings.timebase // settings.sample_rate
+
+
+def clip_source_end(project: Project, clip: Clip) -> int:
+    """Where this clip's window ends inside its source asset.
+
+    A speed curve consumes source by the curve rather than by the clip's own clock, so
+    the track's quantum is what turns timeline ticks into counted source ticks here.
+    """
+
+    if not clip.speed_curve:
+        return clip.source_in_ticks + base_source_ticks(clip)
+    track = _clip_track(project, clip)
+    return clip.source_in_ticks + consumed_source_ticks(
+        clip, track_quantum(project.settings, track.kind)
+    )
+
+
+def _link_anchor(project: Project, members: list[Clip]) -> Clip:
+    """The clip a link is measured against: the picture, if there is one.
+
+    `link_status` and `clips.link_reconcile` need the same answer, and a desktop sentence
+    about which side ran ahead is only true if both pick the same member.
+    """
+
+    return min(members, key=lambda c: (project.assets[c.asset_id].kind != "video", c.id))
+
+
+def _link_split_trim(project: Project, clip: Clip, command: ClipLinkSplitTrim) -> None:
+    """Move this member's one edge, leaving the linked partner exactly where it is.
+
+    The absolute window is worked out here and written through `_trim_clip`, so a split
+    trim keeps the animation-clock bookkeeping and the speed-curve slicing every other trim
+    does, instead of growing a second copy of that arithmetic.
+    """
+
+    if not command.delta_ticks:
+        raise EditorError(
+            "LINK_SPLIT_NO_MOVE",
+            "this edge does not move: a split trim of zero would only spend a revision",
+            422,
+            clip_id=clip.id,
+        )
+    if not clip.link_id:
+        raise EditorError(
+            "LINK_SPLIT_NOT_LINKED",
+            "a split trim parts the two sides of a link; this clip is not linked to "
+            "anything, so trim it directly (`clip.trim`)",
+            422,
+            clip_id=clip.id,
+        )
+    track = _clip_track(project, clip)
+    quantum = track_quantum(project.settings, track.kind)
+    if command.delta_ticks % quantum:
+        raise EditorError(
+            "LINK_SPLIT_NOT_ALIGNED",
+            f"this {track.kind} track moves in {quantum}-tick steps, so the edge has to "
+            "be asked for a multiple of that",
+            422,
+            clip_id=clip.id,
+            quantum_ticks=quantum,
+            delta_ticks=command.delta_ticks,
+        )
+    delta = command.delta_ticks
+    if command.edge == "head":
+        position = clip.position_ticks + delta
+        source = clip.source_in_ticks + delta
+        duration = clip.duration_ticks - delta
+    else:
+        position = clip.position_ticks
+        source = clip.source_in_ticks
+        duration = clip.duration_ticks + delta
+    if duration <= 0:
+        raise EditorError(
+            "LINK_SPLIT_EMPTY",
+            f"this edge would leave {duration} ticks on a clip that has to keep at least "
+            "one: the sound or the picture would disappear",
+            422,
+            clip_id=clip.id,
+            edge=command.edge,
+            duration_ticks=clip.duration_ticks,
+            delta_ticks=delta,
+        )
+    if position < 0 or source < 0:
+        raise EditorError(
+            "LINK_SPLIT_NO_ROOM",
+            "this edge cannot reach that far left: the clip starts at "
+            f"{clip.position_ticks} and its source at {clip.source_in_ticks}, so the most "
+            f"it can give back is {min(clip.position_ticks, clip.source_in_ticks)} ticks",
+            422,
+            clip_id=clip.id,
+            edge=command.edge,
+            wanted_ticks=abs(delta),
+            available_ticks=max(0, min(clip.position_ticks, clip.source_in_ticks)),
+        )
+    moved = clip.model_copy(
+        update={
+            "position_ticks": position,
+            "source_in_ticks": source,
+            "duration_ticks": duration,
+        }
+    )
+    asset = project.assets[clip.asset_id]
+    if asset.duration_ticks is not None:
+        end = clip_source_end(project, moved)
+        if end > asset.duration_ticks:
+            raise EditorError(
+                "LINK_SPLIT_NO_ROOM",
+                f"the source behind this clip has "
+                f"{max(0, asset.duration_ticks - clip_source_end(project, clip))} ticks "
+                f"left after {command.edge}, and this trim asks for {delta}",
+                422,
+                clip_id=clip.id,
+                edge=command.edge,
+                wanted_ticks=abs(delta),
+                available_ticks=max(0, asset.duration_ticks - clip_source_end(project, clip)),
+            )
+    _trim_clip(project, clip, position, source, duration)
+
+
+def _link_reconcile(project: Project, command: ClipsLinkReconcile) -> None:
+    """Bring every member back onto the anchor's window, keeping its own source phase.
+
+    A J/L cut is a decision, not damage: this is the step that undoes only the part the
+    editor did not mean to keep. The anchor does not move, so reconciling after a split
+    trim returns the trimmed member to a grid the pair already sat on once.
+    """
+
+    members = [clip for clip in project.clips.values() if clip.link_id == command.link_id]
+    if not members:
+        raise EditorError("NOT_FOUND", "no clip carries this link", 404, link_id=command.link_id)
+    if link_status(project)[command.link_id]["synchronized"]:
+        raise EditorError(
+            "LINK_IN_SYNC",
+            "this link is already synchronized: nothing would move, so nothing is written",
+            422,
+            link_id=command.link_id,
+        )
+    anchor = _link_anchor(project, members)
+    baseline = anchor.source_in_ticks - anchor.link_source_offset_ticks
+    for member in members:
+        if member.id == anchor.id:
+            continue
+        _unlocked(project, member.track_id)
+        track = _clip_track(project, member)
+        quantum = track_quantum(project.settings, track.kind)
+        if anchor.position_ticks % quantum or anchor.duration_ticks % quantum:
+            raise EditorError(
+                "LINK_RECONCILE_NOT_ALIGNED",
+                "the anchor sits at "
+                f"{anchor.position_ticks} for {anchor.duration_ticks} ticks, which is not "
+                f"on this {track.kind} track's {quantum}-tick grid: trim the anchor onto "
+                "that grid first",
+                422,
+                clip_id=member.id,
+                quantum_ticks=quantum,
+            )
+        source = baseline + member.link_source_offset_ticks
+        asset = project.assets[member.asset_id]
+        moved = member.model_copy(
+            update={
+                "position_ticks": anchor.position_ticks,
+                "source_in_ticks": source,
+                "duration_ticks": anchor.duration_ticks,
+            }
+        )
+        if source < 0:
+            raise EditorError(
+                "LINK_RECONCILE_NO_ROOM",
+                f"this member would have to start {-source} ticks before its source begins"
+                ": unlink it, or trim the anchor to what both can reach",
+                422,
+                clip_id=member.id,
+                wanted_ticks=abs(source),
+                available_ticks=0,
+            )
+        end = clip_source_end(project, moved)
+        if asset.duration_ticks is not None and end > asset.duration_ticks:
+            raise EditorError(
+                "LINK_RECONCILE_NO_ROOM",
+                f"this member needs {end - asset.duration_ticks} source ticks it does not "
+                "have: trim the anchor to what both can reach instead",
+                422,
+                clip_id=member.id,
+                wanted_ticks=end,
+                available_ticks=asset.duration_ticks,
+            )
+        _trim_clip(project, member, anchor.position_ticks, source, anchor.duration_ticks)
+
+
 def link_status(project: Project) -> dict:
     """Report source phase, timeline placement and length independently of selection."""
     links: dict[str, list[Clip]] = {}
@@ -1620,7 +1830,7 @@ def link_status(project: Project) -> dict:
             links.setdefault(clip.link_id, []).append(clip)
     result = {}
     for link_id, members in links.items():
-        anchor = min(members, key=lambda c: (project.assets[c.asset_id].kind != "video", c.id))
+        anchor = _link_anchor(project, members)
         baseline = anchor.source_in_ticks - anchor.link_source_offset_ticks
         result[link_id] = {
             "clip_ids": [c.id for c in members],

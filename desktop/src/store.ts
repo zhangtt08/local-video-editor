@@ -1249,6 +1249,12 @@ export function linkSelection(clear = false) {
   submit([{ op: "clips.link", clip_ids: state.selectedClips, link_id: clear ? null : newId("l-") }], clear ? "解除音画链接" : "链接音画");
 }
 
+// One step back onto the anchor's window: the engine already knows the offsets, so the desktop does
+// not compute a target position here.
+export function reconcileLink(linkId: string) {
+  submit([{ op: "clips.link_reconcile", link_id: linkId }], "拉回音画同步");
+}
+
 export function selectAllClips() { selectClips(Object.keys(state.project?.clips ?? {})); }
 
 export function selectAsset(assetId: string | null) {
