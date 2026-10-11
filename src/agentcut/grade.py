@@ -269,9 +269,22 @@ def node_function(node, index: int):
     return average
 
 
+def _leaf_operations(node):
+    """这台节点真正做的那些操作——一层或多层混频台都只数叶子。
+
+    采样网格要知道曲线上每一个折点，1.124 起折点可能藏在第二层、第三层混频台的某一支里，所以这里
+    跟着树走；不然嵌套进去的那条曲线就只能被弦线近似，两端读的就不再是同一张表。
+    """
+    if node.kind != "parallel":
+        yield node
+        return
+    for branch in node.branches:
+        yield from _leaf_operations(branch)
+
+
 def _curve_knots(node, index: int):
     """Input positions where a node (or one of its branches) actually bends this channel."""
-    operations = node.branches if node.kind == "parallel" else [node]
+    operations = list(_leaf_operations(node))
     for operation in operations:
         if operation.kind == "curve":
             if operation.channel != "rgb" and CURVE_CHANNELS[operation.channel] != index:

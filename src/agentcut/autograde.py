@@ -240,13 +240,22 @@ def _levels_nodes(measurement: dict, mode: str) -> list[GradeLevels]:
     return nodes
 
 
+def _holds_levels(node) -> bool:
+    """这一台节点（或它下面任意一层混频台的某一支）里已经有色阶了吗。
+
+    1.124 起支路自己也能是一台混频台，所以这一句必须跟着树走：自动调色要不要顶掉已有色阶，问的是
+    「这条链子上有没有人已经在拉黑白场」，跟它藏了几层没关系。
+    """
+    if node.kind == "levels":
+        return True
+    return node.kind == "parallel" and any(_holds_levels(branch) for branch in node.branches)
+
+
 def _held_levels(nodes: list) -> list[int]:
     """Positions of the levels nodes already in this chain, including inside parallel branches."""
     held = []
     for index, node in enumerate(nodes):
-        if node.kind == "levels":
-            held.append(index)
-        elif node.kind == "parallel" and any(branch.kind == "levels" for branch in node.branches):
+        if _holds_levels(node):
             held.append(index)
     return held
 

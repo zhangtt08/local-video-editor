@@ -6,7 +6,7 @@
  * It lives apart from the component so the ordering rules can be asserted directly.
  */
 
-import { blendLabel, type BlendMode, type GradeNode, type GradeOperation, type GradeParallel } from "./engine";
+import { blendLabel, type BlendMode, type GradeBranch, type GradeNode, type GradeOperation, type GradeParallel } from "./engine";
 
 export const NODE_NAMES: Record<GradeNode["kind"], string> = {
   curve: "色调曲线",
@@ -24,7 +24,90 @@ export type GraphLane = {
   label: string;
   detail: string;
   enabled: boolean;
+  /** 1.124：一支自己是一台混频台时，它下面那些支也各有自己的名字与状态。 */
+  lanes?: GraphLane[];
 };
+
+/**
+ * 1.124：一支可以是一台混频台，于是「正在编辑哪一台」不再是一个下标，而是一条支路路径。
+ * 路径的走法只在这里：界面拿它进出，写入拿它定位，别处不许再自己走一遍树。
+ */
+export type GradePath = number[];
+
+export function mixerAt(node: GradeNode | null | undefined, path: GradePath): GradeParallel | null {
+  let current = node && node.kind === "parallel" ? (node as GradeParallel) : null;
+  for (const index of path) {
+    if (!current) return null;
+    const branch = current.branches[index];
+    current = branch && branch.kind === "parallel" ? (branch as GradeParallel) : null;
+  }
+  return current;
+}
+
+/** 沿路径下去，把那一台混频台换成 `update` 的结果；路径走不通就原样交回，不猜用户想改谁。
+ *  支路的返回类型仍是 `GradeBranch`，所以改写一棵树不会在半路把类型放宽成任意节点。 */
+function walkBranch(
+  branch: GradeBranch,
+  path: GradePath,
+  update: (mixer: GradeParallel) => GradeParallel,
+): GradeBranch {
+  if (branch.kind !== "parallel") return branch;
+  if (!path.length) return update(branch);
+  const [head, ...rest] = path;
+  if (branch.branches[head] === undefined) return branch;
+  return {
+    ...branch,
+    branches: branch.branches.map((entry, index) =>
+      index === head ? walkBranch(entry, rest, update) : entry,
+    ),
+  };
+}
+
+export function mapMixer(
+  node: GradeNode,
+  path: GradePath,
+  update: (mixer: GradeParallel) => GradeParallel,
+): GradeNode {
+  if (node.kind !== "parallel") return node;
+  return path.length ? walkBranch(node, path, update) : update(node);
+}
+
+/** 一条支路路径走不通时能走多远算多远：换了一个节点、删了一支之后，路径自己缩短，
+ *  而不是让检查器变成一片空白——人总得看得见还剩哪几层。 */
+export function resolveMixerPath(node: GradeNode | null | undefined, wanted: GradePath): GradePath {
+  const walked: GradePath = [];
+  let current = node && node.kind === "parallel" ? (node as GradeParallel) : null;
+  for (const index of wanted) {
+    const branch = current?.branches[index];
+    if (!current || !branch || branch.kind !== "parallel") break;
+    current = branch as GradeParallel;
+    walked.push(index);
+  }
+  return walked;
+}
+
+/**
+ * 检查器这一格该摆**谁**的控件。挑进某一支之后（路径非空），尽头那台混频台才是被编辑的对象，
+ * 它自己的支、权重与混合方式在另一块面板上；只有站在链子上挑中一个非混频台节点时，才给它摆
+ * 这个节点自己的控件（曲线点、强度、混合方式、换一张表）。路径与链子共用一个 `current` 的名字
+ * 时，这条判断就会把链上节点的控件整块吃掉——1.124 装机复核抓到过。
+ */
+export function chainFieldsFor(head: GradeNode | null | undefined, walked: GradePath): GradeNode | null {
+  return !walked.length && head && head.kind !== "parallel" ? head : null;
+}
+
+/** 一棵树里的操作数与混频台层数：与契约 `branch_tree` 同一个数法，界面前置判断用。 */
+export function branchTree(node: GradeNode | GradeBranch): { depth: number; operations: number } {
+  if (node.kind !== "parallel") return { depth: 0, operations: 1 };
+  let depth = 0;
+  let operations = 1;
+  for (const branch of node.branches) {
+    const child = branchTree(branch);
+    depth = Math.max(depth, child.depth);
+    operations += child.operations;
+  }
+  return { depth: depth + 1, operations };
+}
 
 export type GraphCard = {
   index: number;
@@ -133,11 +216,15 @@ function operationText(node: GradeNode): string {
 }
 
 function laneFor(node: GradeNode, blend: BlendMode = "normal"): GraphLane {
+  const nested = node.kind === "parallel" ? (node as GradeParallel) : null;
   return {
     label: NODE_NAMES[node.kind],
     // 分支自己那个混合方式要说得出来：它改的是这一支怎么与进来的画面相合，看不出来就等于没交付。
     detail: [operationText(node), blend === "normal" ? "" : blendLabel(blend)].filter(Boolean).join(" · "),
     enabled: node.enabled !== false,
+    // 套上来的那台混频台也要说话：它的每一支叫什么、偏不偏置，卡片上就得看得见，不然「一层壳」
+    // 在界面上就只是一个图标。
+    ...(nested ? { lanes: nested.branches.map((branch, index) => laneFor(branch, branchBlend(nested, index))) } : {}),
   };
 }
 

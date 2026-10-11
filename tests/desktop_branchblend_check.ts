@@ -49,9 +49,9 @@ assert.ok(view, "the inspector must be readable from the check's working directo
 const fields = readFileSync(view, "utf8");
 assert.match(fields, /const blendsOn = Boolean\(app\.caps\?\.features\?\.grade_branch_blend_modes\)/, "the dropdown waits for the engine to say it composites per branch");
 assert.match(fields, /\{blendsOn \? <>/, "and it is behind that gate, not merely labelled by it");
-assert.match(fields, /blends: blendsAfterPick\(node, index, mode\)/, "a pick writes through the shared shape decision");
-assert.match(fields, /blends: blendsAfterAdd\(node\)/, "adding a branch goes through it too");
-assert.match(fields, /blends: blendsAfterRemove\(node, slot\)/, "and so does removing one");
+assert.match(fields, /blends: blendsAfterPick\(mixer, index, mode\)/, "a pick writes through the shared shape decision at the depth we are editing");
+assert.match(fields, /blends: blendsAfterAdd\(mixer\)/, "adding a branch goes through it too");
+assert.match(fields, /blends: blendsAfterRemove\(mixer, slot\)/, "and so does removing one");
 assert.match(fields, /value=\{branchBlend\(current, slot\)\}/, "the select shows that branch's own mode, read from the same place");
 assert.match(fields, /disabled=\{!shown\.enabled\} aria-label=\{`第 \$\{slot \+ 1\} 支混合方式`\}/, "a disabled branch greys the dropdown, because its mode genuinely does not apply");
 assert.match(fields, /onChange=\{event => setBlend\(current, slot, event\.target\.value as BlendMode\)\}|onChange=\{\(event\) => setBlend\(current, slot, event\.target\.value as BlendMode\)\}/, "and one change is one write");

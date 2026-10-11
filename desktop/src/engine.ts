@@ -89,12 +89,13 @@ export type GradeOperation =
 export type LutPayload =
   | { kind: "lut"; title: string; size: number; channels: number[][]; resampled_from?: number }
   | { kind: "lut3d"; title: string; size: number; cells: number[]; resampled_from?: number | null };
-/** A parallel branch is always a single per-channel operation, so the graph never nests -- and the
- *  mixer is excluded here exactly as the contract excludes it: averaging a cross-channel map into a
- *  table is not something either end can compile. */
+/** 跨通道的操作与立方表都进不了支路：一台混频台输出的是各支的平均，而跨通道的表平均不进一张
+ *  每通道表——两端的编译器都算不出那样的东西，所以契约与这里同一处排除。 */
 export type GradeMixer = { kind: "matrix"; coefficients: number[]; enabled: boolean; mix?: number };
-// 与契约同一处排除：并联分支输出的是各支的平均，跨通道的表平均不进一张每通道表。
-export type GradeBranch = Exclude<GradeOperation, GradeMixer | { kind: "lut3d" }>;
+export type GradeLeaf = Exclude<GradeOperation, GradeMixer | { kind: "lut3d" }>;
+/** 1.124：一支自己也可以是一台混频台。这不是新的算法——每通道函数的平均还是每通道函数，所以一棵树
+ *  仍旧塌成每通道一张表；界面上它是一条「支路路径」，与合成那套面包屑同一个走法。 */
+export type GradeBranch = GradeLeaf | GradeParallel;
 export type GradeParallel = { kind: "parallel"; branches: GradeBranch[]; enabled: boolean; mix?: number; blend?: BlendMode; weights?: number[]; blends?: BlendMode[] };
 export type GradeNode = GradeOperation | GradeParallel;
 export type ColorSpace =
@@ -485,6 +486,9 @@ export type Capabilities = {
     max_nodes: number;
     max_branches: number;
     branch_weight_max?: number;
+    /** 1.124：一棵树最多几层混频台、一个链节点底下最多多少个操作，都由引擎下发。 */
+    max_mixer_depth?: number;
+    max_tree_operations?: number;
     max_curve_points: number;
     max_lut_samples: number;
     levels_black_max?: number;

@@ -1,10 +1,9 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 
-import { branchBlend, branchWeight, blendsAfterAdd, blendsAfterPick, blendsAfterRemove, weightsAfterAdd, weightsAfterRemove, weightsAfterWeight } from "../gradeGraph";
+import { branchBlend, branchTree, branchWeight, blendsAfterAdd, blendsAfterPick, blendsAfterRemove, chainFieldsFor, mapMixer, mixerAt, NODE_NAMES, cardsFor, moveWithin, resolveMixerPath, weightsAfterAdd, weightsAfterRemove, weightsAfterWeight, type GraphLane } from "../gradeGraph";
 import {blendLabel, DEFAULT_TRANSFER, COLOR_SPACES, DEFAULT_CURVE_POINTS, DEFAULT_WHEELS, type GradeBranch, type GradeCapacity, type GradeChannel, type GradeCurvePoint, type GradeNode, type GradeOperation, type GradeParallel, type ColorSpace, BLEND_MODES, type BlendMode} from "../engine";
 import { applyGradeToTrack, editableProject, setClipColor, useApp, applyLut, autoGradeClip, fetchGradeCapacity } from "../store";
 import { autoGradeBlocker, gradeCapacityLine } from "../effects";
-import { NODE_NAMES, cardsFor, moveWithin } from "../gradeGraph";
 
 const CHANNELS: [GradeChannel, string][] = [["rgb", "主色"], ["red", "红"], ["green", "绿"], ["blue", "蓝"]];
 const GREEN_MAGENTA = [0.70710678, -0.70710678, 0];
@@ -16,6 +15,8 @@ const FALLBACK_BRANCHES = 4;
 const FALLBACK_WEIGHT = 2;
 const FALLBACK_LEVELS = { blackMax: 0.9, whiteMin: 0.1, gammaMin: 0.1, gammaMax: 10 };
 const FALLBACK_MATRIX_LIMIT = 4;
+const FALLBACK_MIXER_DEPTH = 3;
+const FALLBACK_TREE_OPERATIONS = FALLBACK_NODES;
 /** 通道混合的三行三列与几个起手式：预设只是把九个框填成一组常用数，改完仍然是普通节点。 */
 const MATRIX_ROWS = ["输出红", "输出绿", "输出蓝"];
 const MATRIX_COLUMNS = ["来自红", "来自绿", "来自蓝"];
@@ -30,6 +31,9 @@ export type GradeLimits = {
   points: number;
   branches: number;
   weightMax: number;
+  /** 1.124：一棵树最多几层、一个节点底下最多几个操作，也是引擎下发。 */
+  mixerDepth?: number;
+  treeOperations?: number;
   blackMax?: number;
   whiteMin?: number;
   gammaMin?: number;
@@ -321,12 +325,22 @@ function newOperation(kind: Exclude<GradeOperation["kind"], "lut">): GradeOperat
           : { kind: "wheels", lift: [...DEFAULT_WHEELS.lift], gamma: [...DEFAULT_WHEELS.gamma], gain: [...DEFAULT_WHEELS.gain], enabled: true };
 }
 
+/** 一支套一台混频台时，卡片里那一行下面还有几行：同一套 `gg-lane` 样式，深度由嵌套给出。 */
+function LaneList({ lanes }: { lanes: GraphLane[] }) {
+  return <>{lanes.map((lane, index) => <span key={index} className={`gg-lane${lane.enabled ? "" : " off"}`}>
+    {index + 1}. {lane.label}
+    {lane.lanes?.length ? <span className="gg-lanes"><LaneList lanes={lane.lanes} /></span> : null}
+  </span>)}</>;
+}
+
 /** 调色节点：串行链与并联分支，引擎都编译成每通道一张表，预览与导出共用。 */
 export function GradeFields({ clipId }: { clipId: string }) {
   const app = useApp();
   const project = editableProject(app);
   const [active, setActive] = useState(0);
   const [branchSlot, setSlot] = useState(0);
+  // 1.124：一支自己可以是一台混频台，所以「正在编辑哪一台」是一条支路路径，而不是一个下标。
+  const [path, setPath] = useState<number[]>([]);
   const [hover, setHover] = useState<number | null>(null);
   const pending = useRef<number | null>(null);
   const dragging = useRef<number | null>(null);
@@ -353,6 +367,8 @@ export function GradeFields({ clipId }: { clipId: string }) {
     points: app.caps?.grade_limits?.max_curve_points ?? FALLBACK_POINTS,
     branches: app.caps?.grade_limits?.max_branches ?? FALLBACK_BRANCHES,
     weightMax: app.caps?.grade_limits?.branch_weight_max ?? FALLBACK_WEIGHT,
+    mixerDepth: app.caps?.grade_limits?.max_mixer_depth ?? FALLBACK_MIXER_DEPTH,
+    treeOperations: app.caps?.grade_limits?.max_tree_operations ?? FALLBACK_TREE_OPERATIONS,
     blackMax: app.caps?.grade_limits?.levels_black_max ?? FALLBACK_LEVELS.blackMax,
     whiteMin: app.caps?.grade_limits?.levels_white_min ?? FALLBACK_LEVELS.whiteMin,
     gammaMin: app.caps?.grade_limits?.levels_gamma_min ?? FALLBACK_LEVELS.gammaMin,
@@ -409,37 +425,72 @@ export function GradeFields({ clipId }: { clipId: string }) {
     lutFile.current?.click();
   };
 
-  const current = nodes[active];
-  const branches = current?.kind === "parallel" ? current.branches : [];
+  const head = nodes[active];
+  // 路径走不通时自己缩短（换节点、删了一支之后都会这样），所以这里不需要一个 effect 去修它。
+  const walked = resolveMixerPath(head, path);
+  const current = mixerAt(head, walked);
+  const chainFields = chainFieldsFor(head, walked);
+  const branches = current?.branches ?? [];
   // Clamped here instead of in an effect, so a stale slot from another node can never edit the wrong branch.
   const slot = Math.min(branchSlot, Math.max(0, branches.length - 1));
   const shown = branches[slot] ?? null;
+  /** 每一处写入都从这一个口子下去：改的是路径尽头那台混频台，链上那个节点整体换掉。 */
+  const editMixer = (update: (mixer: GradeParallel) => GradeParallel) =>
+    head ? replace(active, mapMixer(head, walked, update)) : null;
   // 1.120：并联节点的混频台。权重按位置覆盖每一支——契约要「给就给全」，所以这里从不留半份表：动一支
   // 就补齐整份，而每一支都回到 1 时把这份表整个撤掉（撤掉与交一串 1 是同一个均分，撤掉更诚实，也不会让
   // 老工程的载荷从此多出一串没人要的数）。
   const weightsOn = Boolean(app.caps?.features?.grade_branch_weights);
   const blendsOn = Boolean(app.caps?.features?.grade_branch_blend_modes);
   const setWeight = (node: GradeParallel, index: number, value: number) =>
-    replace(active, { ...node, weights: weightsAfterWeight(node, index, value) });
+    editMixer((mixer) => ({ ...mixer, weights: weightsAfterWeight(mixer, index, value) }));
   const setBlend = (node: GradeParallel, index: number, mode: BlendMode) =>
-    replace(active, { ...node, blends: blendsAfterPick(node, index, mode) });
-  // 分支只能装每通道操作：并联取各支平均，跨通道的矩阵混进去就没有一张表可塌，契约也拒。
-  const replaceBranch = (node: GradeParallel, index: number, next: GradeNode) => replace(active, {
-    ...node,
-    branches: node.branches.map((entry, position) => (
-      position === index && next.kind !== "parallel" && next.kind !== "matrix" && next.kind !== "lut3d" ? next : entry
+    editMixer((mixer) => ({ ...mixer, blends: blendsAfterPick(mixer, index, mode) }));
+  // 一支可以是每通道操作，也可以是另一台混频台（1.124）；跨通道的矩阵与立方表仍然进不来——
+  // 并联取各支平均，那种东西混进来就没有一张每通道表可塌，契约同样拒。
+  const replaceBranch = (node: GradeParallel, index: number, next: GradeNode) => editMixer((mixer) => ({
+    ...mixer,
+    branches: mixer.branches.map((entry, position) => (
+      position === index && (next.kind === "parallel" || (next.kind !== "matrix" && next.kind !== "lut3d")) ? next : entry
     )),
-  });
+  }));
   const addBranch = (node: GradeParallel) => {
-    replace(active, { ...node, branches: [...node.branches, newOperation("white_balance") as GradeBranch], weights: weightsAfterAdd(node), blends: blendsAfterAdd(node) });
+    editMixer((mixer) => ({ ...mixer, branches: [...mixer.branches, newOperation("white_balance") as GradeBranch], weights: weightsAfterAdd(mixer), blends: blendsAfterAdd(mixer) }));
     setSlot(node.branches.length);
   };
   const removeBranch = (node: GradeParallel) => {
-    const next = node.branches.filter((_, position) => position !== slot);
     // 删一支必须把那一格的权重一起删掉：留下的是一份长度对不上的表，而契约会把这一次写入整笔拒掉——
     // 那等于把人困在「删不掉」里，所以形状由 gradeGraph 那一处负责补齐。
-    replace(active, { ...node, branches: next, weights: weightsAfterRemove(node, slot), blends: blendsAfterRemove(node, slot) });
+    editMixer((mixer) => ({ ...mixer, branches: mixer.branches.filter((_, position) => position !== slot), weights: weightsAfterRemove(mixer, slot), blends: blendsAfterRemove(mixer, slot) }));
     setSlot(Math.max(0, slot - 1));
+  };
+  // 1.124：进出某一支、把某一支套成一台混频台。套上来的那台先只装这一支自己（一支的平均就是它
+  // 本身），所以「套并联」这一步不改画面，加下一支才是改画面——按钮不会偷偷调色调。
+  const treesOn = Boolean(app.caps?.features?.grade_mixer_trees);
+  const tree = head ? branchTree(head) : { depth: 0, operations: 0 };
+  const wrapBlock = !shown || shown.kind === "parallel" ? ""
+    : tree.depth + 1 > (limits.mixerDepth ?? FALLBACK_MIXER_DEPTH)
+      ? `这棵树到第 ${tree.depth + 1} 层就越过引擎下发的 ${limits.mixerDepth ?? FALLBACK_MIXER_DEPTH} 层上限了：先回上一层，或删掉一支再套。`
+      : tree.operations + 1 > (limits.treeOperations ?? FALLBACK_TREE_OPERATIONS)
+        ? `这个节点底下已经有 ${tree.operations} 个操作，上限是 ${limits.treeOperations ?? FALLBACK_TREE_OPERATIONS}：先删一支再套。`
+        : "";
+  const wrapBranch = (node: GradeParallel, index: number) => {
+    const branch = node.branches[index];
+    if (!branch || branch.kind === "parallel") return;
+    editMixer((mixer) => ({
+      ...mixer,
+      branches: mixer.branches.map((entry, position) => (
+        position === index ? { kind: "parallel", enabled: true, mix: 1, blend: "normal" as BlendMode, branches: [entry] } : entry
+      )),
+    }));
+  };
+  const enterBranch = (index: number) => {
+    setPath([...walked, index]);
+    setSlot(0);
+  };
+  const leaveBranch = () => {
+    setPath(walked.slice(0, -1));
+    setSlot(0);
   };
 
   return <details className="insp-section grade-section" open={nodes.length > 0}>
@@ -494,9 +545,7 @@ export function GradeFields({ clipId }: { clipId: string }) {
               <b>{card.label}</b>
               {card.detail ? <em className="dim">{card.detail}</em> : null}
             </button>
-            {card.lanes.length ? <div className="gg-lanes" aria-hidden="true">
-              {card.lanes.map((lane, index) => <span key={index} className={`gg-lane${lane.enabled ? "" : " off"}`}>{index + 1}. {lane.label}</span>)}
-            </div> : null}
+            {card.lanes.length ? <div className="gg-lanes" aria-hidden="true"><LaneList lanes={card.lanes} /></div> : null}
             <span className="gg-tools">
               <label className="grade-switch"><input type="checkbox" checked={card.enabled} onChange={(event) => replace(card.index, { ...nodes[card.index], enabled: event.target.checked })} />启用</label>
               <button className="btn tiny" disabled={card.index === 0} onClick={() => move(card.index, card.index - 1)} aria-label="上移节点">↑</button>
@@ -511,13 +560,20 @@ export function GradeFields({ clipId }: { clipId: string }) {
       </div> : <p className="hint">曝光、对比度、饱和度之后按顺序执行这些节点。曲线、白平衡、RGB 增益、色彩空间、1D LUT 与并联只改每通道值，预览与导出共用同一张表；通道混合与 3D LUT 按定义跨通道，各自自成一段——其中 3D LUT 浏览器画不出，只有导出生效。</p>}
       {capacityLine ? <p className="hint">{capacityLine}</p> : null}
 
-      {current && current.kind !== "parallel" ? <OpFields node={current} idPrefix="grade" limits={limits} onReplace={current.kind === "lut" || current.kind === "lut3d" ? () => pickLut(active) : undefined} onCommit={(next) => replace(active, next)} /> : null}
+      {chainFields ? <OpFields node={chainFields} idPrefix="grade" limits={limits} onReplace={chainFields.kind === "lut" || chainFields.kind === "lut3d" ? () => pickLut(active) : undefined} onCommit={(next) => replace(active, next)} /> : null}
 
       {current?.kind === "parallel" ? <div className="grade-body">
         <div className="batch-actions">
-          {current.branches.map((branch, index) => <button key={index} className={`grade-pick${index === slot ? " active" : ""}`} onClick={() => setSlot(index)} aria-label={`选择第 ${index + 1} 支`}>{index + 1}. {NODE_NAMES[branch.kind]}{branch.mix === undefined || branch.mix === 1 ? "" : ` · ${Math.round(branch.mix * 100)}%`}{branchWeight(current, index) === 1 ? "" : ` · ×${branchWeight(current, index)}`}{branchBlend(current, index) === "normal" ? "" : ` · ${blendLabel(branchBlend(current, index))}`}</button>)}
+          {current.branches.map((branch, index) => <button key={index} className={`grade-pick${index === slot ? " active" : ""}`} onClick={() => setSlot(index)} aria-label={`选择第 ${index + 1} 支`}>{index + 1}. {NODE_NAMES[branch.kind]}{branch.kind === "parallel" ? ` ${branch.branches.length} 支` : ""}{branch.mix === undefined || branch.mix === 1 ? "" : ` · ${Math.round(branch.mix * 100)}%`}{branchWeight(current, index) === 1 ? "" : ` · ×${branchWeight(current, index)}`}{branchBlend(current, index) === "normal" ? "" : ` · ${blendLabel(branchBlend(current, index))}`}</button>)}
           <button className="btn tiny" disabled={current.branches.length >= limits.branches} onClick={() => addBranch(current)} aria-label="增加一支">+支</button>
           <button className="btn tiny danger" disabled={current.branches.length <= 1} onClick={() => removeBranch(current)} aria-label="删除本支">删支</button>
+          {treesOn && shown && shown.kind !== "parallel" ? <button className="btn tiny" disabled={Boolean(wrapBlock)} onClick={() => wrapBranch(current, slot)}
+            aria-label="把这一支变成并联" title={wrapBlock || "在这一支里面再摆一台混频台：它先算自己那一台的平均，再作为一支参与上一层"}>套并联</button> : null}
+          {treesOn && shown?.kind === "parallel" ? <button className="btn tiny" onClick={() => enterBranch(slot)} aria-label="进入这一支" title="进去编辑这一台混频台自己的支、权重与混合方式">↳进这一支</button> : null}
+          {walked.length ? <>
+            <button className="btn tiny" onClick={() => leaveBranch()} aria-label="回到上一层混频台">↰上一层</button>
+            <span className="dim" role="status">第 {walked.length + 1} 层 / 上限 {limits.mixerDepth ?? FALLBACK_MIXER_DEPTH}</span>
+          </> : null}
         </div>
         {shown ? <>
           <OpFields node={shown} idPrefix={`grade-b${slot}`} limits={limits} onCommit={(next) => replaceBranch(current, slot, next)} />

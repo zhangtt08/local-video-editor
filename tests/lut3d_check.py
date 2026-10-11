@@ -1,4 +1,4 @@
-"""1.103 3D LUT：导入、契约、导出与像素四段都要过，且「预览不生效」是真话。
+"""1.103 3D LUT：导入、契约、多张链、导出与像素都要过，且「预览不生效」是真话。
 
 为什么这一版才做：3D LUT 的输出红取决于输入绿与蓝，就不再是每通道一条曲线，
 调色链里那段「连续每通道节点塌成一张表」的捷径对它不成立——所以它像 1.84 的
@@ -16,6 +16,9 @@
   作业目录里；
 * 成片：一个把红蓝对调的 2³ 立方，压在纯红底上，中间像素量到 R/B 对调（控制组
   是同一条链去掉这个节点）；
+* 多张立方（1.124）：链里两张各自成一段、两份表各写一个文件、同一张放两次只写一个文件
+  但图里有两段、关掉的那张整个不在场；成片上先后顺序读得出来（对调与轮转不相换位），
+  夹在两张中间的单通道曲线走的是「前一张换完之后」的那一路通道；
 * 能力：`features.lut3d` 真、`features.lut3d_preview` 假、`grade_limits` 的
   `max_lut3d_size` 与契约同一个数。
 """
@@ -46,6 +49,7 @@ from agentcut.contracts import (
 )
 from agentcut.grade import (
     grade_filter,
+    grade_stages,
     grade_tables,
     parse_1d_cube,
     parse_3d_cube,
@@ -82,6 +86,22 @@ def swap_rb(red: float, green: float, blue: float) -> tuple[float, float, float]
 
 def identity(red: float, green: float, blue: float) -> tuple[float, float, float]:
     return red, green, blue
+
+
+# 三通道轮转。它与红蓝对调**不相换位**（先对调再轮转 ≠ 先轮转再对调），所以两张立方的先后
+# 顺序会写在像素上——这是「链序」唯一能测出来的形状。
+def rotate(red: float, green: float, blue: float) -> tuple[float, float, float]:
+    return green, blue, red
+
+
+def cube_files(graph: str) -> list[str]:
+    """导出串里点名的 cube 文件名，按它们出现的顺序。
+
+    文件名是表体内容的哈希，不是节点编号：同一张表放两次只会得到一个文件，所以「几个文件」
+    和「图里有几段」必须分开数——把它们混成一个数，正好看不见想证的那件事。
+    """
+    marks = [part for part in graph.split(",") if "lut3d=file=" in part]
+    return [part[part.index("file=") + 5 :].split(":")[0] for part in marks]
 
 
 def source(folder: Path) -> Path:
@@ -249,6 +269,84 @@ def contract_suite() -> None:
     )
 
 
+def chain_suite() -> None:
+    """两张立方同一条链：都在导出串里、各自的表都在作业目录里、顺序不换人。
+
+    这一段是 1.124 补的。以前只量过一张立方，而「链里有几张」这件事恰好是塌表捷径最容易
+    咬人的地方——每通道那段是攒够了一批才 flush 的，立方是自己成一段的，所以两张相邻的立方
+    在任何一端被并成一张，画面都会悄悄变一个样子，而契约、能力、单张的成片全都不会红。
+    """
+
+    class Plan:
+        def __init__(self) -> None:
+            self.text_files: dict[str, str] = {}
+
+    def cube_node(text: str) -> dict:
+        payload = parse_cube(text)
+        return {"kind": "lut3d", **{key: value for key, value in payload.items() if key != "kind"}}
+
+    swapped = cube_node(cube(2, swap_rb))
+    # 恒等立方当第二张用：它对像素不动，所以「两张都在」在成片里读得出——但这里要的是它在
+    # 图和文件里确实占了一段，不是它把第一段顶掉了。
+    plain_cube = cube_node(cube(2, identity))
+    curve = {
+        "kind": "curve",
+        "channel": "rgb",
+        "points": [{"x": 0.0, "y": 0.1}, {"x": 1.0, "y": 0.9}],
+    }
+
+    for grade, want, why in (
+        ([swapped, plain_cube], ["lut3d", "lut3d"], "两张不同的立方"),
+        ([swapped, dict(swapped)], ["lut3d", "lut3d"], "同一张立方放两次"),
+        ([swapped, curve, plain_cube], ["lut3d", "lut", "lut3d"], "立方把每通道那段打断两次"),
+        ([swapped, {**plain_cube, "enabled": False}], ["lut3d"], "关掉的那张整个不在场"),
+    ):
+        color = ClipColor(grade=grade)
+        stages = grade_stages(color)
+        assert [stage["type"] for stage in stages] == want, (
+            why,
+            [stage["type"] for stage in stages],
+        )
+        plan = Plan()
+        graph = grade_filter(color, plan)
+        files = cube_files(graph)
+        assert len(files) == want.count("lut3d"), (why, files)
+        # 图里点名的文件必须真的会被写进作业目录，否则那一阶段在成片里就是原样交回。
+        assert all(name in plan.text_files for name in files), (why, files, sorted(plan.text_files))
+
+    # 顺序：文件名的先后不算证据，表体内容才是。第一张的表必须在第一个文件里。
+    # 两条各断一次并报出自己差了多少个采样点——两张立方开头几个格点全是 0，只报前三格看不出是谁。
+    color = ClipColor(grade=[swapped, plain_cube])
+    plan = Plan()
+    files = cube_files(grade_filter(color, plan))
+    assert len(set(files)) == 2, files
+    for position, (name, entry) in enumerate((("第一张", swapped), ("第二张", plain_cube))):
+        written = parse_cube(plan.text_files[files[position]])["cells"]
+        differ = [index for index, (a, b) in enumerate(zip(written, entry["cells"])) if a != b]
+        assert not differ, (position, name, len(differ), differ[:4])
+    # 同一张表放两次只写一个文件，但图里必须有两次——文件名是表体的哈希，不是节点的编号。
+    twin = Plan()
+    twin_graph = grade_filter(ClipColor(grade=[swapped, dict(swapped)]), twin)
+    assert len(twin.text_files) == 1 and twin_graph.count("lut3d=file=") == 2, (
+        twin_graph,
+        sorted(twin.text_files),
+    )
+
+    # 预览那一端：几张立方都不重要，一段都不许进 manifest。
+    both_preview = preview_manifest(project(Path(__file__), [swapped, plain_cube]))["clips"]["b"]
+    assert both_preview["grade"] is None and "url(#" not in both_preview["color_filter"], (
+        both_preview["grade"]
+    )
+    drawn = preview_manifest(project(Path(__file__), [swapped, curve, plain_cube]))["clips"]["b"][
+        "grade"
+    ]["stages"]
+    assert [stage["type"] for stage in drawn] == ["lut"], drawn
+    print(
+        "   多张立方：两张各自成一段且文件各写一份、同一张放两次只写一个文件但图里两段、"
+        "关掉那张整个不在场、立方把每通道那段打断两次、预览里几张都不进表"
+    )
+
+
 def both_ends_suite() -> None:
     target = project(
         Path(__file__),
@@ -385,7 +483,52 @@ def media_suite(folder: Path) -> None:
     # 2³ 立方把红蓝对调：同一条链、同一个编码器，唯一的差别就是那个节点。
     assert swapped[2] > 180 and swapped[0] < 70, (plain, swapped)
     assert abs(swapped[1] - green) < 24, (plain, swapped)
-    print(f"   成片：纯红 {plain} 经这张 3D LUT 变成 {swapped}（R/B 对调，绿通道不动）")
+
+    # 1.124：两张立方同一条链，成片里两张都走了，而且按链序走。
+    # 断言的期望值不是猜的：置换对整数三元组是精确的，所以「先 P 再 Q」的理想结果就是把
+    # 上面那次实测的 plain 通道按同一个置换重排——留给编码与四舍五入的余量量出来是 2 级。
+    rotated = {
+        "kind": "lut3d",
+        **{k: v for k, v in parse_cube(cube(2, rotate)).items() if k != "kind"},
+    }
+    red_curve = {
+        "kind": "curve",
+        "channel": "red",
+        "points": [{"x": 0.0, "y": 0.1}, {"x": 1.0, "y": 0.9}],
+    }
+    twice = render([dict(node), dict(node)], "twice.mp4")
+    forward = render([node, rotated], "forward.mp4")
+    backward = render([rotated, node], "backward.mp4")
+    curve_between = render([node, red_curve, rotated], "curve_between.mp4")
+    curve_before = render([red_curve, node, rotated], "curve_before.mp4")
+
+    def near(a: tuple[int, int, int], b: tuple[int, int, int], budget: int) -> bool:
+        return all(abs(one - two) <= budget for one, two in zip(a, b))
+
+    # 同一张立方放两次必须回到原片。只走第一段的话这里读到的是对调值，不是原片。
+    assert near(twice, plain, 6), (plain, twice)
+    assert not near(twice, swapped, 6), (swapped, twice)
+    want_forward = rotate(*swap_rb(*plain))
+    want_backward = swap_rb(*rotate(*plain))
+    # 两条链的理想结果差得越远，这一断言越咬得住；源画面万一三通道靠在一起就要说出来。
+    assert max(abs(a - b) for a, b in zip(want_forward, want_backward)) > 60, (
+        want_forward,
+        want_backward,
+    )
+    assert near(forward, want_forward, 8), (plain, want_forward, forward)
+    assert near(backward, want_backward, 8), (plain, want_backward, backward)
+    # 夹在两张立方中间的那条单通道曲线走的是「前一张立方换完之后」的那一路通道：
+    # 挪到链首就不是同一幅画了。两头都断，才排除了「曲线被并进某一张立方里、两边都一样」。
+    assert max(abs(a - b) for a, b in zip(curve_between, curve_before)) > 12, (
+        curve_between,
+        curve_before,
+    )
+    assert not near(curve_between, forward, 8), (forward, curve_between)
+    print(
+        f"   成片：纯红 {plain} 经这张 3D LUT 变成 {swapped}（R/B 对调，绿通道不动）；"
+        f"同两张立方 {twice} 走回原片，{forward} 与 {backward} 各按自己的链序落点，"
+        f"曲线夹在中间 {curve_between} 与放在链首 {curve_before} 不是一幅画"
+    )
 
 
 def http_suite(folder: Path) -> None:
@@ -501,6 +644,7 @@ def http_suite(folder: Path) -> None:
 def main() -> None:
     parse_suite()
     contract_suite()
+    chain_suite()
     both_ends_suite()
     published = capabilities()
     assert (

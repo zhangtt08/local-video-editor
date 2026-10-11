@@ -9,7 +9,15 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from agentcut.animation import preview_manifest
-from agentcut.contracts import SCHEMA_VERSION, ClipColor, EditBatch, Project, capabilities
+from agentcut.contracts import (
+    GRADE_MIXER_DEPTH,
+    GRADE_NODE_LIMIT,
+    SCHEMA_VERSION,
+    ClipColor,
+    EditBatch,
+    Project,
+    capabilities,
+)
 from agentcut.contracts import TIMEBASE as T
 from agentcut.grade import grade_filter, grade_tables
 from agentcut.http_api import create_app
@@ -756,7 +764,12 @@ def parallel_math_suite(folder: Path) -> None:
     for bad in (
         {"kind": "parallel", "branches": []},
         {"kind": "parallel", "branches": [neutral] * 5},
-        {"kind": "parallel", "branches": [{"kind": "parallel", "branches": [neutral]}]},
+        # 跨通道的操作仍进不了支路：一台混频台可以套一台（1.124，见 `tree_suite`），但矩阵套进去
+        # 之后这条链就不再是「每通道一张表」了，那是编译器不该见到的东西。
+        {
+            "kind": "parallel",
+            "branches": [{"kind": "matrix", "coefficients": [1, 0, 0, 0, 1, 0, 0, 0, 1]}],
+        },
         {"kind": "parallel", "branches": [{"kind": "curves"}]},
     ):
         try:
@@ -764,7 +777,10 @@ def parallel_math_suite(folder: Path) -> None:
         except ValidationError:
             continue
         raise AssertionError(f"{str(bad)[:60]} must not validate")
-    print("   parallel: empty, over-full and nested branch lists are refused by the contract")
+    print(
+        "   parallel: empty, over-full and cross-channel branch lists are refused by the contract "
+        "(a branch may now be another mixer, bounded by tree_suite)"
+    )
 
 
 def parallel_media_suite(folder: Path) -> None:
@@ -932,20 +948,19 @@ def parallel_http_suite(folder: Path) -> None:
             "a refused graph write must not burn a revision"
         )
 
-        nested = edit(
-            "p6",
-            3,
-            [
-                {
-                    "op": "clip.grade",
-                    "clip_id": "c",
-                    "grade": [
-                        {"kind": "parallel", "branches": [{"kind": "parallel", "branches": [warm]}]}
-                    ],
-                }
-            ],
+        # 1.124 起一支可以是一台混频台，越界的那条线从「不许嵌套」挪到了「不许无限深」：四层拒，
+        # 拒了还是不烧 revision。
+        def mixer(*inside: dict) -> dict:
+            return {"kind": "parallel", "branches": list(inside)}
+
+        # 一支一台：4 层、5 个操作，越界的只有深度，不是预算。
+        four_levels = mixer(mixer(mixer(mixer(warm))))
+        too_deep = edit("p6", 3, [{"op": "clip.grade", "clip_id": "c", "grade": [four_levels]}])
+        assert too_deep.status_code == 422, str(too_deep.json())[:200]
+        assert "nest" in str(too_deep.json()), (
+            f"[tree-http-depth] 越深的树被收下了：{str(too_deep.json())[:160]}"
         )
-        assert nested.status_code == 422, nested.text
+        assert client.get(path).json()["revision"] == 3, "越界的树也不许烧掉一个 revision"
 
         history = client.get(path + "/history").json()["history"]
         assert 2 in [entry["revision"] for entry in history]
@@ -957,9 +972,27 @@ def parallel_http_suite(folder: Path) -> None:
         back = restore.json()["project"]["clips"]["c"]["color"]["grade"][0]
         assert back["branches"][2]["enabled"] is True, back
         assert restore.json()["project"]["revision"] == 4, "a restore is a new revision"
+
+        # 一层合法的嵌套走的是同一条写入路：收、原样存、读回来还是那棵树。
+        nested_ok = edit(
+            "p8",
+            4,
+            [
+                {
+                    "op": "clip.grade",
+                    "clip_id": "c",
+                    "grade": [mixer(mixer(warm, warm), warm)],
+                }
+            ],
+        )
+        assert nested_ok.status_code == 200, nested_ok.text
+        stored = nested_ok.json()["project"]["clips"]["c"]["color"]["grade"][0]
+        assert stored["branches"][0]["kind"] == "parallel", stored
+        assert stored["branches"][0]["branches"][0]["kind"] == "white_balance", stored
         print(
-            "   parallel: HTTP writes one graph as one revision, replays it, refuses empty and "
-            f"nested branch lists, and the browser LUT follows the mean within {drift:.3f} levels"
+            "   parallel: HTTP writes one graph as one revision, replays it, refuses empty, "
+            "cross-channel and over-deep branch lists, commits a nested mixer verbatim, "
+            f"and the browser LUT follows the mean within {drift:.3f} levels"
         )
 
 
@@ -1205,6 +1238,165 @@ def weight_receipt_suite() -> None:
     print("   weights: an empty table hashes as a payload that never mentioned one")
 
 
+def shell_of_levels() -> dict:
+    """一台只装着色阶的混频台，套在另一台里面——`_holds_levels` 要跟着树走。"""
+    return {
+        "kind": "parallel",
+        "branches": [
+            {
+                "kind": "parallel",
+                "branches": [
+                    {"kind": "levels", "channel": "rgb", "black": 0.1, "white": 0.9, "gamma": 1.0}
+                ],
+            }
+        ],
+    }
+
+
+def tree_suite(folder: Path) -> None:
+    """1.124：一支也可以是一台混频台。算法一字未改——平均的还是每通道函数——变的是树要有界。
+
+    这里比的是「独立写的那份递归参考」与引擎编译出的表：里层的权重、里层的模式、里层那条只动红
+    通道的色阶，都必须真的走到表里；层数与操作数越界要在契约层就拒；一层壳套在一条曲线上必须逐位
+    不变（这正是「树还是每通道函数」这句话的内容）；最后拿真实成片对一遍。
+    """
+    source = toe_source(folder)
+    lift = {"kind": "curve", "channel": "rgb", "points": [{"x": 0, "y": 0.25}, {"x": 1, "y": 1.0}]}
+    press = {
+        "kind": "curve",
+        "channel": "rgb",
+        "points": [{"x": 0, "y": 0.0}, {"x": 0.5, "y": 0.35}, {"x": 1, "y": 0.9}],
+    }
+    # 一条只动红通道、折点很陡的曲线：嵌套里的折点没被采样网格接住时，误差会远超半级。
+    stretch = {
+        "kind": "curve",
+        "channel": "red",
+        "points": [
+            {"x": 0.0, "y": 0.0},
+            {"x": 0.45, "y": 0.45},
+            {"x": 0.55, "y": 0.62},
+            {"x": 1.0, "y": 1.0},
+        ],
+    }
+    inner = {
+        "kind": "parallel",
+        "branches": [stretch, press],
+        "weights": [2.0, 0.5],
+        "blends": ["normal", "screen"],
+    }
+    outer = {
+        "kind": "parallel",
+        "branches": [inner, lift],
+        "weights": [1.0, 2.0],
+        "blends": ["multiply", "normal"],
+    }
+
+    # 采样网格也得跟着树走：里层那支的折点必须出现在那一支的折点表里，不然它只能被弦线近似。
+    # 这一节放在最前面：它红的时候，说明树被当成了一层——后面那些比较会跟着一起偏，先说清是谁的责任。
+    from agentcut.grade import _curve_knots, _leaf_operations
+
+    tree_node = ClipColor(grade=[outer]).grade[0]
+    assert len(list(_leaf_operations(tree_node))) == 3, "[tree-knots] 树里的操作少数了"
+    sub_mixer = tree_node.branches[0]
+    knots = sorted({round(knot, 6) for knot in _curve_knots(sub_mixer, 0)})
+    assert 0.45 in knots and 0.55 in knots, f"[tree-knots] 里层那支的折点没进网格：{knots}"
+
+    tables = lut_stage(make_project(source, [outer]).clips["c"].color)
+    assert tables is not None, "[tree-table] 一台嵌套的混频台什么都没算出来"
+    for name in CHANNELS:
+        reference = predict([outer], CHANNELS.index(name))
+        drift = max(abs(tables[name][key] - reference[key]) * 255 for key in range(256))
+        assert drift <= 0.5, f"[tree-table] 第 {name} 通道与独立递归参考差 {drift:.2f} 级"
+
+    # 里层那排旋钮有人读：只改里层权重，表必须跟着动。
+    flipped = lut_stage(
+        make_project(source, [dict(outer, branches=[dict(inner, weights=[0.5, 2.0]), lift])])
+        .clips["c"]
+        .color
+    )
+    gap = max(abs(a - b) * 255 for a, b in zip(flipped["r"], tables["r"]))
+    assert gap > 4.0, f"[tree-inner-weights] 里层的权重没人读（最大差 {gap:.2f} 级）"
+
+    # 每台混频台只管自己那份表：长度不符在契约层就拒，嵌套的那层也不例外。
+    cases = (
+        ("里层只给一格权重", {"kind": "parallel", "branches": [stretch, press], "weights": [2.0]}),
+        ("外层多出格来模式", dict(outer, blends=["normal", "normal", "normal"])),
+    )
+    for label, node in cases:
+        try:
+            ClipColor(grade=[node])
+        except ValidationError:
+            continue
+        raise AssertionError(f"[tree-shape] {label}被收下了，两端会算出不同的平均")
+
+    # 深度：三层混频台收，四层拒。一支一台，操作数留在额度里，越界的只有深度这一项。
+    three = {
+        "kind": "parallel",
+        "branches": [{"kind": "parallel", "branches": [{"kind": "parallel", "branches": [lift]}]}],
+    }
+    ClipColor(grade=[three])
+    four = {"kind": "parallel", "branches": [three]}
+    try:
+        ClipColor(grade=[four])
+    except ValidationError as error:
+        assert "nest" in str(error), str(error)[:200]
+    else:
+        raise AssertionError(f"[tree-depth] {GRADE_MIXER_DEPTH + 1} 层套娃被收下了")
+
+    # 预算：一个链节点底下的树与链子本身共用同一个额度。
+    fat = {
+        "kind": "parallel",
+        "branches": [
+            {"kind": "parallel", "branches": [lift, press, stretch, WHEELS]},
+            {"kind": "parallel", "branches": [lift, press, stretch, BALANCE]},
+        ],
+    }
+    try:
+        ClipColor(grade=[fat])
+    except ValidationError as error:
+        assert "operations" in str(error), str(error)[:200]
+    else:
+        raise AssertionError("[tree-budget] 树里的操作数越过了链的额度还被收下")
+
+    # 一层壳套在曲线上必须逐位不变：这是「树还是每通道函数」这句话能被检查的那种写法。
+    shell = lut_stage(
+        make_project(source, [{"kind": "parallel", "branches": [lift]}]).clips["c"].color
+    )
+    plain = lut_stage(make_project(source, [lift]).clips["c"].color)
+    assert shell == plain, "[tree-shell] 一层不改任何东西的混频台改了表"
+
+    # 自动调色问「这条链上有没有人已经在拉黑白场」时，跟着树走：藏在第二层里的那台也算数。
+    from agentcut.autograde import _held_levels
+
+    nested_levels = ClipColor(
+        grade=[{"kind": "parallel", "branches": [shell_of_levels(), lift]}]
+    ).grade
+    assert _held_levels(list(nested_levels)) == [0], "[tree-held] 里层那台有色阶却没被看见"
+    plain_levels = ClipColor(grade=[{"kind": "parallel", "branches": [lift, press]}]).grade
+    assert _held_levels(list(plain_levels)) == [], "[tree-held] 没有色阶时被当成了有"
+
+    caps = capabilities(True, False, [])
+    assert caps["features"]["grade_mixer_trees"] is True, "[tree-flag] 开关没随字段下发"
+    assert caps["grade_limits"]["max_mixer_depth"] == GRADE_MIXER_DEPTH, caps["grade_limits"]
+    assert caps["grade_limits"]["max_tree_operations"] == GRADE_NODE_LIMIT, caps["grade_limits"]
+
+    arrived = [
+        round(value)
+        for value in toe_levels(render(make_project(source, []), folder, "tree-plain.mp4"))
+    ]
+    graded = toe_levels(render(make_project(source, [outer]), folder, "tree.mp4"))
+    reference = predict([outer], 0)
+    for band, level in enumerate(arrived):
+        assert abs(graded[band] - reference[level] * 255) <= 4, (band, level, graded[band])
+    span = max(abs(a - b) for a, b in zip(graded, arrived))
+    assert span > 3.0, f"[tree-media] 树没走到成片（最大差 {span:.1f}）"
+    print(
+        f"   树：里层权重一动表就动 {gap:.1f} 级、三层混频台收而四层按名字拒、一层壳逐位不变，"
+        f"成片六档灰带 {arrived} 变成 {[round(value) for value in graded]}（与独立参考差 "
+        f"{max(abs(graded[b] - predict([outer], 0)[arrived[b]] * 255) for b in range(6)):.1f} 级）"
+    )
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="agentcut-grade-") as scratch:
         folder = Path(scratch)
@@ -1219,10 +1411,11 @@ def main():
         weight_math_suite(folder)
         weight_media_suite(folder)
         weight_receipt_suite()
+        tree_suite(folder)
     print(
         "PASS: grade node contracts, atomic HTTP edits, replay/lock/restore, parallel branch "
         "means, their 1.120 mixer weights and 1.122 per-branch blend modes, browser LUT parity "
-        "and real H.264 pixels"
+        "and real H.264 pixels, nested mixers included"
     )
 
 

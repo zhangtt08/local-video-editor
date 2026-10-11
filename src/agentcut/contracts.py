@@ -1,6 +1,6 @@
 """Versioned JSON contracts; no HTTP, MCP, database, or media engine imports."""
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -11,7 +11,7 @@ SCHEMA_VERSION = (
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.123.0"
+APP_VERSION = "1.124.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -553,10 +553,39 @@ class GradeLut3D(Contract):
 # A parallel branch stays per-channel on purpose: the node outputs the mean of its branches, and the
 # mean of a cross-channel map with anything else is not something the chain can still compile to a
 # table. Refusing it here is what keeps the compiler from ever meeting a matrix inside a branch.
-GradeBranch = GradeCurve | GradeWhiteBalance | GradeWheels | GradeLevels | GradeTransfer | GradeLUT
+# 1.124: a branch may now be *another mixer*. This is not new arithmetic — averaging per-channel
+# functions is closed, so a whole tree still collapses to one table per channel, and
+# `grade.node_function` already resolves each branch through `step_function`, which dispatches on
+# `kind`. What a tree does need is a bound, checked once per chain node rather than per level:
+# `GRADE_MIXER_DEPTH` counts mixers (a flat mixer is 1), and the subtree shares the chain's
+# `GRADE_NODE_LIMIT`, so nesting cannot smuggle past the budget one node already had.
+GradeBranch = Union[
+    GradeCurve,
+    GradeWhiteBalance,
+    GradeWheels,
+    GradeLevels,
+    GradeTransfer,
+    GradeLUT,
+    "GradeParallel",
+]
 
 GRADE_NODE_LIMIT = 8
 GRADE_BRANCH_LIMIT = 4
+# 一层套一层的混频台最多几层。`capabilities.grade_limits.max_mixer_depth` 就是它，界面不许自己写。
+GRADE_MIXER_DEPTH = 3
+
+
+def branch_tree(node) -> tuple[int, int]:
+    """一棵支路树的 (混频台层数, 里面的操作数)。叶子是 0 层、1 个操作。"""
+    if getattr(node, "kind", "") != "parallel":
+        return 0, 1
+    depth = 0
+    operations = 0
+    for branch in node.branches:
+        child_depth, child_operations = branch_tree(branch)
+        depth = max(depth, child_depth)
+        operations += child_operations
+    return depth + 1, operations + 1
 
 
 class GradeParallel(Contract):
@@ -593,6 +622,25 @@ class GradeParallel(Contract):
             if given and len(given) != len(self.branches):
                 raise ValueError(f"branch {name} must cover every branch or none at all")
         return self
+
+    @model_validator(mode="after")
+    def bounded_tree(self):
+        depth, operations = branch_tree(self)
+        if depth > GRADE_MIXER_DEPTH:
+            raise ValueError(
+                f"a mixer tree may nest {GRADE_MIXER_DEPTH} levels deep, this one nests {depth}"
+            )
+        if operations > GRADE_NODE_LIMIT:
+            raise ValueError(
+                f"one chain node's tree may hold {GRADE_NODE_LIMIT} operations, this one holds "
+                f"{operations}"
+            )
+        return self
+
+
+# `GradeBranch` names this class before it exists, so the forward reference is resolved here — the
+# union is the branch vocabulary, and a branch may be another mixer.
+GradeParallel.model_rebuild()
 
 
 GradeNode = (
@@ -2376,6 +2424,10 @@ def capabilities(
             "max_nodes": GRADE_NODE_LIMIT,
             "max_branches": GRADE_BRANCH_LIMIT,
             "branch_weight_max": GRADE_BRANCH_WEIGHT_MAX,
+            # 1.124：一支也可以是一台混频台。层数、以及「一个链节点底下的树总共多少个操作」都由
+            # 这里下发——界面不许自己数层数，也不许自己写那个 8。
+            "max_mixer_depth": GRADE_MIXER_DEPTH,
+            "max_tree_operations": GRADE_NODE_LIMIT,
             "max_curve_points": CURVE_POINT_LIMIT,
             "max_lut_samples": LUT_SAMPLE_LIMIT,
             # A 3D LUT's grid lives inline in project state, so the importer resamples anything
@@ -2552,6 +2604,9 @@ def capabilities(
             # 并联节点的分支增益：下发这个，界面才知道那一排旋钮不是自己想象出来的。
             "grade_branch_weights": True,
             "grade_branch_blend_modes": True,
+            # 1.124：支路能再是一台混频台（树）。开关说的只是「引擎收不收这种载荷」，
+            # 层数与操作数在上面对下发。
+            "grade_mixer_trees": True,
             "timeline_marks": True,
             "range_export": True,
             "four_point_editing": True,

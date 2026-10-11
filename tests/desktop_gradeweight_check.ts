@@ -54,9 +54,9 @@ assert.match(fields, /min=\{0\} max=\{limits\.weightMax\} step=\{0\.05\}/, "the 
 assert.match(fields, /const weightsOn = Boolean\(app\.caps\?\.features\?\.grade_branch_weights\)/, "the control waits for the engine to say it honours weights");
 assert.match(fields, /\{weightsOn \? <>/, "and it is behind that gate, not merely labelled by it");
 // 写出去的是那一处形状判断的结果，而不是组件自己拼的一份。
-assert.match(fields, /weights: weightsAfterWeight\(node, index, value\)/, "a knob move submits the shared shape decision");
-assert.match(fields, /weights: weightsAfterAdd\(node\)/, "adding a branch goes through it too");
-assert.match(fields, /weights: weightsAfterRemove\(node, slot\)/, "and so does removing one");
+assert.match(fields, /weights: weightsAfterWeight\(mixer, index, value\)/, "a knob move submits the shared shape decision");
+assert.match(fields, /weights: weightsAfterAdd\(mixer\)/, "adding a branch goes through it too");
+assert.match(fields, /weights: weightsAfterRemove\(mixer, slot\)/, "and so does removing one");
 assert.equal((fields.match(/weights: /g) ?? []).length, 3, "exactly three places may write that table, all of them the shared decision");
 // 卡片报出「加权」，均分时不报——一张都不存在的表不该被念出来。
 assert.match(cardsFor([node([curve(), curve()], [2, 1])])[0].detail, /加权 ×2\/×1/, "the card says the mixer is off the mean");

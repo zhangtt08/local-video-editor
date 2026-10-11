@@ -2534,3 +2534,42 @@ def），`curve` 逐点 `{offset, id, easing}`，强度 0 的那一格 `id` 是 
 `tests/desktop_sharpenkey_check.ts`（`sharpenFrames`/`sharpenFilters`/`sharpenSteps`、属性行的上限与
 名字、九颗旋钮共用同一条判断，以及 `SpatialProperty` 在契约与界面逐字对齐）。能力位
 `capabilities.features.sharpen_keyframes`；老引擎不回这一位时，曲线编辑器与那两颗 ◇ 都不出现。
+
+
+### 1.124 并联的一支可以又是一台混频台（树）
+
+`GradeBranch` 现在收 `GradeParallel`：一台混频台的某一支自己可以再是一台混频台。这不是新的算式——
+每通道函数的平均仍是每通道函数，所以一棵树照样塌成每通道一张表，`grade.node_function` 一直是经
+`step_function` 解析每一支的，递归本就成立。改动在三处：
+
+1. **界面上的位置从下标变成路径**。`desktop/src/gradeGraph.ts` 的 `mixerAt(node, path)`、
+   `mapMixer(node, path, update)` 与 `resolveMixerPath(node, path)` 是唯一的走树处：路径走不通就缩短到
+   能走的那一层（换节点、删支之后都这样），而不是把检查器变成空白。检查器里 `current` 就是路径尽头那台
+   混频台，所有写入经过一个 `editMixer`，`replace` 只在最外层用一次。
+2. **树要有界，而界不再是「不许嵌套」**。`GRADE_MIXER_DEPTH = 3`（一层套一层的混频台层数）与
+   `GRADE_NODE_LIMIT = 8`（一个链节点底下包括所有层在内的操作数）在 `GradeParallel.bounded_tree` 里检查，
+   两个数都随 `capabilities.grade_limits.max_mixer_depth` / `max_tree_operations` 下发；能力位是
+   `features.grade_mixer_trees`。越界是请求校验失败（422），写入没有发生，revision 不动。跨通道的
+   `matrix` 与 `lut3d` 仍然进不了支路——那种东西平均不进一张每通道表。
+3. **每一层各用各的位置表**。`weights` 与 `blends` 仍按「给就给全」挂在**那一台**上，里层的表不改外层，
+   所以「把这一支变成并联」先造一台只装这一支自己的混频台：一支的平均就是它本身，那一步画面不变，
+   「+支」才是叠加第二路。
+
+跟着树走还有两处判断：`grade._leaf_operations` 让采样网格接住藏在第二层、第三层里的折点（不然那条陡峭
+曲线只能被弦线近似，两端就不是同一张表），`autograde._holds_levels` 让自动调色问「这条链上有没有人已经在
+拉黑白场」时把嵌套里的那台也看过。
+
+量过的数（`tests/grade_check.py` 的 `tree_suite`）：里层权重从 2:1 换成 1:2，编译表动 4.5 级；一台只装一支
+的混频台与不套时表逐位相同；三层收、四层按 `nest` 拒、一棵树 11 个操作按 `operations` 拒；真实成片六档灰带
+[0, 2, 10, 30, 94, 253] 变成 [40, 42, 46, 58, 101, 253]，与独立写出的那份递归参考最大差 2.5 级。界面那侧的
+一条路径走法、一处写入口、一份数法由第 40 个壳层检查 `tests/desktop_mixertree_check.ts` 钉住。
+
+同一条链里还可以有多张 3D LUT，一段接一段按链序走（`tests/lut3d_check.py` 的 `chain_suite` 与
+`media_suite`）：`grade_stages` 让每张立方自己成一段，`grade_filter` 为每张写一个以表体哈希命名的
+`.cube`——同一张表放两次只写一个文件，但导出串里仍是两段。顺序是在成片上量的，用的是两张**不相换位**
+的 2³ 置换（红蓝对调、三通道轮转）：纯红 (231, 29, 20) 走 P+Q 得 (27, 230, 18)、走 Q+P 得 (230, 18, 28)，
+两者都落在整数置换的理想值 2 级以内；同一张放两次得 (229, 28, 19)，回到原片。夹在两张中间的那条单通道
+曲线读的是「前一张换完之后」的那一路通道：夹在中间是 (28, 230, 39)，挪到链首是 (27, 209, 18)。
+预览那一端一张都不进 `preview_manifest`，几张都是；界面上每张立方各写一张卡片（`N³ 网格 · 仅导出生效`，
+重采样过的还说 `由 M³ 重采样`），卡片上没有强度可标——`GradeLut3D` 契约里就没有 `mix` 字段，
+`features.lut3d_preview` 为假就是这件事的原因。
