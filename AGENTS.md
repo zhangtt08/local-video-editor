@@ -50,7 +50,9 @@
    - （1.120 把并联节点的分支权重交付了：`GradeParallel.weights`，见停放点那一条。剩下的还是这一条第二路输入。）
    - 一条还没量的边界留着：第二路**带透明度**时两端是否还一致——1.94 那条「两层一叠就把 (192,32,32) 与 (32,32,192) 叠成 (222,61,220) 的亮边」的前车之鉴就是预乘 Alpha，这条要在支持半透明第二路之前先量。
 2. **多目标跟踪**（长时遮挡 1.85 已能重新找回，但一次还是一个目标）。曾经的另一半「清晰的逐帧动画」已在 1.123 交付：两端都认的算式就是那份共用的窗表（`animation.sharpen_schedule`），不要再按 1.98 那句「没有逐帧形式」拒绝。
-3. 复验口径照旧：`uv run python tests/suite_check.py` 空闲机器单独跑，壳层 `uv run python tests/desktop_ts_check.py`（数目以它的输出为准，不靠记忆），新断言一律配突变且**每条突变要红在自己断言的消息上**；突变脚本改完源码要**按字节还原**（这些 `.ts`/`.tsx`/`.css` 是 CRLF，Python 文本模式写回会把整份文件换成 LF），跑完再逐条重跑一次确认恢复；发布物 `uv run python scripts/build_engine.py --verify` + `cd desktop && npm run dist` 后根 `AgentCut.exe` 与便携版 `cmp`，界面类改动再用打包 exe + Chromium 真点真拖。
+3. **两万段的界面答不上话**（1.130 量过，记在 `docs/optimization.md` 第 1 条）：引擎侧写得进、读得出（八批 0.40→3.09s，工程 JSON 13.1 MiB）；打包渲染层里一次 DOM 求值都超 15s 不返回。按视野裁切的思路量过（两万段筛一次 2ms）但**没验到行为就回退了**——要往前走得先有一个能读 DOM 的界面探针（这台机器的 CDP 通道一旦被卡住的页面占住，后面所有求值都会失或另开一个壳、ruler 与吸附候选的 O(n) 处。补上那条门禁时，判据得是「滚到最右还有片段、滚回来还在」，不是节点数。
+
+4. 复验口径照旧：`uv run python tests/suite_check.py` 空闲机器单独跑，壳层 `uv run python tests/desktop_ts_check.py`（数目以它的输出为准，不靠记忆），新断言一律配突变且**每条突变要红在自己断言的消息上**；突变脚本改完源码要**按字节还原**（这些 `.ts`/`.tsx`/`.css` 是 CRLF，Python 文本模式写回会把整份文件换成 LF），跑完再逐条重跑一次确认恢复；发布物 `uv run python scripts/build_engine.py --verify` + `cd desktop && npm run dist` 后根 `AgentCut.exe` 与便携版 `cmp`，界面类改动再用打包 exe + Chromium 真点真拖。
 
 ## 开始前
 
