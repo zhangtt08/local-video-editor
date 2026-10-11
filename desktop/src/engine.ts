@@ -273,6 +273,8 @@ export type RenderBatchItem = {
   sequence_id?: string | null;
   fit: RenderFit;
   range?: RenderRange;
+  /** 背景透明的那一条交付。老引擎不认这个字段，所以只在真要为 true 时写出去。 */
+  transparent?: boolean;
 };
 
 /** 存在工程里的交付方案：一组交付项加一个名字，人和 Agent 都按同一个列表出货。 */
@@ -421,6 +423,9 @@ export type Preset = {
   pixel_format: string | null;
   profile: number | null;
   scale: [number, number] | null;
+  /** 这条交付装不装得下透明度。引擎那句拒绝与导出面板的勾读的都是预设表里的同一个字段；
+   *  老引擎不回这一行，界面按「装不下」处理。 */
+  alpha?: boolean;
 };
 
 /**
@@ -699,6 +704,7 @@ export class EngineError extends Error {
       SUBTITLES_MODEL_MISSING: "本机缺少这个语言的语音模型。把模型文件夹放到 asr 目录，或用 AGENTCUT_ASR_MODELS 指路。",
       SUBTITLES_UNAVAILABLE: "这台机器上没装语音识别引擎，自动字幕暂时用不了。可以先把字幕写成 SRT 再导入。",
       SUBTITLE_LIMIT: "字幕条数太多了。合并一些短句，或者分几条字幕轨来放。",
+      TRANSPARENT_NEEDS_ALPHA: "这条交付的容器与编码写不下透明通道，勾了也只会导出一个不透明的文件，所以引擎直接拒了这一次。换成能力表里带 alpha 的那几条（ProRes 4444 透明母版／1080p WebM/VP9 透明），或者把「背景透明」的勾去掉。",
       UNKNOWN_PRESET: "没有这个导出预设。能力表里列出的 id 才是可用的；界面下拉里选一个即可。",
     };
     const hint = hints[this.code];
@@ -1120,12 +1126,13 @@ export class Engine {
     return this.request<CachePruneResult>("POST", "/v1/media/cache/prune", body, 120000);
   }
 
-  renderPlan(projectId: string, presetId: string, revision?: number, sequenceId: string | null = null, fit: RenderFit = "contain", range: RenderRange = "full") {
+  renderPlan(projectId: string, presetId: string, revision?: number, sequenceId: string | null = null, fit: RenderFit = "contain", range: RenderRange = "full", transparent = false) {
     const query = new URLSearchParams({ preset_id: presetId });
     if (revision !== undefined) query.set("revision", String(revision));
     if (sequenceId) query.set("sequence_id", sequenceId);
     if (fit !== "contain") query.set("fit", fit);
     if (range !== "full") query.set("range", range);
+    if (transparent) query.set("transparent", "true");
     return this.request<{ plan: Record<string, unknown>; argv_preview: string[] }>(
       "GET",
       `/v1/projects/${projectId}/render-plan?${query.toString()}`
@@ -1167,7 +1174,7 @@ export class Engine {
     return this.request<{ revision: number; srt: string }>("GET", `/v1/projects/${projectId}/captions/${trackId}?revision=${revision}${sequenceId ? `&sequence_id=${sequenceId}` : ""}`);
   }
 
-  render(projectId: string, revision: number, presetId: string, filename: string, folder?: string, sequenceId: string | null = null, fit: RenderFit = "contain", range: RenderRange = "full") {
+  render(projectId: string, revision: number, presetId: string, filename: string, folder?: string, sequenceId: string | null = null, fit: RenderFit = "contain", range: RenderRange = "full", transparent = false) {
     return this.request<{ job: RenderJob; plan: Record<string, unknown> }>(
       "POST",
       `/v1/projects/${projectId}/renders`,
@@ -1180,6 +1187,7 @@ export class Engine {
         sequence_id: sequenceId,
         fit,
         range,
+        transparent,
       }
     );
   }
@@ -1187,7 +1195,7 @@ export class Engine {
   renderBatch(
     projectId: string,
     revision: number,
-    items: { preset_id: string; filename: string; fit: RenderFit; range?: RenderRange }[],
+    items: RenderBatchItem[],
     folder?: string
   ) {
     return this.request<{ committed: boolean; jobs: RenderJob[] }>(

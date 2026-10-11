@@ -11,7 +11,7 @@ SCHEMA_VERSION = (
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.135.0"
+APP_VERSION = "1.136.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -1128,6 +1128,7 @@ class RenderBatchItem(Contract):
     sequence_id: Identifier | None = None
     fit: RenderFit = "contain"
     range: RenderRange = "full"
+    transparent: bool = False
 
     @model_validator(mode="after")
     def safe_filename(self):
@@ -2156,6 +2157,9 @@ class RenderRequest(Contract):
     # `marks` renders only the sequence's marked range; `full` is every render made before this
     # field existed, so the default keeps old requests and old receipts meaning the same thing.
     range: RenderRange = "full"
+    # 透明背景母版。False 就是这个字段出现之前所有请求的含义，所以旧凭据重放还是它自己；
+    # 它只在预设 `alpha` 为真时被接受，否则在编计划的那一步就拒掉。
+    transparent: bool = False
 
     @model_validator(mode="after")
     def safe_filename(self):
@@ -2215,6 +2219,9 @@ class RenderJob(Contract):
     preset_id: Identifier
     fit: RenderFit = "contain"
     range: RenderRange = "full"
+    # 任务自己带着这个勾：worker 到点重编计划时按它渲染，排队的人看到的和落地的是同一张画面。
+    # 老任务文档里没有这一行，读回来就是 False。
+    transparent: bool = False
     filename: Annotated[str, Field(max_length=2048)]
     status: Literal["queued", "running", "succeeded", "failed", "cancelled"]
     total_ticks: Ticks = 0
@@ -2277,6 +2284,7 @@ def _preset(
     scale: list[int] | None,
     profile: int | None = None,
     quality: int | None = None,
+    alpha: bool = False,
 ) -> dict:
     """One delivery target: encoder knobs from a closed set, never raw FFmpeg arguments.
 
@@ -2284,7 +2292,10 @@ def _preset(
     chosen by a profile, VP9 needs an explicit zero video bitrate next to its crf, and PCM is
     lossless so a bitrate would be a lie. `pixel_format` is not cosmetic — it decides the chroma
     subsampling the final graph stage is written to, so a 4:4:10-bit intermediate really does keep
-    the colour the composite had.
+    the colour the composite had. `alpha` is the one statement of whether a preset has room for a
+    transparency band: only such a preset may take a request's `transparent` flag, and the export
+    panel's tickbox reads the same field, so a matte can never be dropped on the floor while
+    everyone involved believes the file still carries one.
     """
     return {
         "id": preset_id,
@@ -2299,6 +2310,7 @@ def _preset(
         "profile": profile,
         "quality": quality,
         "scale": scale,
+        "alpha": alpha,
     }
 
 
@@ -2443,6 +2455,39 @@ def render_presets() -> list[dict]:
             scale=None,
             profile=3,
         ),
+        # 透明通道母版：给 After Effects / DaVinci 做合成回环的那一条。ProRes 4444 是这一行的
+        # 名字，profile 4 才有 alpha；`alpha=True` 是「装得下透明度」唯一的一处说法，
+        # render.output_args 的拒绝和导出面板那个勾都读它，所以两边不可能各说一套。
+        _preset(
+            "prores-4444-alpha",
+            "ProRes 4444 透明母版（AE / DaVinci 合成回环）",
+            "mov",
+            "prores_ks",
+            crf=None,
+            encoder_preset=None,
+            audio_codec="pcm_s24le",
+            audio_bitrate=None,
+            pixel_format="yuva444p10le",
+            scale=None,
+            profile=4,
+            alpha=True,
+        ),
+        # VP9 也能带 alpha，体积比 ProRes 小得多，网页上的叠加层用这一条。它的透明度是挂在每个
+        # block 后面的附带通道里的，ffprobe 在流这一层只报 yuv420p——所以这条的复检必须真解一帧
+        # 去看 alpha 平面，不能读容器元数据就下结论（tests/alphamaster_check.py 就是这么量的）。
+        _preset(
+            "vp9-1080p-web-alpha",
+            "1080p WebM/VP9 透明（网页叠加层）",
+            "webm",
+            "libvpx-vp9",
+            crf=32,
+            encoder_preset=None,
+            audio_codec="libopus",
+            audio_bitrate="128k",
+            pixel_format="yuva420p",
+            scale=[1920, 1080],
+            alpha=True,
+        ),
         # MXF：广播与后期机房之间的包装。容器只认这条表，文件名后缀与复检读的都是同一处，
         # 所以不会出现「写着 .mxf 其实是 mp4」。MXF 的音频轨只接受 48 kHz（FFmpeg 那边直接拒
         # 写头），这条约束在 render.output_args 一处挡下来，而不是等 FFmpeg 报一句看不懂的话。
@@ -2557,6 +2602,9 @@ def capabilities(
         "fade_shapes": [dict(item) for item in FADE_SHAPES],
         "color_spaces": list(COLOR_SPACES),
         "output_containers": list(OUTPUT_CONTAINERS),
+        # 哪几条预设真的装得下透明度。界面那个勾和引擎那句拒绝读的都是同一份预设表，
+        # 所以「勾了透明却导出一个不透明的文件」这件事没有发生的余地。
+        "alpha_presets": [item["id"] for item in render_presets() if item["alpha"]],
         # The build identity, next to the schema it speaks: an Agent reading this document can tell
         # which engine answered, and the desktop shows it in the title bar.
         "app_version": APP_VERSION,

@@ -41,6 +41,7 @@ from .contracts import (
     ReframeRequest,
     RenderBatch,
     RenderFit,
+    RenderRange,
     RenderRequest,
     RestoreProject,
     Revision,
@@ -652,6 +653,8 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         revision: Revision | None = None,
         sequence_id: Identifier | None = None,
         fit: RenderFit = "contain",
+        range: RenderRange = "full",
+        transparent: bool = False,
     ) -> dict[str, Any]:
         """Dry-run: compile the RenderPlan (graph mode, segments, argv) without rendering."""
         query = f"?preset_id={preset_id}" + ("" if revision is None else f"&revision={revision}")
@@ -659,6 +662,12 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
             query += f"&sequence_id={sequence_id}"
         if fit != "contain":
             query += f"&fit={fit}"
+        # 干跑要问的就是真导出会用的那组词：入出点和透明背景在这里缺一个，就会出现
+        # 「计划看着是绿的，落地文件不是那个东西」。
+        if range != "full":
+            query += f"&range={range}"
+        if transparent:
+            query += "&transparent=true"
         return await call("GET", f"/v1/projects/{project_id}/render-plan{query}")
 
     @server.tool(annotations=safe_write)

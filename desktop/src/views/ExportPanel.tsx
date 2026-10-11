@@ -50,6 +50,7 @@ export function ExportPanel(): JSX.Element {
   const [presetId, setPresetId] = useState("");
   const [fit, setFit] = useState<RenderFit>("contain");
   const [range, setRange] = useState<RenderRange>("full");
+  const [transparent, setTransparent] = useState(false);
   const [alsoVertical, setAlsoVertical] = useState(false);
   const [filename, setFilename] = useState("");
   const [folder, setFolder] = useState("");
@@ -110,6 +111,16 @@ export function ExportPanel(): JSX.Element {
       ? "导出比例与时间线一致，三种适配的结果相同"
       : `时间线 ${project.settings.width}×${project.settings.height} 要放进 ${outSize[0]}×${outSize[1]}，这里决定多出来的部分怎么处理`;
   const vertical = presets.find((item) => item.id === VERTICAL_PRESET) ?? null;
+  // 那个勾只在预设真装得下透明度时参与：切到 H.264 却留着勾，发出去就是一个骗人的请求，
+  // 引擎那边会拒。所以这里算的是「这一次导出真正带的值」，界面念的、发出去的、存进方案的
+  // 都是它，不再是两处各写一份。
+  const alphaIds = presets.filter((item) => item.alpha).map((item) => item.id);
+  const matte = !audioOnly && transparent && Boolean(preset?.alpha);
+  const matteHint = audioOnly
+    ? "这条交付只有声音，没有画面，也就没有背景一说"
+    : !preset?.alpha
+      ? `这条交付的画面格式（${preset?.pixel_format ?? "未选"}）装不下透明度，这个勾按不动；带 alpha 的是 ${alphaIds.join("、")}，选它们就能勾`
+      : "空白处真的留空，叠到别的画面上不带一块黑底；AE／DaVinci 与网页合成接得住这一条";
   // 后缀跟着那条交付自己的容器，不再钉死 .mp4：竖屏那条换成 WebM 预设时，文件名也得是 .webm。
   const verticalName = `${(filename.trim() || sanitizeName(timelineName)).replace(/\.[A-Za-z0-9]+$/, "")}-9x16.${vertical?.container ?? "mp4"}`;
   const inTicks = project.settings.in_ticks ?? null;
@@ -123,8 +134,8 @@ export function ExportPanel(): JSX.Element {
   const finalName = `${(filename.trim() || sanitizeName(timelineName)).replace(/\.[A-Za-z0-9]+$/, "")}.${preset?.container ?? "mp4"}`;
   // 方案存的就是「点开始导出会发出去的那组交付」，所以这里只算一次，界面和方案不会各说一套。
   const pendingItems: RenderBatchItem[] = [
-    { preset_id: preset?.id ?? "", filename: finalName, fit, range },
-    ...(alsoVertical && vertical && !audioOnly
+    { preset_id: preset?.id ?? "", filename: finalName, fit, range, transparent: matte },
+    ...(alsoVertical && vertical && !audioOnly && !matte
       ? [{ preset_id: vertical.id, filename: verticalName, fit: "cover" as RenderFit, range }]
       : []),
   ];
@@ -250,6 +261,20 @@ export function ExportPanel(): JSX.Element {
             </div>
           </Field>
 
+          <Field label="背景透明" hint={matteHint}>
+            <label className="batch-row">
+              <input
+                type="checkbox"
+                checked={matte}
+                onChange={(event) => setTransparent(event.target.checked)}
+                disabled={Boolean(blocked) || audioOnly || !preset?.alpha}
+                title={matteHint}
+                aria-label="背景透明"
+              />
+              空白处留透明（只在带 alpha 的预设上有效）
+            </label>
+          </Field>
+
           <Field label="文件名" hint="不用写扩展名，引擎会按容器补上">
             <div className="input-row">
               <input
@@ -310,7 +335,7 @@ export function ExportPanel(): JSX.Element {
                     onClick={() => void exportRecipe(recipe.id, folder || undefined)}
                     disabled={Boolean(blocked) || Boolean(app.busy)}
                     title={`按 r${project.revision} 出货：${recipe.items
-                      .map((entry) => `${entry.filename} · ${entry.fit}/${entry.range ?? "full"}`)
+                      .map((entry) => `${entry.filename} · ${entry.fit}/${entry.range ?? "full"}${entry.transparent ? " 透明背景" : ""}`)
                       .join("，")}`}
                   >
                     {recipe.name}
@@ -353,7 +378,7 @@ export function ExportPanel(): JSX.Element {
                   }}
                   disabled={Boolean(blocked)}
                   title={`存下当前这组：${pendingItems
-                    .map((entry) => `${entry.filename}(${entry.fit}/${entry.range})`)
+                    .map((entry) => `${entry.filename}(${entry.fit}/${entry.range}${entry.transparent ? "，透明背景" : ""})`)
                     .join("，")}`}
                 >
                   存为方案
@@ -364,7 +389,7 @@ export function ExportPanel(): JSX.Element {
 
           <div className="export-actions">
             <Btn
-              onClick={() => renderPlanPreview(preset.id, fit, range)}
+              onClick={() => renderPlanPreview(preset.id, fit, range, matte)}
               disabled={!clips.length}
               title="只读：让服务端编译渲染计划，不会写任何文件"
             >
@@ -374,10 +399,14 @@ export function ExportPanel(): JSX.Element {
               <label className="batch-row">
                 <input
                   type="checkbox"
-                  checked={alsoVertical && !audioOnly}
+                  checked={alsoVertical && !audioOnly && !matte}
                   onChange={(event) => setAlsoVertical(event.target.checked)}
-                  disabled={Boolean(blocked) || audioOnly}
-                  title={audioOnly ? "音频交付没有画面，也就没有竖屏那一条" : undefined}
+                  disabled={Boolean(blocked) || audioOnly || matte}
+                  title={audioOnly
+                    ? "音频交付没有画面，也就没有竖屏那一条"
+                    : matte
+                      ? `背景透明时竖屏那条 ${VERTICAL_PRESET} 写不下透明度，这一次只出主版本；要竖屏就把「背景透明」去掉`
+                      : undefined}
                 />
                 附带一个 9:16 竖屏（裁切填满），一次交付两个画幅
               </label>
@@ -389,12 +418,12 @@ export function ExportPanel(): JSX.Element {
                 // 点下去要发出去的就是 pendingItems 那一组，界面不再另写一份交付清单。
                 pendingItems.length > 1
                   ? void startRenderBatch(pendingItems, folder || undefined)
-                  : void startRender(preset.id, finalName, folder || undefined, fit, range)
+                  : void startRender(preset.id, finalName, folder || undefined, fit, range, matte)
               }
               disabled={Boolean(blocked) || Boolean(app.busy)}
               title={blocked || (pendingItems.length > 1
                 ? `按 r${project.revision} 导出 ${finalName} 与 ${verticalName}`
-                : `按 r${project.revision} 导出 ${finalName}`)}
+                : `按 r${project.revision} 导出 ${finalName}${matte ? "，背景透明" : ""}`)}
             >
               <Icon name="export" size={12} />
               开始导出

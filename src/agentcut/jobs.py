@@ -32,6 +32,7 @@ def plan_for(
     sequence_id: str | None = None,
     fit: str = "contain",
     range_mode: str = "full",
+    transparent: bool = False,
 ) -> RenderPlan:
     """One place that turns a request's `range` into the ticks the exporter trims to, so the
     render-plan preview, the queued job and the worker all read the same marks."""
@@ -50,6 +51,7 @@ def plan_for(
         sequence_id=sequence_id,
         fit=fit,
         range_ticks=ticks,
+        transparent=transparent,
     )
 
 
@@ -418,7 +420,10 @@ class JobRuntime:
             # Only a non-default range joins the fingerprint, so a receipt written before this field
             # existed still replays as itself instead of turning into a conflict.
             + ([request.range] if request.range != "full" else [])
-            + ([request.sequence_id] if request.sequence_id is not None else []),
+            + ([request.sequence_id] if request.sequence_id is not None else [])
+            # Same trick as `range`: only a set flag joins the fingerprint, so a receipt written
+            # before this field existed replays as itself instead of turning into a conflict.
+            + ([request.transparent] if request.transparent else []),
             ensure_ascii=False,
             separators=(",", ":"),
         )
@@ -445,6 +450,7 @@ class JobRuntime:
                     sequence_id=request.sequence_id,
                     fit=request.fit,
                     range_mode=request.range,
+                    transparent=request.transparent,
                 ).as_dict()
             except EditorError:
                 plan = {}
@@ -463,6 +469,7 @@ class JobRuntime:
             sequence_id=request.sequence_id,
             fit=request.fit,
             range_mode=request.range,
+            transparent=request.transparent,
         )
         target = self._target_path(request)
         now = time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -474,6 +481,7 @@ class JobRuntime:
             preset_id=request.preset_id,
             fit=request.fit,
             range=request.range,
+            transparent=request.transparent,
             filename=target.name,
             status="queued",
             total_ticks=plan.duration_ticks,
@@ -508,6 +516,7 @@ class JobRuntime:
                     sequence_id=item.sequence_id,
                     fit=item.fit,
                     range_mode=item.range,
+                    transparent=item.transparent,
                 )
             results: list[tuple[RenderJob, dict]] = []
             for index, item in enumerate(batch.items):
@@ -520,6 +529,7 @@ class JobRuntime:
                     sequence_id=item.sequence_id,
                     fit=item.fit,
                     range=item.range,
+                    transparent=item.transparent,
                 )
                 if batch.dry_run:
                     results.append(
@@ -531,6 +541,7 @@ class JobRuntime:
                                 preset_id=item.preset_id,
                                 fit=item.fit,
                                 range=item.range,
+                                transparent=item.transparent,
                                 filename=item.filename,
                                 status="queued",
                             ),
@@ -540,6 +551,7 @@ class JobRuntime:
                                 sequence_id=item.sequence_id,
                                 fit=item.fit,
                                 range_mode=item.range,
+                                transparent=item.transparent,
                             ).as_dict(),
                         )
                     )
@@ -649,6 +661,7 @@ class JobRuntime:
             sequence_id=job.sequence_id,
             fit=job.fit,
             range_mode=job.range,
+            transparent=job.transparent,
         )
         target = Path(job.output_path or (self.output_dir / job.filename))
         target.parent.mkdir(parents=True, exist_ok=True)

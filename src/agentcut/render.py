@@ -404,7 +404,9 @@ def preset_by_id(preset_id: str) -> dict:
     raise EditorError("UNKNOWN_PRESET", "unknown render preset", 422, preset_id=preset_id)
 
 
-def output_args(preset: dict, sample_rate: int, frame_rate: float) -> list[str]:
+def output_args(
+    preset: dict, sample_rate: int, frame_rate: float, *, transparent: bool = False
+) -> list[str]:
     """Encode and mux arguments for one preset, switched by the codec the preset names.
 
     The vocabulary is closed here, not in the caller: a preset may only name a codec this function
@@ -412,7 +414,20 @@ def output_args(preset: dict, sample_rate: int, frame_rate: float) -> list[str]:
     encoder actually accepts rather than one template forced on all of them — VP9 takes no
     `-preset` and wants `-b:v 0` beside its crf, ProRes takes neither and is chosen by a profile,
     PCM has no bitrate, and `-movflags` belongs to the mp4/mov muxer only.
+    `transparent` is answered here rather than ignored: an encoder whose pixel format has no
+    alpha plane cannot carry a matte no matter what the graph above it produced, so the request
+    that would silently export an opaque file is refused and pointed at the presets that can.
     """
+    if transparent and not preset["alpha"]:
+        exits = "、".join(str(item["id"]) for item in render_presets() if item["alpha"])
+        raise EditorError(
+            "TRANSPARENT_NEEDS_ALPHA",
+            f"{preset['label']} 这一条写不下透明度（画面格式 "
+            f"{preset['pixel_format'] or '没有画面轨'}）；透明背景只有 {exits} 可以，"
+            "换成其中一条再导出，或者把「透明背景」去掉",
+            422,
+            preset_id=preset["id"],
+        )
     codec = preset["codec"]
     video: list[str] = []
     if codec is None:
@@ -596,6 +611,10 @@ class RenderPlan:
             "layers": self.summary.get("layers"),
             "audio_layers": self.summary.get("audio_layers"),
             "sources": self.summary.get("sources"),
+            # The matte belongs in the dry-run document: a person or an Agent reading a plan has to
+            # be able to tell "this file will hold a matte" from the plan itself, not only from the
+            # flag they sent in.
+            "transparent": self.summary.get("transparent"),
         }
 
 
@@ -682,11 +701,15 @@ def compile_render_plan(
     sequence_id: str | None = None,
     fit: str = "contain",
     range_ticks: tuple[int, int] | None = None,
+    transparent: bool = False,
     _transparent: bool = False,
     _duration_ticks: int | None = None,
 ) -> RenderPlan:
     if not _transparent:
         validate_timeline(project)
+    # 画面什么时候必须带着 alpha 走完：有人明确要透明母版，或者这是嵌套合成（父级要拿它去合成）。
+    # 两者在这一个名字下合流，图上就不存在「按不透明算的那半条链」。
+    alpha_out = transparent or _transparent
     if sequence_id is not None:
         _duration_ticks = (
             project.sequences[sequence_id].duration_ticks
@@ -767,7 +790,7 @@ def compile_render_plan(
         total = max(total, entry["clip"].position_ticks + entry["clip"].duration_ticks)
 
     compositing = (
-        _transparent
+        alpha_out
         or not layers
         or len(layers) > 1
         or any(track.blend_mode != "normal" for track, _ in visible)
@@ -904,12 +927,12 @@ def compile_render_plan(
 
     def blank_label(duration_ticks: int) -> str:
         index = plan.add_lavfi(
-            f"color=c={'black@0' if _transparent else 'black'}:s={size}:r={fps},format=rgba",
+            f"color=c={'black@0' if alpha_out else 'black'}:s={size}:r={fps},format=rgba",
             duration_ticks,
         )
         label = plan.tag("blank")
         plan.filters.append(
-            f"[{index}:v]fps={fps},format={'rgba' if _transparent else pixel_format},"
+            f"[{index}:v]fps={fps},format={'rgba' if alpha_out else pixel_format},"
             f"setsar=1,settb=AVTB{label}"
         )
         return label
@@ -1295,7 +1318,7 @@ def compile_render_plan(
             elif mode != "normal":
                 current = blend_track(plan, lower, current, mode)
             painted.append(len(entries))
-        plan.filters.append(f"{current}format={'rgba' if _transparent else pixel_format}[vout]")
+        plan.filters.append(f"{current}format={'rgba' if alpha_out else pixel_format}[vout]")
         plan.summary["layers"] = len(layers)
     if not audio_only:
         plan.video_label = "[vout]"
@@ -1409,7 +1432,7 @@ def compile_render_plan(
     else:
         plan.duration_ticks = total
 
-    plan.output_args = output_args(preset, settings.sample_rate, rate)
+    plan.output_args = output_args(preset, settings.sample_rate, rate, transparent=transparent)
     plan.summary.update(
         {
             "encoder": f"{preset['label']} ({preset['container']})",
@@ -1418,6 +1441,7 @@ def compile_render_plan(
             "video_codec": preset["codec"],
             "audio_codec": preset["audio_codec"],
             "pixel_format": preset["pixel_format"],
+            "transparent": transparent,
             "resolution": None if audio_only else size,
             "frame_rate": fps,
             "project": {"id": project.id, "name": project.name, "revision": project.revision},

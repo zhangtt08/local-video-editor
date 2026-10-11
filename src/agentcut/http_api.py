@@ -1865,9 +1865,17 @@ def create_app(
         sequence_id: Identifier | None = None,
         fit: RenderFit = "contain",
         range: RenderRange = "full",
+        transparent: bool = False,
     ):
         project = projects.get(project_id, revision)
-        plan = plan_for(project, preset_id, sequence_id=sequence_id, fit=fit, range_mode=range)
+        plan = plan_for(
+            project,
+            preset_id,
+            sequence_id=sequence_id,
+            fit=fit,
+            range_mode=range,
+            transparent=transparent,
+        )
         return {"plan": plan.as_dict(), "argv_preview": plan.ffmpeg_argv("ffmpeg", "out.mp4")}
 
     @app.post("/v1/projects/{project_id}/master/loudness", dependencies=auth)
