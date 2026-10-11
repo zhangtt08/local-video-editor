@@ -47,9 +47,11 @@ import {
   setMarker,
   splitAtMarkers,
   setFadeWindowsForClips,
+  keymap,
   ZOOM_MAX,
   ZOOM_MIN,
 } from "../store";
+import { chordWords } from "../keymap";
 import { EMPTY_TRACK_HINT, FIELD_LABEL, trackToolBlocker, fadeDragBatch, fadeDragTicks, fadeProperties, fadeWindows, type FadeProperty, type FadeSide } from "../effects";
 import { selectionQuantum, timelineTracks } from "../selection";
 
@@ -245,9 +247,9 @@ export function Timeline() {
       <div className="tl-toolbar">
         <IconBtn icon="cursor" label="选择工具（V）：拖动片段改位置，拖左右边缘改时长" active={edit.tool === "select"} onClick={() => prefs.setTool("select")} />
         <IconBtn icon="razor" label="分割工具（C）：点片段即在点击处切一刀，切成两段可独立删除" active={edit.tool === "razor"} onClick={() => prefs.setTool("razor")} />
-        <button className="btn tiny subtle" disabled={!canSplit} title="在播放头处分割选中片段（Ctrl+B）" onClick={() => splitSelection(playhead.value)}>分割</button>
-        <IconBtn icon="copy" label="复制选中片段（Ctrl+C）" disabled={!app.selectedClip} onClick={copySelection} />
-        <button className="btn tiny subtle" disabled={!app.clipboardCount} onClick={pasteSelection} title="粘贴到播放头（Ctrl+V）">粘贴</button>
+        <button className="btn tiny subtle" disabled={!canSplit} title={`在播放头处分割选中片段（${chordWords(keymap().split)}）`} onClick={() => splitSelection(playhead.value)}>分割</button>
+        <IconBtn icon="copy" label={`复制选中片段（${chordWords(keymap().copy)}）`} disabled={!app.selectedClip} onClick={copySelection} />
+        <button className="btn tiny subtle" disabled={!app.clipboardCount} onClick={pasteSelection} title={`粘贴到播放头（${chordWords(keymap().paste)}）`}>粘贴</button>
         <IconBtn icon="trash" label="删除选中片段，保留空隙（Delete）" disabled={!app.selectedClip} onClick={() => removeSelection()} />
         <button className="btn tiny subtle" disabled={!app.selectedClip} title="删除并向左补齐本轨后续片段（Shift+Delete）" onClick={() => removeSelection(true)}>涟漪删除</button>
         {app.selectedClips.length > 1 ? <span className="tag accent">{app.selectedClips.length} 段</span> : null}
@@ -258,7 +260,7 @@ export function Timeline() {
         <button className={`btn tiny subtle${edit.linkedSelection ? " active" : ""}`} aria-pressed={edit.linkedSelection} title="联动选择：组合与链接一起选中；音画链接一起修剪、分割。Alt 点选可临时单选。" onClick={() => prefs.toggleLinkedSelection()}>联动</button>
         <span className="divider-v" />
         <IconBtn icon="undo" label="撤销：用历史恢复回到上一步（版本号继续增加，不会倒退）" disabled={!app.undo.length} onClick={undo} />
-        <IconBtn icon="redo" label="重做：回到撤销前的那一版（Ctrl+Shift+Z）" disabled={!app.redo.length} onClick={redoStep} />
+        <IconBtn icon="redo" label={`重做：回到撤销前的那一版（${chordWords(keymap().redo)}）`} disabled={!app.redo.length} onClick={redoStep} />
         <IconBtn
           icon="zoomIn"
           label="适应窗口：把整条时间线放进可视范围"

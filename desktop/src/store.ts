@@ -47,6 +47,16 @@ import { linkSplitTrim } from "./splitTrim";
 import { CLIP_KEY, MARKS_KEY, isClipClipboard, isSourceMarks, readBrowser, writeBrowser, type SourceMark } from "./clipboardStore";
 import type { FadeOp, FadeProperty, FadeShape, FadeSide } from "./effects";
 import { fadeAdoptSummary } from "./effects";
+import {
+  changedFromDefault,
+  chordWords,
+  commandLabel,
+  mergeMap,
+  rebind,
+  type Chord,
+  type CommandId,
+  type KeyEvent,
+} from "./keymap";
 
 export type View = "home" | "editor" | "history" | "agent";
 
@@ -2674,6 +2684,108 @@ export function useEdit(): EditPrefs {
 /** 渲染之外读同一份偏好（快捷键表、自检脚本），不另开第二条状态。 */
 export function editPrefs(): EditPrefs {
   return edit;
+}
+
+// —— 1.134：命令键位 —— 那张表只有 `keymap.ts` 一份，这里是它的状态与落库。
+function readStored(key: string): unknown {
+  try {
+    return JSON.parse(localStorage.getItem(key) ?? "null");
+  } catch {
+    return null;
+  }
+}
+
+function writeStored(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* 隐私模式下写不进去也不影响这一局用 */
+  }
+}
+
+let keymapState = mergeMap(readStored("agentcut.keys"));
+
+/** 冲突、不可用都只说一句话，而且点名抢的是哪条命令；改成了就落库，重开窗口读回来。 */
+export const remap = {
+  set(id: CommandId, chord: Chord): boolean {
+    const result = rebind(keymapState, id, chord);
+    if (!result.ok) {
+      toast("error", `改不了这个键：${result.why}`, `${commandLabel(id)} 仍然是 ${chordWords(keymapState[id])}`);
+      return false;
+    }
+    keymapState = result.map;
+    writeStored("agentcut.keys", changedFromDefault(keymapState));
+    toast("ok", `${commandLabel(id)} 换成 ${chordWords(chord)}`, "这个键只做这一件事；界面上那个按钮照旧在。");
+    return true;
+  },
+  reset(): void {
+    keymapState = mergeMap(null);
+    writeStored("agentcut.keys", {});
+    toast("ok", "快捷键回到出厂那一套", "剪映、达芬奇、AE 的默认键各不相同，所以改过的一律清掉。");
+  },
+};
+
+export function keymap(): Record<CommandId, Chord> {
+  return keymapState;
+}
+
+/** 键盘不是唯一的路：每条命令都还有界面上那个孪生，所以这里只回答「这一下归谁、做没做成」。
+ *  返回 false 表示这条命令此刻的条件不对（比如不在时间线里按 Ctrl+A），与 1.134 之前那条
+ *  if 链的早退一模一样——不许因为改成了表就悄悄多接住一些按键。 */
+export function runKeyCommand(id: CommandId, event: KeyEvent): boolean {
+  const inEditor = state.view === "editor" && Boolean(state.project);
+  switch (id) {
+    case "undo":
+      undo();
+      return true;
+    case "redo":
+      redoStep();
+      return true;
+    case "duplicate":
+      if (state.view !== "editor") return false;
+      duplicateSelection();
+      return true;
+    case "select-all":
+      if (!inEditor) return false;
+      selectAllClips();
+      return true;
+    case "copy":
+      if (!inEditor) return false;
+      copySelection();
+      return true;
+    case "paste":
+      if (!inEditor) return false;
+      pasteSelection();
+      return true;
+    case "split":
+      if (!inEditor) return false;
+      splitSelection(playhead.value);
+      return true;
+    case "export-panel":
+      if (!inEditor) return false;
+      setEditorPanel("export");
+      return true;
+    case "marker":
+      if (!inEditor) return false;
+      addMarker();
+      return true;
+    case "group":
+      if (!inEditor) return false;
+      groupSelection(event.shiftKey);
+      return true;
+    case "ungroup":
+      if (!inEditor) return false;
+      groupSelection(true);
+      return true;
+    case "link":
+      if (!inEditor) return false;
+      linkSelection(event.shiftKey);
+      return true;
+    case "unlink":
+      if (!inEditor) return false;
+      linkSelection(true);
+      return true;
+  }
 }
 
 export const prefs = {

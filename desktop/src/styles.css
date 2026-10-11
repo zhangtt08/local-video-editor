@@ -658,6 +658,10 @@ select, input[type=range] { color-scheme: dark; }
 .area-body { font-size: 12px; color: var(--ink-2); margin-top: 2px; }
 table.keys { width: 100%; }
 table.keys td.k { width: 110px; color: var(--accent-deep); font-weight: 600; }
+/* 1.134：能改的那张表。键名那一格在等按键时要看得出来，「界面上：那颗按钮」是附注不是正文。 */
+table.command-keys td { vertical-align: top; }
+table.command-keys tr.arming td.k { color: var(--accent); }
+.k-twin { display: block; margin-top: 3px; font-size: 11px; color: var(--ink-3); }
 
 /* Agent 面板 */
 .agent-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 18px; }

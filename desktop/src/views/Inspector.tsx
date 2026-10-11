@@ -67,10 +67,12 @@ import {
   adoptTrackFades,
   normaliseLoudness,
   alignMasterLoudness,
+  keymap,
 } from "../store";
 import { PROJECT_PRESETS } from "../presets";
 import { bridge } from "../bridge";
 import { toast } from "../store";
+import { chordWords } from "../keymap";
 
 /** 检查器：选中什么就解释什么。精确数值默认收起，需要时状态栏一键打开。 */
 export function Inspector() {
@@ -188,7 +190,7 @@ function ClipFields({ clip }: { clip: Clip }) {
         {asset?.kind !== "image" && asset?.kind !== "text" ? <p className="hint">保留音高，变速后自动移动本轨后续片段；动画仍按时间线时间播放。</p> : null}
         <div className="insp-actions">
           <SplitButton clip={clip} />
-          <button className="btn" title="复制一段接到本轨末尾（Ctrl+D）" onClick={() => duplicateClip(clip.id)}>
+          <button className="btn" title={`复制一段接到本轨末尾（${chordWords(keymap().duplicate)}）`} onClick={() => duplicateClip(clip.id)}>
             <Icon name="copy" /> 复制
           </button>
           {asset?.kind === "video" && asset.verified?.has_audio && clip.embedded_audio !== false ? <button className="btn" title="把本段的声音拆成独立声音轨，方便单独淡入淡出或对齐其他音轨" onClick={() => detachAudio(clip.id)}>

@@ -9,18 +9,18 @@ import { Home } from "./views/Home";
 import { History } from "./views/History";
 import { StatusBar } from "./views/StatusBar";
 import { Icon } from "./ui";
+import { matchCommand } from "./keymap";
 import {
   boot,
   dismissToast,
+  keymap,
   playhead,
   prefs,
   refreshWindowState,
+  runKeyCommand,
   timelineEnd,
   toggleHelp,
-  undo,
   useApp,
-  setEditorPanel,
-  redoStep,
   jumpEditPoint,
   editSource,
   markSequence,
@@ -28,17 +28,10 @@ import {
   selectedSource,
   setSourceCursor,
   setSourcePlaying,
-  copySelection,
-  pasteSelection,
-  duplicateSelection,
-  selectAllClips,
   selectClips,
   removeSelection,
   nudgeSelection,
   splitSelection,
-  groupSelection,
-  linkSelection,
-  addMarker,
 } from "./store";
 import { TIMEBASE } from "./time";
 
@@ -101,15 +94,12 @@ function useGlobalKeys() {
         else { if (playhead.value >= timelineEnd(app.project)) playhead.set(0); playhead.play(); }
         return;
       }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+      // 1.134：命令键位是一张能改的表，解析只有一处（`keymap.matchCommand`），做的事也只有
+      // `store.runKeyCommand` 那一个开关。条件不对就交回原路（返回 false），这条链的早退顺序
+      // 与以前那条 if 链一致。
+      const command = matchCommand(keymap(), event);
+      if (command && runKeyCommand(command, event)) {
         event.preventDefault();
-        if (event.shiftKey) redoStep();
-        else undo();
-        return;
-      }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "d") {
-        event.preventDefault();
-        if (app.view === "editor") duplicateSelection();
         return;
       }
       if (event.key === "F1") {
@@ -125,15 +115,7 @@ function useGlobalKeys() {
       }
       if (app.view !== "editor" || !app.project) return;
       const key = event.key.toLowerCase();
-      if ((event.ctrlKey || event.metaKey) && ["a", "c", "v"].includes(key)) {
-        event.preventDefault();
-        if (key === "a") selectAllClips(); else if (key === "c") copySelection(); else pasteSelection();
-        return;
-      }
-      if ((event.ctrlKey || event.metaKey) && key === "m") { event.preventDefault(); setEditorPanel("export"); return; }
-      if ((event.ctrlKey || event.metaKey) && key === "b") { event.preventDefault(); splitSelection(playhead.value); return; }
-      if (app.view === "editor" && key === "m" && !event.ctrlKey && !event.metaKey && !event.altKey) { event.preventDefault(); addMarker(); return; }
-      if ((event.ctrlKey || event.metaKey) && ["g", "l"].includes(key)) { event.preventDefault(); if (key === "g") groupSelection(event.shiftKey); else linkSelection(event.shiftKey); return; }
+      // 带修饰的那些已经全在表里了（上面那一次 `matchCommand`），这里只剩不带修饰的手感键。
       if (event.ctrlKey || event.metaKey) return;
       if (app.monitorMode !== "source" && (key === "i" || key === "o")) { event.preventDefault(); markSequence(key === "i" ? "in" : "out"); return; }
       if (app.monitorMode !== "source" && key === "x" && event.altKey) { event.preventDefault(); markSequence("clear"); return; }

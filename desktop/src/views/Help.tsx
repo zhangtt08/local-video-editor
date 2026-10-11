@@ -1,7 +1,33 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Icon } from "../ui";
-import { toggleHelp } from "../store";
+import { keymap, remap, toggleHelp } from "../store";
+import {
+  COMMANDS,
+  chordFromEvent,
+  chordWords,
+  commandLabel,
+  type CommandId,
+} from "../keymap";
+
+/** 1.134 之前这些句子挂在各条「Ctrl+X」的行上；那些行现在由那张唯一的表来写键名，
+ *  句子留在这里——一条命令的说明不许因为改键而丢掉。 */
+const COMMAND_NOTES: Partial<Record<CommandId, string>> = {
+  undo: "用历史恢复，版本号继续增加。",
+  redo: "把刚撤销的那一步再做回来。",
+  duplicate: "追加整组副本到所用轨道末尾。",
+  "select-all": "选中这条时间线上所有片段。",
+  copy: "复制片段组，保留间隔与内部转场。",
+  paste:
+    "粘贴到播放头。关掉应用再开这一份还在：粘到别的工程时，那边没有的素材会让当前引擎重新读一遍，读不到就整批不粘并点名是哪几个素材。",
+  split: "在播放头处剪开选中的片段。",
+  "export-panel": "打开导出面板。",
+  marker: "在播放头记一个标记（这一条不带修饰键，只在时间线里、且焦点不在输入框时才算）。",
+  group: "组合（保存到工程）。",
+  ungroup: "取消组合。",
+  link: "音画链接（先对齐位置、时长、速度）。",
+  unlink: "解除音画链接。",
+};
 
 const AREAS = [
   { name: "底部·动画曲线", body: "工作台上方切到动画曲线，选择片段与属性。拖动关键帧修改时间和数值，双击空白加点，方向键微调，Delete 删除，Esc 取消拖动。开着「时间吸附」时拖到的位置落在片段自己的整帧上，还会找播放头与这条曲线上没被拖动的针（容差按屏幕算，放大后更严）；数值框与「播放头添加」按精确位置写，不被旁边的针拽走。Shift 拖动锁轴；缩放与横向位置可查看密集关键帧。即时保存或批次预演/提交与时间线共用。Ctrl+C 复制选中的针，Ctrl+V 按播放头把它们粘到当前片段上——一次只能搬一条属性，落在片段之外或已有针那一格的会跳过并报出几枚。" },
@@ -67,17 +93,11 @@ const KEYS = [
   { key: "Delete", body: "删除选中片段（留下空隙）" },
   { key: "Shift+Delete", body: "删除并补齐：后面的片段整体左移" },
   { key: "Ctrl/Shift+点选", body: "增减片段选择；空白处拖动可跨轨框选" },
-  { key: "Ctrl+A / Esc", body: "选择全部片段 / 清空选择" },
-  { key: "Ctrl+C / Ctrl+V", body: "复制片段组 / 粘贴到播放头，保留间隔与内部转场。关掉应用再开这一份还在：粘到别的工程时，那边没有的素材会让当前引擎重新读一遍，读不到就整批不粘并点名是哪几个素材" },
-  { key: "Ctrl+D", body: "追加整组副本到所用轨道末尾" },
-  { key: "Ctrl+G / Ctrl+Shift+G", body: "组合 / 取消组合（保存到工程）" },
-  { key: "Ctrl+L / Ctrl+Shift+L", body: "链接 / 解除音画链接（先对齐位置、时长、速度）" },
+  { key: "Esc", body: "清空选择 / 取消拖动。带 Ctrl 的那几条命令（全选、复制、粘贴、追加副本、组合、链接、剪开、导出面板、撤销、重做、记标记）不写在这张表里——它们是可改的键位，列在下面「命令键位」那一节，读的是同一份表" },
   { key: "Alt+点选 / 联动", body: "临时单选 / 开关组合选择与音画联动剪辑。按住 Alt 直接拖链接片段的某一边，就是一次 J/L cut：只有这一边动、伙伴两边不动、链接记录留着，历史里写「分边修剪（J/L cut）」；检查器的同步状态念出是谁跑在前面、差了多久，「拉回同步」一次拉回" },
   { key: "Alt+← / →", body: "把选中片段挪一帧（按住 Shift 是一秒）" },
   { key: "← →", body: "播放头逐帧移动（Shift 为 10 帧）" },
   { key: "↑ / ↓", body: "上一个 / 下一个编辑点" },
-  { key: "Ctrl+B", body: "在播放头处分割选中片段" },
-  { key: "Ctrl+M", body: "打开导出面板" },
   { key: "L / K", body: "播放 / 暂停" },
   { key: "I / O", body: "素材预览：标记入点 / 出点（包含当前帧）" },
   { key: "I / O", body: "时间线预览（序列监视器）：给整条时间线设入出点，标尺上出现区间带" },
@@ -88,8 +108,6 @@ const KEYS = [
   { key: "Ctrl+滚轮", body: "时间线缩放；Shift+滚轮横向滚动" },
   { key: "Home / End", body: "播放头到起点 / 时间线末尾" },
   { key: "+ / -", body: "放大 / 缩小时间线" },
-  { key: "Ctrl+Z", body: "撤销（用历史恢复，版本号继续增加）" },
-  { key: "Ctrl+Shift+Z", body: "重做" },
   { key: "F1 / Esc", body: "打开 / 关闭本帮助" },
 ];
 
@@ -102,6 +120,27 @@ const CONCEPTS = [
 
 export function HelpOverlay() {
   const [tab, setTab] = useState<"start" | "areas" | "keys" | "concepts">("start");
+  // 等一颗新键：按下去就交给 `store.remap`，冲突由那里点名并拒绝，界面只负责把结果再读一遍。
+  const [armed, setArmed] = useState<CommandId | null>(null);
+  const [rev, setRev] = useState(0);
+  useEffect(() => {
+    if (!armed) return;
+    const capture = (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.key === "Escape") {
+        setArmed(null);
+        return;
+      }
+      const chord = chordFromEvent(event);
+      if (!chord) return;
+      if (remap.set(armed, chord)) setArmed(null);
+      setRev((n) => n + 1);
+    };
+    window.addEventListener("keydown", capture, true);
+    return () => window.removeEventListener("keydown", capture, true);
+  }, [armed]);
+  const map = useMemo(() => keymap(), [rev, armed]);
   return (
     <div className="help-backdrop" onClick={() => toggleHelp(false)} role="presentation">
       <div className="help" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="帮助">
@@ -148,6 +187,50 @@ export function HelpOverlay() {
                 </div>
               ))}
             </div>
+          ) : null}
+          {tab === "keys" ? (
+            <>
+              <p className="hint">
+                下面这些是<b>命令</b>：键位能改，改完写进偏好，重开窗口读回来；改不动的时候会说清是哪一个键已经被哪条命令占着。
+                剪映、达芬奇、AE 的默认键各不相同，所以这里给的是本来的那套，不是抄谁的。每条命令在界面上都有那个按钮
+                （「界面上」那一列写的就是它），键盘从来不是唯一的路，改键也不会把那条路改掉。
+              </p>
+              <div className="batch-actions">
+                <button type="button" className="btn tiny" onClick={() => { remap.reset(); setArmed(null); setRev((n) => n + 1); }}>
+                  回到出厂键位
+                </button>
+                {armed ? <span className="hint">正在等「{commandLabel(armed)}」的新键位：按下一个组合键，Esc 取消。</span> : null}
+              </div>
+              <table className="table keys command-keys">
+                <tbody>
+                  {COMMANDS.map((item) => (
+                    <tr key={item.id} className={armed === item.id ? "arming" : ""}>
+                      <td>{item.label}</td>
+                      <td className="mono k">{armed === item.id ? "等按键…" : chordWords(map[item.id])}</td>
+                      <td>
+                        {COMMAND_NOTES[item.id] ?? ""}
+                        <span className="k-twin">界面上：{item.twin}</span>
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="btn tiny"
+                          aria-label={`改${item.label}的键`}
+                          onClick={() => setArmed(armed === item.id ? null : item.id)}
+                        >
+                          {armed === item.id ? "取消" : "改键"}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="hint">
+                下面那一节是<b>手感键</b>，不在这张表里：它们跟着焦点与上下文走（方向键微调、I/O 进出点、空格播放、Esc 清场、
+                F1/F9/F10），把它们也做成可配置的，只会让那张表看起来谁都能改、其实改了没用了。滚轮那两条（Ctrl+滚轮缩放、
+                Shift+滚轮横滚）同理。
+              </p>
+            </>
           ) : null}
           {tab === "keys" ? (
             <table className="table keys">

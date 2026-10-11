@@ -1,8 +1,9 @@
 import { useState } from "react";
 
 import { BrandMark, Icon } from "./ui";
+import { chordWords } from "./keymap";
 import { TIMEBASE } from "./time";
-import { appInfo, boot, refreshWindowState, setView, setEditorPanel, toast, toggleHelp, updateProjectMeta, useApp, windowControl } from "./store";
+import { appInfo, boot, keymap, refreshWindowState, setView, setEditorPanel, toast, toggleHelp, updateProjectMeta, useApp, windowControl } from "./store";
 
 const TABS = [
   { view: "home", label: "项目", icon: "folder", hint: "所有工程都在这里：一个工程就是一条时间线" },
@@ -72,7 +73,7 @@ export function TitleBar() {
       </nav>
 
       <div className="tb-right">
-        {project ? <button className="btn primary tiny" title="导出视频（Ctrl+M）" onClick={() => setEditorPanel("export")}><Icon name="export" size={12} />导出</button> : null}
+        {project ? <button className="btn primary tiny" title={`导出视频（${chordWords(keymap()["export-panel"])}）`} onClick={() => setEditorPanel("export")}><Icon name="export" size={12} />导出</button> : null}
         <button
           type="button"
           className={`conn ${live ? "on" : "off"}`}
