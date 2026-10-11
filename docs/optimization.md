@@ -71,13 +71,15 @@ tests/build_check.py：启动同一自包含引擎的两个隔离实例，构建
 
 1.6.0 发布包（2026-10-05）：新增涟漪修剪（Shift+拖边缘）与滚动剪辑（Ctrl+拖边缘，共产接缝平移、总时长不变、转场保宽、越界整笔拒绝），新增闪白转场 dip_white（预览与导出同一套包络），新增视频内嵌声音拆分为独立音轨（clip.detach_audio，自动音画链接同步、真实 FFmpeg 响度对齐）。`tests/roll_check.py`、`tests/detach_check.py` 新增验收；`tests/self_check.py` / `editing_check.py` / `link_check.py` / `group_check.py` / `transition_check.py` / `media_check.py` / `placement_check.py` 与 esbuild 桌面检查全部通过；内嵌引擎、vite 构建、Electron 打包均完成；便携版已同步项目根目录 AgentCut.exe，旧 1.1–1.5 交付文件保留。
 
-1. 精确剪辑：J/L cut 与四点剪辑仍待实现；涟漪修剪、滚动剪辑与拆分内嵌音轨已完成。持久组合、手动音画链接、多选与复制粘贴已完成；链接要求先对齐位置/时长/速度，不自动分析波形，原视频仍按自身音量播放。剪贴板（复制的片段、关键帧节奏、素材上的入出点）自 1.125 起跨重启保存：写入本地存储、读回先过形状门，冷的那份在粘到别的工程前由当前引擎重新探测缺的素材，探测不到就整批不粘并点名是哪几个。跨工程不同帧率不自动转换；一批编辑命令的上限自 1.126 起是量出来的 2500 条（契约一处、能力表与界面读同一个数）；比这还大的组仍要分批贴或先登记素材。20,000 片段是契约上限，尚未验收同等规模的界面性能。
-2. 常用成片：更多转场类型与联动音画、曲线变速/冻结、自动语音字幕、字幕样式与批量字幕编辑。
-3. AE 合成：数值曲线编辑器已完成；自定义贝塞尔手柄、速度图、多点编辑、路径遮罩/动画、嵌套合成、混合模式、跟踪、效果栈与常见动效。
-4. 达芬奇工作流：色轮/曲线/LUT、示波器与色彩管理、专业混音、代理与缓存回放。
-5. 真实生产验收：用户的长项目与素材格式、4K 多轨性能、项目备份/打包迁移、更多导出格式、快捷键预设与签名发布。
+1.126 逐条对账过这张清单：写「已完成」的都点得到模块或检查文件，写「仍未做」的说清它挡在哪一个不变量或哪一个没验收的量上。
 
-现阶段适合基础剪辑、画中画、字幕与基础动画；仍不足以覆盖 AE / 剪映 / 达芬奇的全部生产用途。
+1. 精确剪辑：四点剪辑**已交付**（`src/agentcut/fourpoint.py` + `tests/fourpoint_check.py`，成片量过「源长就剪、源短就重新计时、不静默猜」——原文写着「仍待实现」是过时的）。涟漪修剪、滚动剪辑（`roll_check.py`）、滑移（`slip_check.py`）、拆分内嵌音轨（`detach_check.py`）、持久组合/手动音画链接/多选与复制粘贴（`group_check.py`、`link_check.py`、`editing_check.py`）都已完成；链接要求先对齐位置/时长/速度，不自动分析波形，原视频仍按自身音量播放。剪贴板（复制的片段、关键帧节奏、素材上的入出点）自 1.125 起跨重启保存（`tests/desktop_clipboard_check.ts`）：读回先过形状门，冷的那份在粘到别的工程前由当前引擎重新探测缺的素材，探测不到就整批不粘并点名是哪几个。一批编辑命令的上限自 1.126 起是量出来的 2500 条（契约一处，能力表与界面读同一个数）。**仍未做的**：音画链接那一对的 J/L 式分边修剪（现在的等效路径是 Alt 单选其中一路再修剪，或先拆分音轨）；跨工程不同帧率的自动转换（刻度按 `TIMEBASE` 走，位置对得上，帧网格与速度换算不自动改）；20,000 片段是契约上限，同等规模的界面性能还没验收过。
+2. 常用成片：13 种转场（清单由 `capabilities.transition_kinds` 下发，`transition_check.py`）、曲线变速与冻结帧（`speedramp_check.py`）、自动语音字幕（`asr_check.py`）、字幕样式与批量编辑（`style_check.py`、`textstyle_check.py`、`captions_comp_check.py`）、片段两头可拖的淡角柄与四种形状（`fade_check.py`、`fadeshape_check.py`、`fadebatch_check.py`）、按标记分割（`marker_check.py`、`marks_check.py`）均已交付。**仍未做的**：MXF/DPX 一类的后期格式，也不承诺再分发全部 codec。
+3. AE 合成：时间贝塞尔与自定义手柄（`bezier_check.py`）、dope sheet 的一组针（框选、整组拖、Alt 删、轨道道，`desktop_keyframemarquee/keyframedrag/keyframelane_check.ts`）、路径遮罩与其形状动画（`pathmask_check.py`、`maskshape_check.py`、`maskanim_check.py`）、嵌套合成（`nest_check.py` 量嵌套本身与 `sequence_id` 的预演/重放，`nestfx_check.py` 量合成里的每条滤镜落在同一片像素上，`analysis_sweep_check.py` 量九条分析入口对合成内部的每条拒绝都点名；第十条自动调色由 `self_check.py` 走真实 MCP stdio 量过）、混合模式两端同数（`blend_check.py` 与 1.122 的分支混合）、逐帧柔焦/清晰（`blurkey_check.py`、`sharpenkey_check.py`）已完成。**仍未做的**：① 调色节点的第二路输入（把另一段画面喂进同一个节点）——两支画面进同一个 FFmpeg 阶段与浏览器 canvas 的复合都已逐模式量过并记在 `AGENTS.md`，但那是会把「一条链塌成一张每通道表」这个不变量换掉的架构改动，没有连线形状之前不假装交付；② 多目标跟踪（一个片段现在只有一个遮罩槽位 `Clip.mask`，1.85 的遮挡续跟是一个目标一条轨迹）。
+4. 达芬奇工作流：色轮/曲线/色阶/通道混合/1D+3D LUT（`grade_check.py`、`gradelevels_check.py`、`matrix_check.py`、`lut_check.py`、`lut3d_check.py`）、示波器（`tests/scope_check.ts`）、色彩空间转换与每通道表的精度（`grade_check.py`、`gradelevels_check.py`、`curvefidelity_check.py`）、整轨响度/去空白/自动闪避（`loudness_check.py`、`silence_check.py`、`duck_check.py`）、代理与缓存配额（`proxy_check.py`、`proxyspace_check.py`、`cache_check.py`）已完成，调色图还能摆成树（1.124）。**仍未做的**：完整的二通道色彩管理流程（现在是 `transfer` 节点手工两端，没有输入/输出变换链的一键套叠）、可调快捷键、代码签名。
+5. 真实生产验收：项目备份与打包迁移已交付（`bundle_check.py`）；仍欠用户的长项目与素材格式、4K 多轨性能、快捷键预设与签名发布。
+
+现阶段能覆盖的已经不止基础剪辑、画中画、字幕与基础动画；上面每条「仍未做」都写清了它缺的是哪一个不变量或哪一个没验收的量——不拿看着像的近似当已交付。
 
 
 ## 1.9 动画曲线（2026-10-05）
