@@ -520,6 +520,7 @@ select, input[type=range] { color-scheme: dark; }
 .tl-head-btns .icon-btn { width: 20px; height: 20px; }
 .tl-lane { position: relative; flex: none; border-bottom: 1px solid var(--line); background: var(--panel); }
 .tl-lane.audio-track { background: #1b1d21; }
+.tl-window-note { color: var(--muted); font-size: 11px; }
 .lane-hint { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: 11px; color: #808897; pointer-events: none; }
 .row-count { display: none; }
 

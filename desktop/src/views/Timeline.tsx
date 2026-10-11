@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Icon, IconBtn } from "../ui";
 import { TIMEBASE, align, frameTicks, humanDuration, timecode } from "../time";
+import { countHidden, laneTicks, paintClips, rulerSeconds, unionRange, WINDOW_NOTE, type TickRange } from "../timelineWindow";
 import { transitionLabel } from "../engine";
 import type { Clip, Keyframe, Marker, Project, Track } from "../engine";
 import { planKeyframeDrag, planNeedleRemoval } from "../keyframeDrag";
@@ -164,6 +165,23 @@ export function Timeline() {
   const [dropHint, setDropHint] = useState<{ trackId: string; ticks: number } | null>(null);
   const [marquee, setMarquee] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // 1.131：卡片只建窗口里的那些。view 是这条横向滚动的当前视口，marqueeSpan 是框选正在拖的那一段
+  // 时间跨度——被框住的每一条都必须存在，旧的按 DOM 矩形判定命中的逻辑才一个字都不用改。
+  const [view, setView] = useState<{ left: number; width: number } | null>(null);
+  const [marqueeSpan, setMarqueeSpan] = useState<TickRange | null>(null);
+  useEffect(() => {
+    const scroll = scrollRef.current;
+    if (!scroll) return;
+    const measure = () => setView({ left: scroll.scrollLeft, width: scroll.clientWidth });
+    measure();
+    scroll.addEventListener("scroll", measure, { passive: true });
+    window.addEventListener("resize", measure);
+    return () => {
+      scroll.removeEventListener("scroll", measure);
+      window.removeEventListener("resize", measure);
+    };
+  }, [project?.id]);
+
 
   useEffect(() => {
     const scroll = scrollRef.current;
@@ -196,6 +214,9 @@ export function Timeline() {
   const px = edit.pxPerSec;
   const contentTicks = Math.max(timelineEnd(project) + TIMEBASE * 4, TIMEBASE * 20);
   const width = Math.ceil((contentTicks / TIMEBASE) * px) + 80;
+  // 窗口 = 当前视口（两边各多涂两秒）∪ 正在拖的那一框；没量到视口之前不裁，一整条时间线照旧全画。
+  const paintRange = view ? unionRange(laneTicks(view, px, HEAD, contentTicks), marqueeSpan) : null;
+  const outside = paintRange ? countHidden(Object.values(project.clips), paintRange, new Set(app.selectedClips)) : 0;
   const ordered = timelineTracks(project);
   const splitTracks = new Set(app.selectedClips.filter((id) => { const c = project.clips[id]; return c && play.ticks > c.position_ticks && play.ticks < c.position_ticks + c.duration_ticks; }).map((id) => project.clips[id].track_id));
   const inTransition = Object.values(project.clips).some((c) => splitTracks.has(c.track_id) && c.transition_in && play.ticks >= c.position_ticks && play.ticks < c.position_ticks + c.transition_in.duration_ticks);
@@ -258,7 +279,7 @@ export function Timeline() {
           <IconBtn icon="zoomIn" label="放大（+）" onClick={() => prefs.zoomBy(1.25)} />
         </span>
       </div>
-
+        {paintRange && outside ? <span className="tl-window-note" role="status">{WINDOW_NOTE(outside)}</span> : null}
       <div className="tl-scroll" ref={scrollRef}>
         <div className="tl-inner" style={{ width: width + HEAD, height: (ordered.length + 1) * ROW + 8 }} onPointerDown={(event) => {
           if (event.button !== 0 || edit.tool !== "select" || (event.target as HTMLElement).closest('.clip, .tl-head, .tl-ruler, .transition-badge')) return;
@@ -271,11 +292,14 @@ export function Timeline() {
           const move = (ev: PointerEvent) => {
             const left = Math.min(x, ev.clientX), right = Math.max(x, ev.clientX), top = Math.min(y, ev.clientY), bottom = Math.max(y, ev.clientY);
             const bounds = inner.getBoundingClientRect();
-            setMarquee({ x: left - bounds.left, y: top - bounds.top, width: right - left, height: bottom - top });
+            setMarqueeSpan({
+              from: Math.max(0, ((left - bounds.left - HEAD) * TIMEBASE) / px),
+              to: Math.max(0, ((right - bounds.left - HEAD) * TIMEBASE) / px),
+            });
             const ids = Array.from(inner.querySelectorAll<HTMLElement>('.clip[data-id]')).filter((e) => { const r = e.getBoundingClientRect(); return r.left < right && r.right > left && r.top < bottom && r.bottom > top; }).map((e) => e.dataset.id!);
             selectClips([...base, ...ids]);
           };
-          const stop = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', stop); window.removeEventListener('pointercancel', stop); setMarquee(null); };
+          const stop = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', stop); window.removeEventListener('pointercancel', stop); setMarquee(null); setMarqueeSpan(null); };
           window.addEventListener('pointermove', move); window.addEventListener('pointerup', stop); window.addEventListener('pointercancel', stop);
         }}>
           {marquee ? <div className="tl-marquee" style={{ left: marquee.x, top: marquee.y, width: marquee.width, height: marquee.height }} aria-hidden="true" /> : null}
@@ -300,7 +324,7 @@ export function Timeline() {
                 window.addEventListener("pointercancel", stop);
               }}
             >
-              {rulerMarks(contentTicks, px, project)}
+              {rulerMarks(contentTicks, px, project, paintRange)}
               <RangeHandles project={project} px={px} />
               {(project.markers ?? []).map((mark) => {
                 const at = markerDrag?.id === mark.id ? markerDrag.ticks : mark.at_ticks;
@@ -394,6 +418,7 @@ export function Timeline() {
               setDropHint={setDropHint}
               media={media}
               ghosts={ghosts.filter((clip) => clip.track_id === track.id)}
+              paint={paintRange}
             />
           ))}
 
@@ -426,12 +451,16 @@ export function Timeline() {
   }
 }
 
-function rulerMarks(total: number, px: number, project: Project) {
+function rulerMarks(total: number, px: number, project: Project, window?: TickRange | null) {
   const secondsTotal = total / TIMEBASE;
   const step = px >= 150 ? 1 : px >= 70 ? 2 : px >= 34 ? 5 : 10;
   const overHour = secondsTotal >= 3600;
   const items: JSX.Element[] = [];
-  for (let s = 0; s <= secondsTotal; s += step) {
+  // 1.131：尺子也只数窗口里的那些——两万秒的刻度以前和卡片一样全建，那是同一个毛病的第二处。
+  const marks = window
+    ? rulerSeconds(window, total, px)
+    : Array.from({ length: Math.floor(secondsTotal / step) + 1 }, (_, index) => index * step);
+  for (const s of marks) {
     const x = s * px;
     items.push(<span key={`m${s}`} className="ruler-tick big" style={{ left: x }} />);
     items.push(
@@ -458,6 +487,7 @@ function TrackRow({
   setDropHint,
   media,
   ghosts,
+  paint,
 }: {
   track: Track;
   index: number;
@@ -470,13 +500,16 @@ function TrackRow({
   setDropHint: (value: { trackId: string; ticks: number } | null) => void;
   media: Map<string, { thumbs: string[]; wave: number[] }>;
   ghosts: Clip[];
+  paint: TickRange | null;
 }) {
   const app = useApp();
   const edit = useEdit();
   const clips = Object.values(project.clips).filter((item) => item.track_id === track.id);
   const emptyTrack = trackToolBlocker(track.id, clips);
   const selectedIds = useMemo(() => new Set(app.selectedClips), [app.selectedClips]);
+  // 挑中的段即便在窗口外也照旧画出来：一整组被挑着横向拖是既有手感，裁切不许把它裁掉。
   const q = quantum(project, track.kind);
+  const painted = paint ? paintClips(clips, paint, selectedIds).shown : clips;
 
   return (
     <div className={`tl-row${track.kind === "audio" ? " audio-row" : ""}`} style={{ height: ROW }}>
@@ -572,7 +605,7 @@ function TrackRow({
           void addLibraryItemToTimeline(item, track.id, snapTo(project, track.kind, Math.max(0, ((event.clientX - left) / px) * TIMEBASE)));
         }}
       >
-        {clips.map((clip) => (
+        {painted.map((clip) => (
           <ClipBlock
             key={clip.id}
             clip={clip}
@@ -603,7 +636,7 @@ function TrackRow({
             <span className="clip-label">{project.assets[clip.asset_id]?.label ?? clip.asset_id}</span>
           </div>
         ))}
-        {clips.filter((clip) => clip.transition_in).map((clip) => <button key={`transition-${clip.id}`} type="button" className="transition-badge"
+        {painted.filter((clip) => clip.transition_in).map((clip) => <button key={`transition-${clip.id}`} type="button" className="transition-badge"
           style={{ left: clip.position_ticks / TIMEBASE * px, width: Math.max(24, clip.transition_in!.duration_ticks / TIMEBASE * px) }}
           title={`${transitionLabel(app.caps, clip.transition_in!.kind)} · ${humanDuration(clip.transition_in!.duration_ticks)}，点击编辑`}
           aria-label={`编辑${transitionLabel(app.caps, clip.transition_in!.kind)}转场`}
