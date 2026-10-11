@@ -50,7 +50,13 @@ def run_one(path: Path, out_dir: Path) -> None:
     executed = subprocess.run(
         [NODE, str(bundle)], capture_output=True, text=True, encoding="utf-8", errors="replace"
     )
-    output = executed.stdout[-600:] + executed.stderr[-400:]
+    # 一条失败的断言，它那句中文在 node stderr 的**开头**；只截尾巴的话，报上来的是一串
+    # `at file:///…` 的路径，看不出到底是哪条断言红了——突变套件正是靠这句话来认「红在
+    # 自己那条断言上」。所以失败时两头都留。
+    if executed.returncode == 0:
+        output = executed.stdout[-600:] + executed.stderr[-400:]
+    else:
+        output = executed.stdout[-600:] + executed.stderr[:1200] + "\n…\n" + executed.stderr[-300:]
     assert executed.returncode == 0, f"{path.name} failed:\n{output}"
     tail = [line for line in executed.stdout.splitlines() if line.strip()][-1:]
     print(f"    {path.name}: {tail[0] if tail else 'ok'}")

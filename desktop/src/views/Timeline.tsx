@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Icon, IconBtn } from "../ui";
 import { TIMEBASE, align, frameTicks, humanDuration, timecode } from "../time";
-import { countHidden, laneTicks, paintClips, rulerSeconds, unionRange, WINDOW_NOTE, type TickRange } from "../timelineWindow";
+import { countHidden, firstView, laneTicks, paintClips, rulerSeconds, unionRange, WINDOW_NOTE, type TickRange, type View } from "../timelineWindow";
 import { transitionLabel } from "../engine";
 import type { Clip, Keyframe, Marker, Project, Track } from "../engine";
 import { planKeyframeDrag, planNeedleRemoval } from "../keyframeDrag";
@@ -47,6 +47,8 @@ import {
   setMarker,
   splitAtMarkers,
   setFadeWindowsForClips,
+  ZOOM_MAX,
+  ZOOM_MIN,
 } from "../store";
 import { EMPTY_TRACK_HINT, FIELD_LABEL, trackToolBlocker, fadeDragBatch, fadeDragTicks, fadeProperties, fadeWindows, type FadeProperty, type FadeSide } from "../effects";
 import { selectionQuantum, timelineTracks } from "../selection";
@@ -167,7 +169,9 @@ export function Timeline() {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // 1.131：卡片只建窗口里的那些。view 是这条横向滚动的当前视口，marqueeSpan 是框选正在拖的那一段
   // 时间跨度——被框住的每一条都必须存在，旧的按 DOM 矩形判定命中的逻辑才一个字都不用改。
-  const [view, setView] = useState<{ left: number; width: number } | null>(null);
+  // 1.133：初值不是 null 而是「当作看见 FIRST_PAINT_PIXELS 宽」。effect 要等第一次提交以后才量得到，
+  // 所以 null 那一帧就是首帧——两万段那份工程把它读成「不裁」，于是两万张卡片在首帧建完。
+  const [view, setView] = useState<View>(firstView);
   const [marqueeSpan, setMarqueeSpan] = useState<TickRange | null>(null);
   useEffect(() => {
     const scroll = scrollRef.current;
@@ -214,9 +218,9 @@ export function Timeline() {
   const px = edit.pxPerSec;
   const contentTicks = Math.max(timelineEnd(project) + TIMEBASE * 4, TIMEBASE * 20);
   const width = Math.ceil((contentTicks / TIMEBASE) * px) + 80;
-  // 窗口 = 当前视口（两边各多涂两秒）∪ 正在拖的那一框；没量到视口之前不裁，一整条时间线照旧全画。
-  const paintRange = view ? unionRange(laneTicks(view, px, HEAD, contentTicks), marqueeSpan) : null;
-  const outside = paintRange ? countHidden(Object.values(project.clips), paintRange, new Set(app.selectedClips)) : 0;
+  // 窗口 = 当前视口（两边各多涂两秒）∪ 正在拖的那一框。首帧也有界：见上面 `useState(firstView)` 那句。
+  const paintRange = unionRange(laneTicks(view, px, HEAD, contentTicks), marqueeSpan);
+  const outside = countHidden(Object.values(project.clips), paintRange, new Set(app.selectedClips));
   const ordered = timelineTracks(project);
   const splitTracks = new Set(app.selectedClips.filter((id) => { const c = project.clips[id]; return c && play.ticks > c.position_ticks && play.ticks < c.position_ticks + c.duration_ticks; }).map((id) => project.clips[id].track_id));
   const inTransition = Object.values(project.clips).some((c) => splitTracks.has(c.track_id) && c.transition_in && play.ticks >= c.position_ticks && play.ticks < c.position_ticks + c.transition_in.duration_ticks);
@@ -275,11 +279,11 @@ export function Timeline() {
         )}
         <span className="zoom-ctrl">
           <IconBtn icon="zoomOut" label="缩小（-）" onClick={() => prefs.zoomBy(0.8)} />
-          <input type="range" min={16} max={320} value={px} aria-label="时间线缩放" onChange={(event) => prefs.setZoom(Number(event.target.value))} />
+          <input type="range" min={ZOOM_MIN} max={ZOOM_MAX} value={px} aria-label="时间线缩放" onChange={(event) => prefs.setZoom(Number(event.target.value))} />
           <IconBtn icon="zoomIn" label="放大（+）" onClick={() => prefs.zoomBy(1.25)} />
         </span>
       </div>
-        {paintRange && outside ? <span className="tl-window-note" role="status">{WINDOW_NOTE(outside)}</span> : null}
+        {outside ? <span className="tl-window-note" role="status">{WINDOW_NOTE(outside)}</span> : null}
       <div className="tl-scroll" ref={scrollRef}>
         <div className="tl-inner" style={{ width: width + HEAD, height: (ordered.length + 1) * ROW + 8 }} onPointerDown={(event) => {
           if (event.button !== 0 || edit.tool !== "select" || (event.target as HTMLElement).closest('.clip, .tl-head, .tl-ruler, .transition-badge')) return;
@@ -451,15 +455,14 @@ export function Timeline() {
   }
 }
 
-function rulerMarks(total: number, px: number, project: Project, window?: TickRange | null) {
+function rulerMarks(total: number, px: number, project: Project, window: TickRange) {
   const secondsTotal = total / TIMEBASE;
-  const step = px >= 150 ? 1 : px >= 70 ? 2 : px >= 34 ? 5 : 10;
   const overHour = secondsTotal >= 3600;
   const items: JSX.Element[] = [];
   // 1.131：尺子也只数窗口里的那些——两万秒的刻度以前和卡片一样全建，那是同一个毛病的第二处。
-  const marks = window
-    ? rulerSeconds(window, total, px)
-    : Array.from({ length: Math.floor(secondsTotal / step) + 1 }, (_, index) => index * step);
+  // 1.133：窗口是必填的。这里原来还留着一份「没有窗口就从 0 数到结尾」的分支，连带抄了第二张
+  // 间隔表；间隔的唯一主人是 `timelineWindow.rulerStep`，那条分支一删，这张表也就没人重抄了。
+  const marks = rulerSeconds(window, total, px);
   for (const s of marks) {
     const x = s * px;
     items.push(<span key={`m${s}`} className="ruler-tick big" style={{ left: x }} />);
@@ -500,7 +503,7 @@ function TrackRow({
   setDropHint: (value: { trackId: string; ticks: number } | null) => void;
   media: Map<string, { thumbs: string[]; wave: number[] }>;
   ghosts: Clip[];
-  paint: TickRange | null;
+  paint: TickRange;
 }) {
   const app = useApp();
   const edit = useEdit();
@@ -509,7 +512,7 @@ function TrackRow({
   const selectedIds = useMemo(() => new Set(app.selectedClips), [app.selectedClips]);
   // 挑中的段即便在窗口外也照旧画出来：一整组被挑着横向拖是既有手感，裁切不许把它裁掉。
   const q = quantum(project, track.kind);
-  const painted = paint ? paintClips(clips, paint, selectedIds).shown : clips;
+  const painted = paintClips(clips, paint, selectedIds).shown;
 
   return (
     <div className={`tl-row${track.kind === "audio" ? " audio-row" : ""}`} style={{ height: ROW }}>

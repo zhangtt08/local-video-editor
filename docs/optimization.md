@@ -4450,3 +4450,41 @@ renderer bundle 里读得到七句人话与 `clip.color_manage`。四条突变�
    `Debugger.pause` 四轮停在同一串栈 `(anon)<(anon)<TrackRow<…react…`。`view` 在第一次渲染时还是 null，
    而 1.131 的 `laneTicks` 规矩是「没量到视口就不裁」——首帧把两万张卡片建完，第二次渲染才裁到 14 张。
    这一版没有动那条规矩（改动只在引擎侧与首页），但把它记成 1.133 的第一件事：**首帧就有界，并删掉那条不裁的分支**。
+
+## 1.133 首帧就有界：两万段那一页终于画出来了
+
+四处改动，全部由 1.132 那次调试器中断指出来：
+
+- `desktop/src/timelineWindow.ts`：新增 `View` 类型、`FIRST_PAINT_PIXELS = 1200`、`firstView()`；`laneTicks` 收必填 `View`，
+  「量不到视口就把整条时间线交回来」那条分支改成「按默认宽度算」，只剩 `px <= 0`（没有比例就无从换算）一个出口。
+- `desktop/src/views/Timeline.tsx`：`useState<View>(firstView)`（原来是 `null`，而量视口的 effect 要等第一次提交以后才跑）；
+  `paintRange` 不再有 null；`TrackRow` 的 `paint` 改成必填 `TickRange`，那条 `paint ? … : clips` 的三元删掉；
+  `rulerMarks` 的窗口必填，顺带删掉它自带的那第二张间隔表（间隔的唯一主人是 `rulerStep`）；滑杆的 min/max 改读
+  `ZOOM_MIN/ZOOM_MAX`。
+- `desktop/src/store.ts`：`ZOOM_MIN/ZOOM_MAX` 一处定义，`clampZoom` 一个主人——`setZoom`、`zoomBy` 与**从 localStorage
+  读回来的那份偏好**都过它；非数（NaN/字符串）不带走现值。这一处不是洁癖：`pxPerSec` 是 `laneTicks` 唯一还能
+  「不裁」的那道门，而旧代码把偏好原样摊进初始状态，一枚写坏的 `agentcut.edit` 就够把两万段放回首帧。
+- `tests/desktop_ts_check.py`：一条失败断言的那句中文在 node stderr 的**开头**，以前只截尾巴，报上来的全是一串
+  `at file:///…`，看不出红在哪条断言——突变套件因此要求「红在自己的消息上」时无从可查。现在失败时两头都留。
+
+门禁：`tests/desktop_20k_check.ts` 改的那几条钉的是首帧（`laneTicks(firstView(), …)` 与「宽度为 0」同解；三秒的小工程
+不会被默认宽度切掉；两万段在 `px=100` 与 `px=ZOOM_MIN` 下首帧都不过界），`tests/desktop_zoomclamp_check.ts`
+（第 45 个壳层检查，跑真 store：脏值、两端、NaN、写回 localStorage 的那份、滑杆与夹法同源，最后一行把夹法与首帧接起来：
+`ZOOM_MIN` 下两万段的首帧仍是 71 张）。11 条突变逐条红在自己那条断言上，并且核对红的是哪一份 shell check。
+
+装机实测（冻结引擎自报 1.133.0，渲染层从新 `app.asar` 抽出，同一个引擎实例 `3b3f86eb8f94`，工程线上 12,103,211 字节）：
+
+| 页 | `renderer_scale` 判语 | 卡片 | DOM 节点 | 本次进程树峰值 | 用户态 CPU |
+| --- | --- | --- | --- | --- | --- |
+| 两万段（1.132 那份代码） | never-painted | 0 | 无从问 | 2,994 MB（渲染进程 2,370 MB 后进程消失） | 10.41 s |
+| 两万段（1.133） | painted，6.7 s 内 | 13 | 485 | 843 MB（最大单进程 205 MB） | 2.21 s |
+| 三段对照页（1.133） | painted，7 s 内 | 3 | — | 与上一行同一台引擎 | — |
+
+那一句也在页面上念得出实数：「窗口外还有 19987 段没有画（它们仍在工程里，也在导出里）：往那个方向滚就出现。」
+滚动与缩放都还带得动（这一轮的 CDP 探针：推一次滚动，再问一次 DOM）：把 1,240,440 px 的横向滚动推到 25%/60%/100%，
+卡片 18/17/9 张、卡片左缘 309,814 / 744,000 / 1,239,440 px、那句话的数随之 19982/19983/19991，三次求值分别 1/1/0 ms；
+把缩放推到上限 320 px/s，滚动宽度涨到 6,401,472 px 而卡片仍是 8 张、求值 0 ms。这把尺这一版也继续说真话：
+本轮第一次采样（2.2 s）被它自己标成 `WRONG_PAGE` 拒了，它只认 `location.href` 与 `--url` 逐字相同的那一页。
+
+「两万段能用」不等于「五十万段能用」：筛与数的那些 `Object.values(project.clips)` 仍是每条轨道、每次渲染一遍，
+五十万段这台机器上没量过。首帧有界这件事现在由两处一起守着：窗口必填 + 缩放有下限。

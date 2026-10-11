@@ -2627,6 +2627,18 @@ export function newBatchId(commandCount: number): string {
 export type Tool = "select" | "razor";
 type EditPrefs = { pxPerSec: number; snap: boolean; tool: Tool; showTicks: boolean; linkedSelection: boolean };
 
+/** 缩放的两端只在这里写一次：滑杆的 min/max、`setZoom`、以及从 localStorage 读回来那一份都用它。
+ *  下限不是手感问题——时间线的窗口是按像素算的，`pxPerSec<=0` 意味着无从换算，那一条分支会把
+ *  整条时间线交回给渲染（见 `timelineWindow.laneTicks`）。以前存偏好时没夹过，重开窗口读回来的
+ *  是原样一份，所以一枚写坏的 `agentcut.edit` 就够把两万段那份工程放回首帧建两万张卡片的老路。 */
+export const ZOOM_MIN = 16;
+export const ZOOM_MAX = 320;
+
+function clampZoom(value: number | undefined, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(value)));
+}
+
 const editListeners = new Set<() => void>();
 const storedPrefs = (() => {
   try {
@@ -2635,7 +2647,8 @@ const storedPrefs = (() => {
     return {};
   }
 })();
-let edit: EditPrefs = { pxPerSec: 62, snap: true, tool: "select", showTicks: false, linkedSelection: true, ...storedPrefs };
+const DEFAULT_EDIT: EditPrefs = { pxPerSec: 62, snap: true, tool: "select", showTicks: false, linkedSelection: true };
+let edit: EditPrefs = { ...DEFAULT_EDIT, ...storedPrefs, pxPerSec: clampZoom(storedPrefs.pxPerSec, DEFAULT_EDIT.pxPerSec) };
 
 function setEdit(patch: Partial<EditPrefs>) {
   edit = { ...edit, ...patch };
@@ -2665,7 +2678,7 @@ export function editPrefs(): EditPrefs {
 
 export const prefs = {
   setZoom(value: number) {
-    setEdit({ pxPerSec: Math.min(320, Math.max(16, Math.round(value))) });
+    setEdit({ pxPerSec: clampZoom(value, edit.pxPerSec) });
   },
   zoomBy(factor: number) {
     this.setZoom(edit.pxPerSec * factor);

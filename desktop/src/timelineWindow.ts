@@ -3,29 +3,44 @@ import { TIMEBASE } from "./time";
 /** 1.131：时间线只画窗口里的那一段。
  *
  * 装机量出来的事实（`scripts/renderer_scale.cjs`，打包产物 + 冻结引擎，两万段）：页面画了 **0 段**，
- * 渲染进程涨到 2,923 MB 与 14.8 秒用户态 CPU 之后消失，此后每一次 `Runtime.evaluate` 都在 5 秒上
- * 限时内没有回话（连续 200 多秒），而同一时刻引擎答同一条 GET 只用 0.7 秒、照样交出两万段。所以
- * 瓶颈不是「算不过来」，是「一次把两万张卡片全建出来」。窗口化把建卡片这件事绑在看得见的宽度上，
- * 与段的总数无关。
+ * 自己那棵进程树涨到 2,994 MB（渲染进程单独 2,370 MB / 10.41 秒用户态 CPU）之后那个进程消失，此后
+ * 每一次 `Runtime.evaluate` 都在 5 秒上限内没有回话，而同一时刻引擎答同一条 GET 只用 0.96 秒、照样
+ * 交出两万段。所以瓶颈不是「算不过来」，是「一次把两万张卡片全建出来」。窗口化把建卡片这件事绑在
+ * 看得见的宽度上，与段的总数无关。
  *
- * 这里只回答「哪些段该建」，坐标还是 `Timeline.tsx` 那一处算：一条卡片的本来的位置是
+ * 1.133 补的是这里漏掉的第一帧：`Debugger.pause` 打在未压缩的 bundle 上，四轮都停在同一串栈
+ * `(anon)<(anon)<TrackRow<…react…`，也就是**第一次渲染**——那时视口还没量到，而原来写的规矩是
+ * 「没量到就不裁」，于是两万段照旧在首帧把两万张卡片建完，第二次渲染才裁到 14 张，已经太晚。
+ * 首帧必须有界：量到真视口以前，当作看见 `FIRST_PAINT_PIXELS` 这么宽。
+ *
+ * 这里只回答「哪些段该建」，坐标还是 `Timeline.tsx` 那一处算：一条卡片本来的位置是
  * `left = position_ticks / TIMEBASE * px`，所以「看得见」= 这条区间和窗口的像素区间相交。
  */
 
 export type TickRange = { from: number; to: number };
 
+/** 那条横向滚动当前看见的位置与宽度（像素）。 */
+export type View = { left: number; width: number };
+
 /** 窗口两边各多涂两秒：贴着边缘的段不至于一边有一边没有，拖到边缘时也不会「先到后画」。 */
 export const WINDOW_PAD_TICKS = 2 * TIMEBASE;
 
-export function laneTicks(
-  view: { left: number; width: number },
-  px: number,
-  head: number,
-  totalTicks: number,
-): TickRange {
-  if (!(px > 0) || !(view.width > 0)) return { from: 0, to: totalTicks };
+/** 没量到视口时当作看见这么宽。这个数的作用只有一个：让**首帧**就有界——它比真视口宽一点或窄一点
+ *  都只影响第一次渲染那一下（量到真值之后立刻按实测改），而「没有界」的代价是两万张卡片、
+ *  一个 2.4 GB 的渲染进程和一次崩溃。 */
+export const FIRST_PAINT_PIXELS = 1200;
+
+export function firstView(): View {
+  return { left: 0, width: FIRST_PAINT_PIXELS };
+}
+
+export function laneTicks(view: View, px: number, head: number, totalTicks: number): TickRange {
+  // 唯一还能交回整条时间线的出口是 px<=0：没有比例就无从换算。缩放被 `store.ts` 夹在
+  // [ZOOM_MIN, ZOOM_MAX]，读回来的那份偏好也过同一个夹子，所以这条路在应用里走不到。
+  if (!(px > 0)) return { from: 0, to: totalTicks };
+  const width = view.width > 0 ? view.width : FIRST_PAINT_PIXELS;
   const from = Math.min(totalTicks, Math.max(0, ((view.left - head) / px) * TIMEBASE - WINDOW_PAD_TICKS));
-  const to = Math.min(totalTicks, Math.max(0, ((view.left - head + view.width) / px) * TIMEBASE + WINDOW_PAD_TICKS));
+  const to = Math.min(totalTicks, Math.max(0, ((view.left - head + width) / px) * TIMEBASE + WINDOW_PAD_TICKS));
   return { from, to: Math.max(from, to) };
 }
 
