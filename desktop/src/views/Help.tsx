@@ -67,7 +67,7 @@ const KEYS = [
   { key: "Shift+Delete", body: "删除并补齐：后面的片段整体左移" },
   { key: "Ctrl/Shift+点选", body: "增减片段选择；空白处拖动可跨轨框选" },
   { key: "Ctrl+A / Esc", body: "选择全部片段 / 清空选择" },
-  { key: "Ctrl+C / Ctrl+V", body: "复制片段组 / 粘贴到播放头，保留间隔与内部转场" },
+  { key: "Ctrl+C / Ctrl+V", body: "复制片段组 / 粘贴到播放头，保留间隔与内部转场。关掉应用再开这一份还在：粘到别的工程时，那边没有的素材会让当前引擎重新读一遍，读不到就整批不粘并点名是哪几个素材" },
   { key: "Ctrl+D", body: "追加整组副本到所用轨道末尾" },
   { key: "Ctrl+G / Ctrl+Shift+G", body: "组合 / 取消组合（保存到工程）" },
   { key: "Ctrl+L / Ctrl+Shift+L", body: "链接 / 解除音画链接（先对齐位置、时长、速度）" },

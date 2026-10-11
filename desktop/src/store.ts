@@ -40,9 +40,10 @@ import type {
   RenderRange,
   RenderBatchItem,
 } from "./engine";
-import { FIT_MODES, type TransitionKind } from "./engine";
+import { FIT_MODES, verifiedFromProbe, type TransitionKind, type VerifiedMedia } from "./engine";
 import { align, frameTicks, sampleTicks, ticks, TIMEBASE } from "./time";
-import { copyClips, pasteCommands, relatedClips, selectionQuantum, timelineTracks, type ClipClipboard } from "./selection";
+import { clipboardAssetsToReprobe, copyClips, pasteCommands, relatedClips, reviveClipboardAssets, selectionQuantum, timelineTracks, type ClipClipboard } from "./selection";
+import { CLIP_KEY, MARKS_KEY, isClipClipboard, isSourceMarks, readBrowser, writeBrowser, type SourceMark } from "./clipboardStore";
 import type { FadeOp, FadeProperty, FadeShape, FadeSide } from "./effects";
 import { fadeAdoptSummary } from "./effects";
 
@@ -125,7 +126,7 @@ export type AppState = {
   monitorMode: "timeline" | "source";
   sourceCursorTicks: number;
   sourcePlaying: boolean;
-  sourceMarks: Record<string, { in_ticks?: number; out_ticks?: number }>;
+  sourceMarks: Record<string, SourceMark>;
   targetTrack: string | null;
   sourceRippleAll: boolean;
   bundleRetry: string;
@@ -1374,14 +1375,20 @@ export function markSequence(point: "in" | "out" | "clear") {
   void setSequenceMark(point, playhead.value);
 }
 
+/** 素材入出点也跨重启保存：写只写这一处，读回来按 `isSourceMarks` 那道门。 */
+function rememberSourceMarks(marks: Record<string, SourceMark>) {
+  set({ sourceMarks: marks });
+  writeBrowser(MARKS_KEY, marks);
+}
+
 export function markSource(point: "in" | "out" | "clear") {
   const source = selectedSource(); if (!source || source.kind === "image" || source.end < source.q) return;
-  if (point === "clear") { const marks = { ...state.sourceMarks }; delete marks[source.key]; set({ sourceMarks: marks }); return; }
+  if (point === "clear") { const marks = { ...state.sourceMarks }; delete marks[source.key]; rememberSourceMarks(marks); return; }
   const cursor = Math.min(source.end - source.q, Math.max(0, Math.floor(state.sourceCursorTicks / source.q) * source.q));
   const marks = { ...(state.sourceMarks[source.key] ?? {}) };
   if (point === "in") { marks.in_ticks = cursor; if ((marks.out_ticks ?? source.end) <= cursor) delete marks.out_ticks; }
   else { marks.out_ticks = cursor + source.q; if ((marks.in_ticks ?? 0) >= marks.out_ticks) delete marks.in_ticks; }
-  set({ sourceMarks: { ...state.sourceMarks, [source.key]: marks } });
+  rememberSourceMarks({ ...state.sourceMarks, [source.key]: marks });
 }
 
 export function editSource(mode: "insert" | "overwrite") {
@@ -1919,13 +1926,51 @@ export function duplicateClip(clipId: string) {
   void submit([clipAdd(copy)], "复制片段");
 }
 
-let clipClipboard: ClipClipboard | null = null;
+// 上一次运行留下的那份复制读得回来，但它带的那份探测记录是上一个进程给的——`asset.import` 只认
+// 这台引擎自己发的那张，所以标成「冷」，粘之前让这台引擎把没落点的素材重新读一遍。
+let clipClipboard: ClipClipboard | null = readBrowser(CLIP_KEY, isClipClipboard);
+let clipClipboardCold = clipClipboard !== null;
+if (clipClipboard) set({ clipboardCount: clipClipboard.clips.length });
+const storedMarks = readBrowser(MARKS_KEY, isSourceMarks);
+if (storedMarks) set({ sourceMarks: storedMarks });
+
+/** 这份复制只有一个落点：内存里的那一份与存储里的那一份永远一起换。 */
+function rememberClip(copy: ClipClipboard | null, cold = false): void {
+  clipClipboard = copy;
+  clipClipboardCold = copy !== null && cold;
+  writeBrowser(CLIP_KEY, copy);
+  set({ clipboardCount: copy?.clips.length ?? 0 });
+}
 
 export function copySelection() {
   if (!state.project || !state.selectedClips.length) return;
-  clipClipboard = copyClips(state.project, state.selectedClips, state.sequenceId);
-  set({ clipboardCount: clipClipboard.clips.length });
-  toast("ok", `已复制 ${clipClipboard.clips.length} 个片段`, "移动播放头后粘贴；也可切换到其他工程。");
+  rememberClip(copyClips(state.project, state.selectedClips, state.sequenceId));
+  toast("ok", `已复制 ${clipClipboard?.clips.length ?? 0} 个片段`, "移动播放头后粘贴；也可切换到其他工程，关掉应用再开这一份还在。");
+}
+
+/** 冷的那份要先补探测：目标工程里没有落点的那些素材，让这台引擎重新读一遍文件。
+ *  有一个读不到就整批不粘——半份素材拼出来的命令只会报一句说不清原因的红。 */
+async function reviveClipboard(
+  copied: ClipClipboard,
+  project: Project,
+  importMedia: (path: string) => Promise<Probe>,
+): Promise<ClipClipboard | null> {
+  const wanted = clipboardAssetsToReprobe(project, copied);
+  if (!wanted.length) return copied;
+  const fresh: Record<string, VerifiedMedia> = {};
+  const unreadable: string[] = [];
+  for (const job of wanted) {
+    try {
+      fresh[job.asset.id] = verifiedFromProbe(await importMedia(job.path));
+    } catch {
+      unreadable.push(`${job.asset.label}（${job.path}）`);
+    }
+  }
+  if (unreadable.length) {
+    toast("warn", `这份复制里的 ${unreadable.length} 个素材现在读不到`, `${unreadable.slice(0, 3).join("、")}。把文件放回原来的位置、或先把它们导入目标工程，或回原工程重新复制一次再粘。`);
+    return null;
+  }
+  return reviveClipboardAssets(copied, fresh);
 }
 
 function placeCopied(copied: ClipClipboard, at: number, direction = 0) {
@@ -1935,7 +1980,17 @@ function placeCopied(copied: ClipClipboard, at: number, direction = 0) {
   submit(plan.commands, `粘贴 ${copied.clips.length} 个片段`, { selectAfter: plan.ids });
 }
 
-export function pasteSelection() { if (clipClipboard) placeCopied(clipClipboard, playhead.value); }
+export function pasteSelection() {
+  const project = state.project;
+  if (!clipClipboard || !project) return;
+  if (!clipClipboardCold) { placeCopied(clipClipboard, playhead.value); return; }
+  if (!engine) { toast("warn", "引擎还没连上", "这一份复制要先让引擎重新读一遍素材才能粘出去，等左下角变成「引擎在线」再试一次。"); return; }
+  void reviveClipboard(clipClipboard, project, (path) => engine!.importMedia(path)).then((revived) => {
+    if (!revived) return;
+    rememberClip(revived);
+    placeCopied(revived, playhead.value);
+  });
+}
 
 export function duplicateSelection() {
   const project = state.project; if (!project || !state.selectedClips.length) return;

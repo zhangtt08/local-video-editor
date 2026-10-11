@@ -58,12 +58,16 @@ export function pasteKeys(target: PasteTarget, copy: CopiedKeys | null, at: numb
 }
 
 /**
- * 这份复制跟着应用走而不是跟着组件走：离开动画曲线再回来，那段节奏还在。
- * 它不进工程状态（写了就涨 revision、清撤销栈），也不跨工程——记着 projectId，换了就按失效处理。
+ * 这份复制跟着应用走而不是跟着组件走：离开动画曲线再回来，那段节奏还在。1.125 起它还跟着这台
+ * 机器走——重启后回到同一个工程，那段节奏照样能粘（`pasteKeys` 仍然按工程判，换了工程就按失效处理）。
+ * 它不进工程状态（写了就涨 revision、清撤销栈）。
  */
-let last: CopiedKeys | null = null;
+import { KEYS_KEY, isCopiedKeys, readBrowser, writeBrowser } from "./clipboardStore";
+
+let last: CopiedKeys | null = readBrowser(KEYS_KEY, isCopiedKeys);
 export function rememberCopy(copy: CopiedKeys | null): void {
   last = copy;
+  writeBrowser(KEYS_KEY, copy);
 }
 export function copiedKeys(): CopiedKeys | null {
   return last;

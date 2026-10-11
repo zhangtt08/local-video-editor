@@ -1217,12 +1217,16 @@ export const trackUpdate = (trackId: string, patch: Partial<Omit<Track, "id" | "
 
 export const trackRemove = (trackId: string): Command => ({ op: "track.remove", track_id: trackId });
 
+/** 服务器这次探出来的那份记录：`probe_id` 是这一次运行给的，别的字段是文件自己的。
+ *  冷粘贴要把它换回剪贴板里那份素材上，所以构造只在这里做一次。 */
+export const verifiedFromProbe = (probe: Probe): VerifiedMedia => ({ ...probe.verified, probe_id: probe.id });
+
 export const assetImport = (probe: Probe, assetId: string, label: string): Command => ({
   op: "asset.import",
   asset_id: assetId,
   label,
   probe_id: probe.id,
-  verified: { ...probe.verified, probe_id: probe.id },
+  verified: verifiedFromProbe(probe),
 });
 
 export const assetRemove = (assetId: string): Command => ({ op: "asset.remove", asset_id: assetId });

@@ -1,4 +1,4 @@
-import { newId, type Asset, type Clip, type Command, type Project, type Track, type Sequence } from "./engine";
+import { newId, type Asset, type Clip, type Command, type Project, type Track, type Sequence, type VerifiedMedia } from "./engine";
 import { frameTicks, sampleTicks } from "./time";
 
 export type ClipClipboard = { projectId: string; sequenceId?: string | null; clips: Clip[]; assets: Asset[]; tracks: Track[]; sequences?: Sequence[] };
@@ -55,14 +55,47 @@ export function copyClips(project: Project, ids: string[], sequenceId: string | 
   return structuredClone({ projectId: project.id, sequenceId, sequences: [...sequences.values()], clips: clips.map((c) => c.link_id && incomplete.has(c.link_id) ? { ...c, link_id: null, link_source_offset_ticks: 0 } : c), assets: Object.values(project.assets).filter((a) => assets.has(a.id)), tracks: project.tracks.filter((t) => tracks.has(t.id)) });
 }
 
+/** 剪贴板里那份素材在目标工程里的落点：同一份内容（按引擎算出的哈希）算已有；同一个工程里
+ *  id、kind、路径、时长都对得上的那份也算——那是复制出去以后没动过的原样。
+ *  冷粘贴（上一次运行留下的那份复制）要重新探测的就是「没有落点」的那些，所以这个判断只留一处，
+ *  `pasteCommands` 与 `clipboardAssetsToReprobe` 都走它。 */
+export function clipboardAssetMatcher(project: Project, copied: ClipClipboard) {
+  const media = new Map(Object.values(project.assets).filter((a) => a.verified).map((a) => [`${a.kind}:${a.verified!.content_sha256}`, a]));
+  return (asset: Asset): Asset | undefined => {
+    const current = copied.projectId === project.id ? project.assets[asset.id] : undefined;
+    return asset.verified
+      ? media.get(`${asset.kind}:${asset.verified.content_sha256}`)
+      : current && current.kind === asset.kind && current.reference === asset.reference && current.duration_ticks === asset.duration_ticks
+        ? current
+        : undefined;
+  };
+}
+
+/** 冷粘贴前必须由这台引擎重新探一遍的素材：带探测记录、走的是真实文件路径、而目标工程里没有落点。
+ *  `sequence://` 那种由嵌套时间线自己带进去，不需要探测。
+ *  要探的是 `verified.path`——`reference` 是 `asset.import` 之后引擎给的那个 probe_id，不是文件路径，
+ *  拿它去探测会被引擎回一句「这不是我认识的素材」。 */
+export type ClipboardReprobe = { asset: Asset; path: string };
+
+export function clipboardAssetsToReprobe(project: Project, copied: ClipClipboard): ClipboardReprobe[] {
+  const match = clipboardAssetMatcher(project, copied);
+  return copied.assets
+    .filter((asset) => asset.verified && !match(asset) && !asset.reference.startsWith("sequence://"))
+    .map((asset) => ({ asset, path: asset.verified?.path ?? asset.reference }));
+}
+
+/** 把这次探测出来的记录换回剪贴板：只动 `verified`，标签、路径、kind 那些原样留着。 */
+export function reviveClipboardAssets(copied: ClipClipboard, fresh: Record<string, VerifiedMedia>): ClipClipboard {
+  return { ...copied, assets: copied.assets.map((asset) => (fresh[asset.id] ? { ...asset, verified: fresh[asset.id] } : asset)) };
+}
+
 /** Build explicit commands; the engine validates media, clocks, locks and overlaps. */
 export function pasteCommands(project: Project, copied: ClipClipboard, at: number, direction = 0, sequenceId: string | null = null): { commands: Command[]; ids: string[] } {
   const commands: Command[] = []; const assets = new Map<string, string>(); const tracks = new Map<string, string>();
-  const media = new Map(Object.values(project.assets).filter((a) => a.verified).map((a) => [`${a.kind}:${a.verified!.content_sha256}`, a]));
+  const matchAsset = clipboardAssetMatcher(project, copied);
   const sequences = new Map((copied.sequences ?? []).map((s) => [s.id, copied.projectId === project.id && project.sequences?.[s.id] ? s.id : newId("seq-")]));
   for (const asset of copied.assets) {
-    const current = copied.projectId === project.id ? project.assets[asset.id] : undefined;
-    const existing = asset.verified ? media.get(`${asset.kind}:${asset.verified.content_sha256}`) : current?.kind === asset.kind && current.reference === asset.reference && current.duration_ticks === asset.duration_ticks ? current : undefined;
+    const existing = matchAsset(asset);
     const id = existing?.id ?? newId("a-"); assets.set(asset.id, id);
     if (existing) continue;
     commands.push(asset.verified ? { op: "asset.import", asset_id: id, label: asset.label, probe_id: asset.verified.probe_id, verified: asset.verified } : { op: "asset.register", asset: { ...asset, id, verified: null, ...(asset.sequence_id ? { sequence_id: sequences.get(asset.sequence_id), reference: `sequence://${sequences.get(asset.sequence_id)}` } : {}) } });
