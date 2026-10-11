@@ -442,6 +442,9 @@ def output_args(preset: dict, sample_rate: int, frame_rate: float) -> list[str]:
             ]
         elif codec == "prores_ks":
             video += ["-profile:v", str(preset["profile"])]
+        elif codec == "mpeg2video":
+            # MPEG-2 has no crf: the quality knob is the quantiser (-q:v), 1 best, 31 worst.
+            video += ["-q:v", str(preset["quality"])]
         else:
             raise EditorError(
                 "UNKNOWN_PRESET", f"this build cannot encode {codec}", 422, preset_id=preset["id"]
@@ -460,7 +463,16 @@ def output_args(preset: dict, sample_rate: int, frame_rate: float) -> list[str]:
     if preset["audio_bitrate"]:
         audio += ["-b:a", preset["audio_bitrate"]]
     audio += ["-ar", str(sample_rate), "-ac", "2"]
+    if preset["container"] == "mxf" and sample_rate != 48_000:
+        raise EditorError(
+            "MXF_NEEDS_48K",
+            f"MXF 只能写 48 kHz 的音频轨（FFmpeg 在这一条上直接拒写文件头），当前混音是"
+            f" {sample_rate} Hz；把工程的采样率改成 48000 再交付，或者改用 mp4/mov 预设",
+            422,
+            preset_id=preset["id"],
+        )
     mux = ["-movflags", "+faststart"] if preset["container"] in ("mp4", "mov") else []
+
     return [*video, *audio, *mux]
 
 

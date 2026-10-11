@@ -209,6 +209,7 @@ def contract_suite() -> None:
             "audio_bitrate",
             "pixel_format",
             "profile",
+            "quality",
             "scale",
         }, sorted(preset)
     argv = {preset_id: output_args(preset, 48000, 25.0) for preset_id, preset in presets.items()}

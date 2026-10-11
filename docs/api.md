@@ -84,6 +84,7 @@ clip_ids 不得重复；不存在、锁轨、越界、未对齐或最终重叠�
 | clip.move | clip_id, track_id, position_ticks | 移动，可换兼容轨道；不 ripple |
 | clip.trim | clip_id, source_in_ticks, duration_ticks, position_ticks? | 同时调整位置、入点、时长；省略 position 时保持旧位置。ripple=true 同轨后续顺位右移 |
 | clip.trim_linked | 字段同 clip.trim | 对全部同步成员应用同一源增量，ripple 逐轨顺位后续 |
+| 交付预设（1.129） | `mxf-prores-422hq`、`mxf-mpeg2` | MXF 容器：ProRes 422 HQ 或 MPEG-2（`-q:v`）＋PCM 24 位 48 kHz；混音不是 48 kHz 时计划阶段回 `MXF_NEEDS_48K`，只按容器判，mp4/mov 不受影响 |
 | clip.link_split_trim | clip_id, edge, delta_ticks | J/L cut：只动这一边，伙伴两边不动，链接记录保留；edge 是 head/tail，delta 向右为正（ticks） |
 | clips.link_reconcile | link_id | 把其余成员拉回基准片段的窗口，各自保留原来的源入点差值；已经同步时拒绝 |
 | clip.roll | clip_id, other_clip_id, delta_ticks | 滚动剪辑：相邻两片段共用接缝平移，总时长不变；超出源范围整笔拒绝 |

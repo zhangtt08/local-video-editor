@@ -122,7 +122,9 @@ def plan_suite(folder: Path) -> None:
     presets = {item["id"]: item for item in render_presets()}
     assert presets["h264-1080x1920-vertical"]["scale"] == [1080, 1920], presets
     assert presets["h264-1080-square"]["scale"] == [1080, 1080], presets
-    assert len(presets) == 14, sorted(presets)
+    # 1.129 起 16 条：新增的是 `mxf-prores-422hq` 与 `mxf-mpeg2` 两条 MXF 母带。
+    # 这条计数就是「加一种交付格式必须是一次看得见的改动」，不许悄悄多一条。
+    assert len(presets) == 16, sorted(presets)
 
     contain = stage_for(project, "contain")
     cover = stage_for(project, "cover")

@@ -664,6 +664,7 @@ export class EngineError extends Error {
       LINK_SPLIT_NOT_LINKED: "分边修剪拆的是音画链接的一边，可这段片段没有链接。要单独修它直接用普通修剪就够了。",
       LINK_OUT_OF_SYNC: "音画链接的两边长度已经不一致，不能这样提交。先解开链接，或者把两边修齐。",
       LOUDNESS_FAILED: "响度表读不出这段声音：纯静音没有响度可对齐，其它情况请确认素材能正常解码。",
+      MXF_NEEDS_48K: "MXF 这个容器只装得下 48 kHz 的音频轨，这份工程的混音不是这个采样率。把工程的采样率改成 48000 再交付，或者改用 mp4／mov 预设。",
       MEDIA_CACHE_ENTRY_MISSING: "这份派生数据已经不在了（缓存被清过）。重新打开一次素材就会自动重建。",
       MEDIA_EMPTY: "这个文件是空的或者读不出内容。确认文件完整后重新导入。",
       MEDIA_NOT_FOUND: "原文件不在这个位置了。把素材放回原来的文件夹，或者在素材库里重新指向新位置。",

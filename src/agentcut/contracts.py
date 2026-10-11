@@ -11,7 +11,7 @@ SCHEMA_VERSION = (
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.128.0"
+APP_VERSION = "1.129.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -2221,11 +2221,11 @@ class EditorError(Exception):
 # Containers this build can write. A request picks a preset id, the preset names one of these, and
 # `jobs` requires the file name to carry the matching extension — so a delivered file is never a
 # stream the container cannot hold, and no caller can aim FFmpeg at an arbitrary muxer.
-OUTPUT_CONTAINERS = ("mp4", "mov", "webm", "mp3", "wav", "flac")
+OUTPUT_CONTAINERS = ("mp4", "mov", "webm", "mxf", "mp3", "wav", "flac")
 # The codecs `render.output_args` knows how to ask for. Anything outside this set is refused rather
 # than passed through, which is what keeps the preset table a closed vocabulary of encoder knobs.
 # `None` means the deliverable carries no picture at all: the mix is the product.
-OUTPUT_CODECS = (None, "libx264", "libx265", "libvpx-vp9", "prores_ks")
+OUTPUT_CODECS = (None, "libx264", "libx265", "libvpx-vp9", "prores_ks", "mpeg2video")
 OUTPUT_AUDIO_CODECS = ("aac", "libopus", "pcm_s24le", "libmp3lame", "flac")
 
 
@@ -2242,6 +2242,7 @@ def _preset(
     pixel_format: str | None,
     scale: list[int] | None,
     profile: int | None = None,
+    quality: int | None = None,
 ) -> dict:
     """One delivery target: encoder knobs from a closed set, never raw FFmpeg arguments.
 
@@ -2262,6 +2263,7 @@ def _preset(
         "audio_bitrate": audio_bitrate,
         "pixel_format": pixel_format,
         "profile": profile,
+        "quality": quality,
         "scale": scale,
     }
 
@@ -2406,6 +2408,35 @@ def render_presets() -> list[dict]:
             pixel_format="yuv444p10le",
             scale=None,
             profile=3,
+        ),
+        # MXF：广播与后期机房之间的包装。容器只认这条表，文件名后缀与复检读的都是同一处，
+        # 所以不会出现「写着 .mxf 其实是 mp4」。MXF 的音频轨只接受 48 kHz（FFmpeg 那边直接拒
+        # 写头），这条约束在 render.output_args 一处挡下来，而不是等 FFmpeg 报一句看不懂的话。
+        _preset(
+            "mxf-prores-422hq",
+            "MXF ProRes 422 HQ（机房交接，PCM 24 位）",
+            "mxf",
+            "prores_ks",
+            crf=None,
+            encoder_preset=None,
+            audio_codec="pcm_s24le",
+            audio_bitrate=None,
+            pixel_format="yuv422p10le",
+            scale=None,
+            profile=3,
+        ),
+        _preset(
+            "mxf-mpeg2",
+            "MXF MPEG-2（广播母带，PCM 24 位）",
+            "mxf",
+            "mpeg2video",
+            crf=None,
+            encoder_preset=None,
+            audio_codec="pcm_s24le",
+            audio_bitrate=None,
+            pixel_format="yuv420p",
+            scale=None,
+            quality=5,
         ),
         # Audio-only deliverables: `codec=None` means the picture chain is never compiled, so an MP3
         # of a three-minute cut costs the mix, not a full render. The mix is the same authoritative
