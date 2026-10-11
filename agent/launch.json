@@ -1,0 +1,7 @@
+{
+  "command": "C:\\Users\\Administrator\\Desktop\\项目\\agentcut\\.venv\\Scripts\\python.exe",
+  "args": ["agent/server.py"],
+  "ready_port": 8780,
+  "ready_path": "/api/health",
+  "note": "AgentCut 本地剪辑引擎 Agent API 服务，默认端口 8780"
+}
