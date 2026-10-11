@@ -77,7 +77,9 @@ export type GradeOperation =
   | { kind: "levels"; channel: GradeChannel; black: number; white: number; gamma: number; enabled: boolean; mix?: number; blend?: BlendMode }
   /** 通道混合器：3x3 作用在存储值上。没有 blend 字段是刻意的——矩阵与非线性混合模式的复合不再是矩阵。 */
   | { kind: "matrix"; coefficients: number[]; enabled: boolean; mix?: number }
-  | { kind: "transfer"; input_space: ColorSpace; output_space: ColorSpace; enabled: boolean; mix?: number; blend?: BlendMode }
+  /** 色彩空间转换。`purpose` 只有引擎的 `clip.color_manage` 会写：它把这一对节点标记成「一键套上的
+   *  色彩管理」，取下时只删自己被标过的两个，中间谁手工加的都原样留着。界面不许自己造第三个值。 */
+  | { kind: "transfer"; input_space: ColorSpace; output_space: ColorSpace; enabled: boolean; mix?: number; blend?: BlendMode; purpose?: "color_manage" | null }
   /** 导入的 1D 查找表：三个通道各一条折线，采样点由引擎解析 `.cube` 文件得到，界面不自己读文件。 */
   | { kind: "lut"; title: string; size: number; channels: number[][]; enabled: boolean; mix?: number; blend?: BlendMode }
   /** 导入的 3D 查找表：一个 size³ 的 RGB 立方，按定义跨通道，所以它像通道混合那样打断每通道的合并。
@@ -481,6 +483,8 @@ export type Capabilities = {
   /** 安全区的内缩量（占画面边长的比例），由引擎给出，界面不自己另写一套数字。 */
   safe_area_insets?: { action: number; title: number };
   mask_vertex_limit?: number;
+  /** 引擎认得的色彩空间名单，界面那两张下拉菜单照此列出，不自己再写一套。 */
+  color_spaces?: ColorSpace[];
   /** 调色链的形状上限（节点数、并联支数、曲线点数、LUT 采样数）由引擎下发，界面照此限制。 */
   grade_limits?: {
     max_nodes: number;
@@ -665,6 +669,10 @@ export class EngineError extends Error {
       LINK_OUT_OF_SYNC: "音画链接的两边长度已经不一致，不能这样提交。先解开链接，或者把两边修齐。",
       LOUDNESS_FAILED: "响度表读不出这段声音：纯静音没有响度可对齐，其它情况请确认素材能正常解码。",
       MXF_NEEDS_48K: "MXF 这个容器只装得下 48 kHz 的音频轨，这份工程的混音不是这个采样率。把工程的采样率改成 48000 再交付，或者改用 mp4／mov 预设。",
+      COLOR_MANAGE_NOT_SET: "这一段头上脚下没有一键套上去的那两个转换节点，所以没有可取的东西。要么先在「色彩管理」里选好来源空间套上，要么自己动手加的那两个转换节点请你手动删掉——界面只认引擎盖过章的一对，不替你猜哪两个是。",
+      COLOR_MANAGE_IDENTITY: "来源和输出都选了「线性」，这一对什么都不转，却照样占两个节点、记一次历史，所以引擎什么都没写。把来源改成素材真正的空间（屏幕录制通常是 sRGB，广播时间线是 Rec.709），或者按「取下」把现有的一对删掉。",
+      COLOR_MANAGE_LIMIT: "这一对要占调色链额度里的两个节点，取下旧的一对之后这条链还是装不下。先在调色节点里删掉几个不要的节点，或者这一段干脆不套色彩管理，只在输出端手动改一个转换。",
+      COLOR_MANAGE_NO_CHANGE: "这一段已经是按你选的来源读入、按你选的输出写出了，再套一次不会改变任何东西，所以引擎没有写入。想换一套色彩空间就改上面两个下拉菜单再按「套上」；想重新来就按「取下」再套。",
       MEDIA_CACHE_ENTRY_MISSING: "这份派生数据已经不在了（缓存被清过）。重新打开一次素材就会自动重建。",
       MEDIA_EMPTY: "这个文件是空的或者读不出内容。确认文件完整后重新导入。",
       MEDIA_NOT_FOUND: "原文件不在这个位置了。把素材放回原来的文件夹，或者在素材库里重新指向新位置。",

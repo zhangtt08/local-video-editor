@@ -11,7 +11,7 @@ SCHEMA_VERSION = (
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.129.0"
+APP_VERSION = "1.130.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -344,6 +344,17 @@ GRADE_BRANCH_WEIGHT_MAX = 2.0
 GradeBranchWeight = Annotated[float, Field(ge=0, le=GRADE_BRANCH_WEIGHT_MAX)]
 
 
+# The transfer-function names, in the order the interface lists them. `COLOR_SPACES` is what
+# the engine publishes; a renderer that typed its own list would drift from this one silently.
+COLOR_SPACES: tuple[str, ...] = (
+    "linear",
+    "srgb",
+    "gamma18",
+    "gamma20",
+    "gamma22",
+    "gamma24",
+    "rec709",
+)
 ColorSpace = Literal["linear", "srgb", "gamma18", "gamma20", "gamma22", "gamma24", "rec709"]
 
 
@@ -468,6 +479,9 @@ class GradeTransfer(Contract):
     kind: Literal["transfer"] = "transfer"
     input_space: ColorSpace
     output_space: ColorSpace
+    # `clip.color_manage` writes a *pair* of these and tags both, so taking it off removes
+    # the two nodes that command added and nothing a person placed by hand.
+    purpose: Literal["color_manage"] | None = None
     enabled: bool = True
     mix: GradeMix = 1.0
     blend: BlendMode = "normal"
@@ -1398,6 +1412,25 @@ class ClipsLink(Contract):
     link_id: Identifier | None
 
 
+class ClipColorManage(Contract):
+    """Grade this clip in linear light and deliver it display-referred, in one step.
+
+    A colour-managed workflow is a *pair* of conversions: read the source from the space it was
+    authored in, work in linear, then write out the transfer function the display expects. By
+    hand that is two transfer nodes in the right order on every clip, added and removed
+    together. This command writes the pair around whatever the clip already holds and tags both
+    nodes, so running it again replaces the pair instead of stacking a second one, and the
+    middle of the chain is never touched.
+
+    `source_space = null` takes the pair off again.
+    """
+
+    op: Literal["clip.color_manage"]
+    clip_id: Identifier
+    source_space: ColorSpace | None
+    display_space: ColorSpace = "rec709"
+
+
 class ClipEffectsSet(Contract):
     op: Literal["clip.effects"]
     clip_id: Identifier
@@ -1733,6 +1766,7 @@ Command = Annotated[
     | ClipSpeedCurveSet
     | ClipStabilizeRecord
     | ClipColorSet
+    | ClipColorManage
     | ClipGradeSet
     | ClipTextSet
     | ClipPatch
@@ -2521,6 +2555,7 @@ def capabilities(
         "transition_kinds": [dict(item) for item in TRANSITION_KINDS],
         # 淡的形状同一条规矩：界面列的是这份表，不是自己写的四个名字。
         "fade_shapes": [dict(item) for item in FADE_SHAPES],
+        "color_spaces": list(COLOR_SPACES),
         "output_containers": list(OUTPUT_CONTAINERS),
         # The build identity, next to the schema it speaks: an Agent reading this document can tell
         # which engine answered, and the desktop shows it in the title bar.
@@ -2567,6 +2602,7 @@ def capabilities(
             "clip.speed_curve",
             "clip.stabilize_record",
             "clip.color",
+            "clip.color_manage",
             "clip.grade",
             "clip.text",
             "clip.patch",

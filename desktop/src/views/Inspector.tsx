@@ -851,6 +851,7 @@ const OPS: Record<string, string> = {
   "mask.shape.remove": "删除遮罩轮廓",
   "clip.speed": "片段变速",
   "clip.color": "画面色彩",
+  "clip.color_manage": "色彩管理套叠",
   "clip.text": "文字内容",
   "clip.fade": "淡入淡出",
   "captions.import": "导入字幕",

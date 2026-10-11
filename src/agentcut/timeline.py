@@ -18,12 +18,14 @@ from .contracts import (
     Asset,
     Clip,
     ClipColor,
+    ClipColorManage,
     ClipEffects,
     ClipLinkSplitTrim,
     ClipsLinkReconcile,
     Command,
     EditorError,
     FadeEnvelope,
+    GradeTransfer,
     Identifier,
     Keyframe,
     Project,
@@ -821,6 +823,12 @@ def apply_commands(
                     if candidate.assets[clip.asset_id].kind == "audio":
                         raise EditorError("INVALID_COLOR", "audio has no color properties")
                     clip.color = command.color.model_copy(deep=True)
+                elif command.op == "clip.color_manage":
+                    if candidate.assets[clip.asset_id].kind == "audio":
+                        raise EditorError("INVALID_COLOR", "audio has no color properties")
+                    clip.color = clip.color.model_copy(
+                        update={"grade": _color_manage(clip, command)}
+                    )
                 elif command.op == "clip.grade":
                     if candidate.assets[clip.asset_id].kind == "audio":
                         raise EditorError("INVALID_COLOR", "audio has no color properties")
@@ -1621,6 +1629,75 @@ def _clip_track(project: Project, clip: Clip):
             "MISSING_REFERENCE", "clip requires an existing asset and track", clip_id=clip.id
         )
     return track
+
+
+def _color_manage(clip, command: ClipColorManage) -> list:
+    """Wrap the clip's chain in the tagged source -> linear -> display pair.
+
+    The pair is found by the tag this command writes, never by pattern-matching somebody's curves:
+    taking it off has to hand back exactly the chain that putting it on found, which is the only
+    promise worth making about nodes a person may have edited in between. The middle of the chain
+    travels through untouched, so a grade built under the wrap survives re-wrapping.
+    """
+
+    chain = list(clip.color.grade)
+    tagged = {
+        index
+        for index, node in enumerate(chain)
+        if getattr(node, "purpose", None) == "color_manage"
+    }
+    stripped = [node for index, node in enumerate(chain) if index not in tagged]
+    if command.source_space is None:
+        if not tagged:
+            raise EditorError(
+                "COLOR_MANAGE_NOT_SET",
+                "this clip carries no pair written by clip.color_manage, so there is nothing to "
+                f"take off: {len(chain)} node(s) in the chain and none tagged",
+                422,
+                clip_id=clip.id,
+                nodes=len(chain),
+            )
+        return stripped
+    if command.source_space == "linear" and command.display_space == "linear":
+        raise EditorError(
+            "COLOR_MANAGE_IDENTITY",
+            "both ends are already linear, so this pair would convert nothing and still cost one "
+            "history entry: name the space the source was authored in, or take the pair off",
+            422,
+            clip_id=clip.id,
+            source_space=command.source_space,
+            display_space=command.display_space,
+        )
+    if len(stripped) + 2 > GRADE_NODE_LIMIT:
+        raise EditorError(
+            "COLOR_MANAGE_LIMIT",
+            f"the pair needs two of the {GRADE_NODE_LIMIT} slots a chain may hold, and this chain "
+            f"still keeps {len(stripped)} nodes after its old pair comes off: delete a node first",
+            422,
+            clip_id=clip.id,
+            limit=GRADE_NODE_LIMIT,
+            nodes=len(stripped),
+            room=max(0, GRADE_NODE_LIMIT - len(stripped)),
+        )
+    head = GradeTransfer(
+        input_space=command.source_space, output_space="linear", purpose="color_manage"
+    )
+    tail = GradeTransfer(
+        input_space="linear", output_space=command.display_space, purpose="color_manage"
+    )
+    proposed = [head, *stripped, tail]
+    if proposed == chain:
+        raise EditorError(
+            "COLOR_MANAGE_NO_CHANGE",
+            f"this clip already reads from {command.source_space} and writes out for "
+            f"{command.display_space}: writing again would store the same two nodes, so nothing "
+            "was written",
+            422,
+            clip_id=clip.id,
+            source_space=command.source_space,
+            display_space=command.display_space,
+        )
+    return proposed
 
 
 def track_quantum(settings, kind: str) -> int:

@@ -40,7 +40,7 @@ import type {
   RenderRange,
   RenderBatchItem,
 } from "./engine";
-import { FIT_MODES, verifiedFromProbe, type TransitionKind, type VerifiedMedia } from "./engine";
+import { FIT_MODES, verifiedFromProbe, type ColorSpace, type TransitionKind, type VerifiedMedia } from "./engine";
 import { align, frameTicks, sampleTicks, ticks, TIMEBASE } from "./time";
 import { clipboardAssetsToReprobe, copyClips, pasteCommands, relatedClips, reviveClipboardAssets, selectionQuantum, timelineTracks, type ClipClipboard } from "./selection";
 import { linkSplitTrim } from "./splitTrim";
@@ -1633,6 +1633,15 @@ export function setClipSpeed(clipId: string, speed: number) {
 
 export function setClipColor(clipId: string, patch: Partial<ClipColor>) {
   submit([{ op: "clip.patch", clip_id: clipId, color: patch }], "调整画面色彩", { quiet: true });
+}
+
+/** 1.130：一键色彩管理。界面只交代「素材从哪里读、交付按什么输出」，那两个转换节点长什么样、旧的
+ *  这一对怎么取下来、链子装不装得下，全是引擎那一处的事——所以这里不许出现「两个 transfer 节点」。 */
+export function colorManageClip(clipId: string, source: ColorSpace | null, display: ColorSpace) {
+  submit(
+    [{ op: "clip.color_manage", clip_id: clipId, source_space: source, display_space: display }],
+    source === null ? "取下色彩管理" : "套上色彩管理（在线性光里调色）",
+  );
 }
 
 /** 导入 .cube 查找表：文件内容交给引擎里唯一的解析器，回来的节点原样进调色链。

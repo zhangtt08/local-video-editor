@@ -2,7 +2,8 @@ import { Fragment, useEffect, useRef, useState } from "react";
 
 import { branchBlend, branchTree, branchWeight, blendsAfterAdd, blendsAfterPick, blendsAfterRemove, chainFieldsFor, mapMixer, mixerAt, NODE_NAMES, cardsFor, moveWithin, resolveMixerPath, weightsAfterAdd, weightsAfterRemove, weightsAfterWeight, type GraphLane } from "../gradeGraph";
 import {blendLabel, DEFAULT_TRANSFER, COLOR_SPACES, DEFAULT_CURVE_POINTS, DEFAULT_WHEELS, type GradeBranch, type GradeCapacity, type GradeChannel, type GradeCurvePoint, type GradeNode, type GradeOperation, type GradeParallel, type ColorSpace, BLEND_MODES, type BlendMode} from "../engine";
-import { applyGradeToTrack, editableProject, setClipColor, useApp, applyLut, autoGradeClip, fetchGradeCapacity } from "../store";
+import { applyGradeToTrack, editableProject, setClipColor, useApp, applyLut, autoGradeClip, colorManageClip, fetchGradeCapacity } from "../store";
+import { managedPair, managedWords, manageFits, manageSpaces, taggedCount } from "../colorManage";
 import { autoGradeBlocker, gradeCapacityLine } from "../effects";
 
 const CHANNELS: [GradeChannel, string][] = [["rgb", "主色"], ["red", "红"], ["green", "绿"], ["blue", "蓝"]];
@@ -390,6 +391,29 @@ export function GradeFields({ clipId }: { clipId: string }) {
   );
   const [autoMode, setAutoMode] = useState<"luma" | "rgb">("luma");
   const [autoReplace, setAutoReplace] = useState(true);
+  // 1.130：色彩管理那一行。名单、「装不装得下」和「现在套的是哪一对」都问同一份实现
+  //  （../colorManage.ts），界面不自己数第二遍；两个下拉菜单的候选来自引擎的 capabilities。
+  const spaces = manageSpaces(app.caps?.color_spaces, COLOR_SPACES);
+  const spaceLabel = (name: ColorSpace) => spaces.find(([entry]) => entry === name)?.[1] ?? name;
+  const managed = managedPair(nodes);
+  const managedTagged = taggedCount(nodes);
+  const [manageSource, setManageSource] = useState<ColorSpace>(managed?.source ?? "srgb");
+  const [manageDisplay, setManageDisplay] = useState<ColorSpace>(managed?.display ?? "rec709");
+  useEffect(() => {
+    setManageSource(managed?.source ?? "srgb");
+    setManageDisplay(managed?.display ?? "rec709");
+    // 只在换了片段时重读：同一段上刚选的这套空间要留着，好让人换一套再套一次。
+  }, [clipId]);
+  const manageSame = managed !== null && managed.source === manageSource && managed.display === manageDisplay;
+  const manageBlock = assetKind === "audio"
+    ? "音频片段没有画面可调色，也没有色彩空间可言。要管颜色就选一段画面或图片。"
+    : manageSource === "linear" && manageDisplay === "linear"
+      ? "两端都选了线性：这一对什么都不转，却要占两个节点、记一次历史，引擎会拒收。把「素材从哪里读」改成它真正的空间（屏幕录制通常是 sRGB，广播时间线是 Rec.709）。"
+      : !manageFits(nodes, limits.nodes)
+        ? `取下已有的一对以后这条链还要 ${nodes.length - managedTagged} 个位置，再放两个就过了每链 ${limits.nodes} 个的上限。先在下面的链子里删掉几个节点，或者这一段干脆不套。`
+        : manageSame
+          ? "这一段现在就是这个来源、这个输出：再按一次引擎会说「什么也不会变」，所以这颗按钮先不亮。要换一套就改上面两个下拉菜单。"
+          : null;
 
   useEffect(() => {
     if (pending.current !== null && nodes.length > pending.current) {
@@ -524,6 +548,26 @@ export function GradeFields({ clipId }: { clipId: string }) {
           onClick={() => void autoGradeClip(clipId, autoMode, 0.005, autoReplace)}>量黑场白场并拉开</button>
         <p className="hint">亮度模式只动整体明暗，不会凭空造出色偏；分通道模式能把偏色的素材拉回中性，但要占三个节点。量到的数会写在提示里，不满意就在上面的色阶卡片里自己改两个点。</p>
       </div>
+      <div className="batch-actions grade-auto-row">
+        <label className="mask-shape">素材从哪里读
+          <select className="input" aria-label="色彩管理来源空间" value={manageSource} onChange={(e) => setManageSource(e.target.value as ColorSpace)}>
+            {spaces.map(([name, label]) => <option key={name} value={name}>{label}</option>)}
+          </select>
+        </label>
+        <label className="mask-shape">交付按什么输出
+          <select className="input" aria-label="色彩管理输出空间" value={manageDisplay} onChange={(e) => setManageDisplay(e.target.value as ColorSpace)}>
+            {spaces.map(([name, label]) => <option key={name} value={name}>{label}</option>)}
+          </select>
+        </label>
+        <button className="btn tiny" disabled={Boolean(manageBlock) || locked || Boolean(app.busy)}
+          title={manageBlock ?? "一次写下两个转换节点：素材读进线性光、调色在线性光里做、交付按你选的输出空间写回去。链子中间原有的节点一个不动；再套一次换的是同一对节点，不会叠出第二对。"}
+          onClick={() => colorManageClip(clipId, manageSource, manageDisplay)}>套上色彩管理</button>
+        <button className="btn tiny" disabled={!managedTagged || locked || Boolean(app.busy)}
+          title={managedTagged ? "只删引擎自己盖过章的那两个转换节点，中间手工加的曲线、混频台都原样留下。" : "这一段没有引擎盖过章的转换节点，所以这里没有可取的东西。那两个转换节点若是手工加的，请在下面的链子里删。"}
+          onClick={() => colorManageClip(clipId, null, manageDisplay)}>取下色彩管理</button>
+        <p className="hint">{managedWords(managed, managedTagged, spaceLabel)} 同一条曲线在线性光里调与按存储值调，中点落点是两个数——越暗差别越大，而导出的文件读的就是这一份。</p>
+      </div>
+
       {nodes.length ? <div className="grade-graph" role="list" aria-label="调色节点链">
         <span className="gg-io">输入</span>
         {cards.map((card) => <Fragment key={card.index}>
