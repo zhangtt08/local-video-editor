@@ -4524,3 +4524,42 @@ renderer bundle 里读得到七句人话与 `clip.color_manage`。四条突变�
 「在播放头处剪开 Ctrl / ⌘ + B」，存储清成 `{}`。关掉帮助，用 pointerdown/pointerup 选中一段（`aria-pressed` 回
 true、`.clip.selected` 一枚），推十下 ArrowRight 再按 Ctrl+B：页面从 3 张卡片变 4 张，**引擎**读回
 `revision 3`、`clips: 4`——这一下是真的写进了工程，不是界面自己改了自己的显示。
+
+## 1.135 那张表管到工具键、两种删除与缩放
+
+1.134 只把带 Ctrl 的命令放进了表，剩下 V/C/S/X、Delete / Shift+Delete、＋/－ 还写在 `App.tsx` 那条链的
+后半段——一张表管一半，等于没有表：一个人改了键，另一半照旧，而帮助页与悬停会开始各说各的。这一版把
+那 8 条也搬进来，表上共 21 条。
+
+- `keymap.ts`：新增 `tool-select`(v)、`tool-razor`(c)、`toggle-snap`(s)、`split-at-playhead`(x)、
+  `delete-selection`(delete, shift:false)、`ripple-delete`(delete, shift:true)、`zoom-in`(+)、`zoom-out`(-)。
+  `chordUsable` 的判断跟着改准：1.134 那句「至少要带 Ctrl/⌘ 或 Alt」其实是把工具键一并拒了，而工具键天生是裸的；
+  现在拒的是**只按修饰键**（那会让「按一下 Shift」本身变成一件事），裸键合法——拦在打字之前的那道判断是
+  `App.tsx` 里 `const typing = …` 那一条，它跑在分发之前，门禁既断顺序也断它必须是活的条件。
+- `store.ts`：`runKeyCommand` 多了这 8 格，条件与以前那条链一致（工具/磁吸/剪开/缩放要在时间线里，两种删除还要有选中）。
+- `App.tsx`：那 8 个分支删掉，只留两个**别名**——Backspace 走同一条删除、「=」走同一条放大；它们不占键位，
+  也不许被改键牵走（改了键之后它们仍指向那两条命令本身）。
+- 悬停与说明改读同一份表：时间线的选择/分割工具、两种删除、＋/－ 缩放，检查器的「只删这一段」与
+  「删掉这段并补齐」、「在播放头处切成两段」。
+
+门禁：`tests/desktop_keymap_check.ts` 长到 21 行表、裸键合法、只按修饰键被拒（界面与存储两处都断）、
+`typing` 那道判断必须活着且在前、三份视图文件里不许出现 `（V）（C）（S）（X）（Delete）（Shift+Delete）`
+或 `（Ctrl+…）` 这样的写死键名；`tests/desktop_snappref_check.ts` 里「S 快捷键」那条接线改断新的唯一开关
+（`case "toggle-snap"` 必须调 `prefs.toggleSnap()`），并断 `App.tsx` 不再自己认 S。19 条突变逐条红在
+自己那条断言上，并核对红的是哪一份 shell check。
+
+装机实测（冻结引擎自报 1.135.0，渲染层从新 `app.asar` 抽出后深链同一份三段工程；读的是客观信号：
+工具条两个按钮的 `active` 类与状态栏那行 `NNpx/s`）：
+
+| 这一步 | 选择工具 active | 分割工具 active | 状态栏 px/s |
+| --- | --- | --- | --- |
+| 刚开机 | true | false | 62 |
+| 按一次 c | false | true | 62 |
+| 按一次 v | true | false | 62 |
+| 按一次 － | true | false | 50 |
+| 按一次 ＋ | true | false | 63 |
+
+再把「缩小时间线」改成 Ctrl+Alt+M（`agentcut.keys` 里就只有这一条
+`{"zoom-out":{"key":"m","shift":false,"ctrl":true,"alt":true}}`，表上那一行同步念成
+「缩小时间线 Ctrl / ⌘ + Alt + M · 界面上：缩放滑杆与「－」按钮」），关掉帮助后：按「－」——63，一动不动；
+按 Ctrl+Alt+M——50。旧键退休、新键上岗，而那张表上 21 行的键名与工具条、检查器、状态栏的措辞是同一份数。

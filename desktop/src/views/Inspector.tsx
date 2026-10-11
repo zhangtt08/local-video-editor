@@ -209,12 +209,12 @@ function ClipFields({ clip }: { clip: Clip }) {
         <div className="insp-actions">
           <button
             className="btn danger-text"
-            title="删掉这段，后面的片段自动左移补上空隙（Shift+Delete）"
+            title={`删掉这段，后面的片段自动左移补上空隙（${chordWords(keymap()["ripple-delete"])}）`}
             onClick={() => removeClipRipple(clip.id)}
           >
             <Icon name="trash" /> 删除并补齐
           </button>
-          <button className="btn danger-text" title="只删这一段，留下空隙（Delete）" onClick={() => removeClip(clip.id)}>
+          <button className="btn danger-text" title={`只删这一段，留下空隙（${chordWords(keymap()["delete-selection"])}）`} onClick={() => removeClip(clip.id)}>
             留空隙删除
           </button>
         </div>
@@ -604,7 +604,7 @@ function SplitButton({ clip }: { clip: Clip }) {
   return (
     <button
       className="btn"
-      title="在播放头处切成两段（X）"
+      title={`在播放头处切成两段（${chordWords(keymap()["split-at-playhead"])}）`}
       disabled={!inside}
       onClick={() => splitClip(clip.id, playhead.value)}
     >

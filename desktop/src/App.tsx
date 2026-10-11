@@ -31,7 +31,6 @@ import {
   selectClips,
   removeSelection,
   nudgeSelection,
-  splitSelection,
 } from "./store";
 import { TIMEBASE } from "./time";
 
@@ -141,14 +140,19 @@ function useGlobalKeys() {
       if (key === "arrowup" || key === "arrowdown") { event.preventDefault(); playhead.pause(); jumpEditPoint(key === "arrowup" ? -1 : 1); return; }
       if (key === "k") playhead.pause();
       else if (key === "l") { if (playhead.value >= timelineEnd(app.project)) playhead.set(0); playhead.play(); }
-      if (key === "v") prefs.setTool("select");
-      else if (key === "c") prefs.setTool("razor");
-      else if (key === "s") prefs.toggleSnap();
-      else if (key === "x") splitSelection(playhead.value);
-      else if ((key === "delete" || key === "backspace") && app.selectedClip) {
+      // 1.135：V/C/S/X、Delete/Shift+Delete、+/- 都进了那张表（上面那一次 `matchCommand` 已经把它们
+      // 交给 `runKeyCommand`）。这里只剩两个**别名**：Backspace 删与「=」放大是同一件事的第二只手，
+      // 它们不单独占一个键位，所以既不出现在那张表里，也不许被改键牵走。
+      if (key === "backspace" && app.selectedClip) {
         event.preventDefault();
         removeSelection(event.shiftKey);
-      } else if (event.altKey && (key === "arrowleft" || key === "arrowright") && app.selectedClip) {
+        return;
+      }
+      if (key === "=" && runKeyCommand("zoom-in", event)) {
+        event.preventDefault();
+        return;
+      }
+      if (event.altKey && (key === "arrowleft" || key === "arrowright") && app.selectedClip) {
         event.preventDefault();
         const frame = app.project.settings.frame_rate.numerator
           ? Math.round((TIMEBASE * app.project.settings.frame_rate.denominator) / app.project.settings.frame_rate.numerator)
@@ -157,8 +161,6 @@ function useGlobalKeys() {
         nudgeSelection(step);
       } else if (key === "home") playhead.set(0);
       else if (key === "end") playhead.set(timelineEnd(app.project));
-      else if (key === "+" || key === "=") prefs.zoomBy(1.25);
-      else if (key === "-") prefs.zoomBy(0.8);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

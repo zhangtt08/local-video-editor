@@ -2785,6 +2785,40 @@ export function runKeyCommand(id: CommandId, event: KeyEvent): boolean {
       if (!inEditor) return false;
       linkSelection(true);
       return true;
+    // 1.135：工具、磁吸、剪开、删除与缩放。今天这些散在 `App.tsx` 那条链的后半段，条件也一样：
+    // 只在时间线里、删除还要有选中。搬进来之后那条链只剩跟着焦点与监视器走的那几个键。
+    case "tool-select":
+      if (!inEditor) return false;
+      prefs.setTool("select");
+      return true;
+    case "tool-razor":
+      if (!inEditor) return false;
+      prefs.setTool("razor");
+      return true;
+    case "toggle-snap":
+      if (!inEditor) return false;
+      prefs.toggleSnap();
+      return true;
+    case "split-at-playhead":
+      if (!inEditor) return false;
+      splitSelection(playhead.value);
+      return true;
+    case "delete-selection":
+      if (!inEditor || !state.selectedClip) return false;
+      removeSelection(false);
+      return true;
+    case "ripple-delete":
+      if (!inEditor || !state.selectedClip) return false;
+      removeSelection(true);
+      return true;
+    case "zoom-in":
+      if (!inEditor) return false;
+      prefs.zoomBy(1.25);
+      return true;
+    case "zoom-out":
+      if (!inEditor) return false;
+      prefs.zoomBy(0.8);
+      return true;
   }
 }
 

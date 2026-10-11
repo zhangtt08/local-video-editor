@@ -38,7 +38,7 @@ Object.assign(globalThis, {
 const { DEFAULT_MAP, COMMANDS, chordWords, matchCommand, rebind, mergeMap, changedFromDefault, chordFromEvent } = await import(
   "../desktop/src/keymap"
 );
-const { keymap, remap } = await import("../desktop/src/store");
+const { keymap, remap, runKeyCommand } = await import("../desktop/src/store");
 
 const press = (key: string, modifiers: { ctrl?: boolean; alt?: boolean; shift?: boolean; meta?: boolean } = {}) => ({
   key,
@@ -63,6 +63,14 @@ const SHIPPED: Array<[string, string, boolean | undefined, boolean | "any"]> = [
   ["ungroup", "g", true, true],
   ["link", "l", true, false],
   ["unlink", "l", true, true],
+  ["tool-select", "v", undefined, "any"],
+  ["tool-razor", "c", undefined, "any"],
+  ["toggle-snap", "s", undefined, "any"],
+  ["split-at-playhead", "x", undefined, "any"],
+  ["delete-selection", "delete", undefined, false],
+  ["ripple-delete", "delete", undefined, true],
+  ["zoom-in", "+", undefined, "any"],
+  ["zoom-out", "-", undefined, "any"],
 ];
 assert.equal(COMMANDS.length, SHIPPED.length, "能改的命令一共就这些条，多一条少一条都得先过这一格");
 for (const [id, key, ctrl, shift] of SHIPPED) {
@@ -105,7 +113,7 @@ assert.equal(
 );
 
 // —— ②b 改键时读的那一次按下 ——————————————————————————
-assert.equal(chordFromEvent(press("Shift")), null, "只按下修饰键时界面要继续等，不许把「Shift」当成一条新键位存进去");
+assert.equal(chordFromEvent(press("Shift")), null, "modifier-only keypress yields null: 只按下修饰键时界面要继续等，不许把「Shift」当成一条新键位存进去");
 assert.deepEqual(chordFromEvent(press("k", { ctrl: true })), { key: "k", shift: false, ctrl: true }, "Ctrl+K 读成 {k, ctrl}，Shift 按精确状态记");
 assert.deepEqual(chordFromEvent(press("z", { meta: true, shift: true })), { key: "z", shift: true, ctrl: true }, "Mac 的 ⌘ 与 Ctrl 存成同一个位");
 
@@ -131,16 +139,31 @@ assert.ok(String(clash.why).includes("撤销"), "那句话里带着被抢那条�
 assert.ok(!remap.set("copy", { key: "z", ctrl: true, shift: false }), "界面上点这一下要失败");
 assert.equal(keymap().copy.key, "c", "被拒的那一次现值一个字都不动");
 assert.equal(matchCommand(keymap(), press("c", { ctrl: true })), "copy", "所以 Ctrl+C 还是复制");
-assert.equal(rebind(keymap(), "copy", { key: "j" }).ok, false, "没有修饰键的单键要拒：那会抢掉正在打字的人");
-assert.ok(String(rebind(keymap(), "copy", { key: "j" }).why).includes("修饰键"), "那句拒绝要说清为什么");
+assert.equal(rebind(keymap(), "copy", { key: "j" }).ok, true, "bare-key accepted: 工具键本来就是裸键，改键当然也能改成裸键");
+assert.equal(rebind(keymap(), "copy", { key: "shift" }).ok, false, "modifier-only refused: 只按修饰键不算一条键位");
+assert.ok(String(rebind(keymap(), "copy", { key: "meta" }).why).includes("修饰键"), "那句拒绝要说清为什么");
+assert.equal(rebind(keymap(), "copy", { key: "" }).ok, false, "一条键位总得有个键");
 assert.equal(remap.set("marker", { key: "n", ctrl: true, alt: true, shift: "any" }), true, "带 Alt 的组合是能改的");
 assert.equal(chordWords(keymap().marker), "Ctrl / ⌘ + Alt + N", "两个修饰键都念得出来");
 
+// —— ③b 1.135：工具键与传输键也在表里 ——————————————————————————————
+assert.equal(matchCommand(keymap(), press("v")), "tool-select", "裸 V 是选择工具");
+assert.equal(matchCommand(keymap(), press("V", { shift: true })), "tool-select", "Shift 不参与这条的判断");
+assert.equal(matchCommand(keymap(), press("v", { ctrl: true })), "paste", "同一个字母带 Ctrl 是粘贴，两条不许互抢");
+assert.equal(matchCommand(keymap(), press("x")), "split-at-playhead", "X 在播放头剪开");
+assert.equal(matchCommand(keymap(), press("x", { alt: true })), null, "Alt+X 清进出点不在这张表里：那一条今天仍跟着监视器走");
+assert.equal(matchCommand(keymap(), press("delete")), "delete-selection", "Delete 删除留空隙");
+assert.equal(matchCommand(keymap(), press("delete", { shift: true })), "ripple-delete", "Shift+Delete 删除并补齐：精确 Shift 的那条赢");
+assert.equal(matchCommand(keymap(), press("+")), "zoom-in", "＋ 放大");
+assert.equal(runKeyCommand("tool-razor", press("c")), false, "context-gate: 不在时间线里时这把键谁都不做——与以前那条链的早退一模一样");
+assert.equal(runKeyCommand("delete-selection", press("delete")), false, "没有选中片段时删除键不做事");
+
 // 一把脏数据：认不出的 id、空键、没修饰的键都要丢掉，而不是让界面崩。
-const poisoned = mergeMap({ split: { key: "" }, nonsense: 1, undo: { key: "z" }, copy: { key: "c", ctrl: true, shift: true } });
+const poisoned = mergeMap({ split: { key: "" }, nonsense: 1, undo: { key: "z" }, redo: { key: "alt" }, copy: { key: "c", ctrl: true, shift: true } });
 assert.equal(poisoned.split.key, "b", "空键丢掉之后那条回到出厂——存储坏了不等于把剪开弄没");
-assert.equal(poisoned.undo.shift, false, "没修饰的读回值不接管出厂那条");
+assert.equal(poisoned.undo.shift, "any", "1.135 起裸键是合法键位：读回来的 {key:z} 照收（工具键本来就是裸的，打字那一挡在 App 分发之前）");
 assert.equal(poisoned.copy.shift, true, "形状对的那条照收");
+assert.equal(poisoned.redo.key, "z", "modifier-only storage dropped: 只按修饰键的存储记录丢掉，出厂那条照旧");
 
 // —— ④b 一键回到出厂：改过的痕迹连存储里都不许留 ————————————————————
 remap.reset();
@@ -159,6 +182,12 @@ assert.ok(!app.includes('["a", "c", "v"].includes(key)'), "复制/粘贴/全选�
 assert.ok(!app.includes('key === "b" && '), "剪开那条也是");
 assert.ok(!help.includes('"Ctrl+B"') && !help.includes('"Ctrl+Z"'), "帮助页不再自己抄一份键名");
 const timeline = readFileSync(SRC + "desktop/src/views/Timeline.tsx", "utf8");
+assert.ok(app.indexOf("const typing =") < app.indexOf("matchCommand(keymap(), event)"), "typing-guard runs first: 输入框里打字不会被这张表抢走——那道判断跑在分发之前");
+assert.ok(!/\u3010(V|C|S|X|Delete|Shift\+Delete)\u3011/.test(timeline), "timeline-live: 时间线的悬停里不许留着写死的工具键名");
+assert.ok(timeline.includes('chordWords(keymap()["tool-select"])') && timeline.includes('chordWords(keymap()["tool-razor"])'), "tool-label-live: 两颗工具按钮念的是当前键位");
+assert.ok(/if \(typing[^\n]*return;/.test(app), "typing-guard live: 「正在打字」那道判断必须是活的——裸键位全靠它才不抢输入框");
+assert.ok(!app.includes('key === "v") prefs.setTool') && !app.includes("prefs.zoomBy(1.25);"), "app-single-path: 那些分支搬进表之后就别再留一份");
+assert.ok(app.includes('runKeyCommand("zoom-in", event)') && app.includes('removeSelection(event.shiftKey)'), "alias kept: Backspace 与「=」还是同一件事的第二只手，不占键位也不被改键牵走");
 assert.ok(timeline.includes("chordWords(keymap().split)"), "tooltip-live: 那颗「分割」按钮悬停里念的是当前键位");
 assert.ok(timeline.includes("chordWords(keymap().copy)") && timeline.includes("chordWords(keymap().paste)"), "复制/粘贴那两句也一样");
 assert.ok(!timeline.includes("（Ctrl+B）") && !timeline.includes("（Ctrl+C）") && !timeline.includes("（Ctrl+V）"), "视图里不许留着写死的键名：改了键之后那句就成了假话");
@@ -170,6 +199,7 @@ assert.ok(titlebar.includes('chordWords(keymap()["export-panel"])'), "导出按�
 assert.ok(inspector.includes("chordWords(keymap().duplicate)"), "检查器那句「复制一段」也是");
 for (const [name, src] of [["Timeline", timeline], ["TitleBar", titlebar], ["Inspector", inspector]] as const) {
   assert.ok(!/（Ctrl\+[A-Z]/.test(src), `${name} 里不许再留着写死的键名`);
+  assert.ok(!/[（(](V|C|S|X|Delete|Shift\+Delete)[)）]/.test(src), `${name}-tool-live: 工具与删除键名也不许写死`);
 }
 assert.ok(!engineHint.includes("用撤销（Ctrl+Z）"), "hint-no-chord: 引擎错误的那句中文说明里不许写死撤销的键名");
 assert.ok(help.includes("COMMANDS.map"), "那一节的每一行都从那张表来");

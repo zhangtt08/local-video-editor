@@ -37,7 +37,15 @@ export type CommandId =
   | "group"
   | "ungroup"
   | "link"
-  | "unlink";
+  | "unlink"
+  | "tool-select"
+  | "tool-razor"
+  | "toggle-snap"
+  | "split-at-playhead"
+  | "delete-selection"
+  | "ripple-delete"
+  | "zoom-in"
+  | "zoom-out";
 
 export type Command = { id: CommandId; label: string; twin: string };
 
@@ -56,6 +64,14 @@ export const COMMANDS: readonly Command[] = [
   { id: "ungroup", label: "取消组合", twin: "工具条的「取消组合」" },
   { id: "link", label: "音画链接", twin: "工具条的「链接」" },
   { id: "unlink", label: "解除音画链接", twin: "工具条的「取消链接」" },
+  { id: "tool-select", label: "选择工具", twin: "工具条那颗光标按钮" },
+  { id: "tool-razor", label: "分割工具", twin: "工具条那颗刀形按钮" },
+  { id: "toggle-snap", label: "开关时间磁吸", twin: "状态栏那枚吸铁石与曲线里那行「时间吸附」" },
+  { id: "split-at-playhead", label: "在播放头处剪开选中片段", twin: "工具条那颗「剪开」；与 Ctrl+B 同一件事" },
+  { id: "delete-selection", label: "删除选中片段，留空隙", twin: "工具条那颗垃圾桶" },
+  { id: "ripple-delete", label: "删除并向左补齐", twin: "工具条那颗「涟漪删除」" },
+  { id: "zoom-in", label: "放大时间线", twin: "缩放滑杆与「＋」按钮" },
+  { id: "zoom-out", label: "缩小时间线", twin: "缩放滑杆与「－」按钮" },
 ];
 
 /** 1.134 之前 `App.tsx` 那条 if 链按的就是这套。 */
@@ -73,6 +89,14 @@ export const DEFAULT_MAP: Readonly<Record<CommandId, Chord>> = {
   ungroup: { key: "g", ctrl: true, shift: true },
   link: { key: "l", ctrl: true, shift: false },
   unlink: { key: "l", ctrl: true, shift: true },
+  "tool-select": { key: "v", shift: "any" },
+  "tool-razor": { key: "c", shift: "any" },
+  "toggle-snap": { key: "s", shift: "any" },
+  "split-at-playhead": { key: "x", shift: "any" },
+  "delete-selection": { key: "delete", shift: false },
+  "ripple-delete": { key: "delete", shift: true },
+  "zoom-in": { key: "+", shift: "any" },
+  "zoom-out": { key: "-", shift: "any" },
 };
 
 export type KeyEvent = {
@@ -86,7 +110,7 @@ export type KeyEvent = {
 /** 改键时从一次真实按下里读出组合键。只按下了修饰键还没有键，就交回 null 让界面继续等。 */
 export function chordFromEvent(event: KeyEvent): Chord | null {
   const key = event.key.toLowerCase();
-  if (!key || key === "shift" || key === "control" || key === "alt" || key === "meta" || key === "capslock") return null;
+  if (!key || MODIFIER_ONLY.includes(key)) return null;
   const chord: Chord = { key, shift: event.shiftKey };
   if (event.ctrlKey || event.metaKey) chord.ctrl = true;
   if (event.altKey) chord.alt = true;
@@ -138,12 +162,17 @@ export function chordWords(chord: Chord): string {
   return parts.join(" + ");
 }
 
-/** 一个能用的组合键：有 key，且带 Ctrl/⌘ 或 Alt。裸键留给正在打字的人。 */
+/** 一个能用的组合键：得真的有一个键，不能只是一串修饰键。
+ *  裸键是**允许的**——工具键本来就是裸的（V/C/S/X、Delete、+/-），而「正在打字的人」那一挡在
+ *  `App.tsx` 里跑在分发之前：焦点落在输入框、文本域、contenteditable 或下拉菜单上时这条链一个字
+ *  都不接，门禁按源码顺序钉这一点。只按修饰键不算一条键位：那会让「按一下 Shift」本身变成一件事。 */
 export function chordUsable(chord: Chord): string | null {
   if (!chord || typeof chord.key !== "string" || chord.key.length === 0) return "这条组合键没有键。";
-  if (!chord.ctrl && !chord.alt) return "至少要带 Ctrl / ⌘ 或 Alt：没有修饰键的单键会给正在打字的人抢掉。";
+  if (MODIFIER_ONLY.includes(chord.key.toLowerCase())) return "只按修饰键不算一条键位：那会让按下修饰键本身变成一件事。";
   return null;
 }
+
+const MODIFIER_ONLY = ["shift", "control", "alt", "meta", "capslock"];
 
 export function rebind(
   map: Record<CommandId, Chord>,

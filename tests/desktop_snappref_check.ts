@@ -72,7 +72,10 @@ assert.match(curve, /与时间线的磁吸是同一个开关/, "the tooltip must
 const shell = read("Timeline.tsx");
 assert.match(shell, /active=\{edit\.snap\} onClick=\{\(\) => prefs\.toggleSnap\(\)\}/, "the magnet button drives the same value");
 const app = read("../App.tsx");
-assert.match(app, /key === "s"\) prefs\.toggleSnap\(\)/, "and so does the S shortcut");
+const storeSrc = read("../store.ts");
+// 1.135：S 这把键进了那张表——开关仍只有一处，只是那一次按下由 `runKeyCommand` 来认。
+assert.match(storeSrc, /case "toggle-snap":[\s\S]{0,160}prefs\.toggleSnap\(\);/, "and so does the S shortcut, now through the one key table");
+assert.doesNotMatch(app, /key === "s"\) prefs\.toggleSnap/, "App 里不许再自己认 S：那条键归表管");
 
 console.log("PASS: 吸附只剩一处开关——曲线编辑器读的是那份持久偏好、写回的也是它，关掉两处一起关，"
   + "localStorage 写不进去也照样生效");

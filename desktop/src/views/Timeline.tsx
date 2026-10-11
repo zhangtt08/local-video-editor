@@ -245,16 +245,16 @@ export function Timeline() {
   return (
     <section className="timeline" aria-label="时间线">
       <div className="tl-toolbar">
-        <IconBtn icon="cursor" label="选择工具（V）：拖动片段改位置，拖左右边缘改时长" active={edit.tool === "select"} onClick={() => prefs.setTool("select")} />
-        <IconBtn icon="razor" label="分割工具（C）：点片段即在点击处切一刀，切成两段可独立删除" active={edit.tool === "razor"} onClick={() => prefs.setTool("razor")} />
+        <IconBtn icon="cursor" label={`选择工具（${chordWords(keymap()["tool-select"])}）：拖动片段改位置，拖左右边缘改时长`} active={edit.tool === "select"} onClick={() => prefs.setTool("select")} />
+        <IconBtn icon="razor" label={`分割工具（${chordWords(keymap()["tool-razor"])}）：点片段即在点击处切一刀，切成两段可独立删除`} active={edit.tool === "razor"} onClick={() => prefs.setTool("razor")} />
         <button className="btn tiny subtle" disabled={!canSplit} title={`在播放头处分割选中片段（${chordWords(keymap().split)}）`} onClick={() => splitSelection(playhead.value)}>分割</button>
         <IconBtn icon="copy" label={`复制选中片段（${chordWords(keymap().copy)}）`} disabled={!app.selectedClip} onClick={copySelection} />
         <button className="btn tiny subtle" disabled={!app.clipboardCount} onClick={pasteSelection} title={`粘贴到播放头（${chordWords(keymap().paste)}）`}>粘贴</button>
-        <IconBtn icon="trash" label="删除选中片段，保留空隙（Delete）" disabled={!app.selectedClip} onClick={() => removeSelection()} />
-        <button className="btn tiny subtle" disabled={!app.selectedClip} title="删除并向左补齐本轨后续片段（Shift+Delete）" onClick={() => removeSelection(true)}>涟漪删除</button>
+        <IconBtn icon="trash" label={`删除选中片段，保留空隙（${chordWords(keymap()["delete-selection"])}）`} disabled={!app.selectedClip} onClick={() => removeSelection()} />
+        <button className="btn tiny subtle" disabled={!app.selectedClip} title={`删除并向左补齐本轨后续片段（${chordWords(keymap()["ripple-delete"])}）`} onClick={() => removeSelection(true)}>涟漪删除</button>
         {app.selectedClips.length > 1 ? <span className="tag accent">{app.selectedClips.length} 段</span> : null}
         <span className="divider-v" />
-        <IconBtn icon="magnet" label="磁吸（S）：拖动时自动贴到整帧、相邻片段边缘与标记，避免留下 1 帧缝" active={edit.snap} onClick={() => prefs.toggleSnap()} />
+        <IconBtn icon="magnet" label={`磁吸（${chordWords(keymap()["toggle-snap"])}）：拖动时自动贴到整帧、相邻片段边缘与标记，避免留下 1 帧缝`} active={edit.snap} onClick={() => prefs.toggleSnap()} />
         <IconBtn icon="flag" label="在指针处打一个标记（M）：人和 Agent 用同一个整数刻度说「这里」，标记还会成为磁吸边缘" onClick={() => addMarker()} />
         <IconBtn icon="razor" label="在每个标记处切开落在它里面的片段：一次事务、一次撤销；落在边缘或空隙上的标记不产生切点" disabled={!(app.project?.markers ?? []).length} onClick={() => void splitAtMarkers()} />
         <button className={`btn tiny subtle${edit.linkedSelection ? " active" : ""}`} aria-pressed={edit.linkedSelection} title="联动选择：组合与链接一起选中；音画链接一起修剪、分割。Alt 点选可临时单选。" onClick={() => prefs.toggleLinkedSelection()}>联动</button>
@@ -280,9 +280,9 @@ export function Timeline() {
           <span className="tag off" title="每个动作立刻写成一条命令批次并提交">即时模式</span>
         )}
         <span className="zoom-ctrl">
-          <IconBtn icon="zoomOut" label="缩小（-）" onClick={() => prefs.zoomBy(0.8)} />
+          <IconBtn icon="zoomOut" label={`缩小（${chordWords(keymap()["zoom-out"])}）`} onClick={() => prefs.zoomBy(0.8)} />
           <input type="range" min={ZOOM_MIN} max={ZOOM_MAX} value={px} aria-label="时间线缩放" onChange={(event) => prefs.setZoom(Number(event.target.value))} />
-          <IconBtn icon="zoomIn" label="放大（+）" onClick={() => prefs.zoomBy(1.25)} />
+          <IconBtn icon="zoomIn" label={`放大（${chordWords(keymap()["zoom-in"])}）`} onClick={() => prefs.zoomBy(1.25)} />
         </span>
       </div>
         {outside ? <span className="tl-window-note" role="status">{WINDOW_NOTE(outside)}</span> : null}
