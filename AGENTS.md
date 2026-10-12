@@ -13,6 +13,24 @@
   数必须等于 `contracts.SCHEMA_VERSION`、四类属性与混合模式的条数必须在提到它的那句话里等于 Literal 的成员数、
   七条过时说法原文不许回来。五条突变各自红在自己那条断言上（含一条把 contracts 改成 17 而 README 不动的方向），
   控制组全绿，README 逐字节还原。**这条本轮就红过一次**：schema 涨到 17 时它立刻点名 README 那句「量到的值是 16」。
+- 1.150 想顺势把「交付的那一头」也接上（给成片写色彩标记，让调色间与 1.150 的自动识别都读得到），
+  **量到的是这条路今天还走不通、以及它究竟卡在哪一个数上**：随包 6.1.1 把 RGB→YUV 的折叠交给
+  **编码器自己的 swscale 上下文**，实测那一格 (128,64,32) 限定量程回来 YUV=(84,104,158)，与独立写出的
+  BT.601 系数**逐位相同**（d601=0，BT.709 应是 (81,108,157)）。而加 `-colorspace bt709` 之后
+  `color_space` 确实写进了容器（1.150 的探针能读回 bt709），折叠却**一个数都没变**——也就是说
+  「勾一下就把成片标成 BT.709」这条最容易想到的路，交出去的是一张与画面不符的标签。
+  两次想改折叠都没改成：`colorspace=all=bt709:iall=bt709:format=yuv420p` 结果仍是 (84,104,158)；
+  `zscale=matrix=709:format=yuv420p`／`zscale=m=709…`／`matrix=bt709` 三种写法都回
+  `Error initializing a simple filtergraph … Option not found`（rc=2880417800）——原因现在量清楚了：
+  `zscale` **没有** `format` 这个选项（`-h filter=zscale` 的表里只有 `size/s/dither/primaries/matrix/…`，
+  像素格式要靠后面单独一个 `format` 滤镜）。按读出来的表写而不是猜变体，第三条就通了：
+  **`-vf zscale=matrix=709,format=yuv420p` 实测把折叠换成 BT.709**——同一格 (128,64,32) 回
+  YUV=(80,108,157)，与独立写出的 709 系数预测 (81,108,157) 差一档（8 位取整），U/V 逐位相同；
+  对照组 `-vf zscale=matrix=170m,format=yuv420p` 回 (84,104,159)，正落在 601 的 (84,104,158) 上。
+  也就是说「矩阵可控」这一条已经从猜测变成量到的事实，1.151 剩下的活是把这条式子接进交付那条图、
+  并让容器的三个标记（primaries/transfer/matrix）与它说同一件事——而不是先加一个开关再赌它成立。
+  证到之前，交付面保持今天的样子：**一个标记都不写**（`color_space` 等四键全缺，探针读到的就是
+  「没说过」），所以没有任何谎；这也让 1.150 的 `auto_source` 对自己导出的文件老实回 `no_color_tags`。
 - 1.150 的能力是把替代清单里「输入侧仍手工选」那条还掉：`clip.color_manage` 多 `auto_source`，来源端由
   `colortags.detect_space` 读素材自己的 transfer characteristic。只有 `color_transfer` 说得出色调曲线，
   `color_space`（矩阵系数）与 `color_primaries`（基色）都不决定 gamma，所以只标后两者的文件回 `no_transfer_tag`
