@@ -1453,10 +1453,16 @@ def compile_render_plan(
                 in_ticks=start,
                 out_ticks=end,
             )
-        frame = settings.frame_ticks
+        # 帧号是**交付流**的帧号：1.138 之后这两把尺可以不同，用时间线的那一把去除，切出来的窗口
+        # 会晚 `交付率/时间线率` 一秒开始、再多露出同样长的一截（实测：30 的线标 1..2 秒、按 25 交，
+        # 旧的算法交出 20 帧绿 + 5 帧蓝——入点前少了一截、出点后多露了一截）。
+        # 两头都向上取整：第一帧不早于入点，最后一帧的起点仍早于出点（end 是开区间）。
+        frame = TIMEBASE * delivery.denominator // delivery.numerator
+        start_frame = -(-start // frame)
+        end_frame = max(start_frame + 1, -(-end // frame))
         if plan.video_label:
             plan.filters.append(
-                f"{plan.video_label}trim=start_frame={start // frame}:end_frame={end // frame},"
+                f"{plan.video_label}trim=start_frame={start_frame}:end_frame={end_frame},"
                 f"setpts=PTS-STARTPTS[vrange]"
             )
             plan.video_label = "[vrange]"
