@@ -184,6 +184,25 @@ for (const entry of files) {
 assert.deepEqual(copied, [], `标记值只许待在引擎下发的那张表里，界面一行都不许抄：${copied.join("、")}`);
 assert.deepEqual(compared, [], `不许拿标记与任何字面量比较：${compared.join("、")}`);
 
+// —— ②′ 凡是把「这一条交付」念出来的地方，都必须念上标记 ——————————————————————
+// 待发清单与交付方案那颗 chip 都在逐条复述交付内容：先前它们只说得出透明与帧率，
+// 一份带标记的母版存进方案以后，界面上那句复述就少说一件事（本项目为这类「说半截」交付过缺陷）。
+const tagEchoLines = panel
+  .split(/\r?\n/)
+  .filter((line) => line.includes("entry.colour_tag"));
+assert.equal(
+  tagEchoLines.length,
+  2,
+  "逐条复述交付内容的两处（待发清单与方案 chip）都要念上色彩标记，一处不许多一处不许少"
+);
+assert.ok(/色彩标记 \$\{entry\.colour_tag\}/.test(panel), "复述里用的是那一个真发出去的值，不是再算一次");
+const help = read("views/Help.tsx");
+assert.ok(help.includes("交付色彩标记"), "帮助里那一节必须认得出这一栏，不能只写在悬停里");
+assert.ok(
+  /七件事都在这一个面板里[\s\S]{0,240}交付色彩标记/.test(help),
+  `导出那一节要把七个开关一次说全，不能停在「预设、文件名、文件夹」：${(help.match(/右侧·导出[\s\S]{0,200}/) ?? [""])[0]}`
+);
+
 console.log(
   "PASS: 交付色彩标记只有一张表（capabilities.output_colour_tags）与一处判断（colourTagAllowed）——" +
     "画面／容器／透明三个场合正反都判得到，没挑一个键都不发，引擎没这一档时照样不带标记出货，" +

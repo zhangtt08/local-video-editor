@@ -514,7 +514,7 @@ export function ExportPanel(): JSX.Element {
                     onClick={() => void exportRecipe(recipe.id, folder || undefined)}
                     disabled={Boolean(blocked) || Boolean(app.busy)}
                     title={`按 r${project.revision} 出货：${recipe.items
-                      .map((entry) => `${entry.filename} · ${entry.fit}/${entry.range ?? "full"}${entry.transparent ? " 透明背景" : ""}${entry.output_frame_rate ? ` ${entry.output_frame_rate.numerator}/${entry.output_frame_rate.denominator}fps` : ""}`)
+                      .map((entry) => `${entry.filename} · ${entry.fit}/${entry.range ?? "full"}${entry.transparent ? " 透明背景" : ""}${entry.output_frame_rate ? ` ${entry.output_frame_rate.numerator}/${entry.output_frame_rate.denominator}fps` : ""}${entry.colour_tag ? ` 色彩标记 ${entry.colour_tag}` : ""}`)
                       .join("，")}`}
                   >
                     {recipe.name}
@@ -557,7 +557,7 @@ export function ExportPanel(): JSX.Element {
                   }}
                   disabled={Boolean(blocked)}
                   title={`存下当前这组：${pendingItems
-                    .map((entry) => `${entry.filename}(${entry.fit}/${entry.range}${entry.transparent ? "，透明背景" : ""}${entry.output_frame_rate ? `，${entry.output_frame_rate.numerator}/${entry.output_frame_rate.denominator}fps` : ""})`)
+                    .map((entry) => `${entry.filename}(${entry.fit}/${entry.range}${entry.transparent ? "，透明背景" : ""}${entry.output_frame_rate ? `，${entry.output_frame_rate.numerator}/${entry.output_frame_rate.denominator}fps` : ""}${entry.colour_tag ? `，色彩标记 ${entry.colour_tag}` : ""})`)
                     .join("，")}`}
                 >
                   存为方案
