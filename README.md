@@ -240,7 +240,7 @@ desktop/         electron/（无边框窗口 + 引擎生命周期） src/（Reac
 design/          旧静态设计稿；现行深色工作台以 desktop/src/ 为准
 examples/        Agent 调用示例与 MCP 配置模板
 docs/            architecture / api / decisions / agent-tasks / validation
-tests/           self_check.py（HTTP + MCP） suite_check.py（逐个跑 68 项 *_check.py） media_check.py（真实媒体） editing_check.py（编辑/动画/字幕/变速/像素） matrix_check.py（53 种命令的可靠性扫面）
+tests/           self_check.py（HTTP + MCP） suite_check.py（逐个跑 tests/*_check.py，数目以 `--list` 为准） media_check.py（真实媒体） editing_check.py（编辑/动画/字幕/变速/像素） matrix_check.py（调色链逐格对参考乘法） docs_facts_check.py（本文件的每条数字对回引擎自己那张表）
 scripts/         build_engine.py（打包引擎） build_icon.py（生成图标）
 ```
 
@@ -259,7 +259,7 @@ uv run python tests/suite_check.py grade marks fourpoint   # 只跑名字含这�
 过去只能手动一个个跑——于是「门禁全绿」并不能证明这些检查真的执行过。该入口对每项打印 `PASS/FAIL` 与耗时，
 失败时贴出子进程的末尾输出，任一失败以非零码退出（用一条故意失败的探针验证过它确实会红）。
 
-渲染层的 6 个 TypeScript 检查（`tests/desktop_*_check.ts`、`tests/scope_check.ts`）以前只能手动一个个跑，「套件全绿」并不能证明它们执行过；`tests/desktop_ts_check.py` 现在用 desktop 自带的 esbuild 打包、node 执行，作为 `tests/*_check.py` 的一员被上面的入口发现（同样用故意失败的探针验证过它会红：探针不在 `desktop_*_check.ts` 这个命名模式里时它压根没被跑到，这也是这个模式必须写清楚的原因）。
+渲染层那一族 TypeScript 检查（`tests/desktop_*_check.ts`、`tests/scope_check.ts`，条目数以 `tests/desktop_ts_check.py` 自己的输出为准）以前只能手动一个个跑，「套件全绿」并不能证明它们执行过；`tests/desktop_ts_check.py` 现在用 desktop 自带的 esbuild 打包、node 执行，作为 `tests/*_check.py` 的一员被上面的入口发现（同样用故意失败的探针验证过它会红：探针不在 `desktop_*_check.ts` 这个命名模式里时它压根没被跑到，这也是这个模式必须写清楚的原因）。
 
 `media_check.py` 需要 FFmpeg：脚本会先找 `desktop/resources/bin`（随包分发的二进制），再找 `desktop/node_modules`，
 也可用 `AGENTCUT_FFMPEG` / `AGENTCUT_FFPROBE` 指定。
@@ -267,12 +267,12 @@ uv run python tests/suite_check.py grade marks fourpoint   # 只跑名字含这�
 ## 边界
 
 - 只监听 `127.0.0.1`；没有多用户授权、远程访问、云素材、第三方插件沙箱。
-- 同轨重叠只允许明确的两镜头转场；画面轨支持上下层合成和 8 种混合模式，已支持六属性关键帧。
+- 同轨重叠只允许明确的两镜头转场；画面轨支持上下层合成和 `contracts.BlendMode` 那 8 种混合模式。可打关键帧的属性由契约自己列：`EffectProperty` 六条标量（x／y／scale／rotation／opacity／gain）、`MaskProperty` 遮罩盒四条、`SpatialProperty` 三条（柔焦、清晰、清晰半径），外加路径遮罩整张形状帧 `Clip.mask_shape_keys`。
 - 历史保存每次全量快照，频繁编辑大工程会让数据库变大；未做结构共享与压缩。
 - 安装包未做代码签名，首次运行 Windows 可能提示 SmartScreen。
-- 导出预设覆盖 mp4（H.264/HEVC+AAC）、webm（VP9+Opus）、mov（ProRes 422 HQ + 24 位 PCM）三种带画面的容器，外加 mp3 / wav / flac 三条纯音频交付；仍没有 MXF/DPX 一类的后期格式，也不承诺可再分发全部 codec。中间码那条保住的是 4:4:4 采样与 10 位量化——时间线与调色链仍在 8 位精度上算，不是 10 位动态范围。
+- 导出预设就是 `contracts.OUTPUT_CONTAINERS` 那九个容器：带画面的 mp4（H.264/HEVC+AAC）、mov（ProRes 422 HQ + 24 位 PCM）、webm（VP9+Opus）、mxf（ProRes 422 HQ 与 MPEG-2），每帧一个文件的 exr／dpx 图像序列，以及 mp3／wav／flac 三条纯音频交付；不承诺可再分发全部 codec。中间码那条保住的是 4:4:4 采样与 10 位量化；调色链只有含跨通道矩阵的那一条会进 16 位线性平面（1.149 实测：矩阵那一份量化从 4 级降到 0），其余仍在 8 位取样上算，不是整条 10 位管线。
 - 交付复检量的是**文件结构与完整性**（容器、两路流在不在、时长、结尾半秒能否解码），不是内容好坏：它不会看画面是否过曝、声音是否符合某平台的响度规范，也不比对人眼期望。复检还依赖 FFmpeg 同目录的那个 ffprobe——只给一个 ffmpeg 二进制、旁边不放 ffprobe 时，任务会照常出货但把 `output_checked` 留成 false 并写明未经复检；这时交付的可靠性回到「FFmpeg 退出码」这一层。
 
 ## 工作台升级
 
-详见 [本次升级与完整替代目标](docs/optimization.md)。项目 schema v11 兼容读取 v1–v10 历史与旧请求回执；左缘修剪、音画联动、涟漪删除和变速均由服务统一执行。
+详见 [本次升级与完整替代目标](docs/optimization.md)。项目 schema 现为 `contracts.SCHEMA_VERSION`（本轮量到的值是 16，`docs_facts_check.py` 把这一行钉回那张表），旧文档按 ge=1 起兼容读取，历史与旧请求回执同规则；左缘修剪、音画联动、涟漪删除和变速均由服务统一执行。
