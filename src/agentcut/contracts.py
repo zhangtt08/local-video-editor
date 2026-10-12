@@ -5,6 +5,8 @@ from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .gamut import gamut_presets
+
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = (
@@ -12,7 +14,7 @@ SCHEMA_VERSION = (
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.145.0"
+APP_VERSION = "1.146.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -2826,6 +2828,9 @@ def capabilities(
         # 淡的形状同一条规矩：界面列的是这份表，不是自己写的四个名字。
         "fade_shapes": [dict(item) for item in FADE_SHAPES],
         "color_spaces": list(COLOR_SPACES),
+        # 基色转换表：矩阵由引擎算（`gamut.py`），界面与 Agent 都从这一处读。手抄的九个数迟早和
+        # 另一侧不一样，而这种不一致在成片里只表现为「颜色有点偏」。
+        "gamut_matrices": gamut_presets(),
         "output_containers": list(OUTPUT_CONTAINERS),
         # 哪几条预设真的装得下透明度。界面那个勾和引擎那句拒绝读的都是同一份预设表，
         # 所以「勾了透明却导出一个不透明的文件」这件事没有发生的余地。

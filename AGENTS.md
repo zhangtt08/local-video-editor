@@ -77,17 +77,34 @@
   这条边，靠的是 `GradeBranch` 那张类型表（不含 composite），壳检钉这个不含；界面那句中文话也不再念
   「这个工程是多条画面轨合成的」这种通用假诊断，engine.ts 里搜不到这句话是断言之一。
   最后：`npm run dist` 之后根 `AgentCut.exe` 要与 `release/AgentCut-便携版.exe` 逐字节一致（本轮 189,896,776 B）。
-- **1.145 的设计已经想清楚，落在这里免得下一轮重新推导**：把 `composite` 接进分层那条 Builder。
-  分层里每个片段有**自己的**一条链（`[1:v]…[layerN]` 再 overlay 到 `[base]`），所以「这条链进来的那幅画」
-  在分层里同样定义得清楚——`COMPOSITE_NEEDS_CUT` 是过虑了。做法：在 `head` 之前 `split=2`，一支过
-  `color_filter(clip, plan)`，一支不过，两支共用同一串 `scale/format=rgba/pad/setsar`，然后照 cut 那一路
-  编成 `format=gbrp` + `blend=all_mode=MODE` + `blend=all_mode=normal:all_opacity=mix`，末了 `format=rgba`
-  接回原来的 `head`（融合点必须在 **遮罩与不透明度之前**：那里 alpha 还是满的，matte 由后面的 `geq` 一次
-  性写成，两条支共用同一个几何与同一张 matte，所以相合只减弱调色、绝不动形状）。要一起改的：`details.reasons`
-  那十条里除「透明通道」「多条画面轨」之外都不该再拒；引擎侧新增门禁要按 alpha 逐帧读（ProRes 4444 那一路
-  的 matte 必须与不挂这一级时逐帧相同，`mix=0` 时 RGB 逐值等于原图），并 retire 掉老的那几条断言
-  （壳检与 `composite_check` 里 `COMPOSITE_NEEDS_CUT` 的行、engine.ts 的那句中文话）——老行不点名撤掉就会
-  变绿或变含糊。
+- **1.146 交的是「基色转换表」这一份数据，外加一条装机复核抓出来的真缺陷**。上半：`src/agentcut/gamut.py`
+  由 xy 与白点现算六档转换（2020↔709、DCI-P3↔709、Display P3→709、Rec.601→709），随
+  `capabilities.gamut_matrices` 交出九个数与两端传递函数名；没有那颗按钮，界面一字不接。门禁
+  `tests/gamut_check.py`：三条自洽性质（行和 1、正逆恒等 1e-12、每一列落在源档那号原色的射线上）
+  加一颗取自 1.52 测量记录的外部锚（那九个数字除以它自己的行和 1.11971，与本轮逐系数差 ≤7e-6），
+  再加真导出四份交付：中灰 `(130,127,131)→(129,126,130)` 不动、橙红 `(179,79,50)→(216,41,1)` 换档，
+  来回一趟不恒等（蓝 50→40）——同形状对照链自己漂 6 级、矩阵那份再 4 级，界按这个物理推出来。
+  电池九行逐条红（含「按列主序写进 matrix 节点」被导出的中灰当场抓住、xy 少抄一位只有外部锚抓得到），
+  两行量出来之后按理由退掉，记在脚本里。下半：装机复核里第一份交付照常出片、第二份（挂调色那一条）
+  报 `Unrecognized option 'filter_complex_script'`——冻结引擎根本没用随包那份 ffmpeg：搜索表缺
+  「`resources/bin` 这一层」，于是落到 PATH，而这台机器的 PATH 是 9.0.2，实测已经没有那个选项
+  （随包 6.1.1 有）。修 `src/agentcut/__main__.py` 一行，新增 `tests/ffmpegpath_check.py` 在临时目录
+  里搭真实形状断言三件事（随包那份胜、包里没有仍走 PATH、`--ffmpeg`/`AGENTCUT_FFMPEG` 更说了算），
+  删掉那一行门禁就红、还原就绿。**还欠的一条写在 `docs/optimization.md` 末尾**：引擎不验证它拿到的
+  ffmpeg 认不认自己将要发的每一个选项。
+  用户拿 `--ffmpeg` 指一份 9.x 时长滤镜图仍会撞同一句话。验证账：全量套件单跑 **100/100**
+  （新增 `gamut_check.py`、`ffmpegpath_check.py` 两项），`scripts/build_engine.py --verify` +
+  `npm run dist` + 根 `AgentCut.exe` 与便携版逐字节一致（189,903,294 B，SHA-256 前缀
+  `110f7974b25e3926`），装机复核 `package_check_1146.py` 全 PASS——包括「挂调色那一条长滤镜图
+  在打包版里照常出片」，成片像素与源码引擎逐项相同（灰 `(130,127,131)→(129,126,130)`、
+  橙 `(179,79,50)→(216,41,1)`），`app.asar` 5,678,773 B 里数不到 `gamut_matrices`（确实没那颗按钮）。
+
+- **1.145 把 `composite` 接进了分层那条 Builder**（上面那段推导就是当时照着做的，已落地，别再重推）：
+  每个片段在自己的那条链里 `split=2`，一支过 `color_filter`、一支不过，两支共用同一串几何与同一张
+  matte，相合发生在 `format=gbrp` 上、**遮罩与不透明度之前**；`COMPOSITE_NEEDS_CUT` 已经从引擎与
+  壳层里逐字删净（`tests/composite_check.py`、`tests/desktop_composite_check.ts` 现在断的是「分层
+  里挂这一级导得出来且只减弱调色」，`engine.ts` 里那句「这个工程是多条画面轨合成的」也随之外退）。
+  强度与方式的账在 `tests/compositerange_check.py`；alpha 逐帧那份证据在 1.145 的交叉表里。
 
 - 1.144 的两万段界面复核**在新包上重量过一遍**（bundle `index-CQf0hRJ3.js`，`node scripts/renderer_scale.cjs
   --budget 90` 退出 0）：写 8 批 ×2500 共 13.62 s、读回整份工程 0.86 s（revision 9、片段 20000、

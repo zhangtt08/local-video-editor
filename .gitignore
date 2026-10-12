@@ -15,3 +15,5 @@ __pycache__/
 /desktop/release/
 # PyInstaller 构建缓存（scripts/build_engine.py 的工作目录）
 /build/
+
+*.exe

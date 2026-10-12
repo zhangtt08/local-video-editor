@@ -25,7 +25,18 @@ def _find_binary(name: str, override: str) -> Path | None:
         if candidate and Path(candidate).is_file():
             return Path(candidate).resolve()
     if getattr(sys, "frozen", False):
-        for bundle in (Path(sys._MEIPASS), _app_dir(), _app_dir() / "resources"):
+        # 打包后的目录形状是 `resources/bin/agentcut/agentcut.exe` 与 `resources/bin/ffmpeg.exe`：
+        # 随包的媒体工具在**上一级**。少这一条，冻结引擎就会一路落到 PATH 上用户自己那份 ffmpeg，
+        # 而那条路是版本赌博——本轮实测这台机器的 PATH 上是 9.0.2，它已经没有
+        # `-filter_complex_script` 这一项（6.1.1 有），于是「滤镜图超过 12000 字符的交付」
+        # 在打包版里直接拒，短图却照常出片。`_app_dir().parent` 就是那一层；
+        # `_internal` 是 PyInstaller onedir 放数据文件的另一处。
+        for bundle in (
+            Path(sys._MEIPASS),
+            _app_dir(),
+            _app_dir().parent,
+            _app_dir() / "resources",
+        ):
             for hit in (bundle / f"{name}.exe", bundle / name / f"{name}.exe"):
                 if hit.is_file():
                     return hit.resolve()
