@@ -108,6 +108,134 @@ def ffprobe_beside(ffmpeg: Path | None) -> Path | None:
 TAIL_WINDOW = 0.5
 
 
+def _sequence_frames(pattern: Path) -> list[Path]:
+    """这一串序列里已经落盘的帧，按编号从小到大排。
+
+    只认 `%06d` 展开成的那一种名字（前缀、六位数字、扩展名三样都对）。同一目录里别人的文件
+    不会被当成帧——把数点多了比少点更难查。
+    """
+    prefix, _, suffix = pattern.name.partition("%06d")
+    directory = pattern.parent
+    if "%06d" not in pattern.name or not directory.is_dir():
+        return []
+    frames: list[tuple[int, Path]] = []
+    for path in directory.iterdir():
+        head = path.name
+        if not (
+            head.startswith(prefix)
+            and head.endswith(suffix)
+            and len(head) > len(prefix) + len(suffix)
+        ):
+            continue
+        middle = head[len(prefix) : len(head) - len(suffix)]
+        if len(middle) == 6 and middle.isdigit():
+            frames.append((int(middle), path))
+    return [frame for _, frame in sorted(frames)]
+
+
+def _discard_staging(pattern: Path, sequence: bool) -> None:
+    """删掉这一次渲染的临时产物。序列只删自己那一串编号的文件，目录真空了才删目录。"""
+    if not sequence:
+        pattern.unlink(missing_ok=True)
+        return
+    for frame in _sequence_frames(pattern):
+        frame.unlink(missing_ok=True)
+    try:
+        pattern.parent.rmdir()
+    except OSError:
+        # 里面还有别人的东西就留着：宁可剩一个空壳目录，也不动不属于这次渲染的文件。
+        pass
+
+
+def verify_sequence(ffmpeg: Path, ffprobe: Path, pattern: Path, plan: RenderPlan) -> str:
+    """图像序列的复检数的是**文件**：一帧一个、编号连续、首尾都解得开。
+
+    FFmpeg 写坏序列的方式不是「退出码非零」，而是少写几帧、中间断一号、最后一帧只写了个头。
+    这三种都只有按期望帧数点过、并且真解过首尾才会露出来。
+    """
+    frames = _sequence_frames(pattern)
+    prefix = pattern.name.split("%06d")[0]
+    numerator, _, denominator = plan.summary["frame_rate"].partition("/")
+    rate = int(numerator) / int(denominator or 1)
+    expected = int(plan.duration_ticks / TIMEBASE * rate + 0.5)
+    if not frames:
+        raise EditorError(
+            "OUTPUT_INVALID",
+            f"序列目录 {pattern.parent.name}/ 里一帧都没有，FFmpeg 却说自己正常结束了",
+            500,
+            directory=str(pattern.parent),
+        )
+    if len(frames) != expected:
+        raise EditorError(
+            "OUTPUT_INVALID",
+            f"序列该有 {expected} 帧（{plan.duration_ticks / TIMEBASE:.3f} 秒 × "
+            f"{rate:g} fps），实际落盘 {len(frames)} 个文件",
+            500,
+            expected=expected,
+            found=len(frames),
+            directory=str(pattern.parent),
+        )
+    numbers = [int(frame.name[len(prefix) : len(prefix) + 6]) for frame in frames]
+    if numbers != list(range(numbers[0], numbers[0] + expected)):
+        raise EditorError(
+            "OUTPUT_INVALID",
+            f"序列的帧号不连续：从 {numbers[0]} 到 {numbers[-1]}，{expected} 个里缺了号",
+            500,
+            first=numbers[0],
+            last=numbers[-1],
+            directory=str(pattern.parent),
+        )
+    reading = subprocess.run(
+        [
+            str(ffprobe),
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type",
+            "-of",
+            "json",
+            str(frames[0]),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        creationflags=_NO_WINDOW,
+        timeout=60,
+    )
+    if reading.returncode != 0 or '"video"' not in reading.stdout:
+        raise EditorError(
+            "OUTPUT_INVALID",
+            f"序列第一帧 {frames[0].name} 里读不出画面流（ffprobe 退出码 {reading.returncode}）"
+            + (f"：{reading.stderr.strip()[-160:]}" if reading.stderr.strip() else ""),
+            500,
+            file=frames[0].name,
+        )
+    # ffprobe 只读头，看不出「最后一帧只写了一半」；这一遍真解码，坏帧会让 ffmpeg 非零退出。
+    for frame in (frames[0], frames[-1]):
+        decoded = subprocess.run(
+            [str(ffmpeg), "-v", "error", "-i", str(frame), "-f", "null", "-"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=_NO_WINDOW,
+            timeout=60,
+        )
+        if decoded.returncode != 0:
+            raise EditorError(
+                "OUTPUT_INVALID",
+                f"序列的 {frame.name} 这一帧解不开（ffmpeg 退出码 {decoded.returncode}）"
+                + (f"：{decoded.stderr.strip()[-160:]}" if decoded.stderr.strip() else ""),
+                500,
+                file=frame.name,
+            )
+    return (
+        f"共 {len(frames)} 帧，从 {prefix}{numbers[0]:06d} 起连续编号，"
+        f"首尾两帧（{frames[0].name}、{frames[-1].name}）都解得开"
+    )
+
+
 def verify_output(ffmpeg: Path, ffprobe: Path, path: Path, plan: RenderPlan) -> str:
     """Re-open the candidate file and hold it against the plan before it gets the final name.
 
@@ -384,7 +512,8 @@ class JobRuntime:
         name = Path(request.filename).name
         # The extension is the container the preset will actually write, so a delivered file cannot
         # be a stream the wrapper cannot hold (an hvc1 track named .webm would never play back).
-        container = preset_by_id(request.preset_id)["container"]
+        preset = preset_by_id(request.preset_id)
+        container = preset["container"]
         if not name.lower().endswith(f".{container}"):
             raise EditorError("OUTPUT_NAME_INVALID", f"output file name must end with .{container}")
         base = Path(request.folder) if request.folder else self.output_dir
@@ -399,6 +528,25 @@ class JobRuntime:
                 folder=str(base),
                 output_roots=self.describe_output_roots(),
             )
+        if preset["sequence"]:
+            # 序列交付的不止一个文件，而是一串：目录名 = 文件名去掉扩展名，
+            # 里面是 `名字.000001.exr`。目录此刻就占下来（这一步在提交锁里做），
+            # 名字被占就往后让——覆盖上一次交付不可逆。
+            stem = Path(name).stem
+            folder = base / stem
+            index = 1
+            while folder.exists():
+                index += 1
+                folder = base / f"{stem}-{index}"
+            if index >= 1000:
+                raise EditorError(
+                    "OUTPUT_NAME_INVALID",
+                    f"{base} 里 {stem} 这个名字让不开了，换个文件名再导",
+                    422,
+                    filename=request.filename,
+                )
+            folder.mkdir()
+            return folder / f"{folder.name}.%06d.{container}"
         target = base / name
         if target.exists():
             stem, suffix = target.stem, target.suffix
@@ -700,9 +848,16 @@ class JobRuntime:
             output_frame_rate=job.output_frame_rate,
         )
         target = Path(job.output_path or (self.output_dir / job.filename))
+        sequence = bool(preset_by_id(job.preset_id)["sequence"])
+        if sequence:
+            # 序列没有「一个临时文件」可以躲：帧先落进兄弟目录 `名字.part/`，点过数、
+            # 首尾都解得开，才逐帧搬进最终目录。写坏的序列不会顶着可用的名字。
+            staging = target.parent.with_name(target.parent.name + ".part") / target.name
+            staging.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            staging = target.with_suffix(f".part.{preset_by_id(job.preset_id)['container']}")
         target.parent.mkdir(parents=True, exist_ok=True)
-        temp = target.with_suffix(f".part.{preset_by_id(job.preset_id)['container']}")
-        argv = plan.ffmpeg_argv(str(self.ffmpeg), str(temp))
+        argv = plan.ffmpeg_argv(str(self.ffmpeg), str(staging))
         work = self.db_path.parent / "render-assets" / job_id
         work.mkdir(parents=True, exist_ok=True)
         for name, body in plan.text_files.items():
@@ -788,8 +943,7 @@ class JobRuntime:
         stderr_thread.join(timeout=5)
         stderr = "".join(stderr_tail)
         if cancelled or return_code not in (0, None):
-            if temp.exists():
-                temp.unlink(missing_ok=True)
+            _discard_staging(staging, sequence)
             if cancelled:
                 self._save(
                     job.model_copy(
@@ -808,7 +962,12 @@ class JobRuntime:
                     )
                 )
             return
-        if not temp.exists() or temp.stat().st_size <= 0:
+        frames = _sequence_frames(staging) if sequence else []
+        if (sequence and not frames) or (
+            not sequence and (not staging.exists() or staging.stat().st_size <= 0)
+        ):
+            if sequence:
+                _discard_staging(staging, True)
             self._save(
                 job.model_copy(
                     update={
@@ -823,12 +982,16 @@ class JobRuntime:
         measurement = None
         if probe is not None:
             try:
-                measurement = verify_output(self.ffmpeg, probe, temp, plan)
+                measurement = (
+                    verify_sequence(self.ffmpeg, probe, staging, plan)
+                    if sequence
+                    else verify_output(self.ffmpeg, probe, staging, plan)
+                )
             except EditorError as failure:
                 # The candidate is destroyed instead of published: a file that cannot be measured
                 # is not a deliverable, and leaving it under the final name would let a person or
                 # an Agent hand it to a client.
-                temp.unlink(missing_ok=True)
+                _discard_staging(staging, sequence)
                 self._save(
                     job.model_copy(
                         update={
@@ -843,7 +1006,17 @@ class JobRuntime:
                     )
                 )
                 return
-        temp.replace(target)  # atomic publish: only finished files carry the final name
+        if sequence:
+            for frame in frames:
+                # 同名换目录：同一分区里就是一次 rename，逐帧原子。
+                frame.replace(target.parent / frame.name)
+            _discard_staging(staging, True)
+            delivered = f"{target.parent.name}/"
+            size = sum(path.stat().st_size for path in _sequence_frames(target))
+        else:
+            staging.replace(target)  # atomic publish: only finished files carry the final name
+            delivered = target.name
+            size = target.stat().st_size
         self._save(
             job.model_copy(
                 update={
@@ -851,14 +1024,14 @@ class JobRuntime:
                     "rendered_ticks": plan.duration_ticks,
                     # Says what was measured, or says nothing was measured. A silent success would
                     # read the same either way, which is exactly how an unchecked file gets trusted.
-                    "message": f"已输出 {target.name}"
+                    "message": f"已输出 {delivered}"
                     + (
                         f"（复检：{measurement}）"
                         if measurement
                         else f"（未经复检：{self.ffmpeg.parent.name} 目录里没有 ffprobe）"
                     ),
                     "output_path": str(target),
-                    "output_size_bytes": target.stat().st_size,
+                    "output_size_bytes": size,
                     "output_checked": measurement is not None,
                     "elapsed_seconds": round(time.time() - started, 2),
                     "error_code": None,

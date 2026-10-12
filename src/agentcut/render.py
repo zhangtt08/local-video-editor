@@ -440,6 +440,19 @@ def output_args(
             422,
             preset_id=preset["id"],
         )
+    if preset["sequence"]:
+        # 一串图像文件没有容器：起始时间码无处可挂，帧号本身就是位置。收下之后再什么都不做
+        # 就是说谎，所以这里点名拒，并指出哪几条带得走时间码。
+        if timecode:
+            raise EditorError(
+                "SEQUENCE_NEEDS_CONTAINER",
+                f"{preset['label']} 交出的是一串图像文件，没有容器可以挂起始时间码——"
+                "EXR／DPX 的帧号就是位置。要时间码请换成 mov／mp4／mxf／webm 那几条",
+                422,
+                preset_id=preset["id"],
+            )
+        # 也没有地方放声音：`-an` 与 ffmpeg_argv 里那条 `-map` 一并免了。
+        return ["-c:v", str(preset["codec"]), "-pix_fmt", str(preset["pixel_format"]), "-an"]
     codec = preset["codec"]
     if delivery_rate is not None and codec is None:
         # 和人给一条纯音频交付写时间码同一个道理：帧率是「一秒几帧」，没有画面就没有帧可数。
@@ -534,6 +547,7 @@ class RenderPlan:
     mode: str = "cut"
     output_args: list[str] = field(default_factory=list)
     summary: dict = field(default_factory=dict)
+    has_audio: bool = True
     counter: int = 0
     text_files: dict[str, str] = field(default_factory=dict)
     graph_in_file: bool = False
@@ -581,6 +595,19 @@ class RenderPlan:
             return ["-filter_complex", graph]
         return ["-filter_complex_script", "filtergraph-frame.txt" if frame else "filtergraph.txt"]
 
+    def render_graph_text(self) -> str:
+        """整条渲染用的图。
+
+        序列不 map 声音，那条 `[aout]` 就得自己落地：悬着的输出 pad 会让 FFmpeg 在 `anull` 上
+        报「unconnected output」，整条渲染直接失败（实测退出码 4294967274）。
+        """
+        tail = [] if self.has_audio else [f"{self.audio_label}anullsink"]
+        return ";".join([*self.filters, *tail])
+
+    def frame_graph_text(self) -> str:
+        """取单帧的图：画面只要一帧，声音无论如何都落地。"""
+        return ";".join([*self.filters, f"{self.audio_label}anullsink"])
+
     def ffmpeg_argv(self, ffmpeg: str, output_path: str) -> list[str]:
         return [
             ffmpeg,
@@ -592,10 +619,11 @@ class RenderPlan:
             "pipe:1",
             "-y",
             *self.input_args,
-            *self.graph_argument(";".join(self.filters)),
+            *self.graph_argument(self.render_graph_text()),
             *(["-map", self.video_label] if self.video_label else []),
-            "-map",
-            self.audio_label,
+            # 图像序列连 `-map` 都不发：那一串文件里根本没有地方放声音（起始时间码由
+            # output_args 点名拒，这里负责声音）。
+            *(["-map", self.audio_label] if self.has_audio else []),
             "-t",
             sec(self.duration_ticks),
             *self.output_args,
@@ -610,9 +638,7 @@ class RenderPlan:
             "-loglevel",
             "error",
             *self.input_args,
-            *self.graph_argument(
-                ";".join([*self.filters, f"{self.audio_label}anullsink"]), frame=True
-            ),
+            *self.graph_argument(self.frame_graph_text(), frame=True),
             "-map",
             self.video_label,
             "-ss",
@@ -650,6 +676,8 @@ class RenderPlan:
             "transparent": self.summary.get("transparent"),
             "timecode": self.summary.get("timecode"),
             "project_frame_rate": self.summary.get("project_frame_rate"),
+            "sequence": self.summary.get("sequence"),
+            "audio": self.summary.get("audio"),
         }
 
 
@@ -860,7 +888,11 @@ def compile_render_plan(
             for entry in entries
         )
     )
-    plan = RenderPlan(mode="audio" if audio_only else "layered" if compositing else "cut")
+    plan = RenderPlan(
+        mode="audio" if audio_only else "layered" if compositing else "cut",
+        # 序列那一串文件里没有声音的位置，所以连那条 `-map` 都不该发出去（ffmpeg_argv 读这个）。
+        has_audio=not preset["sequence"],
+    )
     transition_curves = envelopes(project)
     # Three framings, because a 16:9 timeline is delivered to 9:16 more often than not:
     # `contain` keeps every pixel and bars the rest, `cover` fills the frame and crops the
@@ -1502,6 +1534,9 @@ def compile_render_plan(
             "pixel_format": preset["pixel_format"],
             "transparent": transparent,
             "timecode": timecode,
+            # 序列交付写进摘要：不写声音、产出是一串文件的名字，界面与 Agent 读同一份。
+            "sequence": bool(preset["sequence"]),
+            "audio": not preset["sequence"],
             # 工程自己的率也写一份：读到 `frame_rate` 是 25 时，得知道那是交付的率还是时间线的率。
             "project_frame_rate": (
                 f"{settings.frame_rate.numerator}/{settings.frame_rate.denominator}"
@@ -1532,8 +1567,8 @@ def compile_render_plan(
     # Decided here, not when the command line is built: callers hand `text_files` to disk before
     # they ask for argv, and a file that only appears once argv exists is a file nobody writes.
     # The render graph and the single-frame graph differ by their audio sink, so they are two files.
-    render_graph = ";".join(plan.filters)
-    frame_graph = ";".join([*plan.filters, f"{plan.audio_label}anullsink"])
+    render_graph = plan.render_graph_text()
+    frame_graph = plan.frame_graph_text()
     if len(render_graph) > GRAPH_SCRIPT_LIMIT:
         plan.graph_in_file = True
         plan.text_files["filtergraph.txt"] = render_graph

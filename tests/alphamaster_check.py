@@ -217,14 +217,19 @@ def contract_suite() -> None:
     presets = {item["id"]: item for item in render_presets()}
     flagged = [item["id"] for item in render_presets() if item["alpha"]]
     assert flagged, "no preset can carry a matte, so the feature would be unreachable"
+    ALPHA_FORMATS = ("yuva", "rgba", "gbrap")
     for name in flagged:
         # The flag has to mean what it says: an alpha pixel format, and a container that stores one.
-        assert str(presets[name]["pixel_format"]).startswith("yuva"), presets[name]
-        assert presets[name]["container"] in ("mov", "webm"), presets[name]
+        # 1.142 之后 alpha 有三种存法：yuva*（ProRes／VP9）、rgba*（OpenEXR）、gbrap*（DPX）；
+        # 一串图像文件里 alpha 是每张图自己带的那一层，所以 exr／dpx 也算「装得下」。
+        assert str(presets[name]["pixel_format"]).startswith(ALPHA_FORMATS), presets[name]
+        assert presets[name]["container"] in ("mov", "webm", "exr", "dpx"), presets[name]
     for name, item in presets.items():
         if name in flagged:
             continue
-        assert not str(item["pixel_format"] or "").startswith("yuva"), f"{name} lies about alpha"
+        assert not str(item["pixel_format"] or "").startswith(ALPHA_FORMATS), (
+            f"{name} lies about alpha"
+        )
     caps = capabilities(media_ready=True)
     assert caps["alpha_presets"] == flagged, caps["alpha_presets"]
 

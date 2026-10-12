@@ -198,7 +198,15 @@ def contract_suite() -> None:
         assert preset["container"] in OUTPUT_CONTAINERS, preset
         assert preset["codec"] in OUTPUT_CODECS, preset
         assert preset["audio_codec"] in OUTPUT_AUDIO_CODECS, preset
-        assert preset["alpha"] == str(preset["pixel_format"] or "").startswith("yuva"), preset
+        # 只有图像序列才可以说「我没有声音这一说」；别条预设填了空就等于悄悄交出一个没声的文件。
+        if preset["audio_codec"] == "":
+            assert preset["sequence"], preset
+        # 「带 alpha」必须等于「那个像素格式真的有一层 alpha」，两边都不许自己声明。
+        # yuva*（ProRes 4444 / VP9）、rgba*（OpenEXR）、gbrap*（DPX）是三种不同的存法。
+        alpha_formats = ("yuva", "rgba", "gbrap")
+        assert preset["alpha"] == str(preset["pixel_format"] or "").startswith(alpha_formats), (
+            preset
+        )
         assert set(preset) == {
             "id",
             "label",
@@ -213,6 +221,7 @@ def contract_suite() -> None:
             "quality",
             "scale",
             "alpha",
+            "sequence",
         }, sorted(preset)
     argv = {preset_id: output_args(preset, 48000, 25.0) for preset_id, preset in presets.items()}
     for preset_id, args in argv.items():
@@ -223,6 +232,13 @@ def contract_suite() -> None:
             assert "-c:v" not in joined and "-pix_fmt" not in joined, (preset_id, joined)
             continue
         assert f"-pix_fmt {presets[preset_id]['pixel_format']}" in joined, (preset_id, joined)
+        if presets[preset_id]["sequence"]:
+            # 一串图像文件没有放声音的地方：这条必须连 `-ar/-ac` 都不发，而是明写 `-an`。
+            assert "-an" in joined and "-ar" not in joined and "-ac" not in joined, (
+                preset_id,
+                joined,
+            )
+            continue
         assert "-ar 48000 -ac 2" in joined, joined
         if presets[preset_id]["container"] in ("mp4", "mov"):
             assert "-movflags +faststart" in joined, (preset_id, joined)

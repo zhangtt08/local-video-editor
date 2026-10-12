@@ -81,8 +81,12 @@ assert.equal(transitionLabel(caps, "wipe_from_top"), "从上擦除");
 assert.equal(transitionLabel(caps, "wipe_sideways"), "wipe_sideways", "an unknown id is shown, not guessed");
 assert.equal(transitionLabel(null, "dip_white"), "闪白", "the fallback covers the three old kinds");
 
+// 1.142：这张表里多了 exr／dpx 两个名字——预设表加一种交付，念它的那张表必须跟着长，
+// 否则界面会把 FFmpeg 的编码器名原样甩给人看。
 assert.deepEqual(Object.keys(CODEC_NAMES).sort(), [
   "aac",
+  "dpx",
+  "exr",
   "flac",
   "libmp3lame",
   "libopus",

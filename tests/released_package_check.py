@@ -62,6 +62,11 @@ RENDERER_SENTENCES = (
     # 1.140：时间码那把尺要说清是哪一条交付的画面。
     "这一条交付画面的帧率",
     "是你选的交付率",
+    # 1.142：图像序列在人眼前要说清三件事——交出的是一串文件、声音不在里面、时间码进不去。
+    "每帧一个文件",
+    "声音不在里面",
+    "这一栏不起作用",
+    "帧号就是位置",
 )
 RENDERER_LITERALS = (
     "clip.color_manage",
@@ -70,6 +75,7 @@ RENDERER_LITERALS = (
     "TRANSPARENT_NEEDS_ALPHA",
     "UNKNOWN_OUTPUT_RATE",
     "OUTPUT_RATE_NEEDS_PICTURE",
+    "SEQUENCE_NEEDS_CONTAINER",
 )
 
 

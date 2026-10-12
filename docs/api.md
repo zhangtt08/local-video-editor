@@ -1110,7 +1110,7 @@ POST /v1/projects/{id}/renders
 - 新增预设：`h265-1080p`、`h265-2160p`（MP4 + `hvc1`，让 QuickTime 和剪辑软件认）、
   `vp9-1080p-web`（WebM + Opus）、`prores-422hq`（MOV + 24 位 PCM，`yuv444p10le`）。
 - `render.output_args(preset, sample_rate, frame_rate)` 是**唯一**把预设变成 FFmpeg 参数的地方，
-  按 codec 名字分派，只认 `OUTPUT_CODECS` 里的四个；不在表里的 codec 直接 422，不会拼出一条没验证过的
+  按 codec 名字分派，只认 `OUTPUT_CODECS` 那张闭表；不在表里的 codec 直接 422，不会拼出一条没验证过的
   命令。调用方自始至终只能给 `preset_id`，拿不到任何原始参数位（AGENTS.md「不把 FFmpeg 参数作为工具暴露」）。
 - `pixel_format` 不是只写进 `-pix_fmt` 的装饰：它同时是解码段、`fit_stage` 与 `[vout]` 的 `format=`。
   只在编码参数上写 4:4:4 而画面链中途压成 4:2:0，等于换个壳子撒谎。
@@ -2708,3 +2708,26 @@ H.264，装不下透明度，于是整条被让掉并在悬停里说清为什么
   （`tests/desktop_timecode_rate_check.ts`）。
 - 落盘证据：按 25 交、写 `00:00:00:24`，`ffprobe` 从 mp4 的视频流标签读回来还是 `00:00:00:24`，
   `avg_frame_rate` 是 `25/1`；一次被拒的提交不写 revision、不排队任务。
+
+## 1.142 图像序列交付（OpenEXR / DPX）
+
+预设表多两条，交付物从「一个文件」变成「一串文件」，所以接口上有五处要说清楚：
+
+- `GET /v1/capabilities` 的 `sequence_presets` 点名哪几条是序列（`["exr-sequence", "dpx-sequence"]`），
+  与 `alpha_presets`、`output_frame_rates` 同一性质：界面与 Agent 读的就是这一份，不许自己列。
+  这两条预设的 `audio_codec` 是空串——闭表里只有序列可以填空（`tests/format_check.py` 钉住这一点）。
+- 渲染计划（`GET /v1/projects/{id}/render-plan` 与提交后的 `plan`）多两个键：
+  `sequence`（这一条交出的是一串文件）与 `audio`（这一条带不带声音）。`argv_preview` 里
+  序列那一条是 `-c:v exr -pix_fmt rgba64le -an`，且**没有** `-map [aout]`。
+- `filename` 仍要带容器后缀（`.exr`／`.dpx`），否则契约层 422 点名要的后缀。作业存下来的
+  `filename` 与 `output_path` 是**名字模板**：`全片.%06d.exr`。落盘得到的是目录 `全片/`，
+  里面是 `全片.000001.exr` 起的一串；`output_size_bytes` 是这一串的总和。
+- 起始时间码对序列是 422 `SEQUENCE_NEEDS_CONTAINER`（不是静默丢掉）：一串图像文件没有容器可以挂
+  时间码，帧号就是位置。拒绝发生在编译阶段，所以**一个文件和目录都不会被建出来**。
+- 复检换了算法：序列按**文件**点货——帧数等于「这段时长 × 交付率」，编号从 000001 起连续，
+  首尾两帧先用 ffprobe 认出是画面、再用 `ffmpeg -f null` 真解码一遍。任务消息因此写
+  「已输出 全片/（复检：共 90 帧，从 全片.000001 起连续编号，首尾两帧…都解得开）」。
+
+实测口径见 `tests/sequence_check.py`（套件第 96 项）：三秒红/绿/蓝交 EXR 是 90 个文件、conform
+回来 30 红 / 30 绿 / 30 蓝；1..2 秒的窗口按 25 交 DPX 是 25 帧全是绿；带空洞与半透明的时间线交
+透明 EXR，逐帧 alpha 读回 0 / 255 / 133，而关掉「背景透明」的同一条是 255..255。

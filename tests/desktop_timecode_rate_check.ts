@@ -28,8 +28,13 @@ assert.ok(panel.includes("是你选的交付率"), "panel-says-which-rate");
 assert.ok(/帧号不能超过这一条交付画面的帧率/.test(engine), "engine-hint-names-the-delivery-picture");
 
 // 时间码那一栏仍然只是把字交出去：界面不许自己写正则，也不许提前拦。
+// 1.142 之后多了唯一一个例外：图像序列没有容器挂时间码，所以那一栏对它不起作用，
+// 发出去的就是 null——「界面念的」与「真正发出去的」仍然是同一个值。
 assert.ok(!/RegExp|\.test\(timecodeText\)|timecodeText\.match/.test(panel), "panel-writes-no-regex");
-assert.ok(/const sendTimecode = timecodeText\.trim\(\) \|\| null;/.test(panel), "one-effective-value");
+assert.ok(
+  /const sendTimecode = isSequence \? null : timecodeText\.trim\(\) \|\| null;/.test(panel),
+  "one-effective-value",
+);
 
 console.log(
   "PASS: 时间码的尺子跟着交付率——面板算出 effectiveRate，提示与「分号可用」都从它来，" +

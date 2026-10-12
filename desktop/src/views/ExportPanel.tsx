@@ -118,6 +118,9 @@ export function ExportPanel(): JSX.Element {
   // 都是它，不再是两处各写一份。
   const alphaIds = presets.filter((item) => item.alpha).map((item) => item.id);
   const matte = matteAllowed(preset, audioOnly, transparent);
+  // 1.142：图像序列交出的是一串文件，没有容器可以装声音，也没有地方挂起始时间码。
+  // 「不写」那一句、发出去的那个 null、待发清单那一行都由这一处算，不再两处各写一份。
+  const isSequence = Boolean(preset?.sequence);
   const matteHint = audioOnly
     ? "这条交付只有声音，没有画面，也就没有背景一说"
     : !preset?.alpha
@@ -145,10 +148,13 @@ export function ExportPanel(): JSX.Element {
   const tcIsDropRate = tcDropRates.some(
     ([n, d]) => n === effectiveRate.numerator && d === effectiveRate.denominator
   );
-  // 发出去的就是这一处：填了才算，空串一律当「不写」。
-  const sendTimecode = timecodeText.trim() || null;
+  // 发出去的就是这一处：填了才算，空串一律当「不写」。图像序列没有容器可以挂时间码，
+  // 所以它恒为「不写」——界面念的与真正发出去的是同一个值，不是两处各写一份。
+  const sendTimecode = isSequence ? null : timecodeText.trim() || null;
   const timecodeHint = [
-    `写给交接用的起始时间码，留空就是不写。写法 ${tcShape}，每段两位数字。`,
+    isSequence
+      ? "这一条交出的是一串图像文件，帧号就是位置，没有容器可以挂起始时间码，所以这一栏不起作用；要带时间码的成片请再交一份 mov／mp4。"
+      : `写给交接用的起始时间码，留空就是不写。写法 ${tcShape}，每段两位数字。`,
     `帧号不能超过这一条交付画面的帧率（这里是 ${effectiveRate.numerator}/` +
       `${effectiveRate.denominator}${sendFps ? "，是你选的交付率，不是时间线那一档" : ""}）。`,
     tcIsDropRate
@@ -335,7 +341,7 @@ export function ExportPanel(): JSX.Element {
                 placeholder={sendTimecode ? "" : "01:00:00:00"}
                 maxLength={11}
                 aria-label="起始时间码"
-                disabled={Boolean(blocked) || audioOnly}
+                disabled={Boolean(blocked) || audioOnly || isSequence}
                 title={audioOnly ? "这条交付没有画面，时间码是给画面数帧的" : timecodeHint}
               />
               <span className="mono suffix">{sendTimecode ?? "不写"}</span>
@@ -375,7 +381,15 @@ export function ExportPanel(): JSX.Element {
             </div>
           </Field>
 
-          <Field label="文件名" hint="不用写扩展名，引擎会按容器补上">
+          <Field
+            label="文件名"
+            hint={
+              isSequence
+                ? "不用写扩展名，引擎会按容器补上。这一条交出的不是单个文件：这个名字成为目录，" +
+                  "里面每帧一个文件（名字.000001 接着容器后缀），声音不在里面"
+                : "不用写扩展名，引擎会按容器补上"
+            }
+          >
             <div className="input-row">
               <input
                 className="input"

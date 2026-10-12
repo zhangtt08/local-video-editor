@@ -12,7 +12,7 @@ SCHEMA_VERSION = (
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.141.0"
+APP_VERSION = "1.142.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -2404,12 +2404,24 @@ class EditorError(Exception):
 # Containers this build can write. A request picks a preset id, the preset names one of these, and
 # `jobs` requires the file name to carry the matching extension — so a delivered file is never a
 # stream the container cannot hold, and no caller can aim FFmpeg at an arbitrary muxer.
-OUTPUT_CONTAINERS = ("mp4", "mov", "webm", "mxf", "mp3", "wav", "flac")
+OUTPUT_CONTAINERS = ("mp4", "mov", "webm", "mxf", "mp3", "wav", "flac", "exr", "dpx")
 # The codecs `render.output_args` knows how to ask for. Anything outside this set is refused rather
 # than passed through, which is what keeps the preset table a closed vocabulary of encoder knobs.
 # `None` means the deliverable carries no picture at all: the mix is the product.
-OUTPUT_CODECS = (None, "libx264", "libx265", "libvpx-vp9", "prores_ks", "mpeg2video")
-OUTPUT_AUDIO_CODECS = ("aac", "libopus", "pcm_s24le", "libmp3lame", "flac")
+# `exr`/`dpx` are the two image-sequence writers — one file per frame, no container for audio.
+OUTPUT_CODECS = (
+    None,
+    "libx264",
+    "libx265",
+    "libvpx-vp9",
+    "prores_ks",
+    "mpeg2video",
+    "exr",
+    "dpx",
+)
+# `""` means the deliverable carries no sound at all — only the two image-sequence presets get to
+# say that, because a string of image files has nowhere to put a mix.
+OUTPUT_AUDIO_CODECS = ("aac", "libopus", "pcm_s24le", "libmp3lame", "flac", "")
 
 
 def _preset(
@@ -2427,6 +2439,7 @@ def _preset(
     profile: int | None = None,
     quality: int | None = None,
     alpha: bool = False,
+    sequence: bool = False,
 ) -> dict:
     """One delivery target: encoder knobs from a closed set, never raw FFmpeg arguments.
 
@@ -2453,6 +2466,9 @@ def _preset(
         "quality": quality,
         "scale": scale,
         "alpha": alpha,
+        # 图像序列没有容器可以装东西：声音与起始时间码都无处安放，所以引擎点名拒，
+        # 而不是收下之后再什么都不做。
+        "sequence": sequence,
     }
 
 
@@ -2662,6 +2678,36 @@ def render_presets() -> list[dict]:
         # Audio-only deliverables: `codec=None` means the picture chain is never compiled, so an MP3
         # of a three-minute cut costs the mix, not a full render. The mix is the same authoritative
         # one the video presets use — master gain, ducking envelopes and the limiter included.
+        # 1.142：开链交付。这台 FFmpeg 实测写得出、也读得回 alpha 平面——rgba64le 与 gbrap10le
+        # 读回来的 alpha 都是 127，RGB 仍是 255,0,0，不是把透明度烘进画面那种。
+        _preset(
+            "exr-sequence",
+            "OpenEXR 图像序列（16 位，带 alpha）",
+            "exr",
+            "exr",
+            crf=None,
+            encoder_preset=None,
+            audio_codec="",
+            audio_bitrate=None,
+            pixel_format="rgba64le",
+            scale=None,
+            alpha=True,
+            sequence=True,
+        ),
+        _preset(
+            "dpx-sequence",
+            "DPX 图像序列（10 位，带 alpha）",
+            "dpx",
+            "dpx",
+            crf=None,
+            encoder_preset=None,
+            audio_codec="",
+            audio_bitrate=None,
+            pixel_format="gbrap10le",
+            scale=None,
+            alpha=True,
+            sequence=True,
+        ),
         _preset(
             "audio-mp3",
             "MP3 音频（口播与配乐交付）",
@@ -2747,6 +2793,8 @@ def capabilities(
         # 哪几条预设真的装得下透明度。界面那个勾和引擎那句拒绝读的都是同一份预设表，
         # 所以「勾了透明却导出一个不透明的文件」这件事没有发生的余地。
         "alpha_presets": [item["id"] for item in render_presets() if item["alpha"]],
+        # 序列那两条也单独下发：界面要说「声音与时间码进不去序列」，靠的是这一份，不自己猜表。
+        "sequence_presets": [item["id"] for item in render_presets() if item["sequence"]],
         # 时间码的写法与「哪两个率才有丢帧码」由引擎说，界面不许自己写死一份正则：
         # 这两条就是 `checked_timecode` 用的同一组常量。
         # 交付帧率的那张闭表也下发出去：界面排出来的就是这几档，不许自己再列一份。

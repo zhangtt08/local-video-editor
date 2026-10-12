@@ -59,7 +59,11 @@ assert.equal(batch.items[1].timecode, undefined, "batch-two-untouched");
 const panel = readFileSync(SRC + "desktop/src/views/ExportPanel.tsx", "utf8");
 assert.ok(!/const \[timecode[,=]/.test(panel), "no-shadow-formatter");
 assert.ok(/const \[timecodeText, setTimecodeText\]/.test(panel), "field-state-named");
-assert.ok(/const sendTimecode = timecodeText\.trim\(\) \|\| null;/.test(panel), "one-effective-value");
+// 1.142：图像序列没有容器挂时间码，那一栏对它恒为「不写」；念的与发出的仍是同一个值。
+assert.ok(
+  /const sendTimecode = isSequence \? null : timecodeText\.trim\(\) \|\| null;/.test(panel),
+  "one-effective-value",
+);
 assert.equal((panel.match(/timecode: sendTimecode/g) ?? []).length, 2, "sent-to-both-deliverables");
 // 1.138 又在这一串尾巴上加了交付帧率：这两条断的是「发出去的就是 matte/sendTimecode 这些有效值」，
 // 参数列表一变就得同步——变了没同步，红的是这两条，而不是没人看见。

@@ -433,6 +433,10 @@ export type Preset = {
   /** 这条交付装不装得下透明度。引擎那句拒绝与导出面板的勾读的都是预设表里的同一个字段；
    *  老引擎不回这一行，界面按「装不下」处理。 */
   alpha?: boolean;
+  /** 1.142：这条交付的是不是一串图像文件（每帧一张 EXR／DPX）。序列没有容器，所以既装不进
+   *  声音也挂不上起始时间码——面板那个「不写」与发出去的那个 null 都读这一处。
+   *  老引擎不回这一行，界面按「不是序列」处理。 */
+  sequence?: boolean;
 };
 
 /**
@@ -477,6 +481,8 @@ export const CODEC_NAMES: Record<string, string> = {
   pcm_s24le: "PCM 24-bit",
   libmp3lame: "MP3",
   flac: "FLAC",
+  exr: "OpenEXR",
+  dpx: "DPX",
 };
 
 const SAMPLING_NAMES: Record<string, string> = {
@@ -495,6 +501,9 @@ export function codecText(item: Preset): string {
   const audio = CODEC_NAMES[item.audio_codec] ?? item.audio_codec;
   if (item.codec === null) return `仅音频 · ${audio}`;
   const video = CODEC_NAMES[item.codec] ?? item.codec;
+  // 序列那一条没有声音那一路（audio_codec 是空串），念成「OpenEXR 序列 · 每帧一个文件」，
+  // 而不是留一个空荡荡的斜杠骗人。
+  if (item.sequence) return `${video} 序列 · 每帧一个文件`;
   const sampling = item.pixel_format ? SAMPLING_NAMES[item.pixel_format] : undefined;
   return `${video} / ${audio}${sampling && item.pixel_format !== "yuv420p" ? ` · ${sampling}` : ""}`;
 }
@@ -730,6 +739,7 @@ export class EngineError extends Error {
       TIMECODE_NEEDS_PICTURE: "这一条交付根本没有画面，时间码是给画面数帧的，写上去只会骗人。要时间码请换成带画面的预设，或者把这一栏清空。",
       UNKNOWN_OUTPUT_RATE: "这一档交付帧率不在这张表上，所以这一次导出没有排队。可交的是 24／23.976／25／29.97／30／50／59.94／60（清单以引擎能力表为准）；想跟时间线一样就选「跟时间线」，那一栏留空也是同一个意思。",
       OUTPUT_RATE_NEEDS_PICTURE: "这一条交付根本没有画面，帧率是「一秒几帧」，写上去只会骗人。要换交付帧率请换成带画面的预设，或者把那一栏改回「跟时间线」。",
+      SEQUENCE_NEEDS_CONTAINER: "图像序列交出的是一串文件（每帧一张），没有容器可以挂起始时间码，帧号就是位置。要时间码请换成 mov／mp4／mxf／webm 那几条；这一串的声音也不在里面，需要带声的成片请同时交一份 mp4／mov。",
       UNKNOWN_PRESET: "没有这个导出预设。能力表里列出的 id 才是可用的；界面下拉里选一个即可。",
     };
     const hint = hints[this.code];
