@@ -18,6 +18,8 @@
 6. 停用（`enabled=false`）与根本不挂这一级，像素相同；干跑的图里一个 `split=` 都没有。
 7. 一条链第二个 `composite` 点名拒 `COMPOSITE_LIMIT`；走到分层合成的工程点名拒
    `COMPOSITE_NEEDS_CUT`——两次拒绝都不涨 revision、不排队任务、不落文件。
+8. 八种混合方式逐条过一遍导出（名字是原样写进 `blend=all_mode=` 的）。这把尺的绝对值只有
+   ±6 的抖（yuv420p 往返），所以这里按每个方式定义上的大小关系判，逐条写明容差。
 8. 那句拒绝要**点名真的原因**：单条画面轨上改一次不透明度，不能让句子说成「你的工程是多条画面轨
    合成的」（走到分层的原因有十条，这一条只是其中一条）；`details.reasons` 逐条交回，
    透明母版那一路点名的原因是「透明通道」，两条原因同时按下就交回两条。
@@ -81,7 +83,12 @@ def source(folder: Path) -> Path:
 
 
 def greys(path: Path) -> list[int]:
-    """这份文件每一帧的灰度，去重排序——像素是唯一能回答「两幅画都进了混合」的证据。"""
+    """这份文件每一帧的灰度，去重排序——像素是唯一能回答「两幅画都进了混合」的证据。
+
+    尺子自己也要量：1x1 缩放的单通道在 yuv420p 往返上有 ±6 级的抖动（同一幅中灰交回
+    R=184 G=178 B=185），所以这里**不比绝对值到 4 级以内**，比的是每个方式定义上的大小关系
+    与「FFmpeg 认不认这个名字」。要卡绝对值的那几条由 screen／multiply／normal 用 ±3 钉住。
+    """
     raw = run(
         [
             FFMPEG,
@@ -234,6 +241,28 @@ def main() -> None:
             expected_multiply = graded * original / 255
             assert abs(multiplied[0] - expected_multiply) <= 3, (multiplied, expected_multiply)
             assert multiplied != at_one, (multiplied, at_one)
+
+            # 八种方式全都要过一遍导出：契约的 `BlendMode` 表是 8 条，界面八个中文名字来自它，
+            # 而这一级把名字原样写进 `blend=all_mode=`。名字 FFmpeg 不认就是「界面允许、
+            # 导出会拒」，认但算成另一幅画就是「界面说一套、文件做一套」。绝对值这一档量不动
+            # （单通道在 yuv420p 往返上有 ±6 的抖，见 `greys` 的说明），所以按每个方式定义上的
+            # 大小关系判；normal／screen／multiply 三条另有上面那两组 ±2／±3 的硬账。
+            read = {"normal": passthrough[0], "multiply": multiplied[0], "screen": at_one[0]}
+            for mode in ("overlay", "darken", "lighten", "difference", "exclusion"):
+                read[mode] = export(f"cx-{mode}", 0.5, [composite(mode, 1.0)])[0]
+            low, high = min(original, graded), max(original, graded)
+            # 每档按自己的定义判，容差是那把尺的抖（±6）而不是想象的零：
+            # 上面那三行若有人把 `all_mode` 写死，`screen`／`multiply`／`normal` 立刻红在这里。
+            assert read["difference"] < low - 40, read
+            assert read["multiply"] < low - 20, read
+            assert read["darken"] <= low + 6, read
+            assert abs(read["exclusion"] - (low + high - 2 * low * high / 255)) <= 8, read
+            assert abs(read["normal"] - high) <= 3, read
+            assert abs(read["lighten"] - high) <= 3, read
+            assert abs(read["overlay"] - high) <= 8, read
+            assert read["screen"] > high + 20, read
+            # 「方式被忽略」这一整类由这一条兜住：八个名字必须交出至少五种不同的数。
+            assert len(set(read.values())) >= 5, read
 
             # 位置不影响结果：这一级在链首与链尾，读回来的像素必须相同。
             at_head = export("cx-head", 0.5, [composite("screen", 1.0), curve()])
