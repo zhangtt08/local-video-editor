@@ -634,6 +634,7 @@ export class EngineError extends Error {
       INTERRUPTED: "软件重启打断了这次渲染，重新点渲染即可。",
       EMPTY_TIMELINE: "时间线上还没有可用画面，先从素材库拖一段进来。",
       OUTPUT_NOT_ALLOWED: "输出文件夹没有被授权。在导出面板重新选择一次文件夹。",
+      FFMPEG_NO_GRAPH_SCRIPT: "这条交付的滤镜图太长，要写成脚本文件交给 ffmpeg，而你指给引擎的那一份不认那种写法。去掉 --ffmpeg 与 AGENTCUT_FFMPEG 那两处指向，用随包的那一份再导一次。",
       NO_OUTPUT: "编码结束但没有产出文件，通常是磁盘空间或权限问题。",
       INVALID_PROBE: "素材记录与服务端探测不一致，请重新导入这个文件。",
       STORAGE_UNAVAILABLE: "本地数据库被占用，稍等一秒重试；写入是原子的，不会丢数据。",

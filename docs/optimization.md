@@ -5054,3 +5054,13 @@ FFmpeg stderr，现在换成 `FFMPEG_NO_GRAPH_SCRIPT`：回执点名是哪一份
 发生，红的是任务状态）、守卫写反（红在照常出片那半句）、拒绝的话里不再说回去的名字、缓存没了。
 还有一条没写进断言的性质也记着：探测的是「这份 ffmpeg 认不认**我们要发的那一个**选项」，不是
 通用能力表——将来再依赖别的 FFmpeg 选项时，加的是同一条路上的第二次数，不是猜。
+
+1.147 的验证账：`error_vocabulary_check` 把这条新码抓了出来——引擎发出去的每一个码都必须有
+一句中文回执，150 个码 / 154 句提示，0 句落回英文；`desktop/src/engine.ts` 的提示表因此多了
+`FFMPEG_NO_GRAPH_SCRIPT` 那一行（说的是同一条退路，不是「出错了」）。52 个壳检全过；
+全量套件单跑 **101/101**。发布包重建后根 `AgentCut.exe` 与 `release/AgentCut-便携版.exe` 逐字节
+一致（189,903,532 B），冻结引擎自报 1.147.0，`package_check_1147.py` 全 PASS。
+最要紧的一跑是 `package_check_1147_refusal.py`：把**打包版**引擎用 `--ffmpeg` 指到这台机器 PATH
+上那一份 9.0.2（就是 1.146 当年撞上的那一份），挂基色矩阵那条长滤镜图的交付必须以命名拒绝
+收场——实测 PASS：ready 行报的就是被指过去的那一份、回执里点名 9.0.2 与路径、说出 `--ffmpeg`
+与 `AGENTCUT_FFMPEG` 这两个名字，而 `Unrecognized option` 那句原始 stderr 不再独自当结论。
