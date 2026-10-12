@@ -526,7 +526,7 @@ def receipt_suite(folder: Path) -> None:
 
     The pair that could have split is the one that writes the same thing: a pre-1.150 payload said
     `source_space: null` (take the pair off), and a 1.150 client may send that same command with the
-    new field filled in by the default. Asking the file for the answer has to be a different command.
+    new field filled in by the default. Asking the file has to be a different command.
     """
     store = ProjectStore(folder / "rc.sqlite3")
 

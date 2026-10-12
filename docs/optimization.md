@@ -5243,8 +5243,19 @@ ProRes 4444 的 matte 会被悄悄改成不透明；② 岛屿两端的 `format=
 形状——一个只会重复自己意图的门禁，比没有门禁更危险。
 
 验证账：`ruff check`/`format --check` 对 `src tests` 全绿；`colortags_check.py` 与
-`docs_facts_check.py` 各成一节门禁（`suite_check.py --list` 量到总数 103 项，这两条分别排在
-第 17 与第 27 位）；受影响面单跑 `colormanage_check.py`、
-`editing_check.py`、`grade_check.py`、`error_vocabulary_check.py`（151 个码 / 155 句中文 /
-0 句落回英文，`COLOR_SPACE_UNDETECTED` 那句点名「手工选来源空间」与「+LUT」两条真出路）、
+`docs_facts_check.py` 各成一节门禁（`suite_check.py --list` 当时量到总数 103 项，这两条分别排在
+第 17 与第 27 位）；受影响面单跑 `colormanage_check.py`、`editing_check.py`、`grade_check.py`、
+`error_vocabulary_check.py`（151 个码 / 155 句中文 / 0 句落回英文，`COLOR_SPACE_UNDETECTED` 那句点名「手工选来源空间」与「+LUT」两条真出路）、
 `read_sweep_check.py`、`ops_sweep_check.py` 全绿。引擎自报 1.150.0、工程 schema v17。
+
+**发布包这一头是单独量的，而且中间有一次我自己造的假红**：第一次全量跑我把 PyInstaller 的构建
+压在套件尾巴上一起跑，最后三项（`tracking_check`／`verify_check`／`wipe_check`）同时红——
+`wipe_check` 的红是它调 FFmpeg 的那一步（构建正把 `resources/bin/ffmpeg.exe` 换掉）。这条不算
+交付证据，等机器空下来单独复跑，**103/103 全绿、EXIT=0**。发布包重建后：便携版
+189,910,236 B、安装版 190,070,940 B，根目录 `AgentCut.exe` 与便携版 `cmp` 逐字节相同，
+`released_package_check.py` 绿（app.asar 带 1.150.0、84 个文件、内嵌引擎就是刚构建那一份）。
+所以又把「打包版引擎真的把这条新面答出来」固化成套件的一项（`--list` 现在量到 104 项，它排在
+第 73 位）：它启动 `resources/bin/agentcut/agentcut.exe`，用随包
+FFmpeg 造一份带 bt709 与一份不带标记的素材，量到 capabilities 报 1.150.0／schema 17／
+`color_manage_auto` 为真、只读路由 `bt709 → rec709` 与 `no_color_tags`、`auto_source` 写下
+`rec709→linear→rec709`、对没标记那份的写请求回 422 `COLOR_SPACE_UNDETECTED` 且 revision 不动。
