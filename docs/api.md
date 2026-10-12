@@ -217,7 +217,7 @@ preview-manifest 给出 mixed_track_ids 与每片段 transition.picture/sound/bl
 | GET /v1/assets/{asset_id}/stream?project_id= | — | 工程内素材的源文件流，需 `sig` |
 | GET /v1/projects/{id}/asset-urls | project_asset_urls | 一次性给出全部素材的签名播放地址 |
 | GET /v1/render-presets | render_presets_read | 受控输出预设（调用方只能选，不能传编码器参数） |
-| GET /v1/projects/{id}/render-plan?preset_id=&revision=&fit=&range=&transparent=&timecode=&output_fps= | render_plan | 只读编译 RenderPlan 与 FFmpeg 参数预览（1.136：`transparent=true` 问的就是真导出会用的那组词，回包 `plan.transparent` 原样答；1.138：`output_fps=25` 或 `30000%2F1001` 问的是「交成另一档率」，回包 `plan.frame_rate` 是交付率、`plan.project_frame_rate` 是时间线自己的率） |
+| GET /v1/projects/{id}/render-plan?preset_id=&revision=&fit=&range=&transparent=&timecode=&output_fps=&colour_tag= | render_plan | 只读编译 RenderPlan 与 FFmpeg 参数预览（1.136：`transparent=true` 问的就是真导出会用的那组词，回包 `plan.transparent` 原样答；1.138：`output_fps=25` 或 `30000%2F1001` 问的是「交成另一档率」，回包 `plan.frame_rate` 是交付率、`plan.project_frame_rate` 是时间线自己的率；1.151：`colour_tag=bt709` 问的是「这张母版声明自己是哪一抹颜色」，回包 `plan.colour_tag` 原样答，`argv_preview` 里同时看得到 `zscale=matrix=709:range=tv` 与容器那三样标记） |
 | POST /v1/projects/{id}/renders | render_start | 按 `expected_revision` 排队渲染（revision 不符返回 409）；同一 `request_id` 重放返回原 job，换 payload 返回 409 IDEMPOTENCY_CONFLICT |
 | GET /v1/jobs/{job_id} | job_status | 状态 `queued/running/succeeded/failed/cancelled` + 进度 |
 | GET /v1/projects/{id}/jobs | job_list | 该工程最近的任务 |
@@ -2779,3 +2779,78 @@ H.264，装不下透明度，于是整条被让掉并在悬停里说清为什么
   在非 `normal` 方式下会把「0 权重」谎报成另一幅画。
 - 干跑（`GET /v1/projects/{id}/render-plan`）的 `argv_preview` 里能看到 `split=` 与两段 `blend=`；
   工程里没有这一级时图里一个 `blend=` 都没有（既有交付的输出逐字不变）。
+
+## 1.151 交付色彩标记：`colour_tag` 是一词，标记与折叠必须一起写下
+
+`RenderRequest.colour_tag` 声明的是**这一条交付的画面是什么颜色**：`RenderBatchItem` 同名、
+`RenderJob` 也带一份，三处都是 `Annotated[str | None, Field(max_length=24)] = None`。留空就是
+容器上一个色彩标记都不写——那是 1.151 之前所有交付的含义；显式写 `null` 也是同一件事，所以新
+客户端多带一个空键不会把老回执劈成两份。这一词的落点有两处，只写其中一处就是谎话。
+
+- 为什么「只写标记」是谎话（本机随包 FFmpeg 6.1.1 实测，`tests/colour_tag_check.py`）：
+  `-colorspace bt709` 往容器里写一个名字，一个像素都不动。RGB→YUV 那一折发生在**编码器的 swscale
+  上下文**里，而它用的是 **BT.601**：夹具里那一格实测是 RGB `(126,63,30)`，不带标记交出去的
+  `h264-720p-web` 折成 YUV `(83,104,158)`——正是 601 的预测；709 的预测是 `(80,107,157)`。两个
+  预测都由门禁拿公开的系数另算一遍再比，不从引擎导入，否则填错矩阵的代码会跟自己的断言对上。
+  所以在老那张图上写 `bt709`，就是对着一张 601 折出来的画面宣称另一组系数，而容器是下游唯一
+  读得到的地方。
+- 这一档改的两处，缺一个都不成立：① 画面链的最后一步从 `format=<预设像素格式>,settb=AVTB`
+  变成「先按预设自己的位深摆成平面 RGB（`format=gbrp`／`gbrp10le`），再 `zscale=matrix=709:range=tv,format=<预设像素格式>,settb=AVTB`」——折叠交给 `zscale` 在图里
+  做，因为 `-pix_fmt` 那一步落在编码器的 swscale 上下文，那里读不到矩阵选项；② 容器写
+  `-color_primaries`／`-color_trc`／`-colorspace`，三个值取自表里的 `primaries`／`transfer`／
+  `matrix`。不声明时 argv 与滤镜串跟 1.151 之前逐字相同（这一项不参与，除非它被用上）。
+- 两条 FFmpeg 的事实是拿突变试出来的，记在这里免得下一次重新试：`zscale` **没有** `format`
+  选项，像素格式要另挂一级 `format=`；`zscale` 的矩阵表里**没有** `601` 这一拼，601 族的值是
+  `470bg`／`bt470bg`／`170m`。`range` 也不能不说：留在 `input` 会把 RGB 源的满量程一路带过去，
+  有限量程的样本交回来是 `yuvj420p` 加 `color_range=pc`——那是同一类谎的第二句容器声明。
+- 表在 `contracts.OUTPUT_COLOUR_TAGS`，一行一档，七个键：
+  `{id,label,primaries,transfer,matrix,zscale_matrix,zscale_range}`；可点的名字由它派生
+  （`COLOUR_TAG_CODES`），同一件事不写第二遍。**今天这张表只有一行**：`bt709`，
+  label「BT.709（高清显示端交接母版）」。表外一律 422 `UNKNOWN_COLOUR_TAG`
+  （判在 `colour_tag_row`，也就是编计划那一步，干跑、排队、worker 三条路同一条规矩），
+  details 带回 `colour_tag` 与 `known`（实测 `p3-dci` 回 `known == ["bt709"]`），
+  句子把可选的那几档念出来、再说一句「或者干脆留空」。
+- 带不出去的情况各点名拒绝，不静默收下之后再什么都不改；连同上面那句 `UNKNOWN_COLOUR_TAG`，
+  四处都是 422：
+  - `COLOUR_TAG_NEEDS_CONTAINER`（`colour_flags`）——`exr-sequence`／`dpx-sequence` 交出的是一串
+    图像文件，没有容器 VUI 可以挂这三样；EXR／DPX 自己带的是逐帧的像素格式说明，不是这三样。
+    details 带 `preset_id` 与 `colour_tag`。
+  - `COLOUR_TAG_NEEDS_PICTURE`（`colour_flags`）——`audio-mp3`／`audio-wav`／`audio-flac` 只有
+    声音，标记是给画面写的。这一问排在 `output_args` 最前面，所以后面那几条先 `return` 的分支
+    也照样挡得住。
+  - `COLOUR_TAG_NOT_WITH_ALPHA`（`compile_render_plan` 分层那一路）——透明母版是把 rgba 一路带到
+    编码器才折的，用哪一组系数折不由这条图说，容器写任何 matrix 都会与画面不符；句子给两条出路：
+    交不透明的那份并带上标记，或者这一份留空。同一预设（`vp9-1080p-web-alpha`）不勾透明时那条
+    alpha 链一字未改，仍带 `format=rgba[vout]`。
+- `plan.colour_tag` 也写进 dry-run 那份文档：`RenderPlan.summary` 与 `as_dict()` 各多这一个键，
+  没声明时是 `null`。读计划的人要能从计划本身看出这份文件会带那三样容器标记，而不是从自己发出去
+  的那个字段猜——与 1.136 的 `transparent`、1.137 的 `timecode` 同一条规矩。
+- HTTP：`GET /v1/projects/{id}/render-plan` 多一个可选 query `colour_tag`；`POST …/renders` 在
+  请求体里收它，`POST …/renders/batch` 每一项各收自己那一个答案。MCP 的 `render_plan` 工具多同名
+  参数，非空才拼进 query。界面留空时连这个键都不发（`tests/desktop_colour_tag_check.ts` 钉住这一
+  条）——契约是 `extra="forbid"`，多发一个不认的键会让 1.151 之前的引擎整条拒收。
+- `GET /v1/jobs/{id}` 在任务还排着的时候回的是任务自己那份计划（同一个 `plan_for`，带任务那一词），
+  所以 `plan.colour_tag` 念的是这一条交付声明过的话；两份并排实测：带标记那条排着时读回来
+  `plan.colour_tag` 与 `job.colour_tag` 都是 `bt709`，落地后任务文档存的仍是 `bt709`，
+  未标记那条 `job.colour_tag` 是 `null`。
+- 回执：指纹改由模块级纯函数 `jobs.request_fingerprint(project_id, request)` 算，`colour_tag`
+  **只在被点名时**加入那个数组。所以 1.151 之前写的未标记回执原样重放——门禁把 1.150 那次提交
+  自己的 `canonical` 串与它的 sha256 钉成两个常量来比，不是让 1.151 重算一遍再点头；显式 `null`
+  仍算同一份。同一个 `request_id` 改要带标记是 409 `IDEMPOTENCY_CONFLICT`：那是一次不同的交付，
+  不许悄悄回一份已经排队的旧文件。一次拒绝不写状态、不涨 revision、不排队。
+- capabilities 下发 `output_colour_tags`（整张表原样交出去，与 `alpha_presets`、
+  `sequence_presets`、`output_frame_rates` 同一性质：界面与 Agent 读的就是这一份，不许自己列）与
+  `features.colour_tag_delivery=true`。工程 schema 仍是 v17（这一轮没动），`APP_VERSION` 是
+  `1.151.0`。界面那一栏一个值都不抄：`tests/desktop_colour_tag_check.ts` 逐行扫 `desktop/src`，
+  并断言界面连 `primaries`／`transfer`／`matrix` 都不读——读了就是界面在算色彩数学。
+- 为什么要写这三样：带标记的母版靠的是**文件自己那一句自我介绍**——DaVinci 或另一个 Agent 拿到的
+  是这个文件，不是这一次对话。实测 1.150 的 `colortags.detect_space` 把 AgentCut 自己交出的那份
+  带标记母版认成 `rec709`（于是 `clip.color_manage` 的 `auto_source` 接得上自己导的片），同一
+  夹具不带标记那份回 `no_color_tags`；ffprobe 从带标记那份读回 `color_space`、`color_primaries`、
+  `color_transfer` 三样都是 `bt709`，画面格式仍是 `yuv420p`。
+- 边界说清楚：**今天只有一档**，`bt709`，而加第二档不是界面的事。它是 `OUTPUT_COLOUR_TAGS` 这张
+  契约表多一行，连带要定 `zscale` 的那两个拼法，且 `COLOR_TRANSFER_TAGS[row["transfer"]]` 必须
+  仍在 `COLOR_SPACES` 里（capabilities 套件钉住这一条：标记承诺了一条引擎算不出来的曲线，比少一档
+  更糟）。面板那边什么都不必改，它排的就是引擎下发的那张表。
+- 证据是七个套件：capabilities／compile／pixels／round trip／refusals／http／receipts
+  （`tests/colour_tag_check.py`），加界面那一份 `tests/desktop_colour_tag_check.ts`。

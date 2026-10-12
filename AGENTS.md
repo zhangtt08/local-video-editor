@@ -30,7 +30,7 @@
   也就是说「矩阵可控」这一条已经从猜测变成量到的事实。
 - **1.151 把这条式子接进了交付，并让容器的三个标记与它说同一件事**：`RenderRequest`／`RenderBatchItem`／
   `RenderJob` 多 `colour_tag`（默认 null＝照旧一个标记都不写），带标记时滤镜图最后一步换成
-  `zscale=matrix=709:range=tv,format=<预设像素格式>,settb=AVTB`，容器写
+  先按预设自己的位深摆成平面 RGB（`format=gbrp`／`gbrp10le`），再 `zscale=matrix=709:range=tv,format=<预设像素格式>,settb=AVTB`，容器写
   `-color_primaries`／`-color_trc`／`-colorspace`。量到的还是那一格素材：它实拿 RGB (126,63,30)，
   不带标记折出 (83,104,158)＝601 的预测，带标记折出 (80,107,157)＝709 的预测，两份预测都由
   `tests/colour_tag_check.py` 按公开系数独立算过。两条 FFmpeg 事实是拿突变试出来的，别再靠猜：
@@ -45,7 +45,13 @@
   `canonical` 那一串（`["proj_pin_1","h264-720p-web","show.mp4",null,"contain"]` →
   `39931bfe33e7b53745dd5d50caa79cb82065636e61bd8a6fdddc4de611a5c4cb`，本文件钉的是从 HEAD 的源码里
   `ast` 取出的那条语句算出来的数，不是本轮能重算的自证）逐字重放，同 id 改要带标记是 409。
-  表今天只有一档，加第二檔是改契约表而不是改界面。
+  表今天只有一档，加第二档是改契约表而不是改界面。
+- **交付面新增开关，验收里必须有一段从真实素材跑一次真 FFmpeg**（1.151 的教训）：那一版的七项检查全用
+  PNG 素材（解码就是 RGB），`zscale` 接得到 RGB 才谈得上「用哪组系数折」；真实素材解码出来是 YUV，
+  接上去直接 `code 3074: no path between colorspaces`，整条滤镜图崩掉——界面上点「开始导出」就失败，
+  而全部门禁是绿的。现在 `colour_tag_check.py` 的 `video_suite` 走的就是界面那条路（mp4 → 真编码 →
+  探针读三样标记 → 解回 RGB 比往返，实测漂移 1 个色阶），突变「摘掉 `format=gbrp` 那一段」立刻红在
+  那句 FFmpeg 错误上。读滤镜串与读 argv 都不算这一条的证据。
 - 1.150 的能力是把替代清单里「输入侧仍手工选」那条还掉：`clip.color_manage` 多 `auto_source`，来源端由
   `colortags.detect_space` 读素材自己的 transfer characteristic。只有 `color_transfer` 说得出色调曲线，
   `color_space`（矩阵系数）与 `color_primaries`（基色）都不决定 gamma，所以只标后两者的文件回 `no_transfer_tag`

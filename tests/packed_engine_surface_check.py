@@ -1,4 +1,4 @@
-"""The engine inside the Windows package has to answer for 1.150, not just the source tree.
+"""The engine inside the Windows package has to answer for 1.151, not just the source tree.
 
 `released_package_check.py` proves the shipped bytes are the built bytes; this proves those bytes
 actually serve the new surface over real HTTP, using fixtures written by the FFmpeg that ships
@@ -27,7 +27,12 @@ from pathlib import Path
 ROOT = Path(r"C:\Users\Administrator\Desktop\项目\agentcut")
 sys.path.insert(0, str(ROOT / "src"))
 
-from agentcut.contracts import APP_VERSION, COLOR_TRANSFER_TAGS, SCHEMA_VERSION  # noqa: E402
+from agentcut.contracts import (  # noqa: E402
+    APP_VERSION,
+    COLOR_TRANSFER_TAGS,
+    OUTPUT_COLOUR_TAGS,
+    SCHEMA_VERSION,
+)
 from agentcut.contracts import TIMEBASE as T  # noqa: E402
 
 BIN = ROOT / "desktop/resources/bin"
@@ -131,6 +136,10 @@ def main():
             assert caps["app_version"] == APP_VERSION, (caps["app_version"], APP_VERSION)
             assert caps["project_schema_version"] == SCHEMA_VERSION
             assert caps["features"]["color_manage_auto"] is True, caps["features"]
+            assert caps["features"]["colour_tag_delivery"] is True, caps["features"]
+            assert caps["output_colour_tags"] == [
+                dict(item) for item in OUTPUT_COLOUR_TAGS
+            ], caps["output_colour_tags"]
             assert caps["color_transfer_tags"] == [
                 {"tag": tag, "space": space} for tag, space in COLOR_TRANSFER_TAGS
             ], caps["color_transfer_tags"]
@@ -271,8 +280,34 @@ def main():
             assert error["details"]["reason"] == "no_color_tags", error["details"]
             after = call(base, token, "GET", f"/v1/projects/{pid}")[1]["revision"]
             assert after == state["revision"], (after, state["revision"])
+            # 1.151 over the shipped binary: the same query surface has to reach the plan that adds
+            # both the container claim and the fold, and an id outside the table is refused by name.
+            plan_base = (
+                f"/v1/projects/{pid}/render-plan?preset_id=h264-720p-web"
+                f"&revision={state['revision']}"
+            )
+            status, untagged = call(base, token, "GET", plan_base)
+            assert status == 200, untagged
+            argv = " ".join(untagged["argv_preview"])
+            assert "-colorspace" not in argv and "zscale=matrix" not in argv, argv[-260:]
+            assert untagged["plan"]["colour_tag"] is None, untagged["plan"]
+            status, tagged = call(base, token, "GET", f"{plan_base}&colour_tag=bt709")
+            assert status == 200, tagged
+            argv = " ".join(tagged["argv_preview"])
+            for claim in ("-color_primaries bt709", "-color_trc bt709", "-colorspace bt709"):
+                assert claim in argv, (claim, argv[-320:])
+            assert "zscale=matrix=709:range=tv" in argv, argv[-320:]
+            assert tagged["plan"]["colour_tag"] == "bt709", tagged["plan"]
+            status, unknown = call(base, token, "GET", f"{plan_base}&colour_tag=p3-dci")
+            assert status == 422, unknown
+            assert unknown["error"]["code"] == "UNKNOWN_COLOUR_TAG", unknown
+            assert unknown["error"]["details"]["known"] == ["bt709"], unknown["error"]
             print(
-                "PASS: the engine inside the package serves 1.150 over real HTTP, and its "
+                "   render-plan over the packed build: untagged argv carries no claim, tagged adds "
+                "the trio + the 709 fold, an unknown id is refused"
+            )
+            print(
+                "PASS: the engine inside the package serves 1.151 over real HTTP, and its "
                 "refusal writes nothing"
             )
         finally:

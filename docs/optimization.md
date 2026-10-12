@@ -5264,7 +5264,7 @@ FFmpeg 造一份带 bt709 与一份不带标记的素材，量到 capabilities �
 
 上一轮停在「`-colorspace bt709` 只写容器、一个像素都不动」这一个数上。这一轮把那条式子真的接进
 交付，接法只有一种是老实的：**同时改两处**——滤镜图最后一步换成
-`zscale=matrix=709:range=tv,format=<预设像素格式>,settb=AVTB`，容器写
+先按预设自己的位深摆成平面 RGB（`format=gbrp`／`gbrp10le`）再 `zscale=matrix=709:range=tv,format=<预设像素格式>,settb=AVTB`，容器写
 `-color_primaries`／`-color_trc`／`-colorspace`。字段是 `RenderRequest`／`RenderBatchItem`／
 `RenderJob` 上的 `colour_tag`（默认 `null`＝照旧一个标记都不写，argv 逐字节是 1.150 那一份），
 MCP 的 `render_plan` 与 `GET …/render-plan` 各多一个同名入参。
@@ -5358,6 +5358,40 @@ output_colour_tags 这一档」，**导出照常走**：门禁两个方向都判
 前九条各有一次「写成非法命令」的失败版本（`matrix=601`）红在了别处，见上面那条 FFmpeg 事实；
 表里这两条是重做过的合法突变，双向都红：折叠与标记**任一**单独跑偏都会被 `pixels_suite` 抓住。
 界面那三条（序列漏判、待发清单不存标记、硬编码 `<option value="bt709">`）也各红在自己那条中文上。
+
+### 界面真点下去，抓到一个全绿门禁抓不到的缺陷
+
+这一节写到这里，`tests/colour_tag_check.py` 七项已经全绿、壳层 54 项全绿、发布包也对了字节。
+然后把打包版渲染层起在浏览器里、连上 `resources/bin/agentcut/agentcut.exe`（标题栏念
+「引擎在线 v1.151.0」），从时间线上放着一段 **mp4** 的工程点下「开始导出」——任务直接失败：
+
+```
+[Parsed_zscale_5] code 3074: no path between colorspaces
+Error while filtering: Generic error in an external library
+```
+
+原因是这一版所有检查用的素材都是 **PNG**（解码就是 RGB），`zscale` 接得到 RGB 才谈得上「用哪组
+系数折」；真实素材解码出来是 YUV，`zscale` 不知道从哪一个空间走到哪一个空间，直接拒绝整条滤镜图。
+也就是说：**这一版的主用例——把真实 footage 交成带标记的母版——在界面上根本走不通，而七项检查
+一项都没红**。这条缺陷不是断言写松了，是**输入面窄了**：fixture 全走了一条不会坏的路。
+
+修法是在 `zscale` 之前按预设自己的位深把画面摆成平面 RGB（`format=gbrp`／`gbrp10le`，10 位
+预设不能降到 8 位），折完再回预设的 YUV 格式。量回来的往返是：素材解码 RGB
+(126,63,30) → 带标记母版再解回 **(125,62,29)**，漂移 1 个色阶（8 位取整），容器三样标记
+`color_space`／`color_primaries`／`color_transfer` 全部读回 `bt709`、`color_range=tv`；不带标记
+那份照旧四键全缺。往返之所以不损观感，是 YUV→RGB 与 RGB→YUV 这两趟系数互逆：
+下游按 709 读这份母版，得到的正是源素材按 601 该被读出的那组 RGB。
+
+新增第八项 `video_suite`，走的就是界面那条路（mp4 素材 → 真跑 FFmpeg → 探针读标记 → 解回 RGB
+比往返），并把这条面钉成**必须跑一次真编码**的断言，而不是读滤镜串。突变验证：把 `format=` 那一
+段从 `fit_post` 里摘掉，`video_suite` 立刻红在 FFmpeg 那句 `no path between colorspaces` 上——
+这条检查从此拦得住这个缺陷。同一次真点还确认了三门门禁在界面上的样子：MP3／OpenEXR／
+「VP9 透明＋背景透明」三种情况下「交付色彩标记」都是 disabled 且后缀念「不写」，720p 那条是
+enabled；选中后导出按钮的 title 念「按 r1 导出 ui1151.mp4，色彩标记 bt709」，发出去的就是那一个值。
+
+**口径改一条**：往后凡新增「交付面」的开关，验收里必须有一段是从**真实素材**（解码后是 YUV 的
+视频）跑一次真 FFmpeg，而不是一张 PNG 或一段 argv；`tests/colour_tag_check.py` 的这条注释就是
+给下一次看的。
 
 ### 仍然开着的
 

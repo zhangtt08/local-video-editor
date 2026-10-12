@@ -8,7 +8,10 @@ predicts (80,107,157). So a tag written beside the old graph would be a claim ab
 file does not hold, and the container is the only thing a downstream colour pipeline can read.
 
 The switch therefore does two things at once, and this file checks both against the same frame:
-* the last stage of the graph becomes `zscale=matrix=709,format=<preset's pixel format>`;
+* the last stage of the graph becomes planar RGB at the preset's own depth, then
+  `zscale=matrix=709:range=tv,format=<preset's pixel format>` — `zscale` has to be *handed* RGB, or
+  it answers `code 3074: no path between colorspaces` and the render dies (that is why the video
+  suite exists: an image-only fixture stayed green while real footage could not be exported);
 * the container gets `-color_primaries/-color_trc/-colorspace`.
 
 The reference numbers are re-derived here from the published coefficients, not imported from the
@@ -311,6 +314,116 @@ def roundtrip_suite(folder: Path, master: Path) -> None:
     print("PASS round trip: the tagged master reads back as rec709, the untagged one says nothing")
 
 
+def probe_stream(path: Path) -> dict:
+    raw = run(
+        [
+            FFPROBE,
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height,pix_fmt,color_space,color_primaries,color_transfer,color_range",
+            "-of",
+            "json",
+            path,
+        ]
+    )
+    streams = json.loads(raw).get("streams", [])
+    assert streams, (path, raw)
+    return streams[0]
+
+
+def first_rgb(path: Path) -> tuple[int, int, int]:
+    raw = run(
+        [
+            FFMPEG,
+            "-v",
+            "error",
+            "-i",
+            path,
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "pipe:1",
+        ]
+    )
+    assert len(raw) >= 3, (path, len(raw))
+    return tuple(raw[:3])
+
+
+def video_suite(folder: Path) -> None:
+    """A video master, from a source that decodes as YUV — the case every other suite here missed.
+
+    `zscale` can only be told which matrix to fold with when it is handed RGB; fed YUV it answers
+    `code 3074: no path between colorspaces` and the whole filter graph dies. The first 1.151 plan
+    did exactly that, and stayed green because every fixture in this file was a PNG. What caught it
+    was clicking 开始导出 in the packaged app with an mp4 on the timeline.
+    """
+    clip = folder / "clip.mp4"
+    run(
+        [
+            FFMPEG,
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c=0x{SOURCE_RGB[0]:02x}{SOURCE_RGB[1]:02x}{SOURCE_RGB[2]:02x}"
+            f":s={WIDTH}x{HEIGHT}",
+            "-t",
+            "1",
+            "-r",
+            "30",
+            "-pix_fmt",
+            "yuv420p",
+            str(clip),
+        ]
+    )
+    media = MediaService(folder / "vid.sqlite3", [folder], folder / "vid-cache", FFMPEG, FFPROBE)
+    store = ProjectStore(media.db_path, media)
+    probe = media.import_file(str(clip))
+    project = store.create(
+        CreateProject(request_id="vid", name="vid", settings={"width": WIDTH, "height": HEIGHT})
+    ).project
+    batch = EditBatch.model_validate(
+        {"request_id": "seed", "expected_revision": project.revision, "commands": _commands(probe)}
+    )
+    project = apply_commands(project, batch.commands)
+
+    tagged = export(folder, project, "bt709", "video-tagged.mp4")
+    plain = export(folder, project, None, "video-plain.mp4")
+    assert tagged.is_file() and tagged.stat().st_size > 1024, tagged
+    assert plain.is_file() and plain.stat().st_size > 1024, plain
+
+    stream = probe_stream(tagged)
+    claims = {
+        key: str(stream[key])
+        for key in ("color_space", "color_primaries", "color_transfer", "color_range")
+        if key in stream
+    }
+    assert claims.get("color_space") == "bt709", claims
+    assert claims.get("color_primaries") == "bt709", claims
+    assert claims.get("color_transfer") == "bt709", claims
+    assert claims.get("color_range") == "tv", claims
+    assert probe_stream(plain).get("color_space") in (None, "unknown"), probe_stream(plain)
+
+    # The RGB a colour pipeline derives from the master has to be the RGB the source held: the trip
+    # through planar RGB and back is coefficients-only, not a re-grade.
+    want = first_rgb(clip)
+    got = first_rgb(tagged)
+    drift = tuple(abs(g - w) for g, w in zip(got, want))
+    assert all(step <= 2 for step in drift), (want, got, drift)
+    print(
+        f"PASS video: an mp4-sourced tagged master really encodes, declares bt709 on all three "
+        f"tags, and returns RGB {got} from source {want} (drift {drift})"
+    )
+
+
 def refusal_suite(folder: Path) -> None:
     project = build_project(folder)
     presets = {str(item["id"]): item for item in render_presets()}
@@ -586,7 +699,7 @@ def main() -> None:
         folder = Path(tmp)
         master = pixels_suite(folder)
         roundtrip_suite(folder, master)
-    for suite in (refusal_suite, http_suite, receipt_suite):
+    for suite in (refusal_suite, video_suite, http_suite, receipt_suite):
         with tempfile.TemporaryDirectory() as tmp:
             suite(Path(tmp))
 

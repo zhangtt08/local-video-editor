@@ -389,10 +389,13 @@ COLOR_TRANSFER_TAGS: tuple[tuple[str, ColorSpace], ...] = (
 # this engine can state truthfully today: the timeline renders display-referred values and the
 # colour-managed chain's display end defaults to Rec.709, and the RGB->YUV fold is the third thing a
 # `bt709` tag asserts. The fold is *not* free — bundled FFmpeg leaves it to the encoder's own
-# swscale context, which measures as BT.601 (a solid (128,64,32) source comes back YUV=(84,104,158),
-# the BT.601 prediction), so naming the tag also swaps the last stage of the graph to
-# `zscale=matrix=709` (the same source then measures (80,108,157), i.e. BT.709 within 8-bit
-# rounding). Writing the tag without swapping the fold is the lie this row exists to prevent.
+# swscale context, which measures as BT.601 (the fixture's solid colour lands at RGB (126,63,30) and
+# comes back YUV=(83,104,158), the BT.601 prediction), so naming the tag also swaps the last stage
+# of the graph to planar RGB at the preset's own depth followed by `zscale=matrix=709` (the same
+# source then measures (80,107,157), i.e. BT.709). The RGB stage is not decoration: `zscale` refuses
+# a YUV input outright (`code 3074: no path between colorspaces`), which is what a tagged delivery
+# of real footage hit before it. Writing the tag without swapping the fold is the lie this row
+# exists to prevent.
 OUTPUT_COLOUR_TAGS: tuple[dict[str, str], ...] = (
     {
         "id": "bt709",

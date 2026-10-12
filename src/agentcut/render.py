@@ -412,6 +412,12 @@ def row_id_of(row: dict | None) -> str | None:
     return None if row is None else str(row["id"])
 
 
+def rgb_planar_for(pixel_format: str) -> str:
+    """The planar-RGB format holding the same bit depth as this preset's YUV format."""
+    depth = next((bit for bit in ("16", "14", "12", "10") if f"p{bit}" in pixel_format), "")
+    return f"gbrp{depth}le" if depth else "gbrp"
+
+
 def colour_tag_row(tag: str | None) -> dict | None:
     """The one declared colour of a delivered master, or None for "say nothing" (the default).
 
@@ -983,10 +989,17 @@ def compile_render_plan(
     tag_row = colour_tag_row(colour_tag)
     if tag_row is not None:
         # 这个标记断言的不只是基色与传递函数，还有 RGB→YUV 用哪一组系数折。不在这儿换折叠，
-        # 容器就会在一张按 BT.601 折出来的画面上写 bt709（实测同一格 (128,64,32)：默认折出
-        # Y=84，正是 601 的预测，709 应为 81）。折叠交给 `zscale` 在图里做，因为 `-pix_fmt` 的那
-        # 一步发生在编码器的 swscale 上下文里，那里读不到矩阵选项。
+        # 容器就会在一张按 BT.601 折出来的画面上写 bt709（实测素材那一格 RGB (126,63,30)：默认折出
+        # (83,104,158)，正是 601 的预测；709 应为 (80,107,157)）。折叠交给 `zscale` 在图里做，因为
+        # `-pix_fmt` 的那一步发生在编码器的 swscale 上下文里，那里读不到矩阵选项。
+        #
+        # 但 `zscale` 只在**接到 RGB** 时才谈得上「用哪组系数折」：直接给它 YUV（真实素材解码出来
+        # 就是 YUV），它回 `code 3074: no path between colorspaces` 并让整条滤镜图崩掉——界面点
+        # 「开始导出」就是这一条红。所以先按预设自己的位深把画面摆成平面 RGB，再折。
+        # RGB 这一趟与后面那一趟系数互逆：实测 (126,63,30) 出去 (125,62,29) 回来，观感不损，
+        # 而容器那句「按 709 折」是实话。
         fit_post = (
+            f"format={rgb_planar_for(pixel_format)},"
             f"zscale=matrix={tag_row['zscale_matrix']}:range={tag_row['zscale_range']},"
             f"format={pixel_format},settb=AVTB"
         )
