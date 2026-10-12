@@ -12,7 +12,7 @@ SCHEMA_VERSION = (
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.143.0"
+APP_VERSION = "1.144.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -658,6 +658,24 @@ class GradeParallel(Contract):
 GradeParallel.model_rebuild()
 
 
+class GradeComposite(Contract):
+    """第二路画面：把这条链的输出与**进来的那幅画**相合。
+
+    达芬奇节点图里的 Key→Mix、AE 的「与原图叠加」都是这一条边：节点图第一次有两条画面，
+    而不是一条。前面那些节点全是「一幅进、一幅出」的每通道函数，这一条不是——它要读两幅画，
+    所以链子在这里第一次需要 `split` 与 `blend`。
+
+    语义只有一句：**位置不影响结果**。非-composite 的节点照常按顺序构成前向路径，
+    composite 按它们在链里出现的顺序，一次接一次地把「原图」与「到目前为止的结果」相合。
+    `mix` 是那一层的权重（0 = 只看原图，1 = 只看调完的），`mode` 是相合的方式。
+    """
+
+    kind: Literal["composite"] = "composite"
+    mode: BlendMode = "screen"
+    mix: GradeMix = 0.5
+    enabled: bool = True
+
+
 GradeNode = (
     GradeCurve
     | GradeWhiteBalance
@@ -668,6 +686,7 @@ GradeNode = (
     | GradeLUT
     | GradeLut3D
     | GradeParallel
+    | GradeComposite
 )
 
 
@@ -678,6 +697,24 @@ class ClipColor(Contract):
     grade: Annotated[list[GradeNode], Field(max_length=GRADE_NODE_LIMIT)] = Field(
         default_factory=list
     )
+
+    @model_validator(mode="after")
+    def one_second_picture_edge(self):
+        # 一条链最多一条第二输入边。这不是省功夫：每多一条就要多劈一路原图，而「第 k 条把第 k−1 条
+        # 的结果当成链的输出」这种语义没人能从图上读出来——与其给一个说不清的旋钮，不如点名拒绝，
+        # 并把真走得通的出路交回去（两条边就串成两段链，或用嵌套合成）。
+        used = [node for node in self.grade if node.kind == "composite" and node.enabled]
+        if len(used) > 1:
+            raise EditorError(
+                "COMPOSITE_LIMIT",
+                f"一条调色链最多一条「叠一层原图」（这里有 {len(used)} 个）："
+                "两条边叠在一起时「链的输出」指哪一段说不清。"
+                "要两层效果就把没调色的那份放到另一条画面轨上用轨道混合方式，"
+                "或者拆成两段嵌套合成",
+                422,
+                count=len(used),
+            )
+        return self
 
 
 class MaskVertex(Contract):
@@ -2946,6 +2983,10 @@ def capabilities(
             # The exporter runs a 3D LUT through FFmpeg's `lut3d`; no browser primitive
             # can evaluate a cross-channel cube, so the UI must say the preview does not show it.
             "lut3d_preview": False,
+            # 1.144：链子的第二路画面输入。编译与导出这一端是真的生效（`split` + `blend`），
+            # 浏览器没有能画两条输入的滤镜原语，所以预览那一路它被明说成「不生效」——与 3D LUT
+            # 同一个口径：只有一端能执行的强度不是强度，说不出口的差别才是骗人。
+            "grade_composite": True,
             # `GET /v1/projects/{id}/grade-capacity` and MCP `grade_capacity` read the same
             # numbers the reducer refuses with, so usage can be asked before an edit.
             "grade_capacity": True,

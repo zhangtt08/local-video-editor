@@ -443,9 +443,29 @@ def grade_stages(color) -> list[dict] | None:
             if matrix is not None:
                 stages.append({"type": "matrix", "m": matrix})
             continue
+        if node.kind == "composite":
+            # 这一条不是一幅进一幅出的每通道函数：它读两幅画，所以先把攒下的段落结成一张表，
+            # 再把这条边原样交给编译方（`render.py` 在那里劈图与相合）。
+            flush()
+            if node.enabled:
+                stages.append({"type": "composite", "mode": node.mode, "mix": node.mix})
+            continue
         group.append(node)
     flush()
     return stages or None
+
+
+def composite_stages(color) -> list[dict]:
+    """这条链上的第二输入边，按链里的顺序交回来；没有就交回空表。
+
+    只有一条判断「有没有」的地方才可信：`render.py` 决定要不要劈图、`compile` 决定要不要
+    在分层项目上点名拒绝，问的都是这一个函数。
+    """
+    return [
+        {"mode": stage["mode"], "mix": stage["mix"]}
+        for stage in (grade_stages(color) or [])
+        if stage["type"] == "composite"
+    ]
 
 
 def _lut_stage(points: dict) -> dict | None:
@@ -483,6 +503,19 @@ def grade_tables(color) -> dict | None:
                     "id": f"d{_stage_id([stage['size'], stage['title']])}",
                     "title": stage["title"],
                     "size": stage["size"],
+                    "preview": False,
+                }
+            )
+            continue
+        if stage["type"] == "composite":
+            # 浏览器的一条滤镜链没有第二个画面输入，所以这一级带着 `preview: False` 出门，
+            # 由 `preview_grade` 整条丢掉、由界面写明「预览不生效、导出生效」——与 3D LUT 同一条路。
+            built.append(
+                {
+                    "type": "composite",
+                    "id": f"c{_stage_id([stage['mode'], stage['mix']])}",
+                    "mode": stage["mode"],
+                    "mix": stage["mix"],
                     "preview": False,
                 }
             )
@@ -544,6 +577,10 @@ def grade_filter(color, plan=None) -> str:
             name = "lut3d-" + hashlib.sha1(body.encode()).hexdigest()[:16] + ".cube"
             plan.text_files[name] = body
             parts.append(f"lut3d=file={name}:interp=tetrahedral")
+            continue
+        if stage["type"] == "composite":
+            # 这条边由调用方编成 `split` + 两段 `blend`（见 `render.py` 的 cut 路径），
+            # 在这里必须整条跳过：掉进下面那个「按矩阵拼 colorchannelmixer」的分支会 KeyError。
             continue
         if stage["type"] == "lut":
             expressions = {name: _expression(stage[name]) for name in CHANNEL_NAMES}

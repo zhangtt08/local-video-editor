@@ -40,7 +40,7 @@ from .contracts import (
     render_presets,
     spatial_radius,
 )
-from .grade import grade_filter
+from .grade import composite_stages, grade_filter
 from .masks import (
     alpha_expression,
     feather_sigma,
@@ -756,6 +756,18 @@ def _entries_for_track(project: Project, track) -> list[dict]:
     return entries
 
 
+# 「为什么这一次走的是分层合成」这句话要说给人听：属性名与素材类别都是契约里的英文，
+# 直接印出来就是让引擎替用户念字段名（1.115 给界面立过的规矩，引擎这侧同一条）。
+PICTURE_EFFECT_NAMES = {
+    "x": "横向位置",
+    "y": "纵向位置",
+    "scale": "缩放",
+    "rotation": "旋转",
+    "opacity": "不透明度",
+}
+ASSET_KIND_NAMES = {"text": "文字", "sequence": "图像序列"}
+
+
 def compile_render_plan(
     project: Project,
     preset_id: str,
@@ -863,19 +875,31 @@ def compile_render_plan(
     for entry in sounds:
         total = max(total, entry["clip"].position_ticks + entry["clip"].duration_ticks)
 
-    compositing = (
-        alpha_out
-        or not layers
-        or len(layers) > 1
-        or any(track.blend_mode != "normal" for track, _ in visible)
-        or any(
-            entry["asset"].kind in {"text", "sequence"}
-            or entry["clip"].mask
-            or entry["clip"].transition_in
-            or fade_active(entry["clip"], "opacity")
-            or any(k.property != "gain" for k in entry["clip"].keyframes)
-            or any(
-                getattr(entry["clip"].effects, name) != default
+    reasons = []
+    if alpha_out:
+        reasons.append("这一条交付要带透明通道（画面要带着 matte 走完，必须叠在画布上）")
+    if not layers:
+        reasons.append("这条时间线上没有画面轨")
+    if len(layers) > 1:
+        reasons.append(f"有多条画面轨（这里 {len(layers)} 条）")
+    for track, _ in visible:
+        if track.blend_mode != "normal":
+            reasons.append(f"轨道「{track.name}」的混合方式不是 normal")
+    for entries in layers:
+        for entry in entries:
+            clip = entry["clip"]
+            if entry["asset"].kind in ASSET_KIND_NAMES:
+                reasons.append(f"片段 {clip.id} 是{ASSET_KIND_NAMES[entry['asset'].kind]}素材")
+            if clip.mask:
+                reasons.append(f"片段 {clip.id} 挂了遮罩")
+            if clip.transition_in:
+                reasons.append(f"片段 {clip.id} 有转场")
+            if fade_active(clip, "opacity"):
+                reasons.append(f"片段 {clip.id} 有不透明度淡入淡出")
+            if any(k.property != "gain" for k in clip.keyframes):
+                reasons.append(f"片段 {clip.id} 有画面动画关键帧")
+            moved = [
+                PICTURE_EFFECT_NAMES[name]
                 for name, default in (
                     ("x", 0),
                     ("y", 0),
@@ -883,16 +907,33 @@ def compile_render_plan(
                     ("rotation", 0),
                     ("opacity", 1),
                 )
-            )
-            for entries in layers
-            for entry in entries
-        )
-    )
+                if getattr(clip.effects, name) != default
+            ]
+            if moved:
+                reasons.append(f"片段 {clip.id} 改了「{'、'.join(moved)}」")
+    compositing = bool(reasons)
     plan = RenderPlan(
         mode="audio" if audio_only else "layered" if compositing else "cut",
         # 序列那一串文件里没有声音的位置，所以连那条 `-map` 都不该发出去（ffmpeg_argv 读这个）。
         has_audio=not preset["sequence"],
     )
+    if plan.mode == "layered" and any(
+        composite_stages(clip.color) for clip in project.clips.values()
+    ):
+        # 分层合成那条路上，画面已经被叠成一张 `[vchain]`，「这条链进来的那幅画」不再唯一——
+        # 硬编一个定义不清的语义比拒绝更坏。要叠原图：把没调色的那份放在另一条画面轨上，
+        # 用那条轨道自己的混合方式相合（同一件事，而且两端都画得出）。
+        # 原因必须逐条点名：走到分层的原因有十条，「多条画面轨」只是其中一条，
+        # 一个淡入或一次透明交付也会被同一句话解释成「你的工程是合成」——那是假诊断。
+        raise EditorError(
+            "COMPOSITE_NEEDS_CUT",
+            "「叠一层原图」要读的是这一条链自己的输入，只在单条画面轨直接输出（cut）时定义得清楚；"
+            "这一次走的是分层合成，因为：" + "；".join(reasons) + "。"
+            "出路是把没调色的那份放到另一条画面轨上、用那条轨道的混合方式相合，"
+            "或者把这一级去掉再导（上面点名的这些改动不必动）。",
+            422,
+            reasons=reasons,
+        )
     transition_curves = envelopes(project)
     # Three framings, because a 16:9 timeline is delivered to 9:16 more often than not:
     # `contain` keeps every pixel and bars the rest, `cover` fills the frame and crops the
@@ -1040,21 +1081,66 @@ def compile_render_plan(
                 paced = ""
             else:
                 paced = ""
-            head = focus_stages(
-                plan,
-                f"{source}{paced}{color}{fit_pre}",
-                clip,
-                focus_basis,
-                frame_ticks=settings.frame_ticks,
-                alpha=True,
+            trim_tail = (
+                ""
+                if entry["verified"].kind == "image"
+                else f",trim=duration={sec(clip.duration_ticks)},setpts=PTS-STARTPTS"
             )
-            head = f"{head},{fit_post}"
-            if entry["verified"].kind == "image":
-                plan.filters.append(f"{head}{label}")
-            else:
-                plan.filters.append(
-                    f"{head},trim=duration={sec(clip.duration_ticks)},setpts=PTS-STARTPTS{label}"
+            composites = composite_stages(clip.color)
+            if composites:
+                # 第二路画面：这条链的输出要与**进来的那幅画**相合，所以图在这里劈成三路——
+                # 一路走完整的调色与适配，两路原图只做同样的适配（`blend` 要两幅一样大、一样时基）。
+                work = plan.tag("gwork")
+                raws = [plan.tag("gsrc") for _ in range(2)]
+                sized = [plan.tag("gsized") for _ in raws]
+                plan.filters.append(f"{source}{paced}split={len(raws) + 1}{work}" + "".join(raws))
+                for pad, sized_pad in zip(raws, sized):
+                    plan.filters.append(f"{pad}{fit_pre},{fit_post}{sized_pad}")
+                graded = plan.tag("gout")
+                chain = focus_stages(
+                    plan,
+                    f"{work}{color}{fit_pre}",
+                    clip,
+                    focus_basis,
+                    frame_ticks=settings.frame_ticks,
+                    alpha=True,
                 )
+                plan.filters.append(f"{chain},{fit_post}{trim_tail}{graded}")
+                stage = composites[0]
+                # 相合必须在 RGB 平面上做：FFmpeg 的 `blend` 是逐平面的，直接在 YUV 上 screen
+                # 会把中性灰的色度从 128 抬到 192（实测交付里读出 (255,150,255) 的品红）——
+                # 「把原图叠回来」绝不能改颜色。所以三路先各自 format=gbrp，再相合。
+                rgb = [plan.tag("grgb") for _ in range(3)]
+                plan.filters.append(f"{graded}format=gbrp{rgb[0]}")
+                plan.filters.append(f"{sized[0]}format=gbrp{rgb[1]}")
+                plan.filters.append(f"{sized[1]}format=gbrp{rgb[2]}")
+                # 两段而不是一个旋钮：实测 `all_opacity` 只在 `normal` 上是干净的线性插值
+                # （0 给第二路、1 给第一路），而 `screen`／`multiply` 在 op=0 会退回第一路。
+                # 一个旋钮同时当「相合方式」和「权重」会谎报两端，所以先按方式相合、再 normal 插值。
+                mode_result = plan.tag("gmode")
+                plan.filters.append(f"{rgb[0]}{rgb[1]}blend=all_mode={stage['mode']}{mode_result}")
+                lerped = plan.tag("glerp")
+                plan.filters.append(
+                    f"{mode_result}{rgb[2]}blend=all_mode=normal"
+                    f":all_opacity={stage['mix']:.6g}{lerped}"
+                )
+                plan.filters.append(f"{lerped}{fit_post}{label}")
+            else:
+                head = focus_stages(
+                    plan,
+                    f"{source}{paced}{color}{fit_pre}",
+                    clip,
+                    focus_basis,
+                    frame_ticks=settings.frame_ticks,
+                    alpha=True,
+                )
+                head = f"{head},{fit_post}"
+                if entry["verified"].kind == "image":
+                    plan.filters.append(f"{head}{label}")
+                else:
+                    plan.filters.append(
+                        f"{head},trim=duration={sec(clip.duration_ticks)},setpts=PTS-STARTPTS{label}"
+                    )
             labels.append(label)
             windows.append((clip.position_ticks, clip.position_ticks + clip.duration_ticks))
             cursor = clip.position_ticks + clip.duration_ticks

@@ -77,6 +77,9 @@ export type GradeOperation =
   | { kind: "levels"; channel: GradeChannel; black: number; white: number; gamma: number; enabled: boolean; mix?: number; blend?: BlendMode }
   /** 通道混合器：3x3 作用在存储值上。没有 blend 字段是刻意的——矩阵与非线性混合模式的复合不再是矩阵。 */
   | { kind: "matrix"; coefficients: number[]; enabled: boolean; mix?: number }
+  /** 1.144：第二路画面输入。这条边读两幅画（链的输出与链的输入），所以它不是每通道函数：
+   *  导出走 FFmpeg 的 `split` + `blend`，浏览器没有对应的原语，预览明说不生效。 */
+  | { kind: "composite"; mode: BlendMode; mix: number; enabled: boolean }
   /** 色彩空间转换。`purpose` 只有引擎的 `clip.color_manage` 会写：它把这一对节点标记成「一键套上的
    *  色彩管理」，取下时只删自己被标过的两个，中间谁手工加的都原样留着。界面不许自己造第三个值。 */
   | { kind: "transfer"; input_space: ColorSpace; output_space: ColorSpace; enabled: boolean; mix?: number; blend?: BlendMode; purpose?: "color_manage" | null }
@@ -739,6 +742,8 @@ export class EngineError extends Error {
       TIMECODE_NEEDS_PICTURE: "这一条交付根本没有画面，时间码是给画面数帧的，写上去只会骗人。要时间码请换成带画面的预设，或者把这一栏清空。",
       UNKNOWN_OUTPUT_RATE: "这一档交付帧率不在这张表上，所以这一次导出没有排队。可交的是 24／23.976／25／29.97／30／50／59.94／60（清单以引擎能力表为准）；想跟时间线一样就选「跟时间线」，那一栏留空也是同一个意思。",
       OUTPUT_RATE_NEEDS_PICTURE: "这一条交付根本没有画面，帧率是「一秒几帧」，写上去只会骗人。要换交付帧率请换成带画面的预设，或者把那一栏改回「跟时间线」。",
+      COMPOSITE_LIMIT: "一条调色链最多一条「叠一层原图」：两条边叠在一起时，「链的输出」指的是哪一段说不清，所以引擎两条就拒。要两层效果，把没调色的那份放到另一条画面轨上用轨道的混合方式相合，或者拆成两段嵌套合成。",
+      COMPOSITE_NEEDS_CUT: "「叠一层原图」要读的是这一条链自己的输入，只有单条画面轨直接输出时它才定义得清楚。这个工程是多条画面轨合成的：把没调色的那份放到另一条轨道上、用那条轨道的混合方式相合（同一件事，而且两端都画得出），或者把这一级去掉再导出。",
       SEQUENCE_NEEDS_CONTAINER: "图像序列交出的是一串文件（每帧一张），没有容器可以挂起始时间码，帧号就是位置。要时间码请换成 mov／mp4／mxf／webm 那几条；这一串的声音也不在里面，需要带声的成片请同时交一份 mp4／mov。",
       UNKNOWN_PRESET: "没有这个导出预设。能力表里列出的 id 才是可用的；界面下拉里选一个即可。",
     };

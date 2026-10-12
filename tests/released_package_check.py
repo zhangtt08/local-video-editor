@@ -70,6 +70,11 @@ RENDERER_SENTENCES = (
     # 1.143：这三句不能只在悬停里（Field 的 hint 只写进 title），面板上要有一行看得见的字。
     "起始时间码也进不去",
     "请再交一份 mp4／mov",
+    # 1.144：第二路画面输入在人眼前是名字、是两个控件、也是一句明说的差别。
+    "叠一层原图",
+    "与原图相合的方式",
+    "这一层的权重",
+    "预览不生效、导出生效",
 )
 RENDERER_LITERALS = (
     "clip.color_manage",
@@ -79,6 +84,8 @@ RENDERER_LITERALS = (
     "UNKNOWN_OUTPUT_RATE",
     "OUTPUT_RATE_NEEDS_PICTURE",
     "SEQUENCE_NEEDS_CONTAINER",
+    "COMPOSITE_NEEDS_CUT",
+    "COMPOSITE_LIMIT",
 )
 
 

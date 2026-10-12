@@ -18,7 +18,13 @@ export const NODE_NAMES: Record<GradeNode["kind"], string> = {
   lut: "LUT 查找表",
   lut3d: "3D LUT",
   parallel: "并联",
+  composite: "叠一层原图",
 };
+
+/** 「叠一层原图」点下去得到什么：正片叠底 · 一半。这张默认值住在这里，视图不许自带
+ *  混合方式的名字（`tests/desktop_branchblend_check.ts` 数着那些字面量）。 */
+export const DEFAULT_COMPOSITE: { kind: "composite"; mode: BlendMode; mix: number; enabled: boolean } =
+  { kind: "composite", mode: "multiply", mix: 0.5, enabled: true };
 
 export type GraphLane = {
   label: string;

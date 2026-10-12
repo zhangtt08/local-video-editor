@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 
-import { branchBlend, branchTree, branchWeight, blendsAfterAdd, blendsAfterPick, blendsAfterRemove, chainFieldsFor, mapMixer, mixerAt, NODE_NAMES, cardsFor, moveWithin, resolveMixerPath, weightsAfterAdd, weightsAfterRemove, weightsAfterWeight, type GraphLane } from "../gradeGraph";
+import { branchBlend, DEFAULT_COMPOSITE, branchTree, branchWeight, blendsAfterAdd, blendsAfterPick, blendsAfterRemove, chainFieldsFor, mapMixer, mixerAt, NODE_NAMES, cardsFor, moveWithin, resolveMixerPath, weightsAfterAdd, weightsAfterRemove, weightsAfterWeight, type GraphLane } from "../gradeGraph";
 import {blendLabel, DEFAULT_TRANSFER, COLOR_SPACES, DEFAULT_CURVE_POINTS, DEFAULT_WHEELS, type GradeBranch, type GradeCapacity, type GradeChannel, type GradeCurvePoint, type GradeNode, type GradeOperation, type GradeParallel, type ColorSpace, BLEND_MODES, type BlendMode} from "../engine";
 import { applyGradeToTrack, editableProject, setClipColor, useApp, applyLut, autoGradeClip, colorManageClip, fetchGradeCapacity } from "../store";
 import { managedPair, managedWords, manageFits, manageSpaces, taggedCount } from "../colorManage";
@@ -297,6 +297,24 @@ function MixFields({ node, idPrefix, label, onCommit }: { node: GradeNode; idPre
     // 契约里没有 mix 也没有 blend：这里不放控件，比放一个只有一端听的控制诚实。
     return null;
   }
+  if (node.kind === "composite") {
+    return <div className="grade-body">
+      <label className="mask-shape">与原图相合的方式
+        <select className="input" aria-label="叠一层原图的混合方式" value={node.mode} onChange={(e) => onCommit({ ...node, mode: e.target.value as BlendMode })}>
+          {BLEND_MODES.map(([value, name]) => <option key={value} value={value}>{name}</option>)}
+        </select>
+      </label>
+      <Num id={`${idPrefix}-composite-mix`} label="这一层的权重" value={node.mix * 100} min={0} max={100} step={5} unit="%"
+        onCommit={(value) => onCommit({ ...node, mix: round(value / 100) })} />
+      <p className="hint">
+        这一条边读两幅画：这条链<b>调完的结果</b>与<b>进来的那幅原图</b>。它在链里的位置不改变结果——
+        其余节点照常串联，这一级按出现的顺序一次一次把原图叠上去。0% 就是只看原图，100% 就是只看调完的。
+      </p>
+      <p className="hint">浏览器的一条滤镜链没有第二个画面输入，所以<b>预览不生效、导出生效</b>——
+        与 3D LUT 同一个口径：说不出口的差别才是骗人。要看到合成的效果，请把没调色的那份放到另一条
+        画面轨上用轨道的混合方式相合。</p>
+    </div>;
+  }
   return <div className="grade-body">
     {node.kind === "matrix" ? <p className="hint">通道混合没有「混合方式」可选：把矩阵用非线性模式（正片叠底之类）与它的输入混合，结果不再是矩阵，两端就没有同一份数可读了。要减弱效果请用下面的强度。</p> : <label className="mask-shape">混合方式
       <select className="input" aria-label={`${label}混合方式`} value={node.blend ?? "normal"} onChange={(e) => onCommit({ ...node, blend: e.target.value as BlendMode })}>
@@ -433,11 +451,15 @@ export function GradeFields({ clipId }: { clipId: string }) {
     write(next);
     setActive(Math.min(Math.max(0, target), next.length - 1));
   };
-  const add = (kind: "curve" | "white_balance" | "wheels" | "levels" | "matrix" | "transfer" | "parallel") => {
+  const add = (
+    kind: "curve" | "white_balance" | "wheels" | "levels" | "matrix" | "transfer" | "parallel" | "composite",
+  ) => {
     if (nodes.length >= limits.nodes) return;
     const node: GradeNode = kind === "parallel"
       ? { kind: "parallel", branches: [newOperation("white_balance"), newOperation("white_balance")] as GradeBranch[], enabled: true }
-      : newOperation(kind);
+      : kind === "composite"
+        ? { ...DEFAULT_COMPOSITE }
+        : newOperation(kind);
     write([...nodes, node]);
     pending.current = nodes.length;
   };
@@ -521,7 +543,7 @@ export function GradeFields({ clipId }: { clipId: string }) {
     <summary className="panel-label">调色节点{nodes.length ? ` · ${nodes.length} 个` : ""}</summary>
     <fieldset className="effects-fields" disabled={locked}>
       <div className="batch-actions">
-        {(["curve", "white_balance", "wheels", "levels", "matrix", "transfer", "parallel"] as const).map((kind) => <button key={kind} className="btn tiny" disabled={nodes.length >= limits.nodes} onClick={() => add(kind)}>+{NODE_NAMES[kind]}</button>)}
+        {(["curve", "white_balance", "wheels", "levels", "matrix", "transfer", "parallel", "composite"] as const).map((kind) => <button key={kind} className="btn tiny" disabled={nodes.length >= limits.nodes} onClick={() => add(kind)}>+{NODE_NAMES[kind]}</button>)}
         {app.caps?.features.lut_import ? <button className="btn tiny" disabled={nodes.length >= limits.nodes} title="选择 .cube 文件（1D 逐通道或 3D 立方查找表），由引擎解析成调色链节点" onClick={() => pickLut(null)}>+LUT</button> : null}
         {app.caps?.features?.grade_apply_track && nodes.length ? <>
           <button className="btn tiny" disabled={Boolean(app.busy)} title="把这条片段现在的整条调色链套到它所在的这条轨上每一段（替换它们原有的链）。装不下的段落不会被悄悄丢掉：引擎一份份报出原因，toast 照实念。" onClick={() => applyGradeToTrack(clipId, "replace")}>套到整轨（替换）</button>
