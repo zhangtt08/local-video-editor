@@ -1,9 +1,9 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 
 import { branchBlend, DEFAULT_COMPOSITE, branchTree, branchWeight, blendsAfterAdd, blendsAfterPick, blendsAfterRemove, chainFieldsFor, mapMixer, mixerAt, NODE_NAMES, cardsFor, moveWithin, resolveMixerPath, weightsAfterAdd, weightsAfterRemove, weightsAfterWeight, type GraphLane } from "../gradeGraph";
-import {blendLabel, DEFAULT_TRANSFER, COLOR_SPACES, DEFAULT_CURVE_POINTS, DEFAULT_WHEELS, type GradeBranch, type GradeCapacity, type GradeChannel, type GradeCurvePoint, type GradeNode, type GradeOperation, type GradeParallel, type ColorSpace, BLEND_MODES, type BlendMode} from "../engine";
-import { applyGradeToTrack, editableProject, setClipColor, useApp, applyLut, autoGradeClip, colorManageClip, fetchGradeCapacity } from "../store";
-import { managedPair, managedWords, manageFits, manageSpaces, taggedCount } from "../colorManage";
+import {blendLabel, DEFAULT_TRANSFER, COLOR_SPACES, DEFAULT_CURVE_POINTS, DEFAULT_WHEELS, type GradeBranch, type GradeCapacity, type GradeChannel, type GradeCurvePoint, type GradeNode, type GradeOperation, type GradeParallel, type ColorSpace, type ClipColorSpaceReport, BLEND_MODES, type BlendMode} from "../engine";
+import { applyGradeToTrack, editableProject, setClipColor, useApp, applyLut, autoGradeClip, colorManageClip, fetchGradeCapacity, readClipColorSpace } from "../store";
+import { autoSourceBlocker, autoSourceOffered, colorSpaceWords, handPickLive, handPickWords, managedPair, managedWords, manageFits, manageSourceValue, manageSpaces, shouldReadColorSpace, taggedCount, transferTagWords, type ColorSpacePhase } from "../colorManage";
 import { autoGradeBlocker, gradeCapacityLine } from "../effects";
 
 const CHANNELS: [GradeChannel, string][] = [["rgb", "主色"], ["red", "红"], ["green", "绿"], ["blue", "蓝"]];
@@ -427,16 +427,52 @@ export function GradeFields({ clipId }: { clipId: string }) {
     setManageDisplay(managed?.display ?? "rec709");
     // 只在换了片段时重读：同一段上刚选的这套空间要留着，好让人换一套再套一次。
   }, [clipId]);
-  const manageSame = managed !== null && managed.source === manageSource && managed.display === manageDisplay;
+  // 1.150：来源这一头可以多一个回答者——这份文件自己。界面只做两件事：先向引擎要那次只读的回执
+  //  （`POST …/color-space`），再把回执原样念出来；「哪个标记算哪条曲线」一次都不在界面里判，
+  //  连引擎下发的对照表也只念不算。按钮亮不亮只看引擎那两个字段，理由与出路见 ../colorManage.ts。
+  const manageAutoGate = autoSourceOffered(app.caps?.features);
+  const [manageAuto, setManageAuto] = useState(false);
+  const [spaceRead, setSpaceRead] = useState<ClipColorSpaceReport | null>(null);
+  const [spacePhase, setSpacePhase] = useState<ColorSpacePhase>("idle");
+  const readSpace = shouldReadColorSpace(manageAutoGate, manageAuto, assetKind === "audio");
+  const spaceProjectId = app.project?.id;
+  useEffect(() => {
+    if (!readSpace || !spaceProjectId) {
+      setSpaceRead(null);
+      setSpacePhase("idle");
+      return;
+    }
+    let live = true;
+    setSpaceRead(null);
+    setSpacePhase("asking");
+    void readClipColorSpace(spaceProjectId, clipId).then((report) => {
+      if (!live) return;
+      setSpaceRead(report);
+      setSpacePhase(report ? "idle" : "failed");
+    });
+    return () => { live = false; };
+  }, [readSpace, spaceProjectId, clipId]);
+  const autoOn = manageAutoGate && manageAuto;
+  const manageAutoBlock = autoSourceBlocker(manageAutoGate, manageAuto, spaceRead, spacePhase);
+  // 命令里来源那一头写什么：勾了自带标记就是 null（契约要的那个「由文件回答」），否则照人点的。
+  const managePicked = manageSourceValue(manageAutoGate, manageAuto, manageSource);
+  // 「现在套的就是这一对」——来源那一头按上面那个决定读的是人点的还是文件说的，判断只此一处。
+  const manageSame = managed !== null && managed.source === managePicked && managed.display === manageDisplay;
+  const spaceLine = colorSpaceWords(spaceRead, spaceLabel, spacePhase);
+  const tagTable = autoOn ? transferTagWords(app.caps?.color_transfer_tags, spaceLabel) : null;
   const manageBlock = assetKind === "audio"
     ? "音频片段没有画面可调色，也没有色彩空间可言。要管颜色就选一段画面或图片。"
-    : manageSource === "linear" && manageDisplay === "linear"
-      ? "两端都选了线性：这一对什么都不转，却要占两个节点、记一次历史，引擎会拒收。把「素材从哪里读」改成它真正的空间（屏幕录制通常是 sRGB，广播时间线是 Rec.709）。"
-      : !manageFits(nodes, limits.nodes)
-        ? `取下已有的一对以后这条链还要 ${nodes.length - managedTagged} 个位置，再放两个就过了每链 ${limits.nodes} 个的上限。先在下面的链子里删掉几个节点，或者这一段干脆不套。`
-        : manageSame
-          ? "这一段现在就是这个来源、这个输出：再按一次引擎会说「什么也不会变」，所以这颗按钮先不亮。要换一套就改上面两个下拉菜单。"
-          : null;
+    : manageAutoBlock !== null
+      ? manageAutoBlock
+      : managePicked === "linear" && manageDisplay === "linear"
+        ? "两端都选了线性：这一对什么都不转，却要占两个节点、记一次历史，引擎会拒收。把「素材从哪里读」改成它真正的空间（屏幕录制通常是 sRGB，广播时间线是 Rec.709）。"
+          + (autoOn ? "现在来源那一头是这份文件自己说的，要手工改就先去掉「来源按文件自带标记」那个勾。" : "")
+        : !manageFits(nodes, limits.nodes)
+          ? `取下已有的一对以后这条链还要 ${nodes.length - managedTagged} 个位置，再放两个就过了每链 ${limits.nodes} 个的上限。先在下面的链子里删掉几个节点，或者这一段干脆不套。`
+          : manageSame
+            ? "这一段现在就是这个来源、这个输出：再按一次引擎会说「什么也不会变」，所以这颗按钮先不亮。要换一套就改上面两个下拉菜单。"
+              + (autoOn ? "来源那一头是这份文件自己说的，要换来源就去掉那个勾手工点一条。" : "")
+            : null;
 
   useEffect(() => {
     if (pending.current !== null && nodes.length > pending.current) {
@@ -577,7 +613,9 @@ export function GradeFields({ clipId }: { clipId: string }) {
       </div>
       <div className="batch-actions grade-auto-row">
         <label className="mask-shape">素材从哪里读
-          <select className="input" aria-label="色彩管理来源空间" value={manageSource} onChange={(e) => setManageSource(e.target.value as ColorSpace)}>
+          <select className="input" aria-label="色彩管理来源空间" value={manageSource}
+            disabled={!handPickLive(manageAuto, manageAutoGate)} title={handPickWords(manageAuto, manageAutoGate)}
+            onChange={(e) => setManageSource(e.target.value as ColorSpace)}>
             {spaces.map(([name, label]) => <option key={name} value={name}>{label}</option>)}
           </select>
         </label>
@@ -586,12 +624,19 @@ export function GradeFields({ clipId }: { clipId: string }) {
             {spaces.map(([name, label]) => <option key={name} value={name}>{label}</option>)}
           </select>
         </label>
+        {manageAutoGate ? <label className="grade-switch" title="来源这一头不再由人点名：先问这份文件自带的色彩标记说它是哪条曲线（那一次只读，工程一个字都不写），引擎认得就照它认的那条套，认不出就点名拒绝并把读到的标记贴出来。界面不替你猜一条，也不自己抄一份对照表。">
+          <input type="checkbox" aria-label="色彩管理来源按文件自带标记" checked={manageAuto}
+            disabled={assetKind === "audio"} onChange={(e) => setManageAuto(e.target.checked)} />来源按文件自带标记
+        </label>
+          : <p className="hint">这一版引擎不读文件自带的色彩标记（capabilities 里没有 color_manage_auto 这一档），来源只能在「素材从哪里读」里手工点一条；下面那两张下拉菜单照常可用。</p>}
         <button className="btn tiny" disabled={Boolean(manageBlock) || locked || Boolean(app.busy)}
           title={manageBlock ?? "一次写下两个转换节点：素材读进线性光、调色在线性光里做、交付按你选的输出空间写回去。链子中间原有的节点一个不动；再套一次换的是同一对节点，不会叠出第二对。"}
-          onClick={() => colorManageClip(clipId, manageSource, manageDisplay)}>套上色彩管理</button>
+          onClick={() => colorManageClip(clipId, managePicked, manageDisplay, autoOn)}>套上色彩管理</button>
         <button className="btn tiny" disabled={!managedTagged || locked || Boolean(app.busy)}
           title={managedTagged ? "只删引擎自己盖过章的那两个转换节点，中间手工加的曲线、混频台都原样留下。" : "这一段没有引擎盖过章的转换节点，所以这里没有可取的东西。那两个转换节点若是手工加的，请在下面的链子里删。"}
           onClick={() => colorManageClip(clipId, null, manageDisplay)}>取下色彩管理</button>
+        {autoOn ? <p className="hint">{spaceLine}</p> : null}
+        {tagTable ? <p className="hint dim">{tagTable}</p> : null}
         <p className="hint">{managedWords(managed, managedTagged, spaceLabel)} 同一条曲线在线性光里调与按存储值调，中点落点是两个数——越暗差别越大，而导出的文件读的就是这一份。</p>
       </div>
 

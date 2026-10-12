@@ -1646,12 +1646,38 @@ export function setClipColor(clipId: string, patch: Partial<ClipColor>) {
 }
 
 /** 1.130：一键色彩管理。界面只交代「素材从哪里读、交付按什么输出」，那两个转换节点长什么样、旧的
- *  这一对怎么取下来、链子装不装得下，全是引擎那一处的事——所以这里不许出现「两个 transfer 节点」。 */
-export function colorManageClip(clipId: string, source: ColorSpace | null, display: ColorSpace) {
+ *  这一对怎么取下来、链子装不装得下，全是引擎那一处的事——所以这里不许出现「两个 transfer 节点」。
+ *  1.150 多了第四个参数：`autoSource` 为真就是让文件自己回答来源那一头，此时 `source` 必须是 null
+ *  （契约把「两头都答」直接拒收）。开关只在引擎下发 `features.color_manage_auto` 时才可能被点亮，
+ *  而且**不勾就一个字节都不多**——老引擎的契约是 `extra="forbid"`，多一个它不认的键整条命令被拒。 */
+export function colorManageClip(
+  clipId: string,
+  source: ColorSpace | null,
+  display: ColorSpace,
+  autoSource = false,
+) {
+  const command: Command = { op: "clip.color_manage", clip_id: clipId, source_space: source, display_space: display };
+  if (autoSource) command.auto_source = true;
   submit(
-    [{ op: "clip.color_manage", clip_id: clipId, source_space: source, display_space: display }],
-    source === null ? "取下色彩管理" : "套上色彩管理（在线性光里调色）",
+    [command],
+    autoSource
+      ? "套上色彩管理（来源按文件自带标记）"
+      : source === null ? "取下色彩管理" : "套上色彩管理（在线性光里调色）",
   );
+}
+
+/** 1.150：问引擎「这份素材自己的色彩标记说它是哪条曲线」。那一次是纯只读的 HTTP 回执，
+ *  一个字也不写；写仍然是上面那一条 `clip.color_manage`。这里不许判「哪个标记算哪条曲线」，
+ *  也不许把回执里的数换算一遍——界面拿到什么就交回什么，判定与说法都归引擎那一处。 */
+export async function readClipColorSpace(projectId: string, clipId: string) {
+  if (!engine) return null;
+  try {
+    return await engine.clipColorSpace(projectId, clipId, { sequence_id: state.sequenceId });
+  } catch (error) {
+    const { title, detail } = describe(error);
+    toast("error", title, detail);
+    return null;
+  }
 }
 
 /** 导入 .cube 查找表：文件内容交给引擎里唯一的解析器，回来的节点原样进调色链。
