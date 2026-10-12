@@ -58,6 +58,26 @@
   这条边，靠的是 `GradeBranch` 那张类型表（不含 composite），壳检钉这个不含；界面那句中文话也不再念
   「这个工程是多条画面轨合成的」这种通用假诊断，engine.ts 里搜不到这句话是断言之一。
   最后：`npm run dist` 之后根 `AgentCut.exe` 要与 `release/AgentCut-便携版.exe` 逐字节一致（本轮 189,896,776 B）。
+- **1.145 的设计已经想清楚，落在这里免得下一轮重新推导**：把 `composite` 接进分层那条 Builder。
+  分层里每个片段有**自己的**一条链（`[1:v]…[layerN]` 再 overlay 到 `[base]`），所以「这条链进来的那幅画」
+  在分层里同样定义得清楚——`COMPOSITE_NEEDS_CUT` 是过虑了。做法：在 `head` 之前 `split=2`，一支过
+  `color_filter(clip, plan)`，一支不过，两支共用同一串 `scale/format=rgba/pad/setsar`，然后照 cut 那一路
+  编成 `format=gbrp` + `blend=all_mode=MODE` + `blend=all_mode=normal:all_opacity=mix`，末了 `format=rgba`
+  接回原来的 `head`（融合点必须在 **遮罩与不透明度之前**：那里 alpha 还是满的，matte 由后面的 `geq` 一次
+  性写成，两条支共用同一个几何与同一张 matte，所以相合只减弱调色、绝不动形状）。要一起改的：`details.reasons`
+  那十条里除「透明通道」「多条画面轨」之外都不该再拒；引擎侧新增门禁要按 alpha 逐帧读（ProRes 4444 那一路
+  的 matte 必须与不挂这一级时逐帧相同，`mix=0` 时 RGB 逐值等于原图），并 retire 掉老的那几条断言
+  （壳检与 `composite_check` 里 `COMPOSITE_NEEDS_CUT` 的行、engine.ts 的那句中文话）——老行不点名撤掉就会
+  变绿或变含糊。
+
+- 1.144 的两万段界面复核**在新包上重量过一遍**（bundle `index-CQf0hRJ3.js`，`node scripts/renderer_scale.cjs
+  --budget 90` 退出 0）：写 8 批 ×2500 共 13.62 s、读回整份工程 0.86 s（revision 9、片段 20000、
+  工程 json 13,099 KB），首帧照常裁住——工具条那句念「窗口外还有 19629 段没有画」，页面节点 3,336，
+  开机仍然只读一次整工程（`big_responses:1`），自己这棵进程树峰值 1,486 MB／顶进程 850 MB／CPU 6.76 s。
+  验证的来龙去脉写清楚：**97/97 全绿那一次对应的是 `77df16f`**；`079f8d8` 只加门禁的行，加完单独复跑了
+  `composite_check`、`desktop_ts_check`（52 个壳检）与 `docs_shape_check`，三条都绿——没有拿旧一轮冒充新一轮，
+  这台机器上并发构建造出过一批假红，口径不能松。
+
 - 1.143 是**装机复核真点出来的一个只有点得到才看得见的缺陷**。这一轮不再是读发布包字节：把
   `app.asar` 里取出的渲染层起在 headless Edge 里，用 CDP 选中 OpenEXR 预设、点「开始导出」，
   再回引擎数文件。行为全对（时间码栏 `disabled`、后缀 `.exr`、发出去 `timecode=None`、
