@@ -80,6 +80,31 @@ def source(folder: Path) -> Path:
     return target
 
 
+def grey_at(path: Path, at: float) -> int:
+    """某一刻的灰度（`greys()` 取的是全片唯一值的最小，淡入的起点会把最小值压到黑，所以这里按时间读）。"""
+    raw = run(
+        [
+            FFMPEG,
+            "-v",
+            "error",
+            "-ss",
+            f"{at:.3f}",
+            "-i",
+            str(path),
+            "-vf",
+            "scale=1:1",
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-",
+        ]
+    ).stdout
+    return raw[0]
+
+
 def alpha_byte(path: Path, at: float, fx: float, fy: float) -> int:
     """交付文件里某一点的 alpha 字节：`alphaextract` 把 alpha 平面搬成灰度流再读。"""
     raw = run(
@@ -472,7 +497,7 @@ def main() -> None:
                 done = wait(client, job.json()["job"]["id"])
                 assert done["status"] == "succeeded", done
                 out = Path(done["output_path"])
-                return greys(out)[0], alpha_byte(out, 1.0, 0.5, 0.5)
+                return greys(out)[0], alpha_byte(out, 1.0, 0.5, 0.5), out
 
             l_plain = deliver_layered("cx-l-plain", 0.0, [])
             l_graded = deliver_layered("cx-l-graded", 0.5, [])
@@ -494,13 +519,52 @@ def main() -> None:
             assert abs(l_one[0] - want_layered) <= 4, (l_one, want_layered)
             mid_layered = l_plain[0] + 0.5 * (l_one[0] - l_plain[0])
             assert abs(l_half[0] - mid_layered) <= 4, (l_half, mid_layered)
-            matte = {value for _, value in (l_plain, l_graded, l_zero, l_one, l_half)}
+            matte = {row[1] for row in (l_plain, l_graded, l_zero, l_one, l_half)}
             assert len(matte) == 1, (l_plain, l_graded, l_zero, l_one, l_half)
             assert 100 <= l_plain[1] <= 155, l_plain
+            # 交叉表再乘一格：**这条边 × 不透明度淡入 × 透明母版**。
+            # 淡是 alpha 随时间的那条曲线，相合是 RGB 的那条边——两者共用同一个 `geq` 乘子，
+            # 所以淡的形状必须一份都不许被 `mix` 改走：在淡的中点与淡完之后各读一次 alpha，
+            # mix=0 与 mix=1 两份必须**逐字节相同**，而同一帧的灰度必须不同（相合真的在执行）。
+            fade_answer = client.post(
+                lpath + "/edits",
+                json={
+                    "request_id": "cx-l-fade",
+                    "expected_revision": lrevision,
+                    "commands": [
+                        {
+                            "op": "clip.fade",
+                            "clip_id": "c",
+                            "property": "opacity",
+                            "duration_ticks": 70_560_000,
+                            "mode": "in",
+                        }
+                    ],
+                },
+            )
+            assert fade_answer.status_code == 200, fade_answer.text
+            lrevision = fade_answer.json()["project"]["revision"]
+            faded_zero = deliver_layered("cx-l-fade-zero", 0.5, [composite("screen", 0.0)])
+            faded_one = deliver_layered("cx-l-fade-one", 0.5, [composite("screen", 1.0)])
+            mid_zero = alpha_at_zero = None
+            for path_value, tag in ((faded_zero[2], "zero"), (faded_one[2], "one")):
+                mid = alpha_byte(path_value, 0.5, 0.5, 0.5)
+                late = alpha_byte(path_value, 1.5, 0.5, 0.5)
+                assert 40 <= mid <= 90, (tag, mid)
+                assert late >= 120, (tag, late)
+                if mid_zero is None:
+                    mid_zero, late_zero = mid, late
+                else:
+                    assert (mid, late) == (mid_zero, late_zero), (
+                        tag,
+                        (mid, late),
+                        (mid_zero, late_zero),
+                    )
+            zero_grey, one_grey = grey_at(faded_zero[2], 1.5), grey_at(faded_one[2], 1.5)
+            assert one_grey - zero_grey > 20, (zero_grey, one_grey)
             print(
-                f"   分层那一路：原图 {l_plain[0]} / 调完 {l_graded[0]} / mix=0 {l_zero[0]} / "
-                f"mix=1 {l_one[0]}（公式 {want_layered:.0f}）/ mix=0.5 {l_half[0]}，"
-                f"五份 alpha 都是 {l_plain[1]}"
+                f"   淡入中点 alpha={mid_zero}／淡完 alpha={late_zero}，mix=0 与 mix=1 两份逐字节相同；"
+                f"同一时刻灰度 mix=0 {zero_grey} 对 mix=1 {one_grey}"
             )
             print(
                 f"   原图在交付里是 {original}、调完是 {graded}；"
