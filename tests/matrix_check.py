@@ -35,7 +35,7 @@ from agentcut.contracts import (
 from agentcut.contracts import (
     TIMEBASE as T,
 )
-from agentcut.grade import grade_filter, grade_stages, grade_tables
+from agentcut.grade import ISLAND_IN, ISLAND_OUT, grade_filter, grade_stages, grade_tables
 from agentcut.http_api import create_app
 from agentcut.media import MediaService
 from agentcut.projects import ProjectStore
@@ -120,7 +120,11 @@ def main() -> None:
     # 1. Every primary, every level, every output channel — against the reference multiply.
     for label, coefficients in (("bt709", GREY_709), ("swap", SWAP), ("warm", WARM)):
         stage = grade_filter(ClipColor(grade=[GradeMatrix(coefficients=coefficients)]))
-        assert stage.startswith("colorchannelmixer="), stage
+        # 1.149：含跨通道矩阵的链整段走 16 位岛（`ISLAND_IN` 进、`ISLAND_OUT` 出），因为矩阵乘在
+        # 线性量上，8 位平面在暗部只剩几个码字（实测同一往返最大差 16 级，进岛后矩阵那份差 0）。
+        # 所以这里断的是**新形状**：矩阵必须就在岛内的第一段，而不是裸串开头。
+        assert stage.startswith(f"{ISLAND_IN},colorchannelmixer="), stage
+        assert stage.endswith(ISLAND_OUT), stage
         for primary in range(3):
             planes = through(stage, plate(primary))
             for level in range(256):
@@ -158,10 +162,16 @@ def main() -> None:
     reverse = ClipColor(grade=[matrix(GREY_709), CURVE])
     assert [stage["type"] for stage in grade_stages(forward)] == ["lut", "matrix"]
     assert [stage["type"] for stage in grade_stages(reverse)] == ["matrix", "lut"]
-    assert grade_filter(forward).startswith("lutrgb=") and "colorchannelmixer" in grade_filter(
-        forward
+    assert grade_filter(forward).startswith(f"{ISLAND_IN},lutrgb=") and "colorchannelmixer" in (
+        grade_filter(forward)
     )
-    assert grade_filter(reverse).startswith("colorchannelmixer=")
+    assert grade_filter(reverse).startswith(f"{ISLAND_IN},colorchannelmixer=")
+    # 只有跨通道那一段值得进岛：纯曲线链的形状一字不改（它本来就能塌成一张表，中间没有
+    # 会被量化吃掉的线性站）。这一条是「不猜、不多动」的界，也是电池的靶。
+    assert not grade_filter(ClipColor(grade=[CURVE])).startswith(ISLAND_IN), grade_filter(
+        ClipColor(grade=[CURVE])
+    )
+    assert grade_filter(ClipColor(grade=[CURVE])).startswith("lutrgb=")
     assert grade_tables(forward)["id"] != grade_tables(reverse)["id"]
     forward_planes = through(grade_filter(forward), plate(0))
     reverse_planes = through(grade_filter(reverse), plate(0))

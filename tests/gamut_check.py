@@ -347,10 +347,12 @@ def main() -> None:
             ctl_orange, ctl_grey = deliver("gm-ctl")
             assert distance(wide_grey, plain_grey) <= 3, (wide_grey, plain_grey)
             assert distance(wide_orange, plain_orange) >= 6, (wide_orange, plain_orange)
-            # 界的来历，不是宽容：同形状的对照链在暗部蓝（存储值 50，线性后只剩约 7 个码字）
-            # 自己漂 6 级——那是 8 位线性光这一站的量化，1.52 记的就是它。矩阵那份是两条链之差，
-            # 实测 4 级，要求它不超过这条链自己的量化成本；中灰在中段、码字充裕，来回一趟
-            # 实测 0～1 级，界给到 6。
+            # 界的来历，不是宽容。1.146 那次量到的形状是：同一条链自己漂 6 级、矩阵那份再 4 级，
+            # 成因是 `transfer` 落进线性光那一站仍是 8 位（存储值 50 线性后只剩约 7 个码字）。
+            # 1.149 起含矩阵的链整段走 16 位岛（两端各钉一次 `in_range/out_range=full`），
+            # 本轮在同一支门禁下重量：**链自己漂 3 级、矩阵那份漂 0 级**，中灰改为逐位相同
+            # （(130,127,131) 原样回来）。界仍按 1.146 那笔较坏的形状给（≤6），因为要防的是
+            # 「将来有人把岛拆了」，不是替现在的表现背书。
             assert distance(back_orange, ctl_orange) <= 6, (back_orange, ctl_orange)
             assert distance(back_grey, plain_grey) <= 6, (back_grey, plain_grey)
             print(

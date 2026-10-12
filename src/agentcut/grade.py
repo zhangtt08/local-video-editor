@@ -550,6 +550,25 @@ def preview_grade(color) -> dict | None:
     return {**tables, "stages": stages}
 
 
+# 16 位「线性岛」的两端。进岛前把量程钉住（1.52 那节量到的「黑场被吃掉」是没钉量程，不是位深），
+# 出岛回到 `format=rgba`，所以后面那些按 rgba 串的遮罩／blend／垫边一字不改照常接。
+ISLAND_IN = "format=gbrap16le,scale=in_range=full:out_range=full"
+ISLAND_OUT = "scale=in_range=full:out_range=full,format=rgba"
+
+
+def _to_16bit_domain(expression: str) -> str:
+    """把一张按 0..255 写的单通道表搬到 16 位平面：out = 257·f(in/257)。
+
+    `gbrap16le` 上 `val` 的域是 0..65535，而 `_expression` 交回的式子按 0..255 编；就地换掉
+    变量的读法再把结果乘回 257，同一条表在高色深上原样成立。本轮实测过两件事：括号里带
+    `st(0,…);…` 的链式写法 FFmpeg 认，且十六级阶梯逐格原样回来（见 docs 的 1.149 那节）。
+    """
+    import re
+
+    scaled = re.sub(r"\bval\b", "(val/257)", expression)
+    return f"257*({scaled})"
+
+
 def grade_filter(color, plan=None) -> str:
     """The FFmpeg stage list compiled from the same stages; empty when the chain is a no-op.
 
@@ -561,6 +580,12 @@ def grade_filter(color, plan=None) -> str:
     stages = grade_stages(color)
     if not stages:
         return ""
+    # 只有含跨通道矩阵的链才值得进岛：那一站的中间值是乘在**线性**量上的，8 位平面在暗部只剩
+    # 几个码字（实测 16→0、32→25，最大差 16 级）。3D LUT 与岛混在一起没有量过，所以那条路
+    # 保持原形状——不猜。
+    island = any(stage["type"] == "matrix" for stage in stages) and not any(
+        stage["type"] == "lut3d" for stage in stages
+    )
     parts = []
     for stage in stages:
         if stage["type"] == "lut3d":
@@ -586,6 +611,14 @@ def grade_filter(color, plan=None) -> str:
             expressions = {name: _expression(stage[name]) for name in CHANNEL_NAMES}
             if all(value == "val" for value in expressions.values()):
                 continue
+            if island:
+                # 岛上只写真的动了的那几个通道：`lutrgb` 没点名的通道默认就是 `val`，而在
+                # 0..65535 那一站那是同一个数，所以省略是等价的；alpha 整个不碰，默认交回。
+                expressions = {
+                    name: _to_16bit_domain(value)
+                    for name, value in expressions.items()
+                    if value != "val"
+                }
             parts.append(
                 "lutrgb=" + ":".join(f"{name}='{value}'" for name, value in expressions.items())
             )
@@ -596,7 +629,8 @@ def grade_filter(color, plan=None) -> str:
                 + ":".join(f"{name}={value:.10g}" for name, value in zip(names, stage["m"]))
                 + ":aa=1"
             )
-    return ",".join(parts)
+    body = ",".join(parts)
+    return f"{ISLAND_IN},{body},{ISLAND_OUT}" if island else body
 
 
 def parse_1d_cube(text: str, *, title_default: str = "LUT") -> dict:
