@@ -89,6 +89,50 @@ def describe_exit(return_code: int, stderr: str) -> str:
     return f"FFmpeg 退出码 {return_code}：{tail}"
 
 
+_FFMPEG_SUPPORT: dict[str, dict] = {}
+
+
+def parse_ffmpeg_help(text: str) -> dict:
+    """从 `-h full` 的自述里读出：这一份 ffmpeg 的版本号，以及它认不认长滤镜图的脚本形式。
+
+    只数这一件事是本仓库的账，不是通用能力探测。`render.py` 在滤镜图越过 `GRAPH_SCRIPT_LIMIT`
+    时把图写成文件、发 `-filter_complex_script`（Windows 的 `CreateProcess` 在 ~32 KB 上直接拒），
+    而 FFmpeg 9 那一支已经没有这个选项——1.146 的装机复核就是被这句话绊住的：
+    `Unrecognized option 'filter_complex_script'.`
+    """
+    head = next((line for line in text.splitlines() if line.startswith("ffmpeg version")), "")
+    parts = head.removeprefix("ffmpeg version").split()
+    return {
+        "version": parts[0] if parts else "未知",
+        "graph_script": "filter_complex_script" in text,
+    }
+
+
+def ffmpeg_support(ffmpeg: Path | None) -> dict:
+    """量一次，记下来：这份 ffmpeg 是自己说的，不是我猜的。"""
+    key = str(ffmpeg)
+    if key not in _FFMPEG_SUPPORT:
+        if ffmpeg is None:
+            said = {"version": "未知", "graph_script": False, "path": ""}
+        else:
+            try:
+                answer = subprocess.run(  # noqa: S603
+                    [str(ffmpeg), "-h", "full"],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=60,
+                    creationflags=_NO_WINDOW,
+                )
+                said = parse_ffmpeg_help(f"{answer.stdout or ''}\n{answer.stderr or ''}")
+            except (OSError, subprocess.SubprocessError):
+                said = {"version": "跑不起来", "graph_script": False}
+            said["path"] = str(ffmpeg)
+        _FFMPEG_SUPPORT[key] = said
+    return _FFMPEG_SUPPORT[key]
+
+
 def ffprobe_beside(ffmpeg: Path | None) -> Path | None:
     """The inspector that ships next to the FFmpeg which encoded this job, or None.
 
@@ -858,6 +902,20 @@ class JobRuntime:
             staging = target.with_suffix(f".part.{preset_by_id(job.preset_id)['container']}")
         target.parent.mkdir(parents=True, exist_ok=True)
         argv = plan.ffmpeg_argv(str(self.ffmpeg), str(staging))
+        if "-filter_complex_script" in argv and not ffmpeg_support(self.ffmpeg)["graph_script"]:
+            said = ffmpeg_support(self.ffmpeg)
+            # 这不是「界面允许、导出会拒」那类口子：能触发这一条的唯一原因是操作者把引擎指到了
+            # 自己机器上另一份 ffmpeg（`--ffmpeg` 或 `AGENTCUT_FFMPEG`）。所以话要说清是谁、哪一份、
+            # 以及回去的那两个名字——而不是让 FFmpeg 的原始 stderr 当最后一句话。
+            raise EditorError(
+                "FFMPEG_NO_GRAPH_SCRIPT",
+                "这条交付的滤镜图超过了内联的限度，只能写成脚本文件交给 `-filter_complex_script`；"
+                f"你指的这份 ffmpeg（{said['version']}，{said['path']}）不认那个选项。"
+                "随包的那一份认：把 `--ffmpeg` 与 `AGENTCUT_FFMPEG` 这两处去掉再导一次就行。",
+                503,
+                ffmpeg=said["path"],
+                version=said["version"],
+            )
         work = self.db_path.parent / "render-assets" / job_id
         work.mkdir(parents=True, exist_ok=True)
         for name, body in plan.text_files.items():

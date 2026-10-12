@@ -77,6 +77,17 @@
   这条边，靠的是 `GradeBranch` 那张类型表（不含 composite），壳检钉这个不含；界面那句中文话也不再念
   「这个工程是多条画面轨合成的」这种通用假诊断，engine.ts 里搜不到这句话是断言之一。
   最后：`npm run dist` 之后根 `AgentCut.exe` 要与 `release/AgentCut-便携版.exe` 逐字节一致（本轮 189,896,776 B）。
+- **1.147 还的是 1.146 自己记下的那条账**：引擎以前不验证「将要发的那个选项在不在」那份 ffmpeg 里。
+  长滤镜图必须走 `-filter_complex_script`（`GRAPH_SCRIPT_LIMIT` 12000，Windows `CreateProcess` 在
+  ~32 KB 上直接拒），FFmpeg 9 那一支已经没有它。默认路径 1.146 就安全了（打包版真的用随包的 6.1.1），
+  会撞上的只有 `--ffmpeg`/`AGENTCUT_FFMPEG` 指到别处的人；那种时候最后一句话现在是不肯自报姓名的
+  FFmpeg stderr 换成 `FFMPEG_NO_GRAPH_SCRIPT`——点名哪一份（版本 + 路径）、说出回去的那两个名字。
+  门禁 `tests/ffmpeggraph_check.py`（套件第 101 项）**两头都跑**：把限度压到 1 逼出脚本形式，
+  说「不认」时必须失败且回执说清是谁、怎么回去；说「认」时同一条请求照常出片——只断「会拒绝」
+  抓不出守卫写反。电池 6 行逐条红。两处实测记进 docs：`ffmpeg -h full` 的版本横幅在 **stderr**、
+  选项表在 stdout（只读 stdout 时版本永远是「未知」，一句认不出是谁的拒绝等于没说）；探针按路径
+  缓存，门禁连着数两次调用必须一次子进程都不发。
+
 - **1.146 交的是「基色转换表」这一份数据，外加一条装机复核抓出来的真缺陷**。上半：`src/agentcut/gamut.py`
   由 xy 与白点现算六档转换（2020↔709、DCI-P3↔709、Display P3→709、Rec.601→709），随
   `capabilities.gamut_matrices` 交出九个数与两端传递函数名；没有那颗按钮，界面一字不接。门禁
