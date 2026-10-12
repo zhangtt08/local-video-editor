@@ -546,7 +546,7 @@ def main() -> None:
             lrevision = fade_answer.json()["project"]["revision"]
             faded_zero = deliver_layered("cx-l-fade-zero", 0.5, [composite("screen", 0.0)])
             faded_one = deliver_layered("cx-l-fade-one", 0.5, [composite("screen", 1.0)])
-            mid_zero = alpha_at_zero = None
+            mid_zero = late_zero = None
             for path_value, tag in ((faded_zero[2], "zero"), (faded_one[2], "one")):
                 mid = alpha_byte(path_value, 0.5, 0.5, 0.5)
                 late = alpha_byte(path_value, 1.5, 0.5, 0.5)
