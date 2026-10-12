@@ -123,25 +123,8 @@ export function ExportPanel(): JSX.Element {
     : !preset?.alpha
       ? `这条交付的画面格式（${preset?.pixel_format ?? "未选"}）装不下透明度，这个勾按不动；带 alpha 的是 ${alphaIds.join("、")}，选它们就能勾`
       : "空白处真的留空，叠到别的画面上不带一块黑底；AE／DaVinci 与网页合成接得住这一条";
-  // 时间码的写法与「哪两个率才有丢帧码」都问引擎要，界面不写正则、不自己认标准。
-  const tcShape = app.caps?.timecode_shape ?? "HH:MM:SS:FF";
-  const tcDropRates = app.caps?.timecode_drop_rates ?? [];
-  const tcDropNames = tcDropRates.map(([n, d]) => (d === 1 ? `${n}` : (n / d).toFixed(2))).join("／");
-  const tcIsDropRate = tcDropRates.some(
-    ([n, d]) => n === project.settings.frame_rate.numerator && d === project.settings.frame_rate.denominator
-  );
-  // 发出去的就是这一处：填了才算，空串一律当「不写」。
-  const sendTimecode = timecodeText.trim() || null;
-  const timecodeHint = [
-    `写给交接用的起始时间码，留空就是不写。写法 ${tcShape}，每段两位数字。`,
-    `帧号不能超过这条时间线的帧率（这里是 ${project.settings.frame_rate.numerator}/$` +
-      `{project.settings.frame_rate.denominator}）。`,
-    tcIsDropRate
-      ? `这条率属于 ${tcDropNames}，所以分号那种丢帧码（例：01:00:00;00）也可以用。`
-      : `分号那种丢帧码只有 ${tcDropNames || "（引擎没给出）"} 有定义，这条时间线不是那两个率，写分号会被引擎拒绝。`,
-  ].join("");
   // 1.138：交付帧率那张表整个从引擎能力表来，界面不列第二份。选中的那档若等于时间线自己的率，
-  // 就当作没换（也不发这个字段——老引擎的契约是 extra=forbid，多一个它不认的键会整条拒收）。
+  // 就当作没选（发出去也是「跟时间线」），否则老引擎会因为多出一个不认的字段整条拒收。
   const rateChoices = app.caps?.output_frame_rates ?? [];
   const timelineRate = project.settings.frame_rate;
   const sameAsTimeline = (item: OutputRate) =>
@@ -153,6 +136,25 @@ export function ExportPanel(): JSX.Element {
   const fpsHint = rateChoices.length
     ? `可交的帧率是引擎那张闭表：${rateChoices.map((item) => item.label).join("／")}。换率只改重采样与 GOP 的秒数，片段位置、入出点与遮罩仍按时间线自己的 ${timelineRate.numerator}/${timelineRate.denominator} 走；选与时间线相同的那档等于没换，留空也是。`
     : "这台引擎没有下发交付帧率表，这一条只能跟时间线自己的率一致。";
+  // 1.140：落盘的那条流一秒有几帧，由**交付**率说——时间码的帧号与丢帧码都按它判，不是按时间线。
+  const effectiveRate = sendFps ?? timelineRate;
+  // 时间码的写法与「哪两个率才有丢帧码」都问引擎要，界面不写正则、不自己认标准。
+  const tcShape = app.caps?.timecode_shape ?? "HH:MM:SS:FF";
+  const tcDropRates = app.caps?.timecode_drop_rates ?? [];
+  const tcDropNames = tcDropRates.map(([n, d]) => (d === 1 ? `${n}` : (n / d).toFixed(2))).join("／");
+  const tcIsDropRate = tcDropRates.some(
+    ([n, d]) => n === effectiveRate.numerator && d === effectiveRate.denominator
+  );
+  // 发出去的就是这一处：填了才算，空串一律当「不写」。
+  const sendTimecode = timecodeText.trim() || null;
+  const timecodeHint = [
+    `写给交接用的起始时间码，留空就是不写。写法 ${tcShape}，每段两位数字。`,
+    `帧号不能超过这一条交付画面的帧率（这里是 ${effectiveRate.numerator}/` +
+      `${effectiveRate.denominator}${sendFps ? "，是你选的交付率，不是时间线那一档" : ""}）。`,
+    tcIsDropRate
+      ? `这一条交付的率属于 ${tcDropNames}，所以分号那种丢帧码（例：01:00:00;00）也可以用。`
+      : `分号那种丢帧码只有 ${tcDropNames || "（引擎没给出）"} 有定义，这一条交付的率不是那两个率，写分号会被引擎拒绝。`,
+  ].join("");
   // 后缀跟着那条交付自己的容器，不再钉死 .mp4：竖屏那条换成 WebM 预设时，文件名也得是 .webm。
   const verticalName = `${(filename.trim() || sanitizeName(timelineName)).replace(/\.[A-Za-z0-9]+$/, "")}-9x16.${vertical?.container ?? "mp4"}`;
   const inTicks = project.settings.in_ticks ?? null;

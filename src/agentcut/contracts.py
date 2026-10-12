@@ -12,7 +12,7 @@ SCHEMA_VERSION = (
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.139.0"
+APP_VERSION = "1.140.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -1207,13 +1207,13 @@ def checked_timecode(value: str | None, rate: FrameRate) -> str | None:
         problems.append(f"秒最多 59，收到 {seconds}")
     if frames >= limit:
         problems.append(
-            f"这条时间线是 {rate.numerator}/{rate.denominator}，"
+            f"这一条画面的帧率是 {rate.numerator}/{rate.denominator}，"
             f"帧号只能 00–{limit - 1:02d}，收到 {frames:02d}"
         )
     if separator == ";" and (rate.numerator, rate.denominator) not in TIMECODE_DROP_RATES:
         problems.append(
             "分号那种是丢帧码（drop-frame），SMPTE 只在 29.97 与 59.94 上定义它；"
-            "这条时间线不是那两个率，请改用冒号"
+            "这一条画面的帧率不是那两个率，请改用冒号"
         )
     if problems:
         raise EditorError(

@@ -756,8 +756,12 @@ def compile_render_plan(
         project = sequence_view(project, sequence_id)
     preset = preset_by_id(preset_id)
     settings = project.settings
-    # 时间码在这里过一次规矩（要读这条时间线自己的帧率），干跑、排队与 worker 走的是同一条路。
-    timecode = checked_timecode(timecode, settings.frame_rate)
+    # 1.138：交付率可以不同于时间线自己的率，先把它判过——时间码要用**这条交付的**帧率判，
+    # 不是用时间线的。实测（30 的线标 `00:00:00:29` 按 25 交）：按时间线判会收下，而 muxer
+    # 按 25 把那一串改写成 `00:00:01:04` 落盘——1.137 立这条规矩就是为了不让文件替人改数字。
+    delivery_rate = checked_output_rate(output_frame_rate)
+    # 时间码在这里过一次规矩，干跑、排队与 worker 走的是同一条路。
+    timecode = checked_timecode(timecode, delivery_rate or settings.frame_rate)
     out_w, out_h = preview_size or preset["scale"] or (settings.width, settings.height)
     # 两个空间旋钮量的是「画面」的高：预览那个框锁工程比例，成片里画面占多高由 fit 决定。
     picture_w, picture_h = picture_size(out_w, out_h, settings.width, settings.height, fit)
@@ -768,7 +772,7 @@ def compile_render_plan(
     mask_box = (bar_x, bar_y, picture_w, picture_h) if letterbox else None
     # 交付帧率可以不同于时间线自己的率：`fps=` 那一级负责重采样，GOP 的秒数按交付率算，
     # 而片段位置、区间与遮罩仍按时间线的 tick 走——两套刻度各管各的，才有「同一条时间线交两版」。
-    delivery = checked_output_rate(output_frame_rate) or settings.frame_rate
+    delivery = delivery_rate or settings.frame_rate
     fps = f"{delivery.numerator}/{delivery.denominator}"
     rate = delivery.numerator / delivery.denominator
     size = f"{out_w}x{out_h}"
