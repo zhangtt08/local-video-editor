@@ -756,18 +756,6 @@ def _entries_for_track(project: Project, track) -> list[dict]:
     return entries
 
 
-# 「为什么这一次走的是分层合成」这句话要说给人听：属性名与素材类别都是契约里的英文，
-# 直接印出来就是让引擎替用户念字段名（1.115 给界面立过的规矩，引擎这侧同一条）。
-PICTURE_EFFECT_NAMES = {
-    "x": "横向位置",
-    "y": "纵向位置",
-    "scale": "缩放",
-    "rotation": "旋转",
-    "opacity": "不透明度",
-}
-ASSET_KIND_NAMES = {"text": "文字", "sequence": "图像序列"}
-
-
 def compile_render_plan(
     project: Project,
     preset_id: str,
@@ -875,31 +863,19 @@ def compile_render_plan(
     for entry in sounds:
         total = max(total, entry["clip"].position_ticks + entry["clip"].duration_ticks)
 
-    reasons = []
-    if alpha_out:
-        reasons.append("这一条交付要带透明通道（画面要带着 matte 走完，必须叠在画布上）")
-    if not layers:
-        reasons.append("这条时间线上没有画面轨")
-    if len(layers) > 1:
-        reasons.append(f"有多条画面轨（这里 {len(layers)} 条）")
-    for track, _ in visible:
-        if track.blend_mode != "normal":
-            reasons.append(f"轨道「{track.name}」的混合方式不是 normal")
-    for entries in layers:
-        for entry in entries:
-            clip = entry["clip"]
-            if entry["asset"].kind in ASSET_KIND_NAMES:
-                reasons.append(f"片段 {clip.id} 是{ASSET_KIND_NAMES[entry['asset'].kind]}素材")
-            if clip.mask:
-                reasons.append(f"片段 {clip.id} 挂了遮罩")
-            if clip.transition_in:
-                reasons.append(f"片段 {clip.id} 有转场")
-            if fade_active(clip, "opacity"):
-                reasons.append(f"片段 {clip.id} 有不透明度淡入淡出")
-            if any(k.property != "gain" for k in clip.keyframes):
-                reasons.append(f"片段 {clip.id} 有画面动画关键帧")
-            moved = [
-                PICTURE_EFFECT_NAMES[name]
+    compositing = (
+        alpha_out
+        or not layers
+        or len(layers) > 1
+        or any(track.blend_mode != "normal" for track, _ in visible)
+        or any(
+            entry["asset"].kind in {"text", "sequence"}
+            or entry["clip"].mask
+            or entry["clip"].transition_in
+            or fade_active(entry["clip"], "opacity")
+            or any(k.property != "gain" for k in entry["clip"].keyframes)
+            or any(
+                getattr(entry["clip"].effects, name) != default
                 for name, default in (
                     ("x", 0),
                     ("y", 0),
@@ -907,33 +883,16 @@ def compile_render_plan(
                     ("rotation", 0),
                     ("opacity", 1),
                 )
-                if getattr(clip.effects, name) != default
-            ]
-            if moved:
-                reasons.append(f"片段 {clip.id} 改了「{'、'.join(moved)}」")
-    compositing = bool(reasons)
+            )
+            for entries in layers
+            for entry in entries
+        )
+    )
     plan = RenderPlan(
         mode="audio" if audio_only else "layered" if compositing else "cut",
         # 序列那一串文件里没有声音的位置，所以连那条 `-map` 都不该发出去（ffmpeg_argv 读这个）。
         has_audio=not preset["sequence"],
     )
-    if plan.mode == "layered" and any(
-        composite_stages(clip.color) for clip in project.clips.values()
-    ):
-        # 分层合成那条路上，画面已经被叠成一张 `[vchain]`，「这条链进来的那幅画」不再唯一——
-        # 硬编一个定义不清的语义比拒绝更坏。要叠原图：把没调色的那份放在另一条画面轨上，
-        # 用那条轨道自己的混合方式相合（同一件事，而且两端都画得出）。
-        # 原因必须逐条点名：走到分层的原因有十条，「多条画面轨」只是其中一条，
-        # 一个淡入或一次透明交付也会被同一句话解释成「你的工程是合成」——那是假诊断。
-        raise EditorError(
-            "COMPOSITE_NEEDS_CUT",
-            "「叠一层原图」要读的是这一条链自己的输入，只在单条画面轨直接输出（cut）时定义得清楚；"
-            "这一次走的是分层合成，因为：" + "；".join(reasons) + "。"
-            "出路是把没调色的那份放到另一条画面轨上、用那条轨道的混合方式相合，"
-            "或者把这一级去掉再导（上面点名的这些改动不必动）。",
-            422,
-            reasons=reasons,
-        )
     transition_curves = envelopes(project)
     # Three framings, because a 16:9 timeline is delivered to 9:16 more often than not:
     # `contain` keeps every pixel and bars the rest, `cover` fills the frame and crops the
@@ -1313,14 +1272,57 @@ def compile_render_plan(
                         f"setpts=(PTS-STARTPTS)/{clip.speed_percent / 100},"
                         f"fps={fps},trim=duration={sec(clip.duration_ticks)},"
                     )
-                head = (
-                    f"{video_source}{paced}"
-                    f"{title}"
-                    f"{color_filter(clip, plan)}"
+                fit = (
                     f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,"
                     f"format=rgba,pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,"
                     "setsar=1"
                 )
+                composites = composite_stages(clip.color)
+                if composites:
+                    # 1.145：分层这条路里每个片段也有自己的一条链
+                    # 所以「这条链进来的那幅画」在这里同样定义得清楚——不必再拒。
+                    # 融合点必须放在遮罩与不透明度**之前**：两条支此刻共用同一串适配、同一份几何，
+                    # 相合只减弱调色，不会改形状，也不会把被遮掉的画面复活。
+                    # 另一条支的 alpha 一路带到底，用 `alphamerge` 盖回相合的结果：
+                    # 这样 `mix` 无论拧到哪一端，交付文件的 matte 与不挂这一级时**逐帧相同**
+                    # （透明母版那一档量的就是这个字节，不是滤镜串）。
+                    stage = composites[0]
+                    graded = plan.tag("lcxgraded")
+                    raws = plan.tag("lcxraw")
+                    gfit = plan.tag("lcxgfit")
+                    rfit = plan.tag("lcxrfit")
+                    gsplit = plan.tag("lcxgsplit")
+                    galpha = plan.tag("lcxgalpha")
+                    grgb = plan.tag("lcxgrgb")
+                    rs1 = plan.tag("lcxrs1")
+                    rs2 = plan.tag("lcxrs2")
+                    rgb_mode = plan.tag("lcxrgbmode")
+                    rgb_lerp = plan.tag("lcxrgblerp")
+                    rgb_second = plan.tag("lcxrgbsecond")
+                    mode_out = plan.tag("lcxmode")
+                    lerped = plan.tag("lcxlerp")
+                    merged = plan.tag("lcxmerged")
+                    plan.filters.append(f"{video_source}{paced}{title}split=2{graded}{raws}")
+                    plan.filters.append(f"{graded}{color_filter(clip, plan)}{fit}{gfit}")
+                    plan.filters.append(f"{raws}{fit}{rfit}")
+                    plan.filters.append(f"{gfit}split=2{grgb}{gsplit}")
+                    plan.filters.append(f"{gsplit}alphaextract,format=gray{galpha}")
+                    plan.filters.append(f"{grgb}format=gbrp{rgb_mode}")
+                    plan.filters.append(f"{rfit}split=2{rs1}{rs2}")
+                    plan.filters.append(f"{rs1}format=gbrp{rgb_lerp}")
+                    # 同一个 pad 不能读两次：第二段插值还要用一次原图，所以这里再折一路。
+                    plan.filters.append(f"{rs2}format=gbrp{rgb_second}")
+                    plan.filters.append(
+                        f"{rgb_mode}{rgb_lerp}blend=all_mode={stage['mode']}{mode_out}"
+                    )
+                    plan.filters.append(
+                        f"{mode_out}{rgb_second}blend=all_mode=normal"
+                        f":all_opacity={stage['mix']:.6g}{lerped}"
+                    )
+                    plan.filters.append(f"{lerped}{galpha}alphamerge{merged}")
+                    head = f"{merged}format=rgba"
+                else:
+                    head = f"{video_source}{paced}{title}{color_filter(clip, plan)}{fit}"
                 head = focus_stages(plan, head, clip, focus_basis, frame_ticks=settings.frame_ticks)
                 body = (
                     f"{transform}"

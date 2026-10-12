@@ -26,7 +26,14 @@ assert.ok(fields.includes("预览不生效、导出生效"), "card-says-preview-
 // 引擎那两头：预览整条丢掉这一级；拒绝的句子必须点名走得通的出路。
 assert.match(grade, /if stage\["type"\] == "composite":/, "grade-recognises-the-edge");
 assert.match(grade, /"composite", "mode": node\.mode, "mix": node\.mix/, "stage-carries-both-knobs");
-const hints = ["COMPOSITE_NEEDS_CUT", "COMPOSITE_LIMIT"].map((code) => {
+const renderSrc = readFileSync(SRC + "src/agentcut/render.py", "utf8");
+// 1.145：这条边接进了分层那条 Builder，两路共用同一句话。这里钉的是**图真的把 matte 盖回去**
+// （`alphamerge` 在分层那条分支里），以及那句拒话与其代号一起退场——留着比没有更坏。
+assert.match(renderSrc, /alphamerge\{merged\}/, "layered-path-restores-the-matte");
+assert.doesNotMatch(renderSrc, /COMPOSITE_NEEDS_CUT/, "refusal-retired-in-engine");
+assert.doesNotMatch(engineSrc, /COMPOSITE_NEEDS_CUT/, "refusal-retired-in-hint-table");
+const hints = ["COMPOSITE_LIMIT"].map((code) => {
+
   const found = engineSrc.match(new RegExp("^\\s{6}" + code + ": \"([^\"]*)\",\\s*$", "m"));
   assert.ok(found, `hint-${code}`);
   return found[1] as string;

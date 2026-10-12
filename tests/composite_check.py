@@ -16,13 +16,11 @@
    现算的 W3C 合成值。
 5. **位置不影响结果**：这一级放在链首与链尾，读回的像素相同（它是图的一条边，不是串联的一步）。
 6. 停用（`enabled=false`）与根本不挂这一级，像素相同；干跑的图里一个 `split=` 都没有。
-7. 一条链第二个 `composite` 点名拒 `COMPOSITE_LIMIT`；走到分层合成的工程点名拒
-   `COMPOSITE_NEEDS_CUT`——两次拒绝都不涨 revision、不排队任务、不落文件。
+7. 一条链第二个 `composite` 点名拒 `COMPOSITE_LIMIT`：拒的时候不涨 revision、不排队、不落文件。
 8. 八种混合方式逐条过一遍导出（名字是原样写进 `blend=all_mode=` 的）。这把尺的绝对值只有
    ±6 的抖（yuv420p 往返），所以这里按每个方式定义上的大小关系判，逐条写明容差。
-8. 那句拒绝要**点名真的原因**：单条画面轨上改一次不透明度，不能让句子说成「你的工程是多条画面轨
-   合成的」（走到分层的原因有十条，这一条只是其中一条）；`details.reasons` 逐条交回，
-   透明母版那一路点名的原因是「透明通道」，两条原因同时按下就交回两条。
+9. 1.145：**分层那条 Builder 也走同一条边**。用一个不透明度改动把工程推进 layered，交透明母版，
+   五份读回灰度与 alpha——mix 拧到哪一端都不改 matte（五份 alpha 必须是同一个字节）。
 """
 
 import subprocess
@@ -80,6 +78,31 @@ def source(folder: Path) -> Path:
         ]
     )
     return target
+
+
+def alpha_byte(path: Path, at: float, fx: float, fy: float) -> int:
+    """交付文件里某一点的 alpha 字节：`alphaextract` 把 alpha 平面搬成灰度流再读。"""
+    raw = run(
+        [
+            FFMPEG,
+            "-v",
+            "error",
+            "-ss",
+            f"{at:.3f}",
+            "-i",
+            str(path),
+            "-vf",
+            "alphaextract,scale=1:1",
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "gray",
+            "-",
+        ]
+    ).stdout
+    return raw[0]
 
 
 def greys(path: Path) -> list[int]:
@@ -362,13 +385,16 @@ def main() -> None:
             # 若哪天有人把 composite 加进 `GradeBranch`，这里会先变成另一种代号而红。
             assert in_branch.json()["error"]["code"] == "INVALID_REQUEST", in_branch.text
             assert client.get(path).json()["revision"] == branch_revision, in_branch.text
-
-            # 多条画面轨合成的工程：点名拒，出路写在句子里。
+            # 1.145：这条边接进了分层那条 Builder。用一个不透明度改动把工程推进 layered
+            # （`effects.opacity != 1` 就是十条原因里的一条），交五份读回**灰度与 alpha**：
+            # A 曝光 0 不挂 = 原图；B 曝光 0.5 不挂 = 调完的；C mix=0 逐值等于 A；
+            # D mix=1 = screen 的结果；E mix=0.5 = 两端中点。五份的 alpha 必须**同一个字节**——
+            # 相合只减弱调色，不许动 matte（透明母版量的就是这个字节，不是滤镜串）。
             layered = client.post(
                 "/v1/projects",
                 json={
-                    "request_id": "cx-layered-new",
-                    "name": "两条轨",
+                    "request_id": "cx-l2-new",
+                    "name": "分层里的第二路",
                     "settings": {
                         "width": SRC_W,
                         "height": SRC_H,
@@ -380,85 +406,10 @@ def main() -> None:
             lseed = client.post(
                 lpath + "/edits",
                 json={
-                    "request_id": "cx-lseed",
+                    "request_id": "cx-l2-seed",
                     "expected_revision": 0,
                     "commands": [
-                        {"op": "track.add", "track": {"id": "v1", "kind": "video", "name": "v1"}},
-                        {"op": "track.add", "track": {"id": "v2", "kind": "video", "name": "v2"}},
-                        {
-                            "op": "asset.import",
-                            "asset_id": "a",
-                            "label": "a",
-                            "probe_id": probe["id"],
-                            "verified": probe["verified"],
-                        },
-                        {
-                            "op": "clip.add",
-                            "clip": {
-                                "id": "c1",
-                                "asset_id": "a",
-                                "track_id": "v1",
-                                "position_ticks": 0,
-                                "duration_ticks": 2 * T,
-                            },
-                        },
-                        {
-                            "op": "clip.add",
-                            "clip": {
-                                "id": "c2",
-                                "asset_id": "a",
-                                "track_id": "v2",
-                                "position_ticks": 0,
-                                "duration_ticks": T,
-                                "color": {"grade": [composite("screen", 0.5)]},
-                            },
-                        },
-                    ],
-                },
-            )
-            assert lseed.status_code == 200, lseed.text
-            lrevision = lseed.json()["project"]["revision"]
-            ljob = client.post(
-                lpath + "/renders",
-                json={
-                    "request_id": "cx-lrender",
-                    "expected_revision": lrevision,
-                    "preset_id": PRESET,
-                    "filename": "分层拒绝.mp4",
-                },
-            )
-            assert ljob.status_code == 422, ljob.text
-            body = ljob.json()["error"]
-            assert body["code"] == "COMPOSITE_NEEDS_CUT", body
-            assert "另一条" in body["message"], body["message"]
-            assert client.get(lpath).json()["revision"] == lrevision, body
-            assert client.get(lpath + "/jobs").json()["jobs"] == [], body
-            assert "分层拒绝" not in sorted(item.name for item in exports.iterdir())
-            assert "多条画面轨" in body["message"], body["message"]
-
-            # 拒绝那句必须点名**真的**那条原因。走到分层的原因有十条，「多条画面轨」只是其中一条：
-            # 单条画面轨上改一次不透明度、或者只要一份透明母版，都会被同一句「你的工程是合成」
-            # 解释成别的东西——那是假诊断，而假诊断把人支去改一处根本不需要改的地方。
-            solo = client.post(
-                "/v1/projects",
-                json={
-                    "request_id": "cx-solo-new",
-                    "name": "单轨但有改动",
-                    "settings": {
-                        "width": SRC_W,
-                        "height": SRC_H,
-                        "frame_rate": {"numerator": 30, "denominator": 1},
-                    },
-                },
-            ).json()["project"]
-            spath = f"/v1/projects/{solo['id']}"
-            sseed = client.post(
-                spath + "/edits",
-                json={
-                    "request_id": "cx-sseed",
-                    "expected_revision": 0,
-                    "commands": [
-                        {"op": "track.add", "track": {"id": "v1", "kind": "video", "name": "v1"}},
+                        {"op": "track.add", "track": {"id": "v", "kind": "video", "name": "v"}},
                         {
                             "op": "asset.import",
                             "asset_id": "a",
@@ -471,52 +422,86 @@ def main() -> None:
                             "clip": {
                                 "id": "c",
                                 "asset_id": "a",
-                                "track_id": "v1",
+                                "track_id": "v",
                                 "position_ticks": 0,
                                 "duration_ticks": 2 * T,
                                 "effects": {"opacity": 0.5},
-                                "color": {"grade": [composite("screen", 0.5)]},
                             },
                         },
                     ],
                 },
             )
-            assert sseed.status_code == 200, sseed.text
-            srevision = sseed.json()["project"]["revision"]
+            assert lseed.status_code == 200, lseed.text
+            lrevision = lseed.json()["project"]["revision"]
+            lplan = compile_render_plan(
+                Project.model_validate(client.get(lpath).json()),
+                "prores-4444-alpha",
+                transparent=True,
+            )
+            assert lplan.mode == "layered", lplan.mode
 
-            def refuse(tag: str, **extra: object) -> dict:
+            def deliver_layered(tag: str, exposure: float, grade: list) -> tuple[int, int]:
+                nonlocal lrevision
                 answer = client.post(
-                    spath + "/renders",
+                    lpath + "/edits",
                     json={
-                        "request_id": f"cx-{tag}",
-                        "expected_revision": srevision,
-                        "preset_id": extra.pop("preset_id", PRESET),
-                        "filename": f"{tag}.{'mov' if 'transparent' in extra else 'mp4'}",
-                        **extra,
+                        "request_id": f"cx-{tag}-edit",
+                        "expected_revision": lrevision,
+                        "commands": [
+                            {
+                                "op": "clip.color",
+                                "clip_id": "c",
+                                "color": {"exposure": exposure, "grade": grade},
+                            }
+                        ],
                     },
                 )
-                assert answer.status_code == 422, answer.text
-                return answer.json()["error"]
+                assert answer.status_code == 200, answer.text
+                lrevision = answer.json()["project"]["revision"]
+                job = client.post(
+                    lpath + "/renders",
+                    json={
+                        "request_id": f"cx-{tag}-job",
+                        "expected_revision": lrevision,
+                        "preset_id": "prores-4444-alpha",
+                        "filename": f"{tag}.mov",
+                        "transparent": True,
+                    },
+                )
+                assert job.status_code == 200, job.text
+                done = wait(client, job.json()["job"]["id"])
+                assert done["status"] == "succeeded", done
+                out = Path(done["output_path"])
+                return greys(out)[0], alpha_byte(out, 1.0, 0.5, 0.5)
 
-            blamed = refuse("cx-solo")
-            assert blamed["code"] == "COMPOSITE_NEEDS_CUT", blamed
-            assert blamed["details"]["reasons"] == ["片段 c 改了「不透明度」"], blamed
-            assert "不透明度" in blamed["message"], blamed["message"]
-            assert "多条画面轨" not in blamed["message"], blamed["message"]
-            assert "没有画面轨" not in blamed["message"], blamed["message"]
-
-            # 透明母版那一档：只有带 alpha 平面的预设能走到编译（否则先被 TRANSPARENT_NEEDS_ALPHA
-            # 拦在门外，问的就是另一件事）。
-            matte = refuse("cx-matte", transparent=True, preset_id="prores-4444-alpha")
-            assert matte["code"] == "COMPOSITE_NEEDS_CUT", matte
-            assert any("透明通道" in item for item in matte["details"]["reasons"]), matte
-            # 同一次拒绝里两条原因都要在：透明通道是这次交付带来的，不透明度是那条链带来的。
-            assert len(matte["details"]["reasons"]) == 2, matte["details"]
-            assert client.get(spath).json()["revision"] == srevision, matte
-            assert client.get(spath + "/jobs").json()["jobs"] == [], matte
-            for name in ("cx-solo", "cx-matte"):
-                assert name not in " ".join(item.name for item in exports.iterdir()), name
-
+            l_plain = deliver_layered("cx-l-plain", 0.0, [])
+            l_graded = deliver_layered("cx-l-graded", 0.5, [])
+            l_zero = deliver_layered("cx-l-zero", 0.5, [composite("screen", 0.0)])
+            l_one = deliver_layered("cx-l-one", 0.5, [composite("screen", 1.0)])
+            l_half = deliver_layered("cx-l-half", 0.5, [composite("screen", 0.5)])
+            lgraph = ";".join(
+                compile_render_plan(
+                    Project.model_validate(client.get(lpath).json()),
+                    "prores-4444-alpha",
+                    transparent=True,
+                ).filters
+            )
+            assert "alphamerge" in lgraph, "分层那一路要把 matte 盖回相合的结果"
+            assert "blend=all_mode=screen" in lgraph and "all_opacity=0.5" in lgraph, lgraph[:400]
+            assert l_graded[0] - l_plain[0] > 20, (l_plain, l_graded)
+            assert abs(l_zero[0] - l_plain[0]) <= 3, (l_zero, l_plain)
+            want_layered = 255 - (255 - l_graded[0]) * (255 - l_plain[0]) / 255
+            assert abs(l_one[0] - want_layered) <= 4, (l_one, want_layered)
+            mid_layered = l_plain[0] + 0.5 * (l_one[0] - l_plain[0])
+            assert abs(l_half[0] - mid_layered) <= 4, (l_half, mid_layered)
+            matte = {value for _, value in (l_plain, l_graded, l_zero, l_one, l_half)}
+            assert len(matte) == 1, (l_plain, l_graded, l_zero, l_one, l_half)
+            assert 100 <= l_plain[1] <= 155, l_plain
+            print(
+                f"   分层那一路：原图 {l_plain[0]} / 调完 {l_graded[0]} / mix=0 {l_zero[0]} / "
+                f"mix=1 {l_one[0]}（公式 {want_layered:.0f}）/ mix=0.5 {l_half[0]}，"
+                f"五份 alpha 都是 {l_plain[1]}"
+            )
             print(
                 f"   原图在交付里是 {original}、调完是 {graded}；"
                 f"mix=0 读回 {at_zero[0]}（=原图）、mix=1 读回 {at_one[0]}"
