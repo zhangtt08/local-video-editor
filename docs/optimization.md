@@ -76,7 +76,7 @@ tests/build_check.py：启动同一自包含引擎的两个隔离实例，构建
 1. 精确剪辑：四点剪辑**已交付**（`src/agentcut/fourpoint.py` + `tests/fourpoint_check.py`，成片量过「源长就剪、源短就重新计时、不静默猜」——原文写着「仍待实现」是过时的）。涟漪修剪、滚动剪辑（`roll_check.py`）、滑移（`slip_check.py`）、拆分内嵌音轨（`detach_check.py`）、持久组合/手动音画链接/多选与复制粘贴（`group_check.py`、`link_check.py`、`editing_check.py`）都已完成；链接要求先对齐位置/时长/速度，不自动分析波形，原视频仍按自身音量播放。剪贴板（复制的片段、关键帧节奏、素材上的入出点）自 1.125 起跨重启保存（`tests/desktop_clipboard_check.ts`）：读回先过形状门，冷的那份在粘到别的工程前由当前引擎重新探测缺的素材，探测不到就整批不粘并点名是哪几个。一批编辑命令的上限自 1.126 起是量出来的 2500 条（契约一处，能力表与界面读同一个数）。1.128 起时间线上按住 Alt 拖链接的某一边就是这一条命令（一次抓取，不用先单选；窗口到 (edge, delta) 的换算只有一处，不是单边移动就退回普通修剪）。1.127 交付了音画链接的**分边修剪**（J/L cut）：一条 `clip.link_split_trim` 只动被点名的那一边，伙伴两边不动，链接记录留着；`link_status` 的 `differences` 按「相对基准」报出 ticks，`clips.link_reconcile` 是一次拉回（界面那句中文与那颗按钮共用同一份数，不自己再算），成片量过「画面已经换到下一个镜头、同一段 440 Hz 的幅度一字不差」（`tests/jlcut_check.py` + 第 42 个壳层检查 `tests/desktop_jlcut_check.ts`）。**仍未做的**：跨工程不同帧率的自动转换（刻度按 `TIMEBASE` 走，位置对得上，帧网格与速度换算不自动改）；20,000 片段是契约上限，**引擎侧量过了**（打包引擎 1.129.0，一段一秒、单轨 20,000 段，八批各 2,500 条）：写入加读回从每批 0.40s 涨到 3.09s（中位 1.66s，总 13.3s——每批都要重写并哈希整份工程，所以是超线性的），整份工程 JSON 13.1 MiB，之后一次 GET 读回 0.82s。**界面侧那条缺陷已经在 1.131–1.133 还掉了**：当年量到的是同一份工程在打包好的渲染层里连一次 `document.querySelectorAll('.clip').length` 都读不出来（CDP 求值 15s 超时），首帧把两万张卡片全建出来（1.132：never-painted、0 张、进程树峰值 2,994 MB 后渲染进程消失）；1.133 把「建多少东西」绑到视口而不是时间线长度之后，装机实测同一份工程（12,103,211 字节）painted 于 6.7 s、13 张卡片、485 个 DOM 节点、进程树峰值 843 MB，页面那句「窗口外还有 19987 段没有画（它们仍在工程里，也在导出里）」念的是实数，`tests/desktop_20k_check.ts` 与 `desktop_zoomclamp_check.ts` 把首帧上界与脏偏好钉住。所以「两万段首帧画得出来、滚过去就有了」这句现在讲得出；**仍没量的是**：连续滚动的帧率、以及十万段这种量级（这台机器上没跑过）。
 2. 常用成片：13 种转场（清单由 `capabilities.transition_kinds` 下发，`transition_check.py`）、曲线变速与冻结帧（`speedramp_check.py`）、自动语音字幕（`asr_check.py`）、字幕样式与批量编辑（`style_check.py`、`textstyle_check.py`、`captions_comp_check.py`）、片段两头可拖的淡角柄与四种形状（`fade_check.py`、`fadeshape_check.py`、`fadebatch_check.py`）、按标记分割（`marker_check.py`、`marks_check.py`）均已交付。MXF 交付已交付（1.129：`mxf_check.py`，两条预设都真导真读，48 kHz 那条约束按计划阶段点名拒）。DPX／OpenEXR 这类每帧一个文件的序列交付**也已交付**（1.142：`exr-sequence` 与 `dpx-sequence` 两条预设，交付复检从「读一个文件」换成「按帧点货」，`alphamaster_check.py` 与 1.143 的装机真点都量过；`contracts.OUTPUT_CONTAINERS` 现为九个容器，`tests/docs_facts_check.py` 把 README 那一行钉回这张表）。**仍未做的**：MXF 之外的广播封装（没有 AS-11/DPP 一类的机房元数据），也不承诺可再分发全部 codec。
 3. AE 合成：时间贝塞尔与自定义手柄（`bezier_check.py`）、dope sheet 的一组针（框选、整组拖、Alt 删、轨道道，`desktop_keyframemarquee/keyframedrag/keyframelane_check.ts`）、路径遮罩与其形状动画（`pathmask_check.py`、`maskshape_check.py`、`maskanim_check.py`）、嵌套合成（`nest_check.py` 量嵌套本身与 `sequence_id` 的预演/重放，`nestfx_check.py` 量合成里的每条滤镜落在同一片像素上，`analysis_sweep_check.py` 量九条分析入口对合成内部的每条拒绝都点名；第十条自动调色由 `self_check.py` 走真实 MCP stdio 量过）、混合模式两端同数（`blend_check.py` 与 1.122 的分支混合）、逐帧柔焦/清晰（`blurkey_check.py`、`sharpenkey_check.py`）已完成。**仍未做的**：① 调色节点的第二路输入（把另一段画面喂进同一个节点）——两支画面进同一个 FFmpeg 阶段与浏览器 canvas 的复合都已逐模式量过并记在 `AGENTS.md`，但那是会把「一条链塌成一张每通道表」这个不变量换掉的架构改动，没有连线形状之前不假装交付；② 多目标跟踪（一个片段现在只有一个遮罩槽位 `Clip.mask`，1.85 的遮挡续跟是一个目标一条轨迹）。
-4. 达芬奇工作流：色轮/曲线/色阶/通道混合/1D+3D LUT（`grade_check.py`、`gradelevels_check.py`、`matrix_check.py`、`lut_check.py`、`lut3d_check.py`）、示波器（`tests/scope_check.ts`）、色彩空间转换与每通道表的精度（`grade_check.py`、`gradelevels_check.py`、`curvefidelity_check.py`）、整轨响度/去空白/自动闪避（`loudness_check.py`、`silence_check.py`、`duck_check.py`）、代理与缓存配额（`proxy_check.py`、`proxyspace_check.py`、`cache_check.py`）已完成，调色图还能摆成树（1.124）。**仍未做的**：完整的二通道色彩管理流程里剩下的那一半——一键套叠本身已在 1.130 交付（`clip.color_manage`，一条命令把片段搬进线性光再搬回显示端，`colormanage_check.py` 量过），但输入侧的**自动识别**（读素材自带的色域/传递函数标记并据此选两端）仍是手工选；可调快捷键已在 1.134–1.135 交付（`desktop/src/keymap.ts` 那张表，21 条，界面与历史念同一份）；代码签名仍没有，它要一张证书而不是一个改动。
+4. 达芬奇工作流：色轮/曲线/色阶/通道混合/1D+3D LUT（`grade_check.py`、`gradelevels_check.py`、`matrix_check.py`、`lut_check.py`、`lut3d_check.py`）、示波器（`tests/scope_check.ts`）、色彩空间转换与每通道表的精度（`grade_check.py`、`gradelevels_check.py`、`curvefidelity_check.py`）、整轨响度/去空白/自动闪避（`loudness_check.py`、`silence_check.py`、`duck_check.py`）、代理与缓存配额（`proxy_check.py`、`proxyspace_check.py`、`cache_check.py`）已完成，调色图还能摆成树（1.124）。**仍未做的**：完整的二通道色彩管理流程里剩下的那一半——一键套叠本身已在 1.130 交付（`clip.color_manage`，一条命令把片段搬进线性光再搬回显示端，`colormanage_check.py` 量过），输入侧的**自动识别**已在 1.150 交付（`auto_source` 读素材自己的 `color_transfer`，`colortags.py` + `colortags_check.py`；只有带实测标记的四种曲线认得出，`gamma18`／`gamma20`／`gamma24` 没有对应的标记，仍要手工选，只标了矩阵系数或基色的文件按 `no_transfer_tag` 点名拒而不是猜）；可调快捷键已在 1.134–1.135 交付（`desktop/src/keymap.ts` 那张表，21 条，界面与历史念同一份）；代码签名仍没有，它要一张证书而不是一个改动。
 5. 真实生产验收：项目备份与打包迁移已交付（`bundle_check.py`）；仍欠用户的长项目与素材格式、4K 多轨性能、快捷键预设与签名发布。
 
 现阶段能覆盖的已经不止基础剪辑、画中画、字幕与基础动画；上面每条「仍未做」都写清了它缺的是哪一个不变量或哪一个没验收的量——不拿看着像的近似当已交付。
@@ -5194,3 +5194,57 @@ ProRes 4444 的 matte 会被悄悄改成不透明；② 岛屿两端的 `format=
 上那一份 9.0.2（就是 1.146 当年撞上的那一份），挂基色矩阵那条长滤镜图的交付必须以命名拒绝
 收场——实测 PASS：ready 行报的就是被指过去的那一份、回执里点名 9.0.2 与路径、说出 `--ffmpeg`
 与 `AGENTCUT_FFMPEG` 这两个名字，而 `Unrecognized option` 那句原始 stderr 不再独自当结论。
+
+## 1.150 先修「话说过头」，再把一键色彩管理的输入侧交给素材自己
+
+这一轮的两半都是**对账**，不是新旋钮。
+
+**第一半：文档在说谎。** README 的「边界」写着「三种带画面的容器」「仍没有 MXF/DPX 一类的
+后期格式」，而 MXF 是 1.129 交的、OpenEXR/DPX 序列是 1.142 交的，两条都在同一份 README 的
+「已完成」表里；同一节写「已支持六属性关键帧」，而遮罩盒那四条（`MaskProperty`）与柔焦/清晰
+那三条（`SpatialProperty`）早就在契约里；「工作台升级」写 schema v11，而
+`contracts.SCHEMA_VERSION` 是 16；验证那节写 68 项 Python 检查与 6 个 TS 检查，实为
+`suite_check.py` 跑的 101 项与 `desktop_ts_check.py` 自己数的 52 项。`docs/optimization.md`
+上面那张清单同样落后（把 1.130 的一键色彩管理、1.134–1.135 的可改键位、1.131–1.133 的两万段
+首帧还账都仍列为「未做」）。这些不是排版问题：README 的「已完成」表被 AGENTS.md 指为
+「当前事实来源」，一句过时的「还没做」会把一个已经能用的能力从用户的视野里抹掉，一句过时的
+「只有三种容器」则是对交付面的夸大。
+新门禁 `tests/docs_facts_check.py` 不校对文案，只把句子钉回来源：`OUTPUT_CONTAINERS` 那九个
+容器逐个必须在预设那一行里念到；README 引用的 schema 数必须等于 `contracts.SCHEMA_VERSION`；
+`EffectProperty`／`MaskProperty`／`SpatialProperty`／`BlendMode` 四类在某句话里报出的条数
+（中文数词或阿拉伯数字都认）必须等于那条 Literal 的成员数；七条过时说法按原文禁掉。
+五条突变逐条红在自己那条断言上——包括**反方向**那一条（把 contracts 改成 17 而 README 不动，
+红），而且这条本轮真的红过一次：schema 涨到 17 时它立刻点名了刚写下去的那句「量到的值是 16」。
+
+**第二半：让素材替人回答「我是按哪条曲线写的」。** 达芬奇与 Premiere 的彩色管理流程之所以
+能一键，是因为输入侧由文件自带的标记决定；`clip.color_manage`（1.130）此前只把「两端各选一次」
+合并成一次点击，来源端仍要人知道这份素材是什么。现在 `auto_source: true` 让引擎自己去读
+`color_transfer`。三条只有量出来才说得对的事：
+
+- **四个标记里有三个不能当答案。** `color_space` 是 Y/R'G'B' 的矩阵系数、`color_primaries`
+  是基色坐标，两者都不决定 gamma，所以只标了这两样的文件回 `no_transfer_tag` 而不是被猜成
+  Rec.709；SD 带子那种 `smpte170m` 在七条曲线里没有对应，回 `unmatched_transfer_tag`。
+  翻译表 `COLOR_TRANSFER_TAGS` 只收实测过的行，`gamma18`／`gamma20`／`gamma24` 至今没有
+  对应的标记，所以那三条仍要手工选——这不是偷懒，是「不拿看着像的近似当已交付」。
+- **写进去的名字与读回来的名字不是同一个。** 用随包 FFmpeg 造素材写 `-color_trc gamma22`，
+  ffprobe 读回的是 `bt470m`（同一个存储枚举的两个拼法）；而 `-color_trc unknown` 根本不写
+  `color_transfer` 这个键。表里因此钉的是读回的那一拼，`probe_suite` 把这两件事各自钉成一条
+  断言；把 `bt470m` 那行删掉，`detect_suite` 立刻红。
+- **`auto_source` 不是第二条实现。** 量的是产物而不是意图：`tests/colortags_check.py` 先证
+  auto 与手工 `source_space: "rec709"` 写下**同一对节点**，再证两份工程编译出的导出命令串
+  逐字节相同，最后在同一次真实导出里取 0.4 s 与 1.4 s 两帧——两帧 RGB 完全相同（132,68,28），
+  且都不同于未套色彩管理的源色（128,64,32）。reducer 里 `if command.auto_source` 整条删掉，
+  那条红。
+
+回执那一头差点放过一条**不能红的检查**：第一版拿新代码自己两侧对算，默认值填没填都过，
+把 `_fingerprint` 的剥离规则整条删掉后 `receipt_suite` 仍然 exit=0。改成钉 1.149 那棵提交树
+自己算出的 `3abfc7a3…`（那份模型的 dump 里没有 `auto_source` 这个键）之后才真的会红：删规则
+算出 `02556ccb…` 红，还原后绿，`projects.py` 逐字节还原。这就是「断言要落在产物上」的具体
+形状——一个只会重复自己意图的门禁，比没有门禁更危险。
+
+验证账：`ruff check`/`format --check` 对 `src tests` 全绿；`colortags_check.py` 与
+`docs_facts_check.py` 各成一节门禁（`suite_check.py --list` 量到总数 103 项，这两条分别排在
+第 17 与第 27 位）；受影响面单跑 `colormanage_check.py`、
+`editing_check.py`、`grade_check.py`、`error_vocabulary_check.py`（151 个码 / 155 句中文 /
+0 句落回英文，`COLOR_SPACE_UNDETECTED` 那句点名「手工选来源空间」与「+LUT」两条真出路）、
+`read_sweep_check.py`、`ops_sweep_check.py` 全绿。引擎自报 1.150.0、工程 schema v17。
