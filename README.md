@@ -275,4 +275,4 @@ uv run python tests/suite_check.py grade marks fourpoint   # 只跑名字含这�
 
 ## 工作台升级
 
-详见 [本次升级与完整替代目标](docs/optimization.md)。项目 schema 现为 `contracts.SCHEMA_VERSION`（本轮量到的值是 16，`docs_facts_check.py` 把这一行钉回那张表），旧文档按 ge=1 起兼容读取，历史与旧请求回执同规则；左缘修剪、音画联动、涟漪删除和变速均由服务统一执行。
+详见 [本次升级与完整替代目标](docs/optimization.md)。项目 schema 现为 `contracts.SCHEMA_VERSION`（本轮量到的值是 17，`docs_facts_check.py` 把这一行钉回那张表），旧文档按 ge=1 起兼容读取，历史与旧请求回执同规则；左缘修剪、音画联动、涟漪删除和变速均由服务统一执行。

@@ -19,6 +19,7 @@ from .contracts import (
     AutoGradeRequest,
     CachePrune,
     Clip,
+    ClipColorSpaceRead,
     ClipStabilizeRequest,
     CreateProject,
     DuckRequest,
@@ -298,6 +299,25 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
             f"/v1/projects/{project_id}/clips/{clip_id}/silence",
             body,
             timeout=600,
+        )
+
+    @server.tool(annotations=read)
+    async def clip_color_space(
+        project_id: Identifier, clip_id: Identifier, request: ClipColorSpaceRead
+    ) -> dict[str, Any]:
+        """Report the tone curve this clip's own file claims, and whether `auto_source` can use it.
+
+        Read-only: nothing is written. A `space` is one of the seven the engine can convert, and it
+        is exactly what `clip.color_manage` with `auto_source = true` would pick for this clip. A
+        `null` names why not (`no_color_tags`, `no_transfer_tag`, `unmatched_transfer_tag`) and
+        carries the tags as the file spelled them, so the source end can be chosen by hand instead.
+        `sequence_id` asks about the clip inside that nested composition.
+        """
+        return await call(
+            "POST",
+            f"/v1/projects/{project_id}/clips/{clip_id}/color-space",
+            request.model_dump(mode="json"),
+            timeout=120,
         )
 
     @server.tool(annotations=read)

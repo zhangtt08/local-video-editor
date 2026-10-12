@@ -414,6 +414,7 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
                 "media_cache_prune",
                 "media_proxies_prune",
                 "clip_loudness",
+                "clip_color_space",
                 "track_loudness",
                 "track_silence",
                 "captions_auto",
@@ -450,6 +451,13 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
             for voiced in ("clip_loudness", "track_loudness", "track_silence"):
                 assert tools[voiced].annotations.readOnlyHint is True, voiced
                 assert "sequence_id" in json.dumps(tools[voiced].inputSchema), voiced
+            # 1.150: the colour read is the same shape — the file answers for itself here, and the
+            # writer stays `clip.color_manage`, which now carries `auto_source`.
+            assert tools["clip_color_space"].annotations.readOnlyHint is True
+            assert "sequence_id" in json.dumps(tools["clip_color_space"].inputSchema)
+            assert "auto_source" in json.dumps(tools["timeline_edit"].inputSchema), (
+                "1.150 的 auto_source 没有出现在 Agent 的命令 schema 里"
+            )
             # 1.97: the whole-track fade adoption is the same shape — a plan in, ordinary
             # `clip.fade_adopt` commands out, and `timeline_edit` still the only writer.
             assert tools["track_fade_adoption"].annotations.readOnlyHint is True

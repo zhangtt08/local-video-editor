@@ -32,14 +32,17 @@ from . import reframe as reframe_plan
 from . import stabilize as stabilize_module
 from .animation import graph_curve, preview_manifest, sample_values
 from .bundles import MAX_BUNDLE_BYTES, export_bundle, import_bundle
+from .colortags import detect_space
 from .contracts import (
     APP_VERSION,
+    COLOR_SPACES,
     TIMEBASE,
     TRACK_FRAMES_MIN,
     AutoGradeRequest,
     BundleImport,
     CachePrune,
     Clip,
+    ClipColorSpaceRead,
     ClipStabilizeRequest,
     CreateProject,
     DuckRequest,
@@ -1011,6 +1014,45 @@ def create_app(
         )
         mutation = projects.mutate(project_id, batch).model_dump()
         return {**mutation, "silence": {**result, "commands": commands}}
+
+    @app.post("/v1/projects/{project_id}/clips/{clip_id}/color-space", dependencies=auth)
+    def clip_color_space(
+        project_id: Identifier,
+        clip_id: Identifier,
+        request: ClipColorSpaceRead,
+        projects: Store,
+    ):
+        """Say which tone curve this clip's file claims, without writing anything.
+
+        `auto_source` on `clip.color_manage` is the writer; this is the read the interface and an
+        Agent consult before committing. Both go through `colortags.detect_space`, so a space
+        reported here is the space the reducer would have used, and a `null` here names the reason
+        (`no_color_tags`, `no_transfer_tag`, `unmatched_transfer_tag`) with the tags as read.
+        """
+        root = projects.get(project_id)
+        project = sequence_view(root, request.sequence_id)
+        clip = project.clips.get(clip_id)
+        if clip is None:
+            raise EditorError("NOT_FOUND", "clip is not in this project", 404, clip_id=clip_id)
+        asset = project.assets[clip.asset_id]
+        if asset.kind == "audio":
+            raise EditorError(
+                "INVALID_COLOR",
+                "an audio clip has no picture, so no transfer characteristic applies",
+                422,
+                clip_id=clip_id,
+                asset_id=asset.id,
+            )
+        space, report = detect_space(asset.verified)
+        return {
+            "clip_id": clip.id,
+            "asset_id": asset.id,
+            "asset_label": asset.label,
+            "space": space,
+            "auto_source_would_work": space is not None,
+            "color_spaces": list(COLOR_SPACES),
+            **report,
+        }
 
     @app.post("/v1/projects/{project_id}/clips/{clip_id}/loudness", dependencies=auth)
     def loudness_scan(

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from .colortags import detect_space
 from .contracts import (
     GRADE_INLINE_SAMPLE_LIMIT,
     GRADE_NODE_LIMIT,
@@ -827,7 +828,9 @@ def apply_commands(
                     if candidate.assets[clip.asset_id].kind == "audio":
                         raise EditorError("INVALID_COLOR", "audio has no color properties")
                     clip.color = clip.color.model_copy(
-                        update={"grade": _color_manage(clip, command)}
+                        update={
+                            "grade": _color_manage(clip, command, candidate.assets[clip.asset_id])
+                        }
                     )
                 elif command.op == "clip.grade":
                     if candidate.assets[clip.asset_id].kind == "audio":
@@ -1631,14 +1634,34 @@ def _clip_track(project: Project, clip: Clip):
     return track
 
 
-def _color_manage(clip, command: ClipColorManage) -> list:
+def _color_manage(clip, command: ClipColorManage, asset) -> list:
     """Wrap the clip's chain in the tagged source -> linear -> display pair.
 
     The pair is found by the tag this command writes, never by pattern-matching somebody's curves:
     taking it off has to hand back exactly the chain that putting it on found, which is the only
     promise worth making about nodes a person may have edited in between. The middle of the chain
     travels through untouched, so a grade built under the wrap survives re-wrapping.
+
+    `auto_source` asks the file instead of the person: the source end comes from `colortags`, and a
+    file that does not name a tone curve is refused with its tags in the report rather than given a
+    convenient default.
     """
+
+    if command.auto_source:
+        resolved, report = detect_space(getattr(asset, "verified", None))
+        if resolved is None:
+            raise EditorError(
+                "COLOR_SPACE_UNDETECTED",
+                "auto_source reads the transfer characteristic off the file, and this one does not "
+                f"name a tone curve this engine knows (reason: {report['reason']}, "
+                f"color_transfer: {report['color_transfer']!r}); say which of the seven curves the "
+                "source was authored in with source_space instead",
+                422,
+                clip_id=clip.id,
+                asset_id=asset.id,
+                **report,
+            )
+        command = command.model_copy(update={"source_space": resolved})
 
     chain = list(clip.color.grade)
     tagged = {

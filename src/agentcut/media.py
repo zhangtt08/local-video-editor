@@ -358,6 +358,13 @@ class MediaService:
             audio_channels=int(audio_stream.get("channels") or 0) or None if audio_stream else None,
             video_codec=(video_stream or {}).get("codec_name"),
             audio_codec=(audio_stream or {}).get("codec_name"),
+            # 1.150: keep what the file itself said about colour, spelled the way ffprobe spells
+            # it. Empty strings become None so "the stream carried no such tag" and "the stream
+            # tagged it as unknown" (ffprobe omits the key for `unknown`) are the same answer.
+            color_space=(video_stream or {}).get("color_space") or None,
+            color_primaries=(video_stream or {}).get("color_primaries") or None,
+            color_transfer=(video_stream or {}).get("color_transfer") or None,
+            color_range=(video_stream or {}).get("color_range") or None,
             mtime=int(path.stat().st_mtime),
             cached_at="",
         )

@@ -199,6 +199,12 @@ class ProjectStore:
                 # thing as one that was never mentioned (every branch composites normally).
                 if not node.get("blends"):
                     node.pop("blends", None)
+                # 1.150 gave `clip.color_manage` an `auto_source` switch. False is precisely the
+                # state a pre-1.150 payload was written in — the person named the source end — so
+                # dropping it keeps every receipt for a pair written before this release replaying
+                # as the one command it was, instead of splitting in two on retry.
+                if node.get("op") == "clip.color_manage" and not node.get("auto_source"):
+                    node.pop("auto_source", None)
                 for value in node.values():
                     strip_bezier_defaults(value)
             elif isinstance(node, list):

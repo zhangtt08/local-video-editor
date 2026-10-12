@@ -128,6 +128,28 @@ export type GradeCapacity = { samples: number; limit: number; room: number; room
   by_clip_samples: number; other_clips: number; nested_samples: number };
 /** 随回执一起记住它属于哪个 revision：数与 revision 不是同一份了就不许再显示。 */
 export type GradeCapacityCache = { value: GradeCapacity; revision: number } | null;
+/** 1.150：引擎那张「文件里的传递函数标记 → 哪条曲线」的对照表，随 capabilities 下发。
+ *  界面只把它念给人看；拿它再算一次「这个标记该读作哪条曲线」就是第二处答案，
+ *  而写命令的那一侧（`clip.color_manage` 的 `auto_source`）读的是引擎 `colortags` 那一处。 */
+export type ColorTransferTag = { tag: string; space: ColorSpace };
+/** 1.150：`POST /v1/projects/{id}/clips/{id}/color-space` 的回执——这份素材自己怎么说。
+ *  只读，一个字节都不写。`space` 就是引擎待会儿真会用的来源；`space` 为 null 时 `reason`
+ *  点名为什么（`detected` / `no_color_tags` / `no_transfer_tag` / `unmatched_transfer_tag`），
+ *  四个原始标记一律带在报告里，所以拒绝也说得出它读到了什么。 */
+export type ClipColorSpaceReport = {
+  clip_id: string;
+  asset_id: string;
+  asset_label: string;
+  space: ColorSpace | null;
+  auto_source_would_work: boolean;
+  color_spaces: ColorSpace[];
+  reason: string;
+  tag: string | null;
+  color_transfer: string | null;
+  color_space: string | null;
+  color_primaries: string | null;
+  color_range: string | null;
+};
 
 /** feColorMatrix 要 20 个数：把 3x3 摆成 RGBA 行，alpha 原样通过。滤镜上已写
  *  color-interpolation-filters="sRGB"，所以矩阵作用在和导出一样的存储值上，不是线性光。 */
@@ -518,6 +540,9 @@ export type Capabilities = {
   mask_vertex_limit?: number;
   /** 引擎认得的色彩空间名单，界面那两张下拉菜单照此列出，不自己再写一套。 */
   color_spaces?: ColorSpace[];
+  /** 1.150：引擎认得的「文件自带的传递函数标记 → 曲线」对照表。界面只念它，不用它算。
+   *  老引擎不回这一字段——那时这一行干脆不出现（`features.color_manage_auto` 也没有）。 */
+  color_transfer_tags?: ColorTransferTag[];
   /** 调色链的形状上限（节点数、并联支数、曲线点数、LUT 采样数）由引擎下发，界面照此限制。 */
   grade_limits?: {
     max_nodes: number;
@@ -712,6 +737,7 @@ export class EngineError extends Error {
       COLOR_MANAGE_IDENTITY: "来源和输出都选了「线性」，这一对什么都不转，却照样占两个节点、记一次历史，所以引擎什么都没写。把来源改成素材真正的空间（屏幕录制通常是 sRGB，广播时间线是 Rec.709），或者按「取下」把现有的一对删掉。",
       COLOR_MANAGE_LIMIT: "这一对要占调色链额度里的两个节点，取下旧的一对之后这条链还是装不下。先在调色节点里删掉几个不要的节点，或者这一段干脆不套色彩管理，只在输出端手动改一个转换。",
       COLOR_MANAGE_NO_CHANGE: "这一段已经是按你选的来源读入、按你选的输出写出了，再套一次不会改变任何东西，所以引擎没有写入。想换一套色彩空间就改上面两个下拉菜单再按「套上」；想重新来就按「取下」再套。",
+      COLOR_SPACE_UNDETECTED: "这份素材自己没有说清它是按哪条曲线写的（引擎读的是文件里的 transfer characteristic，色域与基色那两种标记定不出曲线，所以不算答案）。「按素材自带标记」这一档因此用不了：请在「来源空间」里手工选一条（屏幕录制一般是 sRGB，广播时间线是 Rec.709，SD 带子多是 Gamma 2.4），或者用「+LUT」把厂家给的查找表套上再调。",
       MEDIA_CACHE_ENTRY_MISSING: "这份派生数据已经不在了（缓存被清过）。重新打开一次素材就会自动重建。",
       MEDIA_EMPTY: "这个文件是空的或者读不出内容。确认文件完整后重新导入。",
       MEDIA_NOT_FOUND: "原文件不在这个位置了。把素材放回原来的文件夹，或者在素材库里重新指向新位置。",
@@ -1150,6 +1176,15 @@ export class Engine {
   /** 1.107：这份工程的查找表额度还剩多少（只读；数字由 `grade_capacity()` 一处算）。 */
   gradeCapacity(projectId: string) {
     return this.request<GradeCapacity>("GET", `/v1/projects/${projectId}/grade-capacity`);
+  }
+
+  /** 1.150：问这份素材自带的色彩标记说它是哪条曲线。整个请求体就是 `{"sequence_id": …}`，
+   *  端点只读不写——写仍然是那一条 `clip.color_manage`（`auto_source: true`）。
+   *  界面拿到回执只念，不自己判定：判定在引擎的 `colortags.detect_space`，写入走的是同一条。 */
+  clipColorSpace(projectId: string, clipId: string, body: { sequence_id: string | null }) {
+    return this.request<ClipColorSpaceReport>(
+      "POST", `/v1/projects/${projectId}/clips/${clipId}/color-space`, body, 60000
+    );
   }
 
   /** 1.97：走一遍这条轨，把 1.90 之前写成关键帧的淡排成普通的 `clip.fade_adopt` 命令。只读。 */

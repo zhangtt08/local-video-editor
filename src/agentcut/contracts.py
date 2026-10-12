@@ -10,11 +10,11 @@ from .gamut import gamut_presets
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = (
-    16  # v16 lets a free-form mask morph its own outline; older rows read no outline keys
+    17  # v17 stores the colour tags a probe read off the file; older rows read them as unsaid
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.148.0"
+APP_VERSION = "1.150.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -86,6 +86,13 @@ class VerifiedMedia(Contract):
     audio_channels: Annotated[int | None, Field(ge=0)] = None
     video_codec: Annotated[str | None, Field(max_length=64)] = None
     audio_codec: Annotated[str | None, Field(max_length=64)] = None
+    # The colour tags as the file itself spelled them, read by the probe and stored with the
+    # record. `None` here is a fact about the file (it said nothing), not an invitation to assume:
+    # see `colortags.detect_space`.
+    color_space: Annotated[str | None, Field(max_length=32)] = None
+    color_primaries: Annotated[str | None, Field(max_length=32)] = None
+    color_transfer: Annotated[str | None, Field(max_length=32)] = None
+    color_range: Annotated[str | None, Field(max_length=32)] = None
     mtime: Annotated[int, Field(ge=0)] = 0
     cached_at: Annotated[str, Field(max_length=64)] = ""
 
@@ -359,6 +366,24 @@ COLOR_SPACES: tuple[str, ...] = (
     "rec709",
 )
 ColorSpace = Literal["linear", "srgb", "gamma18", "gamma20", "gamma22", "gamma24", "rec709"]
+
+# 1.150: which file-carried tag spells which of the seven curves above. The transfer
+# characteristic (`-color_trc` when writing, `color_transfer` when ffprobe reads it back) is the
+# only tag that names a tone curve: the matrix coefficients (`color_space`) say how Y/R'G'B' is
+# folded and the primaries say where the phosphors sit — neither determines the curve, so neither
+# is used here, and a file that tags only those comes back as undetected rather than guessed at.
+# These four rows are the names this release read off its own bundled FFmpeg: writing
+# `-color_trc bt709|iec61966-2-1|linear` returns that same spelling, while writing
+# `-color_trc gamma22` returns `bt470m` (one stored enum, two names), and `-color_trc unknown`
+# writes no `color_transfer` key at all. A tag that is present but absent from this table — e.g.
+# the `smpte170m` an SD file carries — is a named refusal, not a silent default. `gamma18`,
+# `gamma20` and `gamma24` have no measured tag, so those three stay a manual choice.
+COLOR_TRANSFER_TAGS: tuple[tuple[str, ColorSpace], ...] = (
+    ("iec61966-2-1", "srgb"),
+    ("bt709", "rec709"),
+    ("bt470m", "gamma22"),
+    ("linear", "linear"),
+)
 
 
 class GradeCurve(Contract):
@@ -1578,6 +1603,18 @@ class ClipsGroup(Contract):
     group_id: Identifier | None
 
 
+class ClipColorSpaceRead(Contract):
+    """Ask what the file says, without writing anything.
+
+    `clip.color_manage` with `auto_source` is the writer; this is the reader an Agent or the
+    interface consults first, so a button can say which curve the asset carries (or name the reason
+    it cannot) before anybody commits a command that would be refused. It reads the same
+    `colortags.detect_space`, so the answer here and the one the reducer uses cannot diverge.
+    """
+
+    sequence_id: Identifier | None = None
+
+
 class ClipsLink(Contract):
     op: Literal["clips.link"]
     clip_ids: Annotated[list[Identifier], Field(min_length=1, max_length=20_000)]
@@ -1595,12 +1632,28 @@ class ClipColorManage(Contract):
     middle of the chain is never touched.
 
     `source_space = null` takes the pair off again.
+
+    `auto_source = true` asks the file to answer for itself: the source end then comes from the
+    colour tags the probe stored on that asset (`COLOR_TRANSFER_TAGS` is the only translation),
+    and a file whose tags do not name a tone curve is refused by name instead of being read as
+    something convenient. It cannot be combined with a hand-picked `source_space`: two answers to
+    one question is the bug, not the feature.
     """
 
     op: Literal["clip.color_manage"]
     clip_id: Identifier
     source_space: ColorSpace | None
     display_space: ColorSpace = "rec709"
+    auto_source: bool = False
+
+    @model_validator(mode="after")
+    def one_source_answer(self):
+        if self.auto_source and self.source_space is not None:
+            raise ValueError(
+                "auto_source takes the source end from the file's own colour tags, so name either "
+                f"that or a source_space ({self.source_space}) by hand, not both"
+            )
+        return self
 
 
 class ClipEffectsSet(Contract):
@@ -2828,6 +2881,9 @@ def capabilities(
         # 淡的形状同一条规矩：界面列的是这份表，不是自己写的四个名字。
         "fade_shapes": [dict(item) for item in FADE_SHAPES],
         "color_spaces": list(COLOR_SPACES),
+        # 1.150: the translation `clip.color_manage`'s `auto_source` actually uses. A renderer that
+        # guessed which tag means which curve would disagree with the engine, so the table goes out.
+        "color_transfer_tags": [{"tag": tag, "space": space} for tag, space in COLOR_TRANSFER_TAGS],
         # 基色转换表：矩阵由引擎算（`gamut.py`），界面与 Agent 都从这一处读。手抄的九个数迟早和
         # 另一侧不一样，而这种不一致在成片里只表现为「颜色有点偏」。
         "gamut_matrices": gamut_presets(),
@@ -2981,6 +3037,8 @@ def capabilities(
             "speed_change": True,
             "speed_curve": True,
             "color_correction": True,
+            # 1.150: `clip.color_manage` can take its source end from the file's own colour tags.
+            "color_manage_auto": True,
             "grade_nodes": True,
             "grade_node_mix": True,
             "lut_import": True,
