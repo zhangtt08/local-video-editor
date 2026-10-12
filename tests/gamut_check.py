@@ -148,7 +148,7 @@ def check_table() -> None:
         "rec709": (((0.640, 0.330), (0.300, 0.600), (0.150, 0.060)), (0.3127, 0.3290)),
         "rec601": (((0.630, 0.340), (0.310, 0.595), (0.155, 0.077)), (0.3127, 0.3290)),
         "rec2020": (((0.708, 0.292), (0.170, 0.797), (0.131, 0.046)), (0.3127, 0.3290)),
-        "p3-dci": (((0.680, 0.320), (0.265, 0.690), (0.150, 0.060)), (0.3127, 0.3290)),
+        "p3-d65-g22": (((0.680, 0.320), (0.265, 0.690), (0.150, 0.060)), (0.3127, 0.3290)),
         "display-p3": (((0.680, 0.320), (0.265, 0.690), (0.150, 0.060)), (0.3127, 0.3290)),
     }
     for name, (primaries, white) in published.items():
@@ -156,6 +156,17 @@ def check_table() -> None:
         assert got_white == white, (name, got_white, white)
         assert got_primaries == primaries, (name, got_primaries, primaries)
     print("   数据锚：五个档的原色与白点逐个对着出处念过（Rec.709／SMPTE-C／BT.2020-2 表 4／P3）")
+    # 标签不许说数据没做过的事。这一档存的是 P3 原色 + **D65 白** + γ2.2，那它就不该念
+    # 「影院／DCI-P3 母带」——真影院 DCI-P3 的白点是 0.314,0.351、传递特性是 γ2.6，而白点不同的
+    # 两档本模块是直接拒的（不做半套色适应）。1.148 对着权威表念数据时抓到的就是这一处，
+    # 所以钉成断言，不是记一句话：改回那句谎话，这一条就红。
+    for row in tables:
+        assert "影院" not in row["label"], row
+        assert "DCI" not in row["label"], row
+        for side in ("source", "target"):
+            if row[side].startswith("p3"):
+                assert "D65" in row["label"] and "γ2.2" in row["label"], row
+    print("   标签的账：六档里没有一句念影院／DCI，P3 那两档把自己配的白点与曲线写在名字里")
     recorded = [0.92092, 0.19879, 0.0, 0.03717, 1.08255, 0.0, 0.01913, 0.08106, 1.01952]
     gain = sum(recorded[:3])
     assert abs(gain - 1.11971) < 1e-4, gain

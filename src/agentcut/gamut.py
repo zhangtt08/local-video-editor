@@ -17,6 +17,9 @@ XYZ；两档之间 M = inv(A_target) @ A_source。行=输出通道，列=输入�
 
 白点：本表全是 D65，所以不需要色适应。哪天加进 D60/D50 的档，`primaries_matrix` 会直接拒——
 「只做了半套色适应」在成片里读起来只是颜色有点偏，没人会当 bug 报，所以宁可拒。
+也因为这个，**影院 DCI-P3 不在这张表里**：它的白点是影院基准（约 `0.314,0.351`）、传递特性是
+γ2.6。表里那一档 `p3-d65-g22` 是 P3 原色配 **D65 白 + γ2.2**（业界常写的「DCI-P3 D65」那一档），
+与 `display-p3` 只差曲线那一项——名字与 label 都按这个写，不许念「影院母带」。
 """
 
 from __future__ import annotations
@@ -39,7 +42,7 @@ PRIMARIES: dict[str, tuple[tuple[tuple[float, float], ...], tuple[float, float],
         (0.3127, 0.3290),
         "rec709",
     ),
-    "p3-dci": (
+    "p3-d65-g22": (
         ((0.680, 0.320), (0.265, 0.690), (0.150, 0.060)),
         (0.3127, 0.3290),
         "gamma22",
@@ -67,16 +70,16 @@ GAMUT_PRESETS: tuple[dict, ...] = (
         "target": "rec2020",
     },
     {
-        "id": "p3dci_to_rec709",
-        "label": "DCI-P3 → Rec.709（影院母带到电视）",
-        "source": "p3-dci",
+        "id": "p3d65g22_to_rec709",
+        "label": "P3 原色（D65 白、γ2.2）→ Rec.709（广色屏收到电视）",
+        "source": "p3-d65-g22",
         "target": "rec709",
     },
     {
-        "id": "rec709_to_p3dci",
-        "label": "Rec.709 → DCI-P3（电视到影院）",
+        "id": "rec709_to_p3d65g22",
+        "label": "Rec.709 → P3 原色（D65 白、γ2.2）",
         "source": "rec709",
-        "target": "p3-dci",
+        "target": "p3-d65-g22",
     },
     {
         "id": "displayp3_to_rec709",
