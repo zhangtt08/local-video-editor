@@ -166,6 +166,13 @@ def main() -> None:
         grade_filter(forward)
     )
     assert grade_filter(reverse).startswith(f"{ISLAND_IN},colorchannelmixer=")
+    # 量程声明必须**成对**。本轮实测三种形状：两端都钉（`matrix_check` 逐格 256 电平对上参考
+    # 乘法、`gamut_check`、`alphamaster_check` 全绿）、两端都不钉（也绿，但那时的正确性取决于
+    # 源文件带不带 tv 量程标签——真实素材带，所以不把它交给运气）、**只钉一头**时
+    # `gamut_check` 直接红。1.52 那节「插一次 planar 高位深就把黑场吃掉」量的正是第三类：
+    # 一头改了量程假设、另一头没有。这条断言把「只钉一头」钉成形状错误，不靠像素碰运气。
+    assert ISLAND_IN.endswith("scale=in_range=full:out_range=full"), ISLAND_IN
+    assert ISLAND_OUT.startswith("scale=in_range=full:out_range=full"), ISLAND_OUT
     # 只有跨通道那一段值得进岛：纯曲线链的形状一字不改（它本来就能塌成一张表，中间没有
     # 会被量化吃掉的线性站）。这一条是「不猜、不多动」的界，也是电池的靶。
     assert not grade_filter(ClipColor(grade=[CURVE])).startswith(ISLAND_IN), grade_filter(
