@@ -81,7 +81,7 @@ def source(folder: Path) -> Path:
 
 
 def grey_at(path: Path, at: float) -> int:
-    """某一刻的灰度（`greys()` 取的是全片唯一值的最小，淡入的起点会把最小值压到黑，所以这里按时间读）。"""
+    """某一刻的灰度：`greys()` 取的是全片最小值，淡入起点是黑，所以按时间读。"""
     raw = run(
         [
             FFMPEG,
@@ -563,7 +563,7 @@ def main() -> None:
             zero_grey, one_grey = grey_at(faded_zero[2], 1.5), grey_at(faded_one[2], 1.5)
             assert one_grey - zero_grey > 20, (zero_grey, one_grey)
             print(
-                f"   淡入中点 alpha={mid_zero}／淡完 alpha={late_zero}，mix=0 与 mix=1 两份逐字节相同；"
+                f"   淡入中点 alpha={mid_zero}／淡完 {late_zero}，两份逐字节相同；"
                 f"同一时刻灰度 mix=0 {zero_grey} 对 mix=1 {one_grey}"
             )
             print(
