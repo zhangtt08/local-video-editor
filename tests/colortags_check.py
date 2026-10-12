@@ -513,13 +513,20 @@ def http_suite(folder: Path) -> None:
     print("PASS http: the read names curve or reason, the write matches it, refusals move nothing")
 
 
+# The fingerprint the 1.149 tree computed for a `clip.color_manage` that only said "take the pair
+# off". Captured by running that commit's own `projects.ProjectStore._fingerprint` over this exact
+# payload (its model had no `auto_source` field at all), so it is an outside fact rather than a
+# number this release can recompute. If the default leaked into the hash, a receipt written before
+# 1.150 would no longer match on retry and the store would run the same edit a second time.
+PRE_1150_FINGERPRINT = "3abfc7a3ec20c1d11eeb69b716e51b5977fe10d4a834994233e072f99639a4ab"
+
+
 def receipt_suite(folder: Path) -> None:
     """A receipt written before `auto_source` exists still replays as the command it was.
 
     The pair that could have split is the one that writes the same thing: a pre-1.150 payload said
-    `source_space: null` (take the pair off), and so does a 1.150 payload that adds the default
-    `auto_source: false`. If the hash noticed the default, every old receipt for that command would
-    fail to replay and the store would run the same edit twice on retry.
+    `source_space: null` (take the pair off), and a 1.150 client may send that same command with the
+    new field filled in by the default. Asking the file for the answer has to be a different command.
     """
     store = ProjectStore(folder / "rc.sqlite3")
 
@@ -530,10 +537,9 @@ def receipt_suite(folder: Path) -> None:
         return store._fingerprint("timeline.edit", batch)
 
     off = {"op": "clip.color_manage", "clip_id": "c", "source_space": None}
-    silent = fingerprint({**off, "auto_source": False})
-    said = fingerprint({**off, "auto_source": True})
-    assert fingerprint(off) == silent, (fingerprint(off)[:12], silent[:12])
-    assert fingerprint(off) != said, "a payload that asks the file hashes like one that does not"
+    assert fingerprint(off) == PRE_1150_FINGERPRINT, fingerprint(off)
+    assert fingerprint({**off, "auto_source": False}) == PRE_1150_FINGERPRINT, "default split it"
+    assert fingerprint({**off, "auto_source": True}) != PRE_1150_FINGERPRINT, "auto hashed as no-op"
     print("PASS receipts: auto_source=false keeps a pre-1.150 receipt replaying as itself")
 
 
