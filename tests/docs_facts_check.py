@@ -119,12 +119,26 @@ def main() -> None:
                 f"({cn_number(want)}); the sentences read: " + " | ".join(w[:60] for w in windows)
             )
 
+    # 5. The delivery-colour row has to count the tags the contract table actually publishes, and
+    #    the row has to exist at all: a delivered capability that README stopped talking about is
+    #    the same class of lie as a wrong number.
+    colour_rows = [line for line in text.splitlines() if "output_colour_tags" in line]
+    assert colour_rows, "README never names capabilities.output_colour_tags"
+    assert len(colour_rows) == 1, "README names output_colour_tags in more than one place"
+    want_tags = len(contracts.COLOUR_TAG_CODES)
+    if f"{want_tags} 档" not in colour_rows[0]:
+        problems.append(
+            f"README's delivery-colour row does not say {want_tags} 档, which is what "
+            f"contracts.COLOUR_TAG_CODES publishes"
+        )
+
     assert not problems, "\n".join(problems)
     print(
         f"PASS: {len(contracts.OUTPUT_CONTAINERS)} containers named, schema "
         f"{contracts.SCHEMA_VERSION} quoted, "
         f"{count_of('EffectProperty')}+{count_of('MaskProperty')}+{count_of('SpatialProperty')} "
-        f"animated properties and {count_of('BlendMode')} blend modes match the contract"
+        f"animated properties and {count_of('BlendMode')} blend modes match the contract, "
+        f"{len(contracts.COLOUR_TAG_CODES)} delivery colour tag(s) counted"
     )
 
 

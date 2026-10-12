@@ -43,6 +43,7 @@ def plan_for(
     transparent: bool = False,
     timecode: str | None = None,
     output_frame_rate: FrameRate | None = None,
+    colour_tag: str | None = None,
 ) -> RenderPlan:
     """One place that turns a request's `range` into the ticks the exporter trims to, so the
     render-plan preview, the queued job and the worker all read the same marks."""
@@ -64,6 +65,7 @@ def plan_for(
         transparent=transparent,
         timecode=timecode,
         output_frame_rate=output_frame_rate,
+        colour_tag=colour_tag,
     )
 
 
@@ -412,6 +414,29 @@ def frame_seconds(plan: RenderPlan) -> float:
         return 0.0
 
 
+def request_fingerprint(project_id: str, request: RenderRequest) -> str:
+    """The digest a render receipt is stored under: one delivery request, one fingerprint."""
+    canonical = json.dumps(
+        [project_id, request.preset_id, request.filename, request.folder, request.fit]
+        # Only fields whose value is *not* the default join the array, so a receipt written before
+        # the field existed replays as itself instead of turning the retry into a conflict — that
+        # is how `range`, `transparent`, `timecode`, `colour_tag` and `output_frame_rate` arrived.
+        + ([request.range] if request.range != "full" else [])
+        + ([request.sequence_id] if request.sequence_id is not None else [])
+        + ([request.transparent] if request.transparent else [])
+        + ([request.timecode] if request.timecode else [])
+        + ([request.colour_tag] if request.colour_tag else [])
+        + (
+            [request.output_frame_rate.numerator, request.output_frame_rate.denominator]
+            if request.output_frame_rate is not None
+            else []
+        ),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
 class JobRuntime:
     def __init__(
         self, db_path: Path, ffmpeg: Path | None, output_dir: Path, output_roots: list[Path]
@@ -619,27 +644,7 @@ class JobRuntime:
     def _submit_locked(self, project: Project, request: RenderRequest) -> tuple[RenderJob, dict]:
         if not self.ffmpeg:
             raise EditorError("MEDIA_TOOL_MISSING", "ffmpeg is not configured, cannot render", 503)
-        canonical = json.dumps(
-            [project.id, request.preset_id, request.filename, request.folder, request.fit]
-            # Only a non-default range joins the fingerprint, so a receipt written before this field
-            # existed still replays as itself instead of turning into a conflict.
-            + ([request.range] if request.range != "full" else [])
-            + ([request.sequence_id] if request.sequence_id is not None else [])
-            # Same trick as `range`: only a set flag joins the fingerprint, so a receipt written
-            # before this field existed replays as itself instead of turning into a conflict.
-            + ([request.transparent] if request.transparent else [])
-            # Only a *set* value joins the fingerprint, so receipts written before these fields
-            # existed still replay as themselves.
-            + ([request.timecode] if request.timecode else [])
-            + (
-                [request.output_frame_rate.numerator, request.output_frame_rate.denominator]
-                if request.output_frame_rate is not None
-                else []
-            ),
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-        fingerprint = hashlib.sha256(canonical.encode()).hexdigest()
+        fingerprint = request_fingerprint(project.id, request)
         with self.connection() as db:
             row = db.execute(
                 "SELECT job_id,fingerprint FROM render_receipts WHERE request_id=?",
@@ -665,6 +670,7 @@ class JobRuntime:
                     transparent=request.transparent,
                     timecode=request.timecode,
                     output_frame_rate=request.output_frame_rate,
+                    colour_tag=request.colour_tag,
                 ).as_dict()
             except EditorError:
                 plan = {}
@@ -686,6 +692,7 @@ class JobRuntime:
             transparent=request.transparent,
             timecode=request.timecode,
             output_frame_rate=request.output_frame_rate,
+            colour_tag=request.colour_tag,
         )
         target = self._target_path(request)
         now = time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -700,6 +707,7 @@ class JobRuntime:
             transparent=request.transparent,
             timecode=request.timecode,
             output_frame_rate=request.output_frame_rate,
+            colour_tag=request.colour_tag,
             filename=target.name,
             status="queued",
             total_ticks=plan.duration_ticks,
@@ -737,6 +745,7 @@ class JobRuntime:
                     transparent=item.transparent,
                     timecode=item.timecode,
                     output_frame_rate=item.output_frame_rate,
+                    colour_tag=item.colour_tag,
                 )
             results: list[tuple[RenderJob, dict]] = []
             for index, item in enumerate(batch.items):
@@ -752,6 +761,7 @@ class JobRuntime:
                     transparent=item.transparent,
                     timecode=item.timecode,
                     output_frame_rate=item.output_frame_rate,
+                    colour_tag=item.colour_tag,
                 )
                 if batch.dry_run:
                     results.append(
@@ -766,6 +776,7 @@ class JobRuntime:
                                 transparent=item.transparent,
                                 timecode=item.timecode,
                                 output_frame_rate=item.output_frame_rate,
+                                colour_tag=item.colour_tag,
                                 filename=item.filename,
                                 status="queued",
                             ),
@@ -778,6 +789,7 @@ class JobRuntime:
                                 transparent=item.transparent,
                                 timecode=item.timecode,
                                 output_frame_rate=item.output_frame_rate,
+                                colour_tag=item.colour_tag,
                             ).as_dict(),
                         )
                     )
@@ -890,6 +902,7 @@ class JobRuntime:
             transparent=job.transparent,
             timecode=job.timecode,
             output_frame_rate=job.output_frame_rate,
+            colour_tag=job.colour_tag,
         )
         target = Path(job.output_path or (self.output_dir / job.filename))
         sequence = bool(preset_by_id(job.preset_id)["sequence"])

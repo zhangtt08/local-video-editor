@@ -677,6 +677,7 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         transparent: bool = False,
         timecode: str | None = None,
         output_fps: str | None = None,
+        colour_tag: str | None = None,
     ) -> dict[str, Any]:
         """Dry-run: compile the RenderPlan (graph mode, segments, argv) without rendering."""
         query = f"?preset_id={preset_id}" + ("" if revision is None else f"&revision={revision}")
@@ -695,6 +696,10 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
             query += f"&timecode={quote(timecode, safe='')}"
         if output_fps:
             query += f"&output_fps={quote(output_fps, safe='')}"
+        # 1.151: 干跑要能问到同一句「这张母版声明自己是 BT.709」，否则 Agent 看到的计划
+        # 与真交付不是同一个东西。
+        if colour_tag:
+            query += f"&colour_tag={quote(colour_tag, safe='')}"
         return await call("GET", f"/v1/projects/{project_id}/render-plan{query}")
 
     @server.tool(annotations=safe_write)

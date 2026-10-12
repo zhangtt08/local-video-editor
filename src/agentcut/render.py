@@ -30,6 +30,7 @@ from .contracts import (
     GBLUR_STEPS,
     MASK_FIELDS,
     MASK_SHAPE_SCHEDULE_MAX,
+    OUTPUT_COLOUR_TAGS,
     TEXT_FONTS,
     TIMEBASE,
     EditorError,
@@ -407,6 +408,64 @@ def preset_by_id(preset_id: str) -> dict:
     raise EditorError("UNKNOWN_PRESET", "unknown render preset", 422, preset_id=preset_id)
 
 
+def row_id_of(row: dict | None) -> str | None:
+    return None if row is None else str(row["id"])
+
+
+def colour_tag_row(tag: str | None) -> dict | None:
+    """The one declared colour of a delivered master, or None for "say nothing" (the default).
+
+    A name outside `OUTPUT_COLOUR_TAGS` is refused here rather than passed down: the vocabulary of
+    what a master may claim is closed in the contract, exactly like the preset and container tables.
+    """
+    if tag is None:
+        return None
+    for row in OUTPUT_COLOUR_TAGS:
+        if row["id"] == tag:
+            return row
+    exits = "、".join(str(row["id"]) for row in OUTPUT_COLOUR_TAGS)
+    raise EditorError(
+        "UNKNOWN_COLOUR_TAG",
+        f"这一条交付要写的色彩标记 {tag!r} 不在这张构建认识的表里；可选的是 {exits}，"
+        "或者干脆留空（留空就是不写任何标记，今天所有交付都是这样）",
+        422,
+        colour_tag=tag,
+        known=[str(row["id"]) for row in OUTPUT_COLOUR_TAGS],
+    )
+
+
+def colour_flags(tag: str | None, preset: dict) -> list[str]:
+    """The container flags for a declared colour, or the reason this preset cannot declare one."""
+    row = colour_tag_row(tag)
+    if row is None:
+        return []
+    if preset["sequence"]:
+        raise EditorError(
+            "COLOUR_TAG_NEEDS_CONTAINER",
+            f"{preset['label']} 交出的是一串图像文件，没有容器 VUI 可以写色彩标记——"
+            "EXR／DPX 自己带的是逐帧的像素格式说明，不是这三样。要写标记请选 mov／mp4／mxf／webm",
+            422,
+            preset_id=preset["id"],
+            colour_tag=row["id"],
+        )
+    if preset["codec"] is None:
+        raise EditorError(
+            "COLOUR_TAG_NEEDS_PICTURE",
+            f"{preset['label']} 这一条只有声音，色彩标记是给画面写的；要标记请选一条带画面的交付",
+            422,
+            preset_id=preset["id"],
+            colour_tag=row["id"],
+        )
+    return [
+        "-color_primaries",
+        row["primaries"],
+        "-color_trc",
+        row["transfer"],
+        "-colorspace",
+        row["matrix"],
+    ]
+
+
 def output_args(
     preset: dict,
     sample_rate: int,
@@ -415,6 +474,7 @@ def output_args(
     transparent: bool = False,
     timecode: str | None = None,
     delivery_rate=None,
+    colour_tag: str | None = None,
 ) -> list[str]:
     """Encode and mux arguments for one preset, switched by the codec the preset names.
 
@@ -430,6 +490,9 @@ def output_args(
     `contracts.checked_timecode` (FFmpeg silently rewrites several invalid forms), and it is
     refused here for a deliverable that has no picture to count frames of.
     """
+    # Asked first, because a preset that cannot carry the claim has to say so even when the
+    # rest of its argument list is built by an earlier `return` below.
+    colour_video_flags = colour_flags(colour_tag, preset)
     if transparent and not preset["alpha"]:
         exits = "、".join(str(item["id"]) for item in render_presets() if item["alpha"])
         raise EditorError(
@@ -503,6 +566,9 @@ def output_args(
         video += [
             "-pix_fmt",
             preset["pixel_format"],
+            # 1.151: the three tags a master may carry, beside a picture this graph really
+            # folded that way — see `colour_tag_row` and the zscale stage above.
+            *colour_video_flags,
             "-keyint_min",
             str(max(1, round(frame_rate))),
             "-g",
@@ -675,6 +741,7 @@ class RenderPlan:
             # flag they sent in.
             "transparent": self.summary.get("transparent"),
             "timecode": self.summary.get("timecode"),
+            "colour_tag": self.summary.get("colour_tag"),
             "project_frame_rate": self.summary.get("project_frame_rate"),
             "sequence": self.summary.get("sequence"),
             "audio": self.summary.get("audio"),
@@ -767,6 +834,7 @@ def compile_render_plan(
     transparent: bool = False,
     timecode: str | None = None,
     output_frame_rate: FrameRate | None = None,
+    colour_tag: str | None = None,
     _transparent: bool = False,
     _duration_ticks: int | None = None,
 ) -> RenderPlan:
@@ -912,6 +980,16 @@ def compile_render_plan(
         )
     fit_pre = f"{sizing}setsar=1,fps={fps}"
     fit_post = f"format={pixel_format},settb=AVTB"
+    tag_row = colour_tag_row(colour_tag)
+    if tag_row is not None:
+        # 这个标记断言的不只是基色与传递函数，还有 RGB→YUV 用哪一组系数折。不在这儿换折叠，
+        # 容器就会在一张按 BT.601 折出来的画面上写 bt709（实测同一格 (128,64,32)：默认折出
+        # Y=84，正是 601 的预测，709 应为 81）。折叠交给 `zscale` 在图里做，因为 `-pix_fmt` 的那
+        # 一步发生在编码器的 swscale 上下文里，那里读不到矩阵选项。
+        fit_post = (
+            f"zscale=matrix={tag_row['zscale_matrix']}:range={tag_row['zscale_range']},"
+            f"format={pixel_format},settb=AVTB"
+        )
 
     nested_sources = set()
 
@@ -1484,6 +1562,19 @@ def compile_render_plan(
             elif mode != "normal":
                 current = blend_track(plan, lower, current, mode)
             painted.append(len(entries))
+        if alpha_out and tag_row is not None:
+            # 透明母版的最后一步是把 rgba 直接交给编码器去折，那一折用的是谁家的系数这条图说不上；
+            # 在文件上写 bt709 就成了与画面无关的一句话。要么交不透明的母版并带上标记，要么这份
+            # 透明母版什么都不声明——取后者时这个字段留空即可。
+            raise EditorError(
+                "COLOUR_TAG_NOT_WITH_ALPHA",
+                "透明母版这一步是先把 rgba 一路带到编码器再折的，折的那一组系数不由这条图决定，"
+                "所以容器上写任何 matrix 都会与画面不符。要么交不透明的那份并带上标记，"
+                "要么这份透明母版留空（不声明）",
+                422,
+                preset_id=preset["id"],
+                colour_tag=row_id_of(tag_row),
+            )
         plan.filters.append(f"{current}format={'rgba' if alpha_out else pixel_format}[vout]")
         plan.summary["layers"] = len(layers)
     if not audio_only:
@@ -1611,6 +1702,7 @@ def compile_render_plan(
         transparent=transparent,
         timecode=timecode,
         delivery_rate=output_frame_rate,
+        colour_tag=colour_tag,
     )
     plan.summary.update(
         {
@@ -1622,6 +1714,9 @@ def compile_render_plan(
             "pixel_format": preset["pixel_format"],
             "transparent": transparent,
             "timecode": timecode,
+            # 声明的那一抹色彩也写进摘要：读 dry-run 的人或 Agent 要能从计划本身看出这份文件会带着
+            # 三样容器标记，而不是只从自己发出去的那个字段猜。
+            "colour_tag": row_id_of(tag_row),
             # 序列交付写进摘要：不写声音、产出是一串文件的名字，界面与 Agent 读同一份。
             "sequence": bool(preset["sequence"]),
             "audio": not preset["sequence"],

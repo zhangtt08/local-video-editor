@@ -14,7 +14,7 @@ SCHEMA_VERSION = (
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.150.0"
+APP_VERSION = "1.151.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -384,6 +384,34 @@ COLOR_TRANSFER_TAGS: tuple[tuple[str, ColorSpace], ...] = (
     ("bt470m", "gamma22"),
     ("linear", "linear"),
 )
+
+# 1.151: what a delivered master may declare about its own colour. One row, because that is all
+# this engine can state truthfully today: the timeline renders display-referred values and the
+# colour-managed chain's display end defaults to Rec.709, and the RGB->YUV fold is the third thing a
+# `bt709` tag asserts. The fold is *not* free — bundled FFmpeg leaves it to the encoder's own
+# swscale context, which measures as BT.601 (a solid (128,64,32) source comes back YUV=(84,104,158),
+# the BT.601 prediction), so naming the tag also swaps the last stage of the graph to
+# `zscale=matrix=709` (the same source then measures (80,108,157), i.e. BT.709 within 8-bit
+# rounding). Writing the tag without swapping the fold is the lie this row exists to prevent.
+OUTPUT_COLOUR_TAGS: tuple[dict[str, str], ...] = (
+    {
+        "id": "bt709",
+        "label": "BT.709（高清显示端交接母版）",
+        "primaries": "bt709",
+        "transfer": "bt709",
+        "matrix": "bt709",
+        # The values this build's `zscale` takes for the same matrix and the same range
+        # (`-h filter=zscale` lists both spellings; the short ones are what its table shows
+        # first). `range` has to be said out loud: left at "input", zscale takes an RGB source's
+        # full range with it and the file comes back `yuvj420p` + `color_range=pc` while the
+        # samples are limited-range numbers — a second container claim that the pixels contradict.
+        "zscale_matrix": "709",
+        "zscale_range": "tv",
+    },
+)
+
+# The closed vocabulary an Agent may name. It is derived from the table, never written twice.
+COLOUR_TAG_CODES = tuple(str(row["id"]) for row in OUTPUT_COLOUR_TAGS)
 
 
 class GradeCurve(Contract):
@@ -1325,6 +1353,9 @@ class RenderBatchItem(Contract):
     transparent: bool = False
     timecode: Annotated[str | None, Field(max_length=24)] = None
     output_frame_rate: FrameRate | None = None
+    # 1.151: declare the colour of the delivered picture, or say nothing (`None`). Only a
+    # set value joins a render's fingerprint, so receipts written before this field replay.
+    colour_tag: Annotated[str | None, Field(max_length=24)] = None
 
     @model_validator(mode="after")
     def safe_filename(self):
@@ -2390,6 +2421,9 @@ class RenderRequest(Contract):
     # 交付帧率：把这条时间线交成另一个率（PAL／NTSC／胶片感交接）。`None` 就是 1.138 之前的含义——
     # 跟时间线自己的率一致。可选值是一张闭表，见 `checked_output_rate`。
     output_frame_rate: FrameRate | None = None
+    # 1.151: declare the colour of the delivered picture, or say nothing (`None`). Only a
+    # set value joins a render's fingerprint, so receipts written before this field replay.
+    colour_tag: Annotated[str | None, Field(max_length=24)] = None
 
     @model_validator(mode="after")
     def safe_filename(self):
@@ -2456,6 +2490,9 @@ class RenderJob(Contract):
     timecode: Annotated[str | None, Field(max_length=24)] = None
     # 交付帧率同理：排队时选的那个率，落地的文件就得是那个率。
     output_frame_rate: FrameRate | None = None
+    # 1.151: declare the colour of the delivered picture, or say nothing (`None`). Only a
+    # set value joins a render's fingerprint, so receipts written before this field replay.
+    colour_tag: Annotated[str | None, Field(max_length=24)] = None
     filename: Annotated[str, Field(max_length=2048)]
     status: Literal["queued", "running", "succeeded", "failed", "cancelled"]
     total_ticks: Ticks = 0
@@ -2497,6 +2534,7 @@ class EditorError(Exception):
 # `jobs` requires the file name to carry the matching extension — so a delivered file is never a
 # stream the container cannot hold, and no caller can aim FFmpeg at an arbitrary muxer.
 OUTPUT_CONTAINERS = ("mp4", "mov", "webm", "mxf", "mp3", "wav", "flac", "exr", "dpx")
+
 # The codecs `render.output_args` knows how to ask for. Anything outside this set is refused rather
 # than passed through, which is what keeps the preset table a closed vocabulary of encoder knobs.
 # `None` means the deliverable carries no picture at all: the mix is the product.
@@ -2896,6 +2934,9 @@ def capabilities(
         # 时间码的写法与「哪两个率才有丢帧码」由引擎说，界面不许自己写死一份正则：
         # 这两条就是 `checked_timecode` 用的同一组常量。
         # 交付帧率的那张闭表也下发出去：界面排出来的就是这几档，不许自己再列一份。
+        # 1.151: the one claim a master may make about its own colour, and the flags that
+        # make it true. An interface that listed its own tag names would drift from this.
+        "output_colour_tags": [dict(row) for row in OUTPUT_COLOUR_TAGS],
         "output_frame_rates": [
             {"numerator": numerator, "denominator": denominator, "label": label}
             for numerator, denominator, label in OUTPUT_FRAME_RATES
@@ -3039,6 +3080,8 @@ def capabilities(
             "color_correction": True,
             # 1.150: `clip.color_manage` can take its source end from the file's own colour tags.
             "color_manage_auto": True,
+            # 1.151: `RenderRequest.colour_tag` swaps the fold and writes the tags.
+            "colour_tag_delivery": True,
             "grade_nodes": True,
             "grade_node_mix": True,
             "lut_import": True,

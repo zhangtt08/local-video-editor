@@ -304,6 +304,9 @@ export type RenderBatchItem = {
   timecode?: string | null;
   /** 1.138：交付帧率。不写就是「跟时间线自己的率一致」；表外的率由引擎拒（`UNKNOWN_OUTPUT_RATE`）。 */
   output_frame_rate?: OutputRate | null;
+  /** 1.151：这一条母版在容器上声明的颜色（表由 capabilities 下发）。不写就是照旧一个字都不写；
+   *  带不带的出去由 `colourTagAllowed` 那一处判，表外的名字由引擎拒（`UNKNOWN_COLOUR_TAG`）。 */
+  colour_tag?: string | null;
 };
 
 /** 一档交付帧率。合法的那几档只有一份，就是引擎能力表 `output_frame_rates` 下发的那一张。 */
@@ -495,6 +498,38 @@ export function matteAllowed(preset: Preset | null, audioOnly: boolean, requeste
   return requested && !audioOnly && Boolean(preset?.alpha);
 }
 
+/**
+ * 1.151：「交付色彩标记」此刻到底带不带得出去：标记是写在容器上的三样声明
+ * （primaries／transfer／matrix），所以这一条交付既得有画面、也得真有一个容器；透明母版那一
+ * 路是把 rgba 一路带到编码器才折的，写任何矩阵都成了与画面无关的话，所以也不带。
+ * 界面那句提示、待发清单、竖屏副本、以及真正发出去的那个值，全问这一处——同一个理由
+ * （两处各算一份）在 1.136 交付过一次 bug，这里不再犯第二遍。
+ */
+export function colourTagAllowed(
+  preset: Preset | null,
+  audioOnly: boolean,
+  isSequence: boolean,
+  matte: boolean,
+  requested: string | null,
+): string | null {
+  return requested && !audioOnly && !isSequence && !matte && preset !== null ? requested : null;
+}
+
+/**
+ * 1.151：母版可以在容器上声明的「我是什么颜色」，整张表由 capabilities 下发。
+ * 界面只用到 id 与 label；primaries／transfer／matrix 那几样是引擎写给 FFmpeg 的话，
+ * 类型故意收成 unknown——界面一旦想拿它们算点什么，编译期就先拦住，色彩数学只有一份。
+ */
+export type OutputColourTag = {
+  id: string;
+  label: string;
+  primaries?: unknown;
+  transfer?: unknown;
+  matrix?: unknown;
+  zscale_matrix?: unknown;
+  zscale_range?: unknown;
+};
+
 /** 引擎给的是 FFmpeg 的编码器名，这一层只负责念给人听；不认识的名字原样显示，不猜。 */
 export const CODEC_NAMES: Record<string, string> = {
   libx264: "H.264",
@@ -579,6 +614,10 @@ export type Capabilities = {
   timecode_drop_rates?: number[][];
   /** 1.138：交付帧率那张闭表整个下发，界面排出来的下拉就是引擎认的那几档。 */
   output_frame_rates?: OutputRate[];
+  /** 1.151：母版能声明的那几种交付颜色，整张表由引擎下发（`features.colour_tag_delivery` 是它的开关）。
+   *  界面只列 id 与 label，不用 primaries／transfer／matrix 算任何东西。老引擎不回这一字段，
+   *  那时这一栏干脆念「这一版引擎没有这一档」，导出照旧不带标记地走。 */
+  output_colour_tags?: OutputColourTag[];
 };
 
 /** 1.97 整轨规划的一项：要么是能搬的淡（带着将要落库的两个数），要么是搬不动的原因。 */
@@ -738,6 +777,10 @@ export class EngineError extends Error {
       COLOR_MANAGE_LIMIT: "这一对要占调色链额度里的两个节点，取下旧的一对之后这条链还是装不下。先在调色节点里删掉几个不要的节点，或者这一段干脆不套色彩管理，只在输出端手动改一个转换。",
       COLOR_MANAGE_NO_CHANGE: "这一段已经是按你选的来源读入、按你选的输出写出了，再套一次不会改变任何东西，所以引擎没有写入。想换一套色彩空间就改上面两个下拉菜单再按「套上」；想重新来就按「取下」再套。",
       COLOR_SPACE_UNDETECTED: "这份素材自己没有说清它是按哪条曲线写的（引擎读的是文件里的 transfer characteristic，色域与基色那两种标记定不出曲线，所以不算答案）。「按素材自带标记」这一档因此用不了：请在「来源空间」里手工选一条（屏幕录制一般是 sRGB，广播时间线是 Rec.709，SD 带子多是 Gamma 2.4），或者用「+LUT」把厂家给的查找表套上再调。",
+      UNKNOWN_COLOUR_TAG: "这个交付色彩标记不在引擎那张表里（表由 capabilities.output_colour_tags 下发，目前只有 BT.709 一档）。要么从那张表里挑，要么留空——留空就是照今天的老样子，一个标记都不写。",
+      COLOUR_TAG_NEEDS_CONTAINER: "EXR／DPX 交出的是一串图像文件，没有容器可以写这三样标记（primaries／transfer／matrix 都住在容器的 VUI 里）。要带标记的母版请选 mov／mp4／mxf／webm；序列这边由文件自己的像素格式说话。",
+      COLOUR_TAG_NEEDS_PICTURE: "这一条交付只有声音，色彩标记是给画面写的。要带标记的母版请选一条带画面的交付，或者把这一栏留空。",
+      COLOUR_TAG_NOT_WITH_ALPHA: "透明母版是把 rgba 一路带到编码器才折成 YUV 的，用哪一组系数折不由这条滤镜图决定，所以在容器上写 matrix 就成了与画面无关的话。要么交不透明的那份并带上标记，要么这份透明母版把这一栏留空。",
       MEDIA_CACHE_ENTRY_MISSING: "这份派生数据已经不在了（缓存被清过）。重新打开一次素材就会自动重建。",
       MEDIA_EMPTY: "这个文件是空的或者读不出内容。确认文件完整后重新导入。",
       MEDIA_NOT_FOUND: "原文件不在这个位置了。把素材放回原来的文件夹，或者在素材库里重新指向新位置。",
@@ -1205,7 +1248,7 @@ export class Engine {
     return this.request<CachePruneResult>("POST", "/v1/media/cache/prune", body, 120000);
   }
 
-  renderPlan(projectId: string, presetId: string, revision?: number, sequenceId: string | null = null, fit: RenderFit = "contain", range: RenderRange = "full", transparent = false, timecode?: string | null, outputFps?: OutputRate | null) {
+  renderPlan(projectId: string, presetId: string, revision?: number, sequenceId: string | null = null, fit: RenderFit = "contain", range: RenderRange = "full", transparent = false, timecode?: string | null, outputFps?: OutputRate | null, colourTag?: string | null) {
     const query = new URLSearchParams({ preset_id: presetId });
     if (revision !== undefined) query.set("revision", String(revision));
     if (sequenceId) query.set("sequence_id", sequenceId);
@@ -1214,6 +1257,8 @@ export class Engine {
     if (transparent) query.set("transparent", "true");
     if (timecode) query.set("timecode", timecode);
     if (outputFps) query.set("output_fps", `${outputFps.numerator}/${outputFps.denominator}`);
+    // 1.151：只有真挑了标记才写进 query；没挑就一个字段都不多，老引擎才不会因为不认的键整条拒收。
+    if (colourTag) query.set("colour_tag", colourTag);
     return this.request<{ plan: Record<string, unknown>; argv_preview: string[] }>(
       "GET",
       `/v1/projects/${projectId}/render-plan?${query.toString()}`
@@ -1255,7 +1300,7 @@ export class Engine {
     return this.request<{ revision: number; srt: string }>("GET", `/v1/projects/${projectId}/captions/${trackId}?revision=${revision}${sequenceId ? `&sequence_id=${sequenceId}` : ""}`);
   }
 
-  render(projectId: string, revision: number, presetId: string, filename: string, folder?: string, sequenceId: string | null = null, fit: RenderFit = "contain", range: RenderRange = "full", transparent = false, timecode?: string | null, outputFps?: OutputRate | null) {
+  render(projectId: string, revision: number, presetId: string, filename: string, folder?: string, sequenceId: string | null = null, fit: RenderFit = "contain", range: RenderRange = "full", transparent = false, timecode?: string | null, outputFps?: OutputRate | null, colourTag?: string | null) {
     return this.request<{ job: RenderJob; plan: Record<string, unknown> }>(
       "POST",
       `/v1/projects/${projectId}/renders`,
@@ -1272,6 +1317,8 @@ export class Engine {
         timecode: timecode ?? null,
         // 只有真选了才写出去：老引擎的契约是 `extra="forbid"`，多一个它不认的键就整条拒收。
         ...(outputFps ? { output_frame_rate: outputFps } : {}),
+        // 1.151 同一处置：没挑标记就连这个键都不出现，那份请求体还是老引擎认得的形状。
+        ...(colourTag ? { colour_tag: colourTag } : {}),
       }
     );
   }

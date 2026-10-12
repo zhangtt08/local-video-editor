@@ -1911,6 +1911,7 @@ def create_app(
         transparent: bool = False,
         timecode: str | None = None,
         output_fps: str | None = None,
+        colour_tag: str | None = None,
     ):
         project = projects.get(project_id, revision)
         plan = plan_for(
@@ -1922,6 +1923,7 @@ def create_app(
             transparent=transparent,
             timecode=timecode,
             output_frame_rate=parse_frame_rate(output_fps),
+            colour_tag=colour_tag,
         )
         return {"plan": plan.as_dict(), "argv_preview": plan.ffmpeg_argv("ffmpeg", "out.mp4")}
 
@@ -2026,6 +2028,7 @@ def create_app(
                     transparent=job.transparent,
                     timecode=job.timecode,
                     output_frame_rate=job.output_frame_rate,
+                    colour_tag=job.colour_tag,
                 ).as_dict()
             except EditorError:
                 plan = None

@@ -2469,7 +2469,7 @@ export async function loadJobs(id?: string) {
   }
 }
 
-export async function startRender(presetId: string, filename: string, folder?: string, fit: RenderFit = "contain", range: RenderRange = "full", transparent = false, timecode?: string | null, outputFps?: OutputRate | null) {
+export async function startRender(presetId: string, filename: string, folder?: string, fit: RenderFit = "contain", range: RenderRange = "full", transparent = false, timecode?: string | null, outputFps?: OutputRate | null, colourTag?: string | null) {
   if (!engine || !state.project) return null;
   const project = state.project;
   if (folder) {
@@ -2483,7 +2483,7 @@ export async function startRender(presetId: string, filename: string, folder?: s
   }
   set({ busy: "排队渲染…" });
   try {
-    const result = await engine.render(project.id, project.revision, presetId, filename, folder, state.sequenceId, fit, range, transparent, timecode, outputFps);
+    const result = await engine.render(project.id, project.revision, presetId, filename, folder, state.sequenceId, fit, range, transparent, timecode, outputFps, colourTag);
     set({ jobs: [result.job, ...state.jobs] });
     toast("ok", range === "marks" ? "开始导出区间" : "开始导出", `锁定 r${project.revision}，进度在右下角导出面板。`);
     void watchJob(result.job.id);
@@ -2596,10 +2596,10 @@ export async function exportRecipe(recipeId: string, folder?: string) {
   return startRenderBatch(recipe.items, folder);
 }
 
-export function renderPlanPreview(presetId: string, fit: RenderFit = "contain", range: RenderRange = "full", transparent = false, timecode?: string | null, outputFps?: OutputRate | null) {
+export function renderPlanPreview(presetId: string, fit: RenderFit = "contain", range: RenderRange = "full", transparent = false, timecode?: string | null, outputFps?: OutputRate | null, colourTag?: string | null) {
   if (!engine || !state.project) return;
   void engine
-    .renderPlan(state.project.id, presetId, state.project.revision, state.sequenceId, fit, range, transparent, timecode, outputFps)
+    .renderPlan(state.project.id, presetId, state.project.revision, state.sequenceId, fit, range, transparent, timecode, outputFps, colourTag)
     .then((result) => {
       const argv = result.argv_preview.join(" ");
       const mode = FIT_MODES.find((item) => item.id === fit);
@@ -2612,7 +2612,10 @@ export function renderPlanPreview(presetId: string, fit: RenderFit = "contain", 
         "已生成渲染计划",
         `按「${mode?.label ?? fit}」${transparent ? "背景透明" : "不透明"}${
           timecode ? `·时间码 ${timecode}` : ""
-        }${outputFps ? `·交付 ${outputFps.numerator}/${outputFps.denominator} fps` : ""}由服务端编译${window}，界面只读：${argv.slice(0, 160)}…`
+        }${outputFps ? `·交付 ${outputFps.numerator}/${outputFps.denominator} fps` : ""}${
+          // 1.151：念的是真发出去的那个值（名字由引擎那张表给，界面不另写一份）。
+          colourTag ? `·色彩标记 ${colourTag}` : ""
+        }由服务端编译${window}，界面只读：${argv.slice(0, 160)}…`
       );
     })
     .catch((error: unknown) => {

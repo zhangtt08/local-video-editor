@@ -5259,3 +5259,112 @@ ProRes 4444 的 matte 会被悄悄改成不透明；② 岛屿两端的 `format=
 FFmpeg 造一份带 bt709 与一份不带标记的素材，量到 capabilities 报 1.150.0／schema 17／
 `color_manage_auto` 为真、只读路由 `bt709 → rec709` 与 `no_color_tags`、`auto_source` 写下
 `rec709→linear→rec709`、对没标记那份的写请求回 422 `COLOR_SPACE_UNDETECTED` 且 revision 不动。
+
+## 1.151 交付的那一头可以声明色彩：先把「标签与画面必须一致」量死
+
+上一轮停在「`-colorspace bt709` 只写容器、一个像素都不动」这一个数上。这一轮把那条式子真的接进
+交付，接法只有一种是老实的：**同时改两处**——滤镜图最后一步换成
+`zscale=matrix=709:range=tv,format=<预设像素格式>,settb=AVTB`，容器写
+`-color_primaries`／`-color_trc`／`-colorspace`。字段是 `RenderRequest`／`RenderBatchItem`／
+`RenderJob` 上的 `colour_tag`（默认 `null`＝照旧一个标记都不写，argv 逐字节是 1.150 那一份），
+MCP 的 `render_plan` 与 `GET …/render-plan` 各多一个同名入参。
+
+### 量到的四个数（`tests/colour_tag_check.py`，`pixels_suite`）
+
+素材那一格在 PNG 里**实拿 RGB (126,63,30)**——不是名义上的 (128,64,32)：`lavfi color=` 落到
+PNG 之前已经过了一次折算，所以两个参考预测都必须用**量到的**那格去算，否则门禁会比着一张假想
+的素材验证。同一份素材交两次 h264：
+
+| 交付 | 量到的 YUV | BT.601 预测 | BT.709 预测 | 容器回读 |
+|---|---|---|---|---|
+| 不带标记 | (83,104,158) | (83,104,158) | (80,107,157) | 四键全缺 |
+| 带 `bt709` | (80,107,157) | (83,104,158) | (80,107,157) | `color_space`／`primaries`／`transfer` 均 `bt709`，`color_range=tv` |
+
+两份预测都由本文件按公开系数（601：0.299/0.587/0.114；709：0.2126/0.7152/0.0722）独立算出，
+不从引擎 import——否则「引擎里那组系数写错了」这一类缺陷永远红不了。带标记那份再走一遍 1.150 的
+`detect_space`，读回 `rec709`：引擎认得出自己导出的母版，这一条才是「下游调色间不必猜」的意思。
+
+### 两条 FFmpeg 事实是拿突变撞出来的，不是查表查到的
+
+1. `zscale` 的矩阵表里**没有 `601` 这一拼**。第一次想把「折叠没生效」钉成断言，突变写成
+   `zscale=matrix=601:range=tv`，FFmpeg 直接 `Error while filtering: Generic error in an external
+   library` 崩在半路——红是红了，却红在渲染而不是红在那条断言上，等于什么都没证明。换成表里真有
+   的 `470bg`（601 族在 `zscale` 里的名字是 `470bg`／`bt470bg`／`170m`，`-h filter=zscale` 数出来
+   的）才量到「折的是 601、说的是 709」这一对。
+2. `range` 不钉 `tv`，有限量程的样本会被交成 `yuvj420p`＋`color_range=pc`：容器上写的三样标记与
+   量程就各自说话。所以 `zscale=matrix=…:range=…` 之后必须接一个独立的 `format=`（`zscale` 没有
+   `format` 选项，这是上一轮就撞过的），再 `settb=AVTB` 把时间基交回去。
+
+### 三条拒绝各点名一种「带不出去」
+
+`COLOUR_TAG_NEEDS_CONTAINER`（EXR／DPX 是一串文件，没有容器 VUI 可挂）、`COLOUR_TAG_NEEDS_PICTURE`
+（MP3／WAV／FLAC 根本没有画面，标记是给画面写的）、`COLOUR_TAG_NOT_WITH_ALPHA`（透明母版把 rgba
+一路交给编码器才折，用哪组系数折不由这条图决定——在文件上写 matrix 就是一句与画面无关的话），
+外加 `UNKNOWN_COLOUR_TAG` 会回 `known` 列出表里真有什么。每条中文都在 `desktop/src/engine.ts`，
+`error_vocabulary_check.py` 这一轮量到 **155 个码 / 159 句中文 / 0 句落回英文**。反方向也钉住：
+同一个 alpha 预设**不勾透明**时那份 `format=rgba[vout]` 链逐字未改，`refusals_suite` 两种都断。
+
+### 一次「这条面没人看过」的现行犯
+
+`GET /v1/jobs/{id}` 给排队中／运行中的任务回一份它自己的计划，那份计划是 `plan_for(...)` 现场重
+编的——1.51 起就带着 `transparent`／`timecode`，但 `colour_tag` 接上去之后**没有任何断言读过它**：
+把 `colour_tag=job.colour_tag` 突变成 `None`，全套检查照绿。这一轮补了两条（`shown["plan"]
+["colour_tag"] == "bt709"` 与 `plan.colour_tag` 在 dry-run 摘要里），并且把这条面固定成确定性断言：
+`JobRuntime` 只有一个 worker 线程，所以第二次交付在第一次还在编码时必然仍是 queued，读得到。
+标记也进了 `RenderPlan.as_dict()`（与 `transparent`／`timecode` 同一位置的理由：读 dry-run 的人不必
+从自己发过的字段反推）。
+
+### 幂等回执：抽成一处，钉的是上一版自己算出的数
+
+`jobs.py` 里那段内联的 `canonical = json.dumps([...])` 抽成模块级 `request_fingerprint(project_id,
+request)`，行为一字未变。规则照 1.136／1.138／1.142 的老样子：**只有被点名的字段才进哈希**，所以
+1.150 之前写的未标记回执逐字重放；同 `request_id` 改要带标记是 409 `IDEMPOTENCY_CONFLICT`，不会
+悄悄回一份旧文件。钉住它的那串不是本轮能重算的：把 HEAD 的 `jobs.py` 用 `ast` 解析，从
+`_submit_locked` 里取出那条 `canonical` 赋值语句，用**上一版的** `RenderRequest` 求值，得到
+`["proj_pin_1","h264-720p-web","show.mp4",null,"contain"]` 与其摘要
+`39931bfe33e7b53745dd5d50caa79cb82065636e61bd8a6fdddc4de611a5c4cb`，两条都写进检查里。
+第一次跑这条检查还顺手抓到一个假象：把 `JobRuntime` 指到第二个 SQLite 文件时 worker 报
+`no such table: history`——真实部署里工程与任务队列本来就是同一个库，**fixture 指错库只会
+造出一个并不存在的缺陷**。
+
+### 界面这一头（`tests/desktop_colour_tag_check.ts`，第 54 项壳层检查）
+
+导出面板多一栏「交付色彩标记」，候选整档从 `capabilities.output_colour_tags` 来：界面只读 `id`
+与 `label`，`primaries`／`transfer`／`matrix`／`zscale_*` 在客户端类型里是 `unknown`——读它们不
+编译得过。带不出去时那行念的是具体那一个原因，并给一条真走得通的出路（换一条 mov／mp4／mxf／webm
+带画面的交付、或把「背景透明」去掉），而引擎没有这一档时界面明说「capabilities 里没有
+output_colour_tags 这一档」，**导出照常走**：门禁两个方向都判（只知拒绝的门禁本项目交付过一次）。
+`colourTagAllowed(preset, audioOnly, isSequence, matte, requested)` 是唯一一处算「这一次真正带得
+出去的是哪个值」的地方，控件的 `value`、那行 mono、待发清单两条目、两颗按钮的 title 都读它——
+1.150 那轮「两处各算一份」的 bug 不犯第二遍。检查扫整棵 `desktop/src`：四个标记值出现的清单必须
+等于一张空表（`rec709` 例外，它是 1.150 就在用的色彩空间 id，不是交付标记）。
+
+### 突变账（每条都要红在自己那条断言的消息上）
+
+| 突变 | 该红在哪 | 结果 |
+|---|---|---|
+| 容器不写 `-colorspace` | `compile_suite` 的那对 argv | RED |
+| 序列那道门禁关掉（`if preset["sequence"]`→`if False`） | `refusal_suite`「accepted a colour tag it cannot carry」 | RED |
+| 透明母版那道门禁关掉 | `refusal_suite`「accepted a colour claim it cannot back」 | RED |
+| 回执里 `colour_tag` 恒加入 | 「an untagged request no longer replays as the receipt 1.150 wrote」 | RED |
+| 回执里删掉 `colour_tag` | 「a tagged master hashed as the untagged one」 | RED |
+| render-plan 查询参数不再下传 | `http_suite` 那句 `"zscale=matrix=709"` | RED |
+| 摘要不写标记（`row_id_of(tag_row)`→`None`） | `compile_suite` 的 `tagged.summary["colour_tag"]` | RED |
+| `as_dict()` 不回标记 | `http_suite` 的 `shown["plan"]["colour_tag"]` | RED |
+| `GET /v1/jobs/{id}` 那份计划丢标记 | 同上 | RED |
+| 折成 `470bg` 却声明 `bt709` | `pixels_suite` 的 `close(after, want709)` | RED |
+| 折成 709 却声明 `bt470bg` | `pixels_suite` 的 `tagged_tags["color_space"] == "bt709"` | RED |
+
+前九条各有一次「写成非法命令」的失败版本（`matrix=601`）红在了别处，见上面那条 FFmpeg 事实；
+表里这两条是重做过的合法突变，双向都红：折叠与标记**任一**单独跑偏都会被 `pixels_suite` 抓住。
+界面那三条（序列漏判、待发清单不存标记、硬编码 `<option value="bt709">`）也各红在自己那条中文上。
+
+### 仍然开着的
+
+- 表里今天只有一档（BT.709）。第二档（P3-DCI／Rec.2020 之类）要先量 `zscale` 那侧真认的矩阵名，
+  再接 `COLOR_SPACES` 里对应的曲线；加一档是改 `OUTPUT_COLOUR_TAGS` 这一处契约表，界面与文档
+  跟着数走（`docs_facts_check.py` 现在会数 README 那一行的「N 档」）。
+- 透明母版仍不带标记（这是有意的拒绝，不是漏了）。要交带标记的透明母版，得先把那一折从编码器
+  手里接回滤镜图。
+- MXF 那一侧写进去的标记是否被容器原样读回，本轮只在 mp4 上量过；`refusals_suite` 只保证不会
+  交出一张假标签。

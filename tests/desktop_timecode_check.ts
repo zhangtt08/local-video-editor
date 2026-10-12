@@ -65,11 +65,12 @@ assert.ok(
   "one-effective-value",
 );
 assert.equal((panel.match(/timecode: sendTimecode/g) ?? []).length, 2, "sent-to-both-deliverables");
-// 1.138 又在这一串尾巴上加了交付帧率：这两条断的是「发出去的就是 matte/sendTimecode 这些有效值」，
-// 参数列表一变就得同步——变了没同步，红的是这两条，而不是没人看见。
-assert.ok(/renderPlanPreview\(preset\.id, fit, range, matte, sendTimecode, sendFps\)/.test(panel), "dryrun-carries");
+// 1.138 又在这一串尾巴上加了交付帧率，1.151 再加交付色彩标记：这两条断的是「发出去的就是
+// matte/sendTimecode/sendFps/sendColourTag 这些有效值」，参数列表一变就得同步——变了没同步，
+// 红的是这两条，而不是没人看见。
+assert.ok(/renderPlanPreview\(preset\.id, fit, range, matte, sendTimecode, sendFps, sendColourTag\)/.test(panel), "dryrun-carries");
 assert.ok(
-  /startRender\(preset\.id, finalName, folder \|\| undefined, fit, range, matte, sendTimecode, sendFps\)/.test(
+  /startRender\(preset\.id, finalName, folder \|\| undefined, fit, range, matte, sendTimecode, sendFps, sendColourTag\)/.test(
     panel
   ),
   "start-carries",
@@ -87,10 +88,10 @@ for (const code of ["TIMECODE_INVALID", "TIMECODE_NEEDS_PICTURE"]) {
   assert.ok(hint![1].length >= 20, `thin-hint:${code}`);
 }
 const store = readFileSync(SRC + "desktop/src/store.ts", "utf8");
-// 1.138 在两个调用尾巴上又加了 outputFps：这两条断的是 store 把时间码原样递给引擎，参数多一个
-// 就得跟着多一个，谁悄悄不传了会红在这里。
-assert.ok(/renderPlan\([\s\S]{0,180}transparent, timecode, outputFps\)/.test(store), "store-plan-forwards");
-assert.ok(/engine\.render\([\s\S]{0,200}range, transparent, timecode, outputFps\)/.test(store), "store-start-forwards");
+// 1.138 在两个调用尾巴上又加了 outputFps，1.151 又加了 colourTag：这两条断的是 store 把时间码
+// 原样递给引擎，参数多一个就得跟着多一个，谁悄悄不传了会红在这里。
+assert.ok(/renderPlan\([\s\S]{0,180}transparent, timecode, outputFps, colourTag\)/.test(store), "store-plan-forwards");
+assert.ok(/engine\.render\([\s\S]{0,200}range, transparent, timecode, outputFps, colourTag\)/.test(store), "store-start-forwards");
 assert.ok(store.includes("时间码 ${timecode}"), "toast-names-it");
 
 console.log(

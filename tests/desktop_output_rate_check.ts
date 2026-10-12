@@ -65,14 +65,15 @@ assert.match(engineSrc, /^\s{6}OUTPUT_RATE_NEEDS_PICTURE: "([^"]*)",\s*$/m, "hin
 assert.ok(/output_frame_rates\?:/.test(engineSrc), "capabilities-carry-the-table");
 
 const store = readFileSync(SRC + "desktop/src/store.ts", "utf8");
+// 尾巴上 1.151 又多了交付色彩标记：这两条断的是 store 把率原样递给引擎，参数多一个就跟着多一个。
 assert.ok(
-  /engine\.render\(project\.id, project\.revision, presetId, filename, folder, state\.sequenceId, fit, range, transparent, timecode, outputFps\)/.test(
+  /engine\.render\(project\.id, project\.revision, presetId, filename, folder, state\.sequenceId, fit, range, transparent, timecode, outputFps, colourTag\)/.test(
     store,
   ),
   "store-threads-the-rate-to-render",
 );
 assert.ok(
-  /\.renderPlan\(state\.project\.id, presetId, state\.project\.revision, state\.sequenceId, fit, range, transparent, timecode, outputFps\)/.test(
+  /\.renderPlan\(state\.project\.id, presetId, state\.project\.revision, state\.sequenceId, fit, range, transparent, timecode, outputFps, colourTag\)/.test(
     store,
   ),
   "store-threads-the-rate-to-plan",
@@ -85,11 +86,11 @@ for (const literal of ["29.97", "23.976", "59.94"]) {
   assert.ok(!panel.includes(`"${literal}"`) && !panel.includes(`'${literal}'`), `panel-no-copied-${literal}`);
 }
 assert.ok(
-  /renderPlanPreview\(preset\.id, fit, range, matte, sendTimecode, sendFps\)/.test(panel),
+  /renderPlanPreview\(preset\.id, fit, range, matte, sendTimecode, sendFps, sendColourTag\)/.test(panel),
   "panel-plan-sends-the-rate",
 );
 assert.ok(
-  /startRender\(preset\.id, finalName, folder \|\| undefined, fit, range, matte, sendTimecode, sendFps\)/.test(
+  /startRender\(preset\.id, finalName, folder \|\| undefined, fit, range, matte, sendTimecode, sendFps, sendColourTag\)/.test(
     panel,
   ),
   "panel-export-sends-the-rate",

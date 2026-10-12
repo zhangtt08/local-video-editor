@@ -16,7 +16,15 @@ import {
   timelineEnd,
   useApp,
 } from "../store";
-import { codecText, matteAllowed, presetIsAudio, FIT_MODES, type RenderFit, type RenderRange } from "../engine";
+import {
+  codecText,
+  colourTagAllowed,
+  matteAllowed,
+  presetIsAudio,
+  FIT_MODES,
+  type RenderFit,
+  type RenderRange,
+} from "../engine";
 
 const POLL_MS = 1500;
 
@@ -51,6 +59,7 @@ export function ExportPanel(): JSX.Element {
   const [fit, setFit] = useState<RenderFit>("contain");
   const [range, setRange] = useState<RenderRange>("full");
   const [transparent, setTransparent] = useState(false);
+  const [colourTag, setColourTag] = useState("");
   const [timecodeText, setTimecodeText] = useState("");
   const [outputFps, setOutputFps] = useState("");
   const [alsoVertical, setAlsoVertical] = useState(false);
@@ -126,6 +135,32 @@ export function ExportPanel(): JSX.Element {
     : !preset?.alpha
       ? `这条交付的画面格式（${preset?.pixel_format ?? "未选"}）装不下透明度，这个勾按不动；带 alpha 的是 ${alphaIds.join("、")}，选它们就能勾`
       : "空白处真的留空，叠到别的画面上不带一块黑底；AE／DaVinci 与网页合成接得住这一条";
+  // 1.151：交付色彩那张表整个从引擎能力表来，界面不列第二份；primaries／transfer／matrix 那几样
+  // 是引擎写给 FFmpeg 的话，界面连读都不读。
+  const tagRows = app.caps?.output_colour_tags ?? [];
+  const pickedTag = tagRows.find((item) => item.id === colourTag) ?? null;
+  // 真正带得出去的标记只在这一处算：没有画面、是一串图像文件、或这一份是透明母版，就带不出去。
+  // 界面念的（那行 mono 与那句提示）、待发清单里存的、写进请求体的必须都是它——两处各算一份
+  // 的 bug 本项目交付过一次，这里不再犯第二遍。
+  const sendColourTag = colourTagAllowed(preset, audioOnly, isSequence, matte, pickedTag?.id ?? null);
+  // 带不出去的时候要点名是哪一个原因，并给一条真走得通的路（写法同 matteHint）。
+  const tagBlocker = audioOnly
+    ? "这一条交付只有声音，标记是给画面写的；要带标记的母版请换一条有画面的交付（mov／mp4／mxf／webm）。"
+    : isSequence
+      ? "这一条交出的是一串图像文件，没有容器可以挂那三样标记；要带标记的母版请换一条 mov／mp4／mxf／webm 的交付。"
+      : matte
+        ? "背景透明这一路是把 rgba 一路带到编码器才折的，用哪一组系数折不由这条滤镜图决定，容器上写任何矩阵都成了与画面无关的话；要带标记请把「背景透明」去掉，要么这一栏留空。"
+        : null;
+  const tagHint =
+    tagBlocker ??
+    (tagRows.length
+      ? "这一栏是在容器上写一句「这张画面是什么颜色」的声明：基色、传递函数、折叠用的矩阵三样一起写，" +
+        "而写出去的必须与画面真被折的方式一致——所以哪一档能用由引擎那张表说了算，界面不拼 FFmpeg 参数。" +
+        "带标记的母版是给下游读的：DaVinci 或另一个 Agent 把文件打开就能答「它是什么」，不用猜。" +
+        `可挑的就是 capabilities 下发的那几档：${tagRows.map((item) => `${item.label}（${item.id}）`).join("、")}；` +
+        "留空就是照今天的老样子，容器上一个色彩标记都不写。"
+      : "capabilities 里没有 output_colour_tags 这一档（这台引擎还不认交付色彩标记），所以这里没有可挑的标记；" +
+        "这一条交付照旧不带标记，导出照常能走。");
   // 1.138：交付帧率那张表整个从引擎能力表来，界面不列第二份。选中的那档若等于时间线自己的率，
   // 就当作没选（发出去也是「跟时间线」），否则老引擎会因为多出一个不认的字段整条拒收。
   const rateChoices = app.caps?.output_frame_rates ?? [];
@@ -182,6 +217,7 @@ export function ExportPanel(): JSX.Element {
       transparent: matte,
       timecode: sendTimecode,
       output_frame_rate: sendFps,
+      colour_tag: sendColourTag,
     },
     ...(alsoVertical && vertical && !audioOnly && !matte
       ? [
@@ -192,6 +228,7 @@ export function ExportPanel(): JSX.Element {
             range,
             timecode: sendTimecode,
             output_frame_rate: sendFps,
+            colour_tag: sendColourTag,
           },
         ]
       : []),
@@ -330,6 +367,27 @@ export function ExportPanel(): JSX.Element {
               />
               空白处留透明（只在带 alpha 的预设上有效）
             </label>
+          </Field>
+
+          <Field label="交付色彩标记" hint={tagHint}>
+            <div className="input-row">
+              <select
+                className="input"
+                value={sendColourTag ?? ""}
+                onChange={(event) => setColourTag(event.target.value)}
+                disabled={Boolean(blocked) || tagBlocker !== null || !tagRows.length}
+                aria-label="交付色彩标记"
+                title={tagHint}
+              >
+                <option value="">不带标记（照旧：容器上一个色彩标记都不写）</option>
+                {tagRows.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}（{item.id}）
+                  </option>
+                ))}
+              </select>
+              <span className="mono suffix">{sendColourTag ?? "不写"}</span>
+            </div>
           </Field>
 
           <Field label="起始时间码" hint={timecodeHint}>
@@ -510,7 +568,7 @@ export function ExportPanel(): JSX.Element {
 
           <div className="export-actions">
             <Btn
-              onClick={() => renderPlanPreview(preset.id, fit, range, matte, sendTimecode, sendFps)}
+              onClick={() => renderPlanPreview(preset.id, fit, range, matte, sendTimecode, sendFps, sendColourTag)}
               disabled={!clips.length}
               title="只读：让服务端编译渲染计划，不会写任何文件"
             >
@@ -539,14 +597,14 @@ export function ExportPanel(): JSX.Element {
                 // 点下去要发出去的就是 pendingItems 那一组，界面不再另写一份交付清单。
                 pendingItems.length > 1
                   ? void startRenderBatch(pendingItems, folder || undefined)
-                  : void startRender(preset.id, finalName, folder || undefined, fit, range, matte, sendTimecode, sendFps)
-              }
-              disabled={Boolean(blocked) || Boolean(app.busy)}
-              title={blocked || (pendingItems.length > 1
-                ? `按 r${project.revision} 导出 ${finalName} 与 ${verticalName}`
-                : `按 r${project.revision} 导出 ${finalName}${matte ? "，背景透明" : ""}${
-                    sendTimecode ? `，时间码 ${sendTimecode}` : ""
-                  }`)}
+                  : void startRender(preset.id, finalName, folder || undefined, fit, range, matte, sendTimecode, sendFps, sendColourTag)
+                }
+                disabled={Boolean(blocked) || Boolean(app.busy)}
+                title={blocked || (pendingItems.length > 1
+                  ? `按 r${project.revision} 导出 ${finalName} 与 ${verticalName}`
+                  : `按 r${project.revision} 导出 ${finalName}${matte ? "，背景透明" : ""}${
+                      sendTimecode ? `，时间码 ${sendTimecode}` : ""
+                    }${sendColourTag ? `，色彩标记 ${sendColourTag}` : ""}`)}
             >
               <Icon name="export" size={12} />
               开始导出
