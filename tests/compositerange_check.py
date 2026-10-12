@@ -250,9 +250,10 @@ def main() -> None:
             lo, hi = green(at_zero[middle]), green(at_one[middle])
             assert lo + 8 < green(at_half[middle]) < hi - 8, (at_half[middle], lo, hi)
             print(
-                f"   标记 1..2 秒按 25 交：{len(graded)} 帧全是绿；不调 {green(ungraded[middle])}／"
-                f"调完 {green(graded[middle])}／mix=0 {green(at_zero[middle])}／"
-                f"mix=0.5 {green(at_half[middle])}／mix=1 {green(at_one[middle])} —— 两条支配的是同一帧"
+                f"   标记 1..2 秒按 25 交：{len(graded)} 帧全是绿；"
+                f"不调 {green(ungraded[middle])}／调完 {green(graded[middle])}／"
+                f"mix=0 {green(at_zero[middle])}／0.5 {green(at_half[middle])}／"
+                f"1 {green(at_one[middle])}：两条支配的是同一帧"
             )
 
 
