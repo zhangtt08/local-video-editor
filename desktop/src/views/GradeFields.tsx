@@ -278,26 +278,10 @@ function OpFields({ node, idPrefix, limits, onReplace, onCommit }: { node: Grade
       {onReplace ? <button className="btn tiny" onClick={onReplace}>换一张 LUT</button> : null}
     </div>;
   }
-  if (node.kind === "wheels") {
-    return <div className="grade-body wheels-body">
-      {([["lift", "阴影", 0, -0.5, 0.5, 0.5], ["gamma", "中间调", 1, 0.1, 10, 0.5], ["gain", "亮部", 1, 0, 4, 0.5]] as const).map(([field, label, base, lo, hi, span]) => <div className="wheel-group" key={field}>
-        <WheelPad values={node[field]} base={base} span={span} lo={lo} hi={hi} onCommit={(next) => onCommit({ ...node, [field]: next.map(round) })} />
-        <span className="panel-label">{label}</span>
-        {(["红", "绿", "蓝"] as const).map((name, index) => <Num key={name} id={`${idPrefix}-${field}-${index}`} label={name} value={node[field][index] - base} min={lo - base} max={hi - base} step={0.01} onCommit={(value) => { const next = node[field].slice(); next[index] = round(value + base); onCommit({ ...node, [field]: next }); }} />)}
-      </div>)}
-      <p className="hint">圆盘左绿右品红、上黄下蓝，只改彩度；要整体提亮请用右侧数值。达芬奇式的色轮盘面方向一致，但这里不是完整的色彩管理。</p>
-    </div>;
-  }
-  return null;
-}
-
-/** 强度与混合方式：节点有自己的一对，并联分支也有，语义相同——都只与该支/该节点的输入比较。 */
-function MixFields({ node, idPrefix, label, onCommit }: { node: GradeNode; idPrefix: string; label: string; onCommit: (next: GradeNode) => void }) {
-  if (node.kind === "lut3d") {
-    // 契约里没有 mix 也没有 blend：这里不放控件，比放一个只有一端听的控制诚实。
-    return null;
-  }
   if (node.kind === "composite") {
+    // 第二路画面：这一级的两个控件都在它自己身上，没有通用的「强度」可借——`mix` 是相合的权重，
+    // `mode` 是相合的方式，而它必须排在 OpFields 这一层（`MixFields` 只挂在并联节点上，
+    // 串行节点走的是这条分发；把它写在 MixFields 里就等于屏幕上根本没有那两个控件）。
     return <div className="grade-body">
       <label className="mask-shape">与原图相合的方式
         <select className="input" aria-label="叠一层原图的混合方式" value={node.mode} onChange={(e) => onCommit({ ...node, mode: e.target.value as BlendMode })}>
@@ -314,6 +298,27 @@ function MixFields({ node, idPrefix, label, onCommit }: { node: GradeNode; idPre
         与 3D LUT 同一个口径：说不出口的差别才是骗人。要看到合成的效果，请把没调色的那份放到另一条
         画面轨上用轨道的混合方式相合。</p>
     </div>;
+  }
+  if (node.kind === "wheels") {
+    return <div className="grade-body wheels-body">
+      {([["lift", "阴影", 0, -0.5, 0.5, 0.5], ["gamma", "中间调", 1, 0.1, 10, 0.5], ["gain", "亮部", 1, 0, 4, 0.5]] as const).map(([field, label, base, lo, hi, span]) => <div className="wheel-group" key={field}>
+        <WheelPad values={node[field]} base={base} span={span} lo={lo} hi={hi} onCommit={(next) => onCommit({ ...node, [field]: next.map(round) })} />
+        <span className="panel-label">{label}</span>
+        {(["红", "绿", "蓝"] as const).map((name, index) => <Num key={name} id={`${idPrefix}-${field}-${index}`} label={name} value={node[field][index] - base} min={lo - base} max={hi - base} step={0.01} onCommit={(value) => { const next = node[field].slice(); next[index] = round(value + base); onCommit({ ...node, [field]: next }); }} />)}
+      </div>)}
+      <p className="hint">圆盘左绿右品红、上黄下蓝，只改彩度；要整体提亮请用右侧数值。达芬奇式的色轮盘面方向一致，但这里不是完整的色彩管理。</p>
+    </div>;
+  }
+  return null;
+}
+
+/** 强度与混合方式：节点有自己的一对，并联分支也有，语义相同——都只与该支/该节点的输入比较。 */
+function MixFields({ node, idPrefix, label, onCommit }: { node: GradeNode; idPrefix: string; label: string; onCommit: (next: GradeNode) => void }) {
+  if (node.kind === "lut3d" || node.kind === "composite") {
+    // lut3d：契约里没有 mix 也没有 blend，这里不放控件，比放一个只有一端听的控制诚实。
+    // composite：它那两个控件在 `OpFields` 里（串行节点走那条分发），而且契约不许它当一支，
+    // 所以到不了这里——写在这里只会让 TS 以为这条通用支路认得它。
+    return null;
   }
   return <div className="grade-body">
     {node.kind === "matrix" ? <p className="hint">通道混合没有「混合方式」可选：把矩阵用非线性模式（正片叠底之类）与它的输入混合，结果不再是矩阵，两端就没有同一份数可读了。要减弱效果请用下面的强度。</p> : <label className="mask-shape">混合方式

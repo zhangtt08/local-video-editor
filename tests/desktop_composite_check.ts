@@ -35,6 +35,29 @@ for (const said of hints) {
   assert.match(said, /另一条/, "hint-names-the-track-exit");
   assert.match(said, /混合方式/, "hint-names-the-blend-exit");
 }
+// 1.144 的装机教训：那两个控件写在 `MixFields` 里就等于屏幕上没有它们——`MixFields` 只挂在
+// 并联节点与它的支上，串行节点走的是 `OpFields`。所以这里断的是**它在哪个函数里**。
+const opBody = fields.slice(fields.indexOf("function OpFields"), fields.indexOf("function MixFields"));
+assert.match(opBody, /if \(node\.kind === "composite"\)/, "reachable-in-chain-editor");
+assert.match(opBody, /aria-label="叠一层原图的混合方式"/, "chain-editor-carries-the-mode");
+assert.match(opBody, /这一层的权重/, "chain-editor-carries-the-weight");
+assert.match(opBody, /预览不生效、导出生效/, "chain-editor-says-preview-does-not-apply");
+assert.doesNotMatch(
+  fields.slice(fields.indexOf("function MixFields")),
+  /if \(node\.kind === "composite"\)/,
+  "dead-branch-left-in-mixfields",
+);
+// 一支里放不进这条边：`GradeBranch` 那张类型表就是唯一的口径（界面与引擎都不许自备第二份）。
+const branchHead = contracts.indexOf("GradeBranch = Union[");
+assert.ok(branchHead >= 0, "contract-names-the-branch-union");
+assert.doesNotMatch(
+  contracts.slice(branchHead, contracts.indexOf("class GradeParallel", branchHead)),
+  /GradeComposite/,
+  "composite-is-not-a-branch",
+);
+assert.doesNotMatch(engineSrc, /COMPOSITE_NOT_IN_BRANCH/, "no-refusal-for-a-shape-types-reject");
+assert.doesNotMatch(engineSrc, /这个工程是多条画面轨合成的/, "no-blanket-multi-track-lie");
+
 
 console.log(
   "PASS: 「叠一层原图」在界面里认得（名字、按钮、卡片、方式与权重都在）、卡片明写预览不生效导出生效，" +

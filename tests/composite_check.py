@@ -299,6 +299,41 @@ def main() -> None:
             assert head_after == revision_before, refused.text
             assert "cx-two" not in sorted(item.name for item in exports.iterdir())
 
+            # 并联的某一支里挂这条边：契约收 `GradeNode`，所以类型拦不住它，必须在这里点名拒。
+            branch_revision = state["revision"]
+            in_branch = client.post(
+                path + "/edits",
+                json={
+                    "request_id": "cx-branch",
+                    "expected_revision": branch_revision,
+                    "commands": [
+                        {
+                            "op": "clip.color",
+                            "clip_id": "c",
+                            "color": {
+                                "exposure": 0.5,
+                                "grade": [
+                                    {
+                                        "kind": "parallel",
+                                        "enabled": True,
+                                        "mix": 1.0,
+                                        "blend": "normal",
+                                        "branches": [curve(), composite("screen", 1.0)],
+                                    }
+                                ],
+                            },
+                        }
+                    ],
+                },
+            )
+            assert in_branch.status_code == 422, in_branch.text
+            # 一支里放不进这条边：挡住它的不是某个 validator，而是契约的类型表——
+            # `GradeParallel.branches` 收的是 `GradeBranch`，那张表里没有 composite，加上
+            # `extra="forbid"` 就是一次 `INVALID_REQUEST`。这条断言钉的是「类型表就是这一处口径」，
+            # 若哪天有人把 composite 加进 `GradeBranch`，这里会先变成另一种代号而红。
+            assert in_branch.json()["error"]["code"] == "INVALID_REQUEST", in_branch.text
+            assert client.get(path).json()["revision"] == branch_revision, in_branch.text
+
             # 多条画面轨合成的工程：点名拒，出路写在句子里。
             layered = client.post(
                 "/v1/projects",
