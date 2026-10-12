@@ -656,6 +656,7 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         range: RenderRange = "full",
         transparent: bool = False,
         timecode: str | None = None,
+        output_fps: str | None = None,
     ) -> dict[str, Any]:
         """Dry-run: compile the RenderPlan (graph mode, segments, argv) without rendering."""
         query = f"?preset_id={preset_id}" + ("" if revision is None else f"&revision={revision}")
@@ -672,6 +673,8 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         if timecode:
             # 分号在 query 里是有歧义的字符，必须百分号编码，否则 API 收到的不是那串时间码。
             query += f"&timecode={quote(timecode, safe='')}"
+        if output_fps:
+            query += f"&output_fps={quote(output_fps, safe='')}"
         return await call("GET", f"/v1/projects/{project_id}/render-plan{query}")
 
     @server.tool(annotations=safe_write)

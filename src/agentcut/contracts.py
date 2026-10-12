@@ -12,7 +12,7 @@ SCHEMA_VERSION = (
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.137.0"
+APP_VERSION = "1.138.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -1108,6 +1108,68 @@ def timecode_frames(rate: FrameRate) -> int:
     return round(rate.numerator / rate.denominator)
 
 
+# 交付帧率是一张闭表。PAL 机房要 25、NTSC 交 29.97、胶片感要 24／23.976、高帧率要 50／59.94／60；
+# 表外一律拒（`UNKNOWN_OUTPUT_RATE`，句子把可选项念出来）：时间线时钟是 TIMEBASE，随便一个率会
+# 让「一格画面」对不上一个整数 tick，两端就再也说不清同一件事。
+OUTPUT_FRAME_RATES: tuple[tuple[int, int, str], ...] = (
+    (24, 1, "24"),
+    (24000, 1001, "23.976"),
+    (25, 1, "25"),
+    (30000, 1001, "29.97"),
+    (30, 1, "30"),
+    (50, 1, "50"),
+    (60000, 1001, "59.94"),
+    (60, 1, "60"),
+)
+
+
+def _refuse_output_rate(numerator: int, denominator: int, got: object) -> "EditorError":
+    choices = "／".join(label for _, _, label in OUTPUT_FRAME_RATES)
+    return EditorError(
+        "UNKNOWN_OUTPUT_RATE",
+        f"交付帧率只能是这几档：{choices}（现在收到 {numerator}/{denominator}）；"
+        f"留空就跟时间线自己的率一致",
+        422,
+        got=got,
+        choices=[list(item[:2]) for item in OUTPUT_FRAME_RATES],
+    )
+
+
+def _require_output_rate(numerator: int, denominator: int, got: object) -> FrameRate:
+    """表内才构造 `FrameRate`，表外只有一种说法。判断只在这一处，HTTP 与契约共用它。"""
+    for candidate, co_denominator, _ in OUTPUT_FRAME_RATES:
+        if numerator == candidate and denominator == co_denominator:
+            return FrameRate(numerator=numerator, denominator=denominator)
+    raise _refuse_output_rate(numerator, denominator, got)
+
+
+def checked_output_rate(value: FrameRate | None) -> FrameRate | None:
+    """`None` 是 1.138 之前的原意：交付跟时间线自己的率一致。"""
+    if value is None:
+        return None
+    return _require_output_rate(
+        value.numerator, value.denominator, f"{value.numerator}/{value.denominator}"
+    )
+
+
+def parse_frame_rate(text: str | None) -> FrameRate | None:
+    """query 与文本框只能带字符串：`25` 或 `30000/1001`。空等于没有。"""
+    if text is None or not text.strip():
+        return None
+    parts = text.strip().split("/")
+    if len(parts) == 1:
+        parts = [parts[0], "1"]
+    if len(parts) != 2 or not all(part.strip().isdigit() for part in parts):
+        raise EditorError(
+            "UNKNOWN_OUTPUT_RATE",
+            f"帧率要写成整数或 分子/分母（例：25 或 30000/1001），收到 {text!r}",
+            422,
+            got=text,
+        )
+    numerator, denominator = (int(part.strip()) for part in parts)
+    return _require_output_rate(numerator, denominator, text)
+
+
 def checked_timecode(value: str | None, rate: FrameRate) -> str | None:
     """One rule, before FFmpeg ever sees the string.
 
@@ -1198,6 +1260,7 @@ class RenderBatchItem(Contract):
     range: RenderRange = "full"
     transparent: bool = False
     timecode: Annotated[str | None, Field(max_length=24)] = None
+    output_frame_rate: FrameRate | None = None
 
     @model_validator(mode="after")
     def safe_filename(self):
@@ -2232,6 +2295,9 @@ class RenderRequest(Contract):
     # 起始时间码：写给交接用的（`None` 就是没有）。合法性由 `checked_timecode` 判，不在这里判，
     # 因为它要读这条时间线自己的帧率。
     timecode: Annotated[str | None, Field(max_length=24)] = None
+    # 交付帧率：把这条时间线交成另一个率（PAL／NTSC／胶片感交接）。`None` 就是 1.138 之前的含义——
+    # 跟时间线自己的率一致。可选值是一张闭表，见 `checked_output_rate`。
+    output_frame_rate: FrameRate | None = None
 
     @model_validator(mode="after")
     def safe_filename(self):
@@ -2296,6 +2362,8 @@ class RenderJob(Contract):
     transparent: bool = False
     # 任务带着它，worker 到点重编计划时写的还是同一个时间码；老任务文档没有这一行，读回来是 None。
     timecode: Annotated[str | None, Field(max_length=24)] = None
+    # 交付帧率同理：排队时选的那个率，落地的文件就得是那个率。
+    output_frame_rate: FrameRate | None = None
     filename: Annotated[str, Field(max_length=2048)]
     status: Literal["queued", "running", "succeeded", "failed", "cancelled"]
     total_ticks: Ticks = 0
@@ -2681,6 +2749,11 @@ def capabilities(
         "alpha_presets": [item["id"] for item in render_presets() if item["alpha"]],
         # 时间码的写法与「哪两个率才有丢帧码」由引擎说，界面不许自己写死一份正则：
         # 这两条就是 `checked_timecode` 用的同一组常量。
+        # 交付帧率的那张闭表也下发出去：界面排出来的就是这几档，不许自己再列一份。
+        "output_frame_rates": [
+            {"numerator": numerator, "denominator": denominator, "label": label}
+            for numerator, denominator, label in OUTPUT_FRAME_RATES
+        ],
         "timecode_shape": TIMECODE_SHAPE,
         "timecode_drop_rates": [list(item) for item in TIMECODE_DROP_RATES],
         # The build identity, next to the schema it speaks: an Agent reading this document can tell

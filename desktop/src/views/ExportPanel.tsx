@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { bridge } from "../bridge";
 import { Btn, Empty, Field, Icon, Tag } from "../ui";
 import { humanDuration, prettyBytes, rateLabel, TIMEBASE, timecode } from "../time";
-import type { RenderBatchItem, RenderJob } from "../engine";
+import type { OutputRate, RenderBatchItem, RenderJob } from "../engine";
 import {
   cancelJob,
   exportRecipe,
@@ -52,6 +52,7 @@ export function ExportPanel(): JSX.Element {
   const [range, setRange] = useState<RenderRange>("full");
   const [transparent, setTransparent] = useState(false);
   const [timecodeText, setTimecodeText] = useState("");
+  const [outputFps, setOutputFps] = useState("");
   const [alsoVertical, setAlsoVertical] = useState(false);
   const [filename, setFilename] = useState("");
   const [folder, setFolder] = useState("");
@@ -139,6 +140,19 @@ export function ExportPanel(): JSX.Element {
       ? `这条率属于 ${tcDropNames}，所以分号那种丢帧码（例：01:00:00;00）也可以用。`
       : `分号那种丢帧码只有 ${tcDropNames || "（引擎没给出）"} 有定义，这条时间线不是那两个率，写分号会被引擎拒绝。`,
   ].join("");
+  // 1.138：交付帧率那张表整个从引擎能力表来，界面不列第二份。选中的那档若等于时间线自己的率，
+  // 就当作没换（也不发这个字段——老引擎的契约是 extra=forbid，多一个它不认的键会整条拒收）。
+  const rateChoices = app.caps?.output_frame_rates ?? [];
+  const timelineRate = project.settings.frame_rate;
+  const sameAsTimeline = (item: OutputRate) =>
+    item.numerator === timelineRate.numerator && item.denominator === timelineRate.denominator;
+  const pickedRate = rateChoices.find((item) => `${item.numerator}/${item.denominator}` === outputFps);
+  const sendFps = pickedRate && !sameAsTimeline(pickedRate)
+    ? { numerator: pickedRate.numerator, denominator: pickedRate.denominator }
+    : null;
+  const fpsHint = rateChoices.length
+    ? `可交的帧率是引擎那张闭表：${rateChoices.map((item) => item.label).join("／")}。换率只改重采样与 GOP 的秒数，片段位置、入出点与遮罩仍按时间线自己的 ${timelineRate.numerator}/${timelineRate.denominator} 走；选与时间线相同的那档等于没换，留空也是。`
+    : "这台引擎没有下发交付帧率表，这一条只能跟时间线自己的率一致。";
   // 后缀跟着那条交付自己的容器，不再钉死 .mp4：竖屏那条换成 WebM 预设时，文件名也得是 .webm。
   const verticalName = `${(filename.trim() || sanitizeName(timelineName)).replace(/\.[A-Za-z0-9]+$/, "")}-9x16.${vertical?.container ?? "mp4"}`;
   const inTicks = project.settings.in_ticks ?? null;
@@ -152,9 +166,26 @@ export function ExportPanel(): JSX.Element {
   const finalName = `${(filename.trim() || sanitizeName(timelineName)).replace(/\.[A-Za-z0-9]+$/, "")}.${preset?.container ?? "mp4"}`;
   // 方案存的就是「点开始导出会发出去的那组交付」，所以这里只算一次，界面和方案不会各说一套。
   const pendingItems: RenderBatchItem[] = [
-    { preset_id: preset?.id ?? "", filename: finalName, fit, range, transparent: matte, timecode: sendTimecode },
+    {
+      preset_id: preset?.id ?? "",
+      filename: finalName,
+      fit,
+      range,
+      transparent: matte,
+      timecode: sendTimecode,
+      output_frame_rate: sendFps,
+    },
     ...(alsoVertical && vertical && !audioOnly && !matte
-      ? [{ preset_id: vertical.id, filename: verticalName, fit: "cover" as RenderFit, range, timecode: sendTimecode }]
+      ? [
+          {
+            preset_id: vertical.id,
+            filename: verticalName,
+            fit: "cover" as RenderFit,
+            range,
+            timecode: sendTimecode,
+            output_frame_rate: sendFps,
+          },
+        ]
       : []),
   ];
   const recipeHint = (project.recipes ?? []).length
@@ -309,6 +340,39 @@ export function ExportPanel(): JSX.Element {
             </div>
           </Field>
 
+          <Field label="交付帧率" hint={fpsHint}>
+            <div className="input-row">
+              <select
+                className="input"
+                value={outputFps}
+                onChange={(event) => setOutputFps(event.target.value)}
+                disabled={Boolean(blocked) || audioOnly || !rateChoices.length}
+                aria-label="交付帧率"
+                title={audioOnly ? "音频交付没有画面，帧率是「一秒几帧」，这一条没有帧可数" : fpsHint}
+              >
+                <option value="">
+                  跟时间线（{timelineRate.numerator}/{timelineRate.denominator}）
+                </option>
+                {rateChoices.map((item) => (
+                  <option
+                    key={`${item.numerator}/${item.denominator}`}
+                    value={`${item.numerator}/${item.denominator}`}
+                  >
+                    {item.label ?? `${item.numerator}/${item.denominator}`}
+                    {sameAsTimeline(item) ? "（就是时间线那一档）" : ""}
+                  </option>
+                ))}
+              </select>
+              <span className="mono suffix">
+                {audioOnly
+                  ? "没有画面"
+                  : sendFps
+                    ? `${sendFps.numerator}/${sendFps.denominator}`
+                    : "跟时间线"}
+              </span>
+            </div>
+          </Field>
+
           <Field label="文件名" hint="不用写扩展名，引擎会按容器补上">
             <div className="input-row">
               <input
@@ -369,7 +433,7 @@ export function ExportPanel(): JSX.Element {
                     onClick={() => void exportRecipe(recipe.id, folder || undefined)}
                     disabled={Boolean(blocked) || Boolean(app.busy)}
                     title={`按 r${project.revision} 出货：${recipe.items
-                      .map((entry) => `${entry.filename} · ${entry.fit}/${entry.range ?? "full"}${entry.transparent ? " 透明背景" : ""}`)
+                      .map((entry) => `${entry.filename} · ${entry.fit}/${entry.range ?? "full"}${entry.transparent ? " 透明背景" : ""}${entry.output_frame_rate ? ` ${entry.output_frame_rate.numerator}/${entry.output_frame_rate.denominator}fps` : ""}`)
                       .join("，")}`}
                   >
                     {recipe.name}
@@ -412,7 +476,7 @@ export function ExportPanel(): JSX.Element {
                   }}
                   disabled={Boolean(blocked)}
                   title={`存下当前这组：${pendingItems
-                    .map((entry) => `${entry.filename}(${entry.fit}/${entry.range}${entry.transparent ? "，透明背景" : ""})`)
+                    .map((entry) => `${entry.filename}(${entry.fit}/${entry.range}${entry.transparent ? "，透明背景" : ""}${entry.output_frame_rate ? `，${entry.output_frame_rate.numerator}/${entry.output_frame_rate.denominator}fps` : ""})`)
                     .join("，")}`}
                 >
                   存为方案
@@ -423,7 +487,7 @@ export function ExportPanel(): JSX.Element {
 
           <div className="export-actions">
             <Btn
-              onClick={() => renderPlanPreview(preset.id, fit, range, matte, sendTimecode)}
+              onClick={() => renderPlanPreview(preset.id, fit, range, matte, sendTimecode, sendFps)}
               disabled={!clips.length}
               title="只读：让服务端编译渲染计划，不会写任何文件"
             >
@@ -452,7 +516,7 @@ export function ExportPanel(): JSX.Element {
                 // 点下去要发出去的就是 pendingItems 那一组，界面不再另写一份交付清单。
                 pendingItems.length > 1
                   ? void startRenderBatch(pendingItems, folder || undefined)
-                  : void startRender(preset.id, finalName, folder || undefined, fit, range, matte, sendTimecode)
+                  : void startRender(preset.id, finalName, folder || undefined, fit, range, matte, sendTimecode, sendFps)
               }
               disabled={Boolean(blocked) || Boolean(app.busy)}
               title={blocked || (pendingItems.length > 1

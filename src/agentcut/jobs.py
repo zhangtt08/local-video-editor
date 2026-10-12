@@ -16,7 +16,15 @@ from pathlib import Path
 from sqlite3 import Row, connect
 from uuid import uuid4
 
-from .contracts import TIMEBASE, EditorError, Project, RenderBatch, RenderJob, RenderRequest
+from .contracts import (
+    TIMEBASE,
+    EditorError,
+    FrameRate,
+    Project,
+    RenderBatch,
+    RenderJob,
+    RenderRequest,
+)
 from .media import _NO_WINDOW
 from .render import RenderPlan, compile_render_plan, marked_range, preset_by_id
 
@@ -34,6 +42,7 @@ def plan_for(
     range_mode: str = "full",
     transparent: bool = False,
     timecode: str | None = None,
+    output_frame_rate: FrameRate | None = None,
 ) -> RenderPlan:
     """One place that turns a request's `range` into the ticks the exporter trims to, so the
     render-plan preview, the queued job and the worker all read the same marks."""
@@ -54,6 +63,7 @@ def plan_for(
         range_ticks=ticks,
         transparent=transparent,
         timecode=timecode,
+        output_frame_rate=output_frame_rate,
     )
 
 
@@ -428,7 +438,12 @@ class JobRuntime:
             + ([request.transparent] if request.transparent else [])
             # Only a *set* value joins the fingerprint, so receipts written before these fields
             # existed still replay as themselves.
-            + ([request.timecode] if request.timecode else []),
+            + ([request.timecode] if request.timecode else [])
+            + (
+                [request.output_frame_rate.numerator, request.output_frame_rate.denominator]
+                if request.output_frame_rate is not None
+                else []
+            ),
             ensure_ascii=False,
             separators=(",", ":"),
         )
@@ -457,6 +472,7 @@ class JobRuntime:
                     range_mode=request.range,
                     transparent=request.transparent,
                     timecode=request.timecode,
+                    output_frame_rate=request.output_frame_rate,
                 ).as_dict()
             except EditorError:
                 plan = {}
@@ -477,6 +493,7 @@ class JobRuntime:
             range_mode=request.range,
             transparent=request.transparent,
             timecode=request.timecode,
+            output_frame_rate=request.output_frame_rate,
         )
         target = self._target_path(request)
         now = time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -490,6 +507,7 @@ class JobRuntime:
             range=request.range,
             transparent=request.transparent,
             timecode=request.timecode,
+            output_frame_rate=request.output_frame_rate,
             filename=target.name,
             status="queued",
             total_ticks=plan.duration_ticks,
@@ -526,6 +544,7 @@ class JobRuntime:
                     range_mode=item.range,
                     transparent=item.transparent,
                     timecode=item.timecode,
+                    output_frame_rate=item.output_frame_rate,
                 )
             results: list[tuple[RenderJob, dict]] = []
             for index, item in enumerate(batch.items):
@@ -540,6 +559,7 @@ class JobRuntime:
                     range=item.range,
                     transparent=item.transparent,
                     timecode=item.timecode,
+                    output_frame_rate=item.output_frame_rate,
                 )
                 if batch.dry_run:
                     results.append(
@@ -553,6 +573,7 @@ class JobRuntime:
                                 range=item.range,
                                 transparent=item.transparent,
                                 timecode=item.timecode,
+                                output_frame_rate=item.output_frame_rate,
                                 filename=item.filename,
                                 status="queued",
                             ),
@@ -564,6 +585,7 @@ class JobRuntime:
                                 range_mode=item.range,
                                 transparent=item.transparent,
                                 timecode=item.timecode,
+                                output_frame_rate=item.output_frame_rate,
                             ).as_dict(),
                         )
                     )
@@ -675,6 +697,7 @@ class JobRuntime:
             range_mode=job.range,
             transparent=job.transparent,
             timecode=job.timecode,
+            output_frame_rate=job.output_frame_rate,
         )
         target = Path(job.output_path or (self.output_dir / job.filename))
         target.parent.mkdir(parents=True, exist_ok=True)

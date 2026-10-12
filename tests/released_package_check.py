@@ -54,12 +54,19 @@ RENDERER_SENTENCES = (
     "空白处留透明",
     "装不下透明度",
     "ProRes 4444 透明母版",
+    # 1.138：交付帧率在人眼前就是这一栏、这一句出路，以及「不选」的原话。
+    "交付帧率",
+    "跟时间线",
+    "就是时间线那一档",
+    "可交的帧率是引擎那张闭表",
 )
 RENDERER_LITERALS = (
     "clip.color_manage",
     '"color_manage"',
     # The code the desktop must translate, still present as the key it is looked up by.
     "TRANSPARENT_NEEDS_ALPHA",
+    "UNKNOWN_OUTPUT_RATE",
+    "OUTPUT_RATE_NEEDS_PICTURE",
 )
 
 

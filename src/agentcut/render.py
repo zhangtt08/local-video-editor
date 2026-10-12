@@ -33,7 +33,9 @@ from .contracts import (
     TEXT_FONTS,
     TIMEBASE,
     EditorError,
+    FrameRate,
     Project,
+    checked_output_rate,
     checked_timecode,
     render_presets,
     spatial_radius,
@@ -412,6 +414,7 @@ def output_args(
     *,
     transparent: bool = False,
     timecode: str | None = None,
+    delivery_rate=None,
 ) -> list[str]:
     """Encode and mux arguments for one preset, switched by the codec the preset names.
 
@@ -438,6 +441,15 @@ def output_args(
             preset_id=preset["id"],
         )
     codec = preset["codec"]
+    if delivery_rate is not None and codec is None:
+        # 和人给一条纯音频交付写时间码同一个道理：帧率是「一秒几帧」，没有画面就没有帧可数。
+        raise EditorError(
+            "OUTPUT_RATE_NEEDS_PICTURE",
+            f"{preset['label']} 这一条只有声音，没有画面可以数帧；「交付帧率」是给画面的，"
+            "换成带画面的预设再选，或者把那一栏留空",
+            422,
+            preset_id=preset["id"],
+        )
     video: list[str] = []
     if codec is None:
         # An audio-only deliverable: `-vn` is belt-and-braces next to not mapping a picture at all,
@@ -637,6 +649,7 @@ class RenderPlan:
             # flag they sent in.
             "transparent": self.summary.get("transparent"),
             "timecode": self.summary.get("timecode"),
+            "project_frame_rate": self.summary.get("project_frame_rate"),
         }
 
 
@@ -725,6 +738,7 @@ def compile_render_plan(
     range_ticks: tuple[int, int] | None = None,
     transparent: bool = False,
     timecode: str | None = None,
+    output_frame_rate: FrameRate | None = None,
     _transparent: bool = False,
     _duration_ticks: int | None = None,
 ) -> RenderPlan:
@@ -752,8 +766,11 @@ def compile_render_plan(
     bar_x, bar_y = (out_w - picture_w) / 2, (out_h - picture_h) / 2
     letterbox = (picture_w, picture_h) != (out_w, out_h)
     mask_box = (bar_x, bar_y, picture_w, picture_h) if letterbox else None
-    fps = f"{settings.frame_rate.numerator}/{settings.frame_rate.denominator}"
-    rate = settings.frame_rate.numerator / settings.frame_rate.denominator
+    # 交付帧率可以不同于时间线自己的率：`fps=` 那一级负责重采样，GOP 的秒数按交付率算，
+    # 而片段位置、区间与遮罩仍按时间线的 tick 走——两套刻度各管各的，才有「同一条时间线交两版」。
+    delivery = checked_output_rate(output_frame_rate) or settings.frame_rate
+    fps = f"{delivery.numerator}/{delivery.denominator}"
+    rate = delivery.numerator / delivery.denominator
     size = f"{out_w}x{out_h}"
     # The preset's sampling format runs through the whole picture chain, not just the encoder flag:
     # a 4:4:10-bit intermediate has to keep 4:4:4 from the decode and the framing stages too, or the
@@ -1458,7 +1475,12 @@ def compile_render_plan(
         plan.duration_ticks = total
 
     plan.output_args = output_args(
-        preset, settings.sample_rate, rate, transparent=transparent, timecode=timecode
+        preset,
+        settings.sample_rate,
+        rate,
+        transparent=transparent,
+        timecode=timecode,
+        delivery_rate=output_frame_rate,
     )
     plan.summary.update(
         {
@@ -1470,6 +1492,10 @@ def compile_render_plan(
             "pixel_format": preset["pixel_format"],
             "transparent": transparent,
             "timecode": timecode,
+            # 工程自己的率也写一份：读到 `frame_rate` 是 25 时，得知道那是交付的率还是时间线的率。
+            "project_frame_rate": (
+                f"{settings.frame_rate.numerator}/{settings.frame_rate.denominator}"
+            ),
             "resolution": None if audio_only else size,
             "frame_rate": fps,
             "project": {"id": project.id, "name": project.name, "revision": project.revision},

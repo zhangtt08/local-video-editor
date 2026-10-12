@@ -214,7 +214,7 @@ preview-manifest 给出 mixed_track_ids 与每片段 transition.picture/sound/bl
 | GET /v1/assets/{asset_id}/stream?project_id= | — | 工程内素材的源文件流，需 `sig` |
 | GET /v1/projects/{id}/asset-urls | project_asset_urls | 一次性给出全部素材的签名播放地址 |
 | GET /v1/render-presets | render_presets_read | 受控输出预设（调用方只能选，不能传编码器参数） |
-| GET /v1/projects/{id}/render-plan?preset_id=&revision=&fit=&range=&transparent= | render_plan | 只读编译 RenderPlan 与 FFmpeg 参数预览（1.136：`transparent=true` 问的就是真导出会用的那组词，回包 `plan.transparent` 原样答） |
+| GET /v1/projects/{id}/render-plan?preset_id=&revision=&fit=&range=&transparent=&timecode=&output_fps= | render_plan | 只读编译 RenderPlan 与 FFmpeg 参数预览（1.136：`transparent=true` 问的就是真导出会用的那组词，回包 `plan.transparent` 原样答；1.138：`output_fps=25` 或 `30000%2F1001` 问的是「交成另一档率」，回包 `plan.frame_rate` 是交付率、`plan.project_frame_rate` 是时间线自己的率） |
 | POST /v1/projects/{id}/renders | render_start | 按 `expected_revision` 排队渲染（revision 不符返回 409）；同一 `request_id` 重放返回原 job，换 payload 返回 409 IDEMPOTENCY_CONFLICT |
 | GET /v1/jobs/{job_id} | job_status | 状态 `queued/running/succeeded/failed/cancelled` + 进度 |
 | GET /v1/projects/{id}/jobs | job_list | 该工程最近的任务 |
@@ -2642,3 +2642,32 @@ H.264，装不下透明度，于是整条被让掉并在悬停里说清为什么
 - 复检读的是**文件**，而且按每个容器真正存放的位置读：`mov` 与 `mp4` 在视频**流**标签、
   `mxf` 与 `webm` 在**容器**标签，webm 那个键是大写 `TIMECODE`（见 `tests/timecode_check.py`）。
   只按 `pix_fmt`/某一个标签位置去猜，会把「有」读成「没有」。
+
+## 1.138 交付帧率：一张八档闭表，同一条时间线可以交两版
+
+时间线自己的帧率和交出去的帧率是两件事。PAL 机房要 25、NTSC 交 29.97、胶片感要 24／23.976、
+高帧率要 50／59.94／60，而剪辑的刻度始终是 `TIMEBASE = 70_560_000`。所以 `output_frame_rate`
+只换重采样那一级（`fps=` 与 GOP 的秒数），片段位置、入出点、遮罩与区间仍按时间线的 tick 走。
+
+- 闭表在 `contracts.OUTPUT_FRAME_RATES`：24、23.976（`24000/1001`）、25、29.97（`30000/1001`）、
+  30、50、59.94（`60000/1001`）、60。表外一律 422 `UNKNOWN_OUTPUT_RATE`，句子把那八档念出来。
+  **数值相等而有理数不同也算表外**：`30000/1000` 不是 29.97，`23976/1000` 不是 23.976，
+  收下它们会得到一个「以为是那个率」的文件，所以拒。
+- 请求字段：`RenderRequest.output_frame_rate`（`{"numerator":25,"denominator":1}`）、
+  `RenderBatchItem` 同名、`RenderJob` 也带一份——worker 到点重编计划时写的还是同一个率。
+  旧任务文档没有这一行，读回来是 `None`。
+- HTTP 的 query 侧收文本：`GET /v1/projects/{id}/render-plan?output_fps=30000%2F1001`，
+  由 `contracts.parse_frame_rate` 交给同一处判断；MCP 的 `render_plan` 收 `output_fps` 字符串并把
+  那道斜杠百分号编码。留空 = 不写这个字段 = 跟时间线自己的率一致。
+- 计划文档里两个率分开写：`frame_rate` 是**交付**的率，`project_frame_rate` 是**时间线**的率。
+  没选的时候计划与 1.138 之前逐字相同（新字段不参与，除非它被用上）。
+- `audio-mp3`／`audio-wav`／`audio-flac` 没有画面，帧率无处生效，所以给的是
+  `OUTPUT_RATE_NEEDS_PICTURE`——不许收下之后再什么都不改。
+- 幂等指纹只在非空时加入这一项：同一个 `request_id` 把 50 改成 25 得到 409，而不是悄悄重放；
+  旧回执照原样重放。一次拒绝不写状态、不涨 revision、不排队。
+- capabilities 下发 `output_frame_rates`（八档，带 `label`）：界面那颗下拉排的就是这一份，
+  抄第二份表的 mutation 会红（`tests/desktop_output_rate_check.ts`）。
+- 证据读的是**文件**：同一条两秒时间线交 30／25／23.976 三版，ffprobe 读回
+  `avg_frame_rate` 分别是 `30/1`（60 帧、2.000 s）、`25/1`（50 帧、2.000 s）、
+  `24000/1001`（48 帧、2.002 s）；一次批量两份文件各自是 `25/1` 与 `30/1`
+  （见 `tests/output_rate_check.py`）。

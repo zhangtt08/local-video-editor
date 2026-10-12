@@ -277,7 +277,12 @@ export type RenderBatchItem = {
   transparent?: boolean;
   /** 写给交接用的起始时间码（`HH:MM:SS:FF`）。不写就是 null， legality 由引擎判。 */
   timecode?: string | null;
+  /** 1.138：交付帧率。不写就是「跟时间线自己的率一致」；表外的率由引擎拒（`UNKNOWN_OUTPUT_RATE`）。 */
+  output_frame_rate?: OutputRate | null;
 };
+
+/** 一档交付帧率。合法的那几档只有一份，就是引擎能力表 `output_frame_rates` 下发的那一张。 */
+export type OutputRate = { numerator: number; denominator: number; label?: string };
 
 /** 存在工程里的交付方案：一组交付项加一个名字，人和 Agent 都按同一个列表出货。 */
 export type DeliveryRecipe = { id: string; name: string; items: RenderBatchItem[] };
@@ -535,6 +540,8 @@ export type Capabilities = {
   /** 1.137：时间码的写法与「哪两个率才有丢帧码」由引擎说，界面不许自己写一份正则。 */
   timecode_shape?: string;
   timecode_drop_rates?: number[][];
+  /** 1.138：交付帧率那张闭表整个下发，界面排出来的下拉就是引擎认的那几档。 */
+  output_frame_rates?: OutputRate[];
 };
 
 /** 1.97 整轨规划的一项：要么是能搬的淡（带着将要落库的两个数），要么是搬不动的原因。 */
@@ -721,6 +728,8 @@ export class EngineError extends Error {
       TRANSPARENT_NEEDS_ALPHA: "这条交付的容器与编码写不下透明通道，勾了也只会导出一个不透明的文件，所以引擎直接拒了这一次。换成能力表里带 alpha 的那几条（ProRes 4444 透明母版／1080p WebM/VP9 透明），或者把「背景透明」的勾去掉。",
       TIMECODE_INVALID: "这一串时间码引擎不能用，所以这一次导出没有排队。写法是 HH:MM:SS:FF，每段两位数字；帧号不能超过这条时间线的帧率；分号那种丢帧码只有 29.97 与 59.94 有定义。留空就是不写时间码。",
       TIMECODE_NEEDS_PICTURE: "这一条交付根本没有画面，时间码是给画面数帧的，写上去只会骗人。要时间码请换成带画面的预设，或者把这一栏清空。",
+      UNKNOWN_OUTPUT_RATE: "这一档交付帧率不在这张表上，所以这一次导出没有排队。可交的是 24／23.976／25／29.97／30／50／59.94／60（清单以引擎能力表为准）；想跟时间线一样就选「跟时间线」，那一栏留空也是同一个意思。",
+      OUTPUT_RATE_NEEDS_PICTURE: "这一条交付根本没有画面，帧率是「一秒几帧」，写上去只会骗人。要换交付帧率请换成带画面的预设，或者把那一栏改回「跟时间线」。",
       UNKNOWN_PRESET: "没有这个导出预设。能力表里列出的 id 才是可用的；界面下拉里选一个即可。",
     };
     const hint = hints[this.code];
@@ -1146,7 +1155,7 @@ export class Engine {
     return this.request<CachePruneResult>("POST", "/v1/media/cache/prune", body, 120000);
   }
 
-  renderPlan(projectId: string, presetId: string, revision?: number, sequenceId: string | null = null, fit: RenderFit = "contain", range: RenderRange = "full", transparent = false, timecode?: string | null) {
+  renderPlan(projectId: string, presetId: string, revision?: number, sequenceId: string | null = null, fit: RenderFit = "contain", range: RenderRange = "full", transparent = false, timecode?: string | null, outputFps?: OutputRate | null) {
     const query = new URLSearchParams({ preset_id: presetId });
     if (revision !== undefined) query.set("revision", String(revision));
     if (sequenceId) query.set("sequence_id", sequenceId);
@@ -1154,6 +1163,7 @@ export class Engine {
     if (range !== "full") query.set("range", range);
     if (transparent) query.set("transparent", "true");
     if (timecode) query.set("timecode", timecode);
+    if (outputFps) query.set("output_fps", `${outputFps.numerator}/${outputFps.denominator}`);
     return this.request<{ plan: Record<string, unknown>; argv_preview: string[] }>(
       "GET",
       `/v1/projects/${projectId}/render-plan?${query.toString()}`
@@ -1195,7 +1205,7 @@ export class Engine {
     return this.request<{ revision: number; srt: string }>("GET", `/v1/projects/${projectId}/captions/${trackId}?revision=${revision}${sequenceId ? `&sequence_id=${sequenceId}` : ""}`);
   }
 
-  render(projectId: string, revision: number, presetId: string, filename: string, folder?: string, sequenceId: string | null = null, fit: RenderFit = "contain", range: RenderRange = "full", transparent = false, timecode?: string | null) {
+  render(projectId: string, revision: number, presetId: string, filename: string, folder?: string, sequenceId: string | null = null, fit: RenderFit = "contain", range: RenderRange = "full", transparent = false, timecode?: string | null, outputFps?: OutputRate | null) {
     return this.request<{ job: RenderJob; plan: Record<string, unknown> }>(
       "POST",
       `/v1/projects/${projectId}/renders`,
@@ -1210,6 +1220,8 @@ export class Engine {
         range,
         transparent,
         timecode: timecode ?? null,
+        // 只有真选了才写出去：老引擎的契约是 `extra="forbid"`，多一个它不认的键就整条拒收。
+        ...(outputFps ? { output_frame_rate: outputFps } : {}),
       }
     );
   }

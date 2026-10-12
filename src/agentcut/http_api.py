@@ -75,6 +75,7 @@ from .contracts import (
     Ticks,
     audio_scan_problem,
     capabilities,
+    parse_frame_rate,
     render_presets,
 )
 from .grade import parse_cube
@@ -1867,6 +1868,7 @@ def create_app(
         range: RenderRange = "full",
         transparent: bool = False,
         timecode: str | None = None,
+        output_fps: str | None = None,
     ):
         project = projects.get(project_id, revision)
         plan = plan_for(
@@ -1877,6 +1879,7 @@ def create_app(
             range_mode=range,
             transparent=transparent,
             timecode=timecode,
+            output_frame_rate=parse_frame_rate(output_fps),
         )
         return {"plan": plan.as_dict(), "argv_preview": plan.ffmpeg_argv("ffmpeg", "out.mp4")}
 
@@ -1980,6 +1983,7 @@ def create_app(
                     range_mode=job.range,
                     transparent=job.transparent,
                     timecode=job.timecode,
+                    output_frame_rate=job.output_frame_rate,
                 ).as_dict()
             except EditorError:
                 plan = None
