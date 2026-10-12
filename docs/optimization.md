@@ -5085,6 +5085,16 @@ FFmpeg stderr，现在换成 `FFMPEG_NO_GRAPH_SCRIPT`：回执点名是哪一份
 `space=gbr` 之后仍不是纯原色换算（本轮量到：仍出灰、且负分量被钳位）。这条路下一轮要么先把
 `-h filter=colorspace` 的三段枚举读全再试，要么改用 `zscale`（这份构建里也在），别在原地换写法试。
 
+1.148 的验证账（数字都是这一轮量出来的）：改名的电池五行逐条红在自己那条断言上（label 念回
+「影院母带」、把 `D65`/`γ2.2` 从名字里抹掉、`source` 写回已经不存在的旧档名、BT.2020 绿的 y 少
+0.001、数据锚自己抄错），还原回绿；`ruff check`/`ruff format` 干净，`docs_shape_check` 过；
+全量套件单跑 **101/101**；`scripts/build_engine.py --verify` 与 `npm run dist` 都过，根
+`AgentCut.exe` 与 `release/AgentCut-便携版.exe` 逐字节一致（189,903,262 B）。装机复核
+`package_check_1148.py` 全 PASS：冻结引擎自报 **1.148.0**、`gamut_matrices` 六档的 id 就是改名后
+那六条、九个系数逐字节等于源码现算，挂基色矩阵那条**长滤镜图**交付在打包版里照常出片，成片像素与
+源码引擎逐项相同（灰 `(130,127,131)→(129,126,130)`、橙 `(179,79,50)→(216,41,1)`），
+`app.asar` 5,679,010 字节里数不到 `gamut_matrices`（还是没有那颗按钮）。
+
 1.147 的验证账：`error_vocabulary_check` 把这条新码抓了出来——引擎发出去的每一个码都必须有
 一句中文回执，150 个码 / 154 句提示，0 句落回英文；`desktop/src/engine.ts` 的提示表因此多了
 `FFMPEG_NO_GRAPH_SCRIPT` 那一行（说的是同一条退路，不是「出错了」）。52 个壳检全过；
