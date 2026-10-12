@@ -76,8 +76,14 @@ const panel = readFileSync(SRC + "desktop/src/views/ExportPanel.tsx", "utf8");
 assert.ok(/const matte = matteAllowed\(preset, audioOnly, transparent\)/.test(panel), "matte-live");
 assert.ok(/checked=\{matte\}/.test(panel), "checkbox-matte");
 assert.ok(/transparent: matte/.test(panel), "sent-matte");
-assert.ok(/renderPlanPreview\(preset\.id, fit, range, matte\)/.test(panel), "dryrun-matte");
-assert.ok(/startRender\(preset\.id, finalName, folder \|\| undefined, fit, range, matte\)/.test(panel), "start-matte");
+// 1.137 在同一颗按钮上多带了起始时间码：这一条断的仍是「交出去的是 matte 这个有效值」。
+assert.ok(/renderPlanPreview\(preset\.id, fit, range, matte, sendTimecode\)/.test(panel), "dryrun-matte");
+assert.ok(
+    /startRender\(preset\.id, finalName, folder \|\| undefined, fit, range, matte, sendTimecode\)/.test(
+      panel
+    ),
+    "start-matte",
+  );
 assert.ok(/alsoVertical && vertical && !audioOnly && !matte/.test(panel), "vertical-yields");
 assert.ok(panel.includes("背景透明时竖屏那条"), "vertical-reason");
 assert.ok(/disabled=\{Boolean\(blocked\) \|\| audioOnly \|\| !preset\?\.alpha\}/.test(panel), "needs-alpha");

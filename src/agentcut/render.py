@@ -34,6 +34,7 @@ from .contracts import (
     TIMEBASE,
     EditorError,
     Project,
+    checked_timecode,
     render_presets,
     spatial_radius,
 )
@@ -405,7 +406,12 @@ def preset_by_id(preset_id: str) -> dict:
 
 
 def output_args(
-    preset: dict, sample_rate: int, frame_rate: float, *, transparent: bool = False
+    preset: dict,
+    sample_rate: int,
+    frame_rate: float,
+    *,
+    transparent: bool = False,
+    timecode: str | None = None,
 ) -> list[str]:
     """Encode and mux arguments for one preset, switched by the codec the preset names.
 
@@ -417,6 +423,9 @@ def output_args(
     `transparent` is answered here rather than ignored: an encoder whose pixel format has no
     alpha plane cannot carry a matte no matter what the graph above it produced, so the request
     that would silently export an opaque file is refused and pointed at the presets that can.
+    `timecode` is the start timecode for the handoff; the string itself is validated by
+    `contracts.checked_timecode` (FFmpeg silently rewrites several invalid forms), and it is
+    refused here for a deliverable that has no picture to count frames of.
     """
     if transparent and not preset["alpha"]:
         exits = "、".join(str(item["id"]) for item in render_presets() if item["alpha"])
@@ -486,7 +495,19 @@ def output_args(
             422,
             preset_id=preset["id"],
         )
+    if timecode and codec is None:
+        raise EditorError(
+            "TIMECODE_NEEDS_PICTURE",
+            f"{preset['label']} 这一条根本没有画面，时间码是给画面数帧的，写上去只会骗人；"
+            "要时间码请选一条带画面的交付",
+            422,
+            preset_id=preset["id"],
+        )
     mux = ["-movflags", "+faststart"] if preset["container"] in ("mp4", "mov") else []
+    if timecode:
+        # 起始时间码存哪儿是各容器自己的事：实测 mov/mp4 写在**流**这一层的 `timecode`，
+        # mxf 写在容器层的 `timecode`，webm 写成大写的 `TIMECODE`。复检按这些位置读回来。
+        mux += ["-timecode", timecode]
 
     return [*video, *audio, *mux]
 
@@ -615,6 +636,7 @@ class RenderPlan:
             # be able to tell "this file will hold a matte" from the plan itself, not only from the
             # flag they sent in.
             "transparent": self.summary.get("transparent"),
+            "timecode": self.summary.get("timecode"),
         }
 
 
@@ -702,6 +724,7 @@ def compile_render_plan(
     fit: str = "contain",
     range_ticks: tuple[int, int] | None = None,
     transparent: bool = False,
+    timecode: str | None = None,
     _transparent: bool = False,
     _duration_ticks: int | None = None,
 ) -> RenderPlan:
@@ -719,6 +742,8 @@ def compile_render_plan(
         project = sequence_view(project, sequence_id)
     preset = preset_by_id(preset_id)
     settings = project.settings
+    # 时间码在这里过一次规矩（要读这条时间线自己的帧率），干跑、排队与 worker 走的是同一条路。
+    timecode = checked_timecode(timecode, settings.frame_rate)
     out_w, out_h = preview_size or preset["scale"] or (settings.width, settings.height)
     # 两个空间旋钮量的是「画面」的高：预览那个框锁工程比例，成片里画面占多高由 fit 决定。
     picture_w, picture_h = picture_size(out_w, out_h, settings.width, settings.height, fit)
@@ -1432,7 +1457,9 @@ def compile_render_plan(
     else:
         plan.duration_ticks = total
 
-    plan.output_args = output_args(preset, settings.sample_rate, rate, transparent=transparent)
+    plan.output_args = output_args(
+        preset, settings.sample_rate, rate, transparent=transparent, timecode=timecode
+    )
     plan.summary.update(
         {
             "encoder": f"{preset['label']} ({preset['container']})",
@@ -1442,6 +1469,7 @@ def compile_render_plan(
             "audio_codec": preset["audio_codec"],
             "pixel_format": preset["pixel_format"],
             "transparent": transparent,
+            "timecode": timecode,
             "resolution": None if audio_only else size,
             "frame_rate": fps,
             "project": {"id": project.id, "name": project.name, "revision": project.revision},

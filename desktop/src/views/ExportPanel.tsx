@@ -51,6 +51,7 @@ export function ExportPanel(): JSX.Element {
   const [fit, setFit] = useState<RenderFit>("contain");
   const [range, setRange] = useState<RenderRange>("full");
   const [transparent, setTransparent] = useState(false);
+  const [timecodeText, setTimecodeText] = useState("");
   const [alsoVertical, setAlsoVertical] = useState(false);
   const [filename, setFilename] = useState("");
   const [folder, setFolder] = useState("");
@@ -121,6 +122,23 @@ export function ExportPanel(): JSX.Element {
     : !preset?.alpha
       ? `这条交付的画面格式（${preset?.pixel_format ?? "未选"}）装不下透明度，这个勾按不动；带 alpha 的是 ${alphaIds.join("、")}，选它们就能勾`
       : "空白处真的留空，叠到别的画面上不带一块黑底；AE／DaVinci 与网页合成接得住这一条";
+  // 时间码的写法与「哪两个率才有丢帧码」都问引擎要，界面不写正则、不自己认标准。
+  const tcShape = app.caps?.timecode_shape ?? "HH:MM:SS:FF";
+  const tcDropRates = app.caps?.timecode_drop_rates ?? [];
+  const tcDropNames = tcDropRates.map(([n, d]) => (d === 1 ? `${n}` : (n / d).toFixed(2))).join("／");
+  const tcIsDropRate = tcDropRates.some(
+    ([n, d]) => n === project.settings.frame_rate.numerator && d === project.settings.frame_rate.denominator
+  );
+  // 发出去的就是这一处：填了才算，空串一律当「不写」。
+  const sendTimecode = timecodeText.trim() || null;
+  const timecodeHint = [
+    `写给交接用的起始时间码，留空就是不写。写法 ${tcShape}，每段两位数字。`,
+    `帧号不能超过这条时间线的帧率（这里是 ${project.settings.frame_rate.numerator}/$` +
+      `{project.settings.frame_rate.denominator}）。`,
+    tcIsDropRate
+      ? `这条率属于 ${tcDropNames}，所以分号那种丢帧码（例：01:00:00;00）也可以用。`
+      : `分号那种丢帧码只有 ${tcDropNames || "（引擎没给出）"} 有定义，这条时间线不是那两个率，写分号会被引擎拒绝。`,
+  ].join("");
   // 后缀跟着那条交付自己的容器，不再钉死 .mp4：竖屏那条换成 WebM 预设时，文件名也得是 .webm。
   const verticalName = `${(filename.trim() || sanitizeName(timelineName)).replace(/\.[A-Za-z0-9]+$/, "")}-9x16.${vertical?.container ?? "mp4"}`;
   const inTicks = project.settings.in_ticks ?? null;
@@ -134,9 +152,9 @@ export function ExportPanel(): JSX.Element {
   const finalName = `${(filename.trim() || sanitizeName(timelineName)).replace(/\.[A-Za-z0-9]+$/, "")}.${preset?.container ?? "mp4"}`;
   // 方案存的就是「点开始导出会发出去的那组交付」，所以这里只算一次，界面和方案不会各说一套。
   const pendingItems: RenderBatchItem[] = [
-    { preset_id: preset?.id ?? "", filename: finalName, fit, range, transparent: matte },
+    { preset_id: preset?.id ?? "", filename: finalName, fit, range, transparent: matte, timecode: sendTimecode },
     ...(alsoVertical && vertical && !audioOnly && !matte
-      ? [{ preset_id: vertical.id, filename: verticalName, fit: "cover" as RenderFit, range }]
+      ? [{ preset_id: vertical.id, filename: verticalName, fit: "cover" as RenderFit, range, timecode: sendTimecode }]
       : []),
   ];
   const recipeHint = (project.recipes ?? []).length
@@ -275,6 +293,22 @@ export function ExportPanel(): JSX.Element {
             </label>
           </Field>
 
+          <Field label="起始时间码" hint={timecodeHint}>
+            <div className="input-row">
+              <input
+                className="input mono"
+                value={timecodeText}
+                onChange={(event) => setTimecodeText(event.target.value)}
+                placeholder={sendTimecode ? "" : "01:00:00:00"}
+                maxLength={11}
+                aria-label="起始时间码"
+                disabled={Boolean(blocked) || audioOnly}
+                title={audioOnly ? "这条交付没有画面，时间码是给画面数帧的" : timecodeHint}
+              />
+              <span className="mono suffix">{sendTimecode ?? "不写"}</span>
+            </div>
+          </Field>
+
           <Field label="文件名" hint="不用写扩展名，引擎会按容器补上">
             <div className="input-row">
               <input
@@ -389,7 +423,7 @@ export function ExportPanel(): JSX.Element {
 
           <div className="export-actions">
             <Btn
-              onClick={() => renderPlanPreview(preset.id, fit, range, matte)}
+              onClick={() => renderPlanPreview(preset.id, fit, range, matte, sendTimecode)}
               disabled={!clips.length}
               title="只读：让服务端编译渲染计划，不会写任何文件"
             >
@@ -418,12 +452,14 @@ export function ExportPanel(): JSX.Element {
                 // 点下去要发出去的就是 pendingItems 那一组，界面不再另写一份交付清单。
                 pendingItems.length > 1
                   ? void startRenderBatch(pendingItems, folder || undefined)
-                  : void startRender(preset.id, finalName, folder || undefined, fit, range, matte)
+                  : void startRender(preset.id, finalName, folder || undefined, fit, range, matte, sendTimecode)
               }
               disabled={Boolean(blocked) || Boolean(app.busy)}
               title={blocked || (pendingItems.length > 1
                 ? `按 r${project.revision} 导出 ${finalName} 与 ${verticalName}`
-                : `按 r${project.revision} 导出 ${finalName}${matte ? "，背景透明" : ""}`)}
+                : `按 r${project.revision} 导出 ${finalName}${matte ? "，背景透明" : ""}${
+                    sendTimecode ? `，时间码 ${sendTimecode}` : ""
+                  }`)}
             >
               <Icon name="export" size={12} />
               开始导出

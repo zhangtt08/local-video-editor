@@ -2443,7 +2443,7 @@ export async function loadJobs(id?: string) {
   }
 }
 
-export async function startRender(presetId: string, filename: string, folder?: string, fit: RenderFit = "contain", range: RenderRange = "full", transparent = false) {
+export async function startRender(presetId: string, filename: string, folder?: string, fit: RenderFit = "contain", range: RenderRange = "full", transparent = false, timecode?: string | null) {
   if (!engine || !state.project) return null;
   const project = state.project;
   if (folder) {
@@ -2457,7 +2457,7 @@ export async function startRender(presetId: string, filename: string, folder?: s
   }
   set({ busy: "排队渲染…" });
   try {
-    const result = await engine.render(project.id, project.revision, presetId, filename, folder, state.sequenceId, fit, range, transparent);
+    const result = await engine.render(project.id, project.revision, presetId, filename, folder, state.sequenceId, fit, range, transparent, timecode);
     set({ jobs: [result.job, ...state.jobs] });
     toast("ok", range === "marks" ? "开始导出区间" : "开始导出", `锁定 r${project.revision}，进度在右下角导出面板。`);
     void watchJob(result.job.id);
@@ -2570,10 +2570,10 @@ export async function exportRecipe(recipeId: string, folder?: string) {
   return startRenderBatch(recipe.items, folder);
 }
 
-export function renderPlanPreview(presetId: string, fit: RenderFit = "contain", range: RenderRange = "full", transparent = false) {
+export function renderPlanPreview(presetId: string, fit: RenderFit = "contain", range: RenderRange = "full", transparent = false, timecode?: string | null) {
   if (!engine || !state.project) return;
   void engine
-    .renderPlan(state.project.id, presetId, state.project.revision, state.sequenceId, fit, range, transparent)
+    .renderPlan(state.project.id, presetId, state.project.revision, state.sequenceId, fit, range, transparent, timecode)
     .then((result) => {
       const argv = result.argv_preview.join(" ");
       const mode = FIT_MODES.find((item) => item.id === fit);
@@ -2581,7 +2581,13 @@ export function renderPlanPreview(presetId: string, fit: RenderFit = "contain", 
       const window = span?.in_ticks != null && span?.out_ticks != null
         ? `，区间 ${(span.in_ticks / TIMEBASE).toFixed(2)}–${(span.out_ticks / TIMEBASE).toFixed(2)} 秒`
         : "";
-      toast("info", "已生成渲染计划", `按「${mode?.label ?? fit}」${transparent ? "背景透明" : "不透明"}由服务端编译${window}，界面只读：${argv.slice(0, 160)}…`);
+      toast(
+        "info",
+        "已生成渲染计划",
+        `按「${mode?.label ?? fit}」${transparent ? "背景透明" : "不透明"}${
+          timecode ? `·时间码 ${timecode}` : ""
+        }由服务端编译${window}，界面只读：${argv.slice(0, 160)}…`
+      );
     })
     .catch((error: unknown) => {
       const { title, detail } = describe(error);

@@ -275,6 +275,8 @@ export type RenderBatchItem = {
   range?: RenderRange;
   /** 背景透明的那一条交付。老引擎不认这个字段，所以只在真要为 true 时写出去。 */
   transparent?: boolean;
+  /** 写给交接用的起始时间码（`HH:MM:SS:FF`）。不写就是 null， legality 由引擎判。 */
+  timecode?: string | null;
 };
 
 /** 存在工程里的交付方案：一组交付项加一个名字，人和 Agent 都按同一个列表出货。 */
@@ -530,6 +532,9 @@ export type Capabilities = {
   features: Record<string, boolean>;
   limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; denoise_db?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number; track_max_gap_frames?: number; track_gap_default?: number; track_min_frames?: number; track_max_frames?: number; mask_shape_keys?: number; mask_shape_schedule_segments?: number; blur_schedule_segments?: number; sharpen_schedule_segments?: number };
   render_presets: Preset[];
+  /** 1.137：时间码的写法与「哪两个率才有丢帧码」由引擎说，界面不许自己写一份正则。 */
+  timecode_shape?: string;
+  timecode_drop_rates?: number[][];
 };
 
 /** 1.97 整轨规划的一项：要么是能搬的淡（带着将要落库的两个数），要么是搬不动的原因。 */
@@ -714,10 +719,16 @@ export class EngineError extends Error {
       SUBTITLES_UNAVAILABLE: "这台机器上没装语音识别引擎，自动字幕暂时用不了。可以先把字幕写成 SRT 再导入。",
       SUBTITLE_LIMIT: "字幕条数太多了。合并一些短句，或者分几条字幕轨来放。",
       TRANSPARENT_NEEDS_ALPHA: "这条交付的容器与编码写不下透明通道，勾了也只会导出一个不透明的文件，所以引擎直接拒了这一次。换成能力表里带 alpha 的那几条（ProRes 4444 透明母版／1080p WebM/VP9 透明），或者把「背景透明」的勾去掉。",
+      TIMECODE_INVALID: "这一串时间码引擎不能用，所以这一次导出没有排队。写法是 HH:MM:SS:FF，每段两位数字；帧号不能超过这条时间线的帧率；分号那种丢帧码只有 29.97 与 59.94 有定义。留空就是不写时间码。",
+      TIMECODE_NEEDS_PICTURE: "这一条交付根本没有画面，时间码是给画面数帧的，写上去只会骗人。要时间码请换成带画面的预设，或者把这一栏清空。",
       UNKNOWN_PRESET: "没有这个导出预设。能力表里列出的 id 才是可用的；界面下拉里选一个即可。",
     };
     const hint = hints[this.code];
     if (!hint) return this.message;
+    // 引擎自己就已经说中文的那些拒绝（例如时间码点名是哪一段数字不对），比通用提示更具体：
+    // 这时通用那句只当兜底，不能把人要看的那半句盖掉。
+    const specific = /[\u4e00-\u9fff]/.test(this.message);
+    const said = specific ? this.message : hint;
     // The engine names the file, clip, track or composition a refusal is about. A generic sentence
     // on top of that still leaves a person guessing which of forty assets moved.
     const details = this.details ?? {};
@@ -734,7 +745,7 @@ export class EngineError extends Error {
       const value = details[key];
       if (typeof value === "string" && value && value !== asset) named.push(`${word} ${value}`);
     }
-    return named.length ? `${hint}（${named.join("、")}）` : hint;
+    return named.length ? `${said}（${named.join("、")}）` : said;
   }
 }
 
@@ -1135,13 +1146,14 @@ export class Engine {
     return this.request<CachePruneResult>("POST", "/v1/media/cache/prune", body, 120000);
   }
 
-  renderPlan(projectId: string, presetId: string, revision?: number, sequenceId: string | null = null, fit: RenderFit = "contain", range: RenderRange = "full", transparent = false) {
+  renderPlan(projectId: string, presetId: string, revision?: number, sequenceId: string | null = null, fit: RenderFit = "contain", range: RenderRange = "full", transparent = false, timecode?: string | null) {
     const query = new URLSearchParams({ preset_id: presetId });
     if (revision !== undefined) query.set("revision", String(revision));
     if (sequenceId) query.set("sequence_id", sequenceId);
     if (fit !== "contain") query.set("fit", fit);
     if (range !== "full") query.set("range", range);
     if (transparent) query.set("transparent", "true");
+    if (timecode) query.set("timecode", timecode);
     return this.request<{ plan: Record<string, unknown>; argv_preview: string[] }>(
       "GET",
       `/v1/projects/${projectId}/render-plan?${query.toString()}`
@@ -1183,7 +1195,7 @@ export class Engine {
     return this.request<{ revision: number; srt: string }>("GET", `/v1/projects/${projectId}/captions/${trackId}?revision=${revision}${sequenceId ? `&sequence_id=${sequenceId}` : ""}`);
   }
 
-  render(projectId: string, revision: number, presetId: string, filename: string, folder?: string, sequenceId: string | null = null, fit: RenderFit = "contain", range: RenderRange = "full", transparent = false) {
+  render(projectId: string, revision: number, presetId: string, filename: string, folder?: string, sequenceId: string | null = null, fit: RenderFit = "contain", range: RenderRange = "full", transparent = false, timecode?: string | null) {
     return this.request<{ job: RenderJob; plan: Record<string, unknown> }>(
       "POST",
       `/v1/projects/${projectId}/renders`,
@@ -1197,6 +1209,7 @@ export class Engine {
         fit,
         range,
         transparent,
+        timecode: timecode ?? null,
       }
     );
   }

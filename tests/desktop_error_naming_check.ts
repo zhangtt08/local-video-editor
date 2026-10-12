@@ -73,6 +73,18 @@ assert.equal(
   `a hint with nothing to name must not grow empty brackets: ${bare.explain()}`,
 );
 
+// 引擎自己已经说中文的那一类拒绝（时间码点名是哪一段数字不对），具体那半句不能被通用提示盖掉。
+const specific = new EngineError(
+  "TIMECODE_INVALID",
+  "时间码 '01:60:00:00' 不能用：分钟最多 59，收到 60。写法 HH:MM:SS:FF",
+  { value: "01:60:00:00" },
+  422
+);
+assert.ok(specific.explain().includes("分钟最多 59"), `the engine's own detail was overwritten: ${specific.explain()}`);
+// 引擎只说英文时，中文那句仍是人看到的——这条是 1.75 以来的老规矩，不许被上面那半句带走。
+const english = new EngineError("TRACK_LOCKED", "track is locked", {}, 422);
+assert.equal(english.explain(), "轨道已锁定，请解锁或选择其他目标轨道。", "english message lost its hint");
+
 const unknown = new EngineError("SOMETHING_NEW", "the engine said this", {}, 422);
 assert.equal(unknown.explain(), "the engine said this", "an unhinted code shows the engine's words");
 

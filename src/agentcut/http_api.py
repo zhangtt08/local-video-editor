@@ -1866,6 +1866,7 @@ def create_app(
         fit: RenderFit = "contain",
         range: RenderRange = "full",
         transparent: bool = False,
+        timecode: str | None = None,
     ):
         project = projects.get(project_id, revision)
         plan = plan_for(
@@ -1875,6 +1876,7 @@ def create_app(
             fit=fit,
             range_mode=range,
             transparent=transparent,
+            timecode=timecode,
         )
         return {"plan": plan.as_dict(), "argv_preview": plan.ffmpeg_argv("ffmpeg", "out.mp4")}
 
@@ -1977,6 +1979,7 @@ def create_app(
                     fit=job.fit,
                     range_mode=job.range,
                     transparent=job.transparent,
+                    timecode=job.timecode,
                 ).as_dict()
             except EditorError:
                 plan = None

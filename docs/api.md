@@ -2622,3 +2622,23 @@ WebM 这一条还量出两件必须写下来的事：**ffprobe 在流那一层�
 勾、待发清单、干跑按钮、开始导出按钮、以及竖屏副本要不要让路，问的都是这一个函数（竖屏那条是
 H.264，装不下透明度，于是整条被让掉并在悬停里说清为什么）。第 47 个壳层检查
 `tests/desktop_alphamaster_check.ts` 跑真的 `Engine`（假 `fetch` 收请求）断这些行为。
+
+## 1.137 起始时间码：`timecode` 是一词，规矩在引擎，位置按容器读
+
+- `RenderRequest.timecode` / `RenderBatchItem.timecode` / `RenderJob.timecode`（默认 `null` = 不写）。
+  写法只有一种：`HH:MM:SS:FF`，分隔符 `:`（非丢帧）或 `;`（丢帧，**只有 30000/1001 与 60000/1001**）。
+  判它的是 `contracts.checked_timecode(value, frame_rate)`——一处，`compile_render_plan` 在编计划时问，
+  所以干跑、排队、worker 三条路用的是同一条规矩。
+- 为什么规矩不能交给 FFmpeg（这台机器上直接调它实测）：`01:60:00:00` 会被进位写成 `02:00:00:00`；
+  `01:02:03.04` 的点被当丢帧标记写成 `01:02:03;04`；`1:2:3:4`（一位数字）照收；整数 30fps 上
+  `01:02:03;04` 也照样写进 mov。这些一律 422 `TIMECODE_INVALID`，句子点名是哪一段、收到的是几。
+  没有画面的预设（mp3/wav/flac）另给 `TIMECODE_NEEDS_PICTURE`。
+- `GET /v1/projects/{id}/render-plan?timecode=01%3A02%3A03%3A04` 会按它编译并回 `plan.timecode`；
+  MCP 的 `render_plan` 收同名参数并把整串百分号编码（分号在 query 里有歧义）；
+  `GET /v1/jobs/{id}` 那份计划也带任务自己的 `timecode`。指纹只在非空时加入这一项，
+  所以旧回执原样重放，同一个 `request_id` 换数字得到 409。
+- capabilities 下发 `timecode_shape` 与 `timecode_drop_rates`：界面那一栏是纯文本，
+  不写第二份正则，也不自己认哪两个率有丢帧码。
+- 复检读的是**文件**，而且按每个容器真正存放的位置读：`mov` 与 `mp4` 在视频**流**标签、
+  `mxf` 与 `webm` 在**容器**标签，webm 那个键是大写 `TIMECODE`（见 `tests/timecode_check.py`）。
+  只按 `pix_fmt`/某一个标签位置去猜，会把「有」读成「没有」。

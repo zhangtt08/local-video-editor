@@ -1,5 +1,6 @@
 """Versioned JSON contracts; no HTTP, MCP, database, or media engine imports."""
 
+import re
 from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -11,7 +12,7 @@ SCHEMA_VERSION = (
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.136.0"
+APP_VERSION = "1.137.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -1095,6 +1096,73 @@ def checked_render_name(value):
     return value
 
 
+TIMECODE_SHAPE = "HH:MM:SS:FF"
+# SMPTE 的丢帧码只在 29.97 / 59.94 这两个率上有定义。实测：整数 30 上写 `01:02:03;04`，FFmpeg
+# 照样原样塞进 mov 的流标签里——所以这条规矩得由引擎拿着，不能指望 muxer。
+TIMECODE_DROP_RATES = ((30000, 1001), (60000, 1001))
+_TIMECODE_PARTS = re.compile(r"^(\d{2}):(\d{2}):(\d{2})([:;])(\d{2})$")
+
+
+def timecode_frames(rate: FrameRate) -> int:
+    """这条率上一秒里有几个帧号：30000/1001 是 30（帧号 00–29），24000/1001 是 24。"""
+    return round(rate.numerator / rate.denominator)
+
+
+def checked_timecode(value: str | None, rate: FrameRate) -> str | None:
+    """One rule, before FFmpeg ever sees the string.
+
+    FFmpeg's own parser is looser than the standard and *silently rewrites* what it accepts:
+    `1:2:3:4` goes through as written, `01:02:03.04` comes back as `01:02:03;04` (dot becomes
+    drop-frame), and an out-of-range minute `01:60:00:00` is carried into the hours as
+    `02:00:00:00`. A person handing off a master must get that refusal instead of a file whose
+    timecode is not the one they typed.
+    """
+    if value is None:
+        return None
+    parts = _TIMECODE_PARTS.match(value)
+    if not parts:
+        raise EditorError(
+            "TIMECODE_INVALID",
+            f"时间码得写成 {TIMECODE_SHAPE}（每段两位数字，分隔符用 : 或 ;），收到的是 {value!r}；"
+            "例：01:00:00:00",
+            422,
+            value=value,
+        )
+    hours, minutes, seconds, separator, frames = (
+        int(parts.group(1)),
+        int(parts.group(2)),
+        int(parts.group(3)),
+        parts.group(4),
+        int(parts.group(5)),
+    )
+    limit = timecode_frames(rate)
+    problems: list[str] = []
+    if hours > 23:
+        problems.append(f"小时最多 23，收到 {hours}")
+    if minutes > 59:
+        problems.append(f"分钟最多 59，收到 {minutes}")
+    if seconds > 59:
+        problems.append(f"秒最多 59，收到 {seconds}")
+    if frames >= limit:
+        problems.append(
+            f"这条时间线是 {rate.numerator}/{rate.denominator}，"
+            f"帧号只能 00–{limit - 1:02d}，收到 {frames:02d}"
+        )
+    if separator == ";" and (rate.numerator, rate.denominator) not in TIMECODE_DROP_RATES:
+        problems.append(
+            "分号那种是丢帧码（drop-frame），SMPTE 只在 29.97 与 59.94 上定义它；"
+            "这条时间线不是那两个率，请改用冒号"
+        )
+    if problems:
+        raise EditorError(
+            "TIMECODE_INVALID",
+            f"时间码 {value!r} 不能用：" + "；".join(problems) + f"。写法 {TIMECODE_SHAPE}",
+            422,
+            value=value,
+        )
+    return value
+
+
 # How far the subject may drift from the middle of the frame between two auto-reframe keyframes,
 # measured in frame widths. One number so the planner default and the request default cannot drift.
 REFRAME_TOLERANCE = 0.01
@@ -1129,6 +1197,7 @@ class RenderBatchItem(Contract):
     fit: RenderFit = "contain"
     range: RenderRange = "full"
     transparent: bool = False
+    timecode: Annotated[str | None, Field(max_length=24)] = None
 
     @model_validator(mode="after")
     def safe_filename(self):
@@ -2160,6 +2229,9 @@ class RenderRequest(Contract):
     # 透明背景母版。False 就是这个字段出现之前所有请求的含义，所以旧凭据重放还是它自己；
     # 它只在预设 `alpha` 为真时被接受，否则在编计划的那一步就拒掉。
     transparent: bool = False
+    # 起始时间码：写给交接用的（`None` 就是没有）。合法性由 `checked_timecode` 判，不在这里判，
+    # 因为它要读这条时间线自己的帧率。
+    timecode: Annotated[str | None, Field(max_length=24)] = None
 
     @model_validator(mode="after")
     def safe_filename(self):
@@ -2222,6 +2294,8 @@ class RenderJob(Contract):
     # 任务自己带着这个勾：worker 到点重编计划时按它渲染，排队的人看到的和落地的是同一张画面。
     # 老任务文档里没有这一行，读回来就是 False。
     transparent: bool = False
+    # 任务带着它，worker 到点重编计划时写的还是同一个时间码；老任务文档没有这一行，读回来是 None。
+    timecode: Annotated[str | None, Field(max_length=24)] = None
     filename: Annotated[str, Field(max_length=2048)]
     status: Literal["queued", "running", "succeeded", "failed", "cancelled"]
     total_ticks: Ticks = 0
@@ -2605,6 +2679,10 @@ def capabilities(
         # 哪几条预设真的装得下透明度。界面那个勾和引擎那句拒绝读的都是同一份预设表，
         # 所以「勾了透明却导出一个不透明的文件」这件事没有发生的余地。
         "alpha_presets": [item["id"] for item in render_presets() if item["alpha"]],
+        # 时间码的写法与「哪两个率才有丢帧码」由引擎说，界面不许自己写死一份正则：
+        # 这两条就是 `checked_timecode` 用的同一组常量。
+        "timecode_shape": TIMECODE_SHAPE,
+        "timecode_drop_rates": [list(item) for item in TIMECODE_DROP_RATES],
         # The build identity, next to the schema it speaks: an Agent reading this document can tell
         # which engine answered, and the desktop shows it in the title bar.
         "app_version": APP_VERSION,
