@@ -402,6 +402,13 @@ export function ExportPanel(): JSX.Element {
             </div>
           </Field>
 
+          {isSequence && (
+            <p className="hint">
+              图像序列交出的是一串文件：这个名字成为目录，里面每帧一个文件；声音不在里面，
+              起始时间码也进不去（帧号就是位置）。要带声的成片或带时间码的交接，请再交一份 mp4／mov。
+            </p>
+          )}
+
           <Field label="输出文件夹" hint="引擎只允许写进被授权的文件夹">
             <div className="input-row">
               <Btn onClick={() => void chooseFolder()} title="选择引擎允许写入的文件夹">

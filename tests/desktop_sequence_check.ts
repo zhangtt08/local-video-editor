@@ -89,6 +89,17 @@ assert.ok(panel.includes("这一栏不起作用"), "panel-says-why-the-row-is-da
 assert.ok(panel.includes("每帧一个文件"), "filename-hint-says-one-file-per-frame");
 assert.ok(panel.includes("声音不在里面"), "filename-hint-says-no-audio");
 
+// 1.143：装机复核（在发布包取出的渲染层里真点一次）抓到——`Field` 的 hint 只挂在
+// `<label title=…>` 上，鼠标不悬上去就一个字都看不见。序列这三句话不能只在悬停里。
+const ui = readFileSync(SRC + "desktop/src/ui.tsx", "utf8");
+assert.match(ui, /<label title=\{hint\}>/, "field-hint-is-only-a-tooltip");
+assert.match(
+  panel,
+  /\{isSequence && \(\s*<p className="hint">[\s\S]{0,300}?声音不在里面[\s\S]{0,160}?起始时间码也进不去[\s\S]*?<\/p>\s*\)\}/,
+  "sequence-note-is-visible",
+);
+assert.match(panel, /请再交一份 mp4／mov/, "visible-note-names-the-exit");
+
 console.log(
   "PASS: 序列在界面这一侧说三句真话——预设那行念「OpenEXR 序列 · 每帧一个文件」（不再有空的斜杠），" +
     "时间码那一栏对序列不起作用且发出去的就是 null，文件名提示说明白这是一串文件且不带声音；" +

@@ -67,6 +67,9 @@ RENDERER_SENTENCES = (
     "声音不在里面",
     "这一栏不起作用",
     "帧号就是位置",
+    # 1.143：这三句不能只在悬停里（Field 的 hint 只写进 title），面板上要有一行看得见的字。
+    "起始时间码也进不去",
+    "请再交一份 mp4／mov",
 )
 RENDERER_LITERALS = (
     "clip.color_manage",
