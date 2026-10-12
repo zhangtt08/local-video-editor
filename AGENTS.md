@@ -52,6 +52,11 @@
   而全部门禁是绿的。现在 `colour_tag_check.py` 的 `video_suite` 走的就是界面那条路（mp4 → 真编码 →
   探针读三样标记 → 解回 RGB 比往返，实测漂移 1 个色阶），突变「摘掉 `format=gbrp` 那一段」立刻红在
   那句 FFmpeg 错误上。读滤镜串与读 argv 都不算这一条的证据。
+- 1.151 已发：`AgentCut.exe` 与便携版逐字节相同（189,915,745 B / 安装版 190,076,444 B，asar 1.151.0、
+  84 个文件），全量套件**空闲机器单独跑 105/105**、壳层 54 项、突变 12 条各红在自己那条断言上，
+  界面真点跑过一次真实 mp4 的带标记交付。下一档要做的事已量到边界：第二标记要先量 `zscale` 认的
+  基色名（`smpte432`／`bt2020` 在表里，矩阵那侧只有 `709`／`470bg`／`2020_ncl` 这一族）并配一份
+  独立预测；透明母版与标记仍是互斥（要先把那一折从编码器手里接回滤镜图）。
 - 1.150 的能力是把替代清单里「输入侧仍手工选」那条还掉：`clip.color_manage` 多 `auto_source`，来源端由
   `colortags.detect_space` 读素材自己的 transfer characteristic。只有 `color_transfer` 说得出色调曲线，
   `color_space`（矩阵系数）与 `color_primaries`（基色）都不决定 gamma，所以只标后两者的文件回 `no_transfer_tag`
