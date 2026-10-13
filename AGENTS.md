@@ -62,7 +62,26 @@
      就没人能按自身声明解回原色，所以仍不交。`capability_suite` 现在把这两件事都钉住：每一档声明的
      三样标记必须出现在**当场从随包 FFmpeg 帮助里读出来**的那三份名单里，且 γ2.6 缺席——哪天名单里
      有了它，这条会红，届时重量 DCI-P3 那一档并按结果决定加不加行，而不是让这句话当既成事实。
-  3. 多目标跟踪、遮罩跟踪估计旋转、`lut3d` 的浏览器预览（`features.lut3d_preview` 仍 false）。
+  3. 剩下的三个能力项，本轮把各自要动的地方点到行，方便下一轮直接落手：
+     1. **多目标跟踪**（建议先做，也最小可交付）：引擎侧的入口是 `tracking.track_box`
+        （一次跟一个盒子：平移＋可选缩放＋遮挡期整幅重找）与包它的那层 `track_mask`；
+        `MaskTrackRequest`（`src/agentcut/contracts.py:2219`）今天说的还是一个遮罩。
+        第一小步是把请求换成「一组目标」，逐目标跑 `track_box`，各自的 `merge`（接着跟）
+        与预算分别成立——`timeline.mask_track_capacity`（`src/agentcut/timeline.py:62`）与
+        422 `MASK_TRACK_BUDGET` 那五个数要从「一片段的账」变成「逐目标的账」，
+        写入那一站是 `_apply_mask_track`（`src/agentcut/timeline.py:821`）。界面侧的按钮与
+        「这一次量几帧」那段（`effects.ts` 的 `trackWindow`）跟着读同一份回执，不许自备上限。
+     2. **遮罩跟踪估计旋转**：`track_box` 今天只出平移与缩放；可复用的是 `stabilize.py` 里
+        四锚点的 Arun 刚体拟合（画面稳定自 1.67 起就写 `rotation`，低于 0.19° 的死区不写）。
+        贵的不是算，是它后面那一串：`MaskProperty` 今天是四条（`docs_facts_check` 就数着 4），
+        多一条旋转要动契约属性集、曲线预算（一个带尺寸的跟踪点占 4 条曲线）、检查器与
+        时间线的分道上限，以及预览那条链——引擎、界面、门禁三头都要跟着走一遍。
+     3. **`lut3d` 的浏览器预览**：`features.lut3d_preview` 仍 false（`contracts.py:3170`），
+        节点卡片上那句「仅导出生效」在 `desktop/src/gradeGraph.ts:210`，`desktop/src/engine.ts:89`
+        写着「浏览器画不出它」。预览现在那套原语是每通道独立的 `feComponentTransfer` 加一次
+        3×3 的 `feColorMatrix`，跨通道的 33³ 立方体在里面没有落点，所以这是一件**新原语**
+        （浏览器侧真采样 + 与导出同一份四面体插值），不是把那个 flag 改成 true 就完事——
+        两端一致这句话要么真做到，要么继续像今天这样明说「仅导出生效」。
 ## 上一轮停放点（1.154）
 
 - **透明母版现在也能老实声明自己的颜色了。** 1.153 之前那条 `COLOUR_TAG_NOT_WITH_ALPHA` 说的是实话——
