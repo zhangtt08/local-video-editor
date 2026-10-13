@@ -38,6 +38,16 @@
   那三行现在 alpha 档里也有，判据是「一张恒等立方体蒙不过去」那句反向保险。
 - 界面：`desktop/src` 一字未改（那一栏排的就是 `capabilities.output_colour_tags`，面板不抄档名），
   所以「档数」这件事在界面上是零改动——这是 1.151 就定下的口径，本轮再次兑现。
+- 随包媒体程序的身份这轮也被钉住了（一条实测到的交付缺陷）：`scripts/build_engine.py` 原来在
+  `desktop/node_modules` 不在的时候会从 `C:/ffmpeg/bin`／`Program Files`／PATH 拿一支顶上，本轮
+  清完构建输入再重建，`--verify` 照常绿，而包里那支换成了本机 winget 的 **9.0.2 full build**
+  （单支 227,823,104 字节；静态包那支是 `6.1.1-essentials_build`，82,797,568）——文档里 zscale 的
+  矩阵拼法与每一次折叠实测，量的都是随包 6.1.1。现在构建只认静态包（换一支必须用
+  `AGENTCUT_FFMPEG`/`AGENTCUT_FFPROBE` 明说），并写 `desktop/resources/bin/media-stamp.json`
+  （版本行＋sha256＋字节＋来源）；`mediabinary_check` 对这张戳——戳不存在、字节不符、版本行
+  不符、来源不在静态包那一层，四种各红一次，控制组绿；`released_package_check` 另比装机包里那
+  两支与随包的逐字节相同。重建后根 `AgentCut.exe` 回到 189,920,532 字节，`win-unpacked` 里的
+  `ffmpeg -version` 重新是 `6.1.1-essentials_build`。教训：`--verify` 通过不等于装机的就是量过的那支。
 - 下一轮的具体入口：
   1. 交付标记与工程色彩管理的**显示端**对齐（1.152 起挂着）：`bt709`／`bt601` 两档恒声明 709 基色，
      而 `COLOR_SPACES` 里没有宽基色那一档，所以「一条链的显示端选了 rec2020」这句话今天还说不出口。

@@ -23,6 +23,7 @@ Stdlib only, so it runs before any Python environment is set up beyond the proje
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -151,30 +152,44 @@ def build_engine(layout: str, use_uv: bool) -> Path:
 
 # --------------------------------------------------------------------------- media binaries
 def find_source(kind: str) -> Path:
-    """Locate a local ffmpeg/ffprobe binary; node_modules first, then the usual system spots."""
+    """Stage the media binaries the project pins; there is deliberately no fallback to this machine.
+
+    这里原来在 `desktop/node_modules` 找不到就往下退：`C:/ffmpeg/bin`、`Program Files`、最后 PATH。
+    退路的代价本轮量到了：清掉 `node_modules` 之后重建，`--verify` 照常绿，而装机的包里那支 FFmpeg
+    换成了本机 winget 的 9.0.2 full build（218 MB，静态包那一支是 6.1.1，82 MB）——文档里 zscale
+    的折叠、矩阵拼法与色度标记的每一个数都是随包 6.1.1 量的。发布包不能取决于装机器碰巧有什么，
+    所以这里只剩两条路：用静态包，或者点名拒绝。确实要换一支（比如专门验 9.x 的行为差异），
+    用 `AGENTCUT_FFMPEG` / `AGENTCUT_FFPROBE` 把路径明确交进来，戳里会记下它来自哪里。
+    """
     modules = ROOT / "desktop" / "node_modules"
     candidates = [
         modules / "ffmpeg-static" / f"{kind}.exe",
         modules / "ffprobe-static" / "bin" / "win32" / "x64" / "ffprobe.exe",
         modules / "ffprobe-static" / "bin" / "win32" / "ia32" / "ffprobe.exe",
     ]
-    for root in ("C:/ffmpeg/bin", "C:/tools/ffmpeg/bin", os.environ.get("ProgramFiles", "")):
-        if root:
-            candidates.append(Path(root) / f"{kind}.exe")
-    for folder in str(os.environ.get("PATH", "")).split(os.pathsep):
-        if folder:
-            candidates.append(Path(folder) / f"{kind}.exe")
-    if not IS_WINDOWS:
-        which = shutil.which(kind)
-        if which:
-            return Path(which)
+    override = os.environ.get(f"AGENTCUT_{kind.upper()}_BIN", "").strip()
+    if override:
+        chosen = Path(override)
+        if chosen.name == f"{kind}.exe" and chosen.is_file():
+            step(f"staged {kind}.exe from the explicit AGENTCUT_{kind.upper()}_BIN override")
+            return chosen.resolve()
+        fail(
+            f"AGENTCUT_{kind.upper()}_BIN 指向的不是可执行的 {kind}.exe：{override}"
+            "——要换一支就给它正确的路径，别让它悄悄退回去"
+        )
     for candidate in candidates:
         # never hand back the wrong binary just because the folder was searched in order
         if candidate.name == f"{kind}.exe" and candidate.is_file():
             return candidate.resolve()
+    if not IS_WINDOWS:
+        # 开发机上没有 .exe 这一说，跟着 PATH 走是原来的行为，Windows 交付路径不受影响。
+        which = shutil.which(kind)
+        if which:
+            return Path(which).resolve()
     fail(
-        f"no local {kind} binary found; install it with `npm --prefix desktop install` "
-        "(ffmpeg-static / ffprobe-static) or pass a path on PATH"
+        f"没有可随包的 {kind}.exe：先 `npm --prefix desktop ci`（ffmpeg-static / ffprobe-static）。"
+        "本脚本不再从 C:/ffmpeg、Program Files 或 PATH 找退路——装机的那支必须是验收量过的那支；"
+        f"确实要换一支，用 AGENTCUT_{kind.upper()}_BIN 明确交进来。"
     )
     return Path()  # unreachable, keeps mypy/ruff happy
 
@@ -198,15 +213,37 @@ def binary_version(path: Path) -> str:
 
 
 def stage_media() -> list[Path]:
+    """Copy the pinned media binaries in, then write down exactly what they are.
+
+    那张 `media-stamp.json` 是「装机的那支就是验收量的那支」这句话的可判版本：
+    `tests/mediabinary_check.py` 拿它去对随包那两支的字节与版本行。谁手工换过 exe 却没重跑构建，
+    或者换的那支不是静态包里的，当场红。
+    拿它去对随包那两支的字节与版本行，谁手工换过 exe 而没重跑构建，当场红。
+    """
     staged = []
+    stamp: dict[str, dict[str, object]] = {}
     for kind in ("ffmpeg", "ffprobe"):
         source = find_source(kind)
         target = DEST / f"{kind}.exe"
         shutil.copy2(source, target)
         note = " [32-bit build]" if "ia32" in str(source) else ""
         step(f"staged {kind}.exe {human(target.stat().st_size)} <- {source}{note}")
-        step(f"        {kind}.exe -version -> {binary_version(target)}")
+        version = binary_version(target)
+        step(f"        {kind}.exe -version -> {version}")
+        try:
+            shown = str(source.relative_to(ROOT)).replace(chr(92), "/")
+        except ValueError:
+            shown = str(source)
+        stamp[kind] = {
+            "version_line": version,
+            "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+            "bytes": target.stat().st_size,
+            "source": shown,
+        }
         staged.append(target)
+    body = json.dumps(stamp, ensure_ascii=False, indent=2) + "\n"
+    (DEST / "media-stamp.json").write_text(body, encoding="utf-8")
+    step("wrote media-stamp.json (版本行 + sha256 + 字节数 + 来源，随那两支一起进包)")
     return staged
 
 

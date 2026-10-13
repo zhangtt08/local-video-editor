@@ -157,6 +157,15 @@ def main() -> None:
 
     assert packed["version"] == APP_VERSION, (packed["version"], APP_VERSION)
 
+    for media in ("ffmpeg.exe", "ffprobe.exe"):
+        staged_media = DESKTOP / f"resources/bin/{media}"
+        shipped_media = UNPACKED / f"resources/bin/{media}"
+        require(staged_media, engine)
+        require(shipped_media, build)
+        assert digest(staged_media) == digest(shipped_media), (
+            f"the package ships a different {media} than the one staged beside the engine"
+        )
+
     assert digest(STAGED_ENGINE) == digest(SHIPPED_ENGINE), (
         "the app ships a different engine than the one built"
     )

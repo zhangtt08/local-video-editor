@@ -269,6 +269,16 @@ uv run python tests/suite_check.py grade marks fourpoint   # 只跑名字含这�
 引擎自己在运行时的次序不同：随包那份是默认，`--ffmpeg` 命令行与环境变量 `AGENTCUT_FFMPEG` / `AGENTCUT_FFPROBE` 比它更说了算
 （`tests/ffmpegpath_check.py` 钉的就是这个次序）。
 
+构建那一侧同一条规矩现在也有了：`scripts/build_engine.py` 只准从工程自己锁定的静态包
+（`desktop/node_modules/ffmpeg-static` 与 `ffprobe-static`）取那两支，不再从 `C:/ffmpeg/bin`、
+`Program Files` 或 PATH 找退路——真要用另一支，得用 `AGENTCUT_FFMPEG` / `AGENTCUT_FFPROBE`
+把路径明确交进来。每次随包它都写下 `desktop/resources/bin/media-stamp.json`：版本行、sha256、
+字节数与来源。`tests/mediabinary_check.py` 拿这张戳对随包那两支的字节与版本，来源不在静态包
+那一层就红；`tests/released_package_check.py` 另比一份「装机的 `win-unpacked/resources/bin/`
+里那两支与随包的逐字节相同」。这条是本轮补上的实测缺陷：清掉 `node_modules` 之后重建，
+构建脚本从 PATH 拿了本机的 FFmpeg 9.0.2 full build 顶上（单支 218 MB），`--verify` 当时照常绿，
+而发布包内嵌的那一支已经不是文档里所有 zscale 与折叠实测数所依据的那支 6.1.1 了。
+
 **交付后的树里重跑验收**：清掉 `.venv`、`desktop/node_modules`、`dist/`、`desktop/dist*`、`build/`、`desktop/release/`
 只留软件本身以后，下面四步是那些门禁的前置（缺哪一样，对应那条会点名缺的是哪个路径，不会静默跳过）：
 

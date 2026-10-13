@@ -5730,3 +5730,28 @@ YUV mp4**（1.151 那次界面真点抓到缺陷，用的就是这种素材）�
   那时该改的是断言而不是文档。
 - 本轮不动引擎行为：`contracts.py` 改的两处是注释，版本号仍 1.156.0，交付的字节按同一版本
   重新构建并逐字节对表（根目录那份仍等于便携版）。文档与门禁的这一笔账由套件里那一项自己复跑。
+
+## 1.156 的又一笔账：发布包里那支 FFmpeg，原来是装机器碰巧有的那一支
+
+- 补完文档接着重建（`build_engine.py --verify` → `npm run dist` → 重抄根 `AgentCut.exe`），
+  发现根目录那份从 189,919,996 字节变成 273,264,330 字节——差出来的 83 MB 是随包那两支媒体
+  程序：`desktop/resources/bin/ffmpeg.exe` 成了本机 winget 的 **9.0.2 full build**（单支
+  227,823,104 字节），而工程锁定的静态包那支是 `6.1.1-essentials_build`（82,797,568）。
+  所有门禁当时都是绿的：`--verify` 只验「引擎能不能在 exe 旁边找到一支可用的 FFmpeg」，
+  它不验那是哪一支。
+- 成因在 `scripts/build_engine.py` 的 `find_source`：`desktop/node_modules` 里找不到就往下退——
+  `C:/ffmpeg/bin`、`C:/tools/ffmpeg/bin`、`Program Files`，最后 PATH。本轮先清理再重建，
+  `node_modules` 正是被清掉的那一样，于是退路生效；`shutil.copy2` 还把旧时间戳一起搬了过来，
+  看上去更像「一直都在」。**发布包内嵌的媒体程序由装机器碰巧有什么决定**，与 1.152 收回来那条
+  「门禁不许用第二份 FFmpeg」是同一类缺陷，只是发生在构建这一侧：README、`docs/api.md` 与那一串
+  色彩实测数的依据都是随包 6.1.1，换成 9.x 那些数不再成立。
+- 修法按同一口径：只准用静态包，三条退路整个删掉；确实要换一支，用 `AGENTCUT_FFMPEG` /
+  `AGENTCUT_FFPROBE` 把路径明确交进来。构建每次写 `desktop/resources/bin/media-stamp.json`
+  （版本行＋sha256＋字节数＋来源），身份由这张戳说，不由任何人手抄的版本号说——写死「6.1.1」
+  迟早变成第五条「门禁里过时的字面量」。
+- 门禁两头各钉一处：`tests/mediabinary_check.py` 新增 `media_identity`（四种情形各红一次：戳不存在、
+  字节与戳不符、版本行与戳不符、来源不在 `desktop/node_modules/` 那一层；控制组绿），
+  `tests/released_package_check.py` 新增「装机 `win-unpacked/resources/bin/` 里那两支与随包的逐字节
+  相同」。重建后 `ffmpeg -version` 回到 6.1.1，根 exe 189,920,532 字节且与便携版逐字节相同。
+- 这一笔的教训：`--verify` 通过不等于装机的就是量过的。凡是「随包」的东西，要么由来源路径钉住，
+  要么由内容摘要钉住；两者都没有，它只是碰巧对。

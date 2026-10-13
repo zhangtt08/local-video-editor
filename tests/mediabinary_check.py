@@ -12,6 +12,8 @@
 """
 
 import ast
+import hashlib
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -143,6 +145,48 @@ def stray_media_paths(checks: list[Path]) -> list[str]:
     return hits
 
 
+STAMP_FILE = f"media{DASH}stamp{DOT}json"
+STATIC_PREFIX = f"desktop{SEP}node_modules{SEP}"
+
+
+def media_identity(banner: dict) -> list[str]:
+    """随包那两支 FFmpeg 的身份，由构建时留下的那张戳说话。
+
+    本轮量到的缺陷：`scripts/build_engine.py` 在 `desktop/node_modules` 被清掉的时候，会从
+    `C:/ffmpeg/bin` 或 PATH 拿一支顶上——`--verify` 照常绿，而装机的包里换成了本机 winget 的
+    9.0.2 full build。文档里每一个 zscale 与折叠的实测数都是随包 6.1.1 量的，所以「发布包里的
+    媒体程序就是验收量的那支」必须由字节与版本行来判，而不是由构建脚本的礼貌退路来保证。
+    """
+    stamp_path = BIN_DIR / STAMP_FILE
+    if not stamp_path.is_file():
+        return [
+            f"随包目录没有 {STAMP_FILE}：那两支的身份没人记过，包里是什么全看装机器碰巧有什么"
+        ]
+    stamp = json.loads(stamp_path.read_text(encoding="utf-8"))
+    hits: list[str] = []
+    for kind in ("ffmpeg", "ffprobe"):
+        row = stamp.get(kind)
+        if row is None:
+            hits.append(f"戳里没有 {kind} 那一行")
+            continue
+        exe = BIN_DIR / f"{kind}.exe"
+        digest = hashlib.sha256(exe.read_bytes()).hexdigest()
+        if digest != row["sha256"]:
+            hits.append(
+                f"{kind}.exe 的字节与戳不符：现在 {digest[:12]}…，戳记的是 {row['sha256'][:12]}…"
+                "（换过 exe 却没重跑构建）"
+            )
+        line = str(banner[kind])
+        if line.split()[2] != str(row["version_line"]).split()[2]:
+            hits.append(f"{kind}.exe 的版本行与戳不符：{line!r} 对 {row['version_line']!r}")
+        source = str(row["source"]).replace(BS, SEP)
+        if not source.startswith(STATIC_PREFIX):
+            hits.append(
+                f"戳记的来源不在静态包那一层，而是 {source!r}——那是一支碰巧装在这台机器上的媒体程序"
+            )
+    return hits
+
+
 def main() -> None:
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
@@ -156,6 +200,7 @@ def main() -> None:
         ("本机用户目录路径", user_paths(files)),
         ("随包目录之外的 FFmpeg", second_ffmpeg(checks)),
         ("随包目录之外的媒体程序路径", stray_media_paths(checks)),
+        ("随包媒体程序与那张身份戳", media_identity(banner)),
     ):
         assert not hits, f"{label}没被拦住：\n  " + "\n  ".join(hits)
     print(
