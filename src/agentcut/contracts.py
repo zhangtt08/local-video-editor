@@ -14,7 +14,7 @@ SCHEMA_VERSION = (
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.152.0"
+APP_VERSION = "1.153.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -429,17 +429,65 @@ OUTPUT_COLOUR_TAGS: tuple[dict[str, str], ...] = (
         "zscale_matrix": "170m",
         "zscale_range": "tv",
     },
-    # 宽色域（bt2020 / P3）这一档 1.152 **不做**，理由是量出来的而不是想到的：要让「基色是 2020」
-    # 这句话成真，图里得先做 709→2020 的基色转换，而随包 zscale 那一步与标准算式不符——
-    # `zscale=primariesin=709:primaries=2020:matrix=2020_ncl:range=tv` 交出 (83,110,146)，独立预测
-    # 是 (90,113,169)，Cr 差 23 个色阶；P3-D65 那一路（`primaries=432`）当场
-    # `no path between colorspaces`。只换矩阵不换基色（`zscale=matrix=2020_ncl`）能精确折出
-    # (83,106,157)，但那等于给 709 基色的画面盖一张 2020 的标签——正是本表存在的目的所要防止的
-    # 谎话。要做这一档，得先把线性化→基色矩阵→重新编码那三步从 zscale 手里接回引擎自己的图。
+    # 1.153 第三档：宽色域。这一档**换基色**，所以它比前两档多两件事——图里要多一站，而那一站的
+    # 九个数必须有外部出处。`shift_from`/`shift_to` 就是「图里那份 RGB 的基色」与「容器声明的基色」
+    # 两端；渲染器据此把立方体交给 `lut3d`（`gamut.delivery_cube`），折叠再按 2020-NCL 走。
+    # 数都是量回来的（64×36 素材里那一格 (126,63,30)，随包 FFmpeg 6.1.1）：交出的 YUV
+    # (81,109,146)，与「BT.2020 公布的 rec709→rec2020 那张表 + 0.2627/0.6780/0.0593 系数」独立算出
+    # 的 (82,109,145) 差 (1,0,1)；容器读回 `color_space=bt2020nc`＋`color_primaries=bt2020`＋
+    # `bt709`＋`tv`，mp4 与 MXF 都一样；一台老实的观看者按这四样解回来得 (126,62,28)，与源差
+    # (0,1,2)。判「这句基色兑不兑得了现」用纯色（`flat_suite`）：五种画面格式各取一条代表、三片
+    # 709 之外的边缘色，按容器那四样标记解回来最差 1 阶——8 位 4:2:0 也算得过，所以这一档不挑预设。
+    # 立方体在格与格之间的插值用 2×2 块的渐变判（`ramp_suite`，10 位上最大 8 阶、控制档 1~2 阶），
+    # 格数本身用数学判（`cube_suite`：33³ 的插值地板 0.17 阶）。
+    # 这一档也是那条规矩的来源：**互逆的一对错曲线是自洽检查抓不到的**。把 BT.709 编码侧的 0.45
+    # 与解码侧的 1/0.45 对调之后，纯色往返、恒等立方体的控制组全都照常绿，只有换基色把某个通道
+    # 推到极暗时才会把它算成负数、被夹成 0，量到解回差 85 阶。渐变逐列比就是为这个洞放的。
+    # 为什么不用 `colorchannelmixer`：那一站乘的是存储值，基色转换必须在线性光里做；1.152 实测
+    # 「zscale 进线性 → colorchannelmixer → 回 709」这一对在 16 位上仍与标准算式差 3–7 阶。
+    # P3-D65 仍**不交**：同一张立方体的路子量出来蓝通道被夹掉 30 阶（709 的绿原色在 P3-D65 之外），
+    # 那是需要真正的色域压缩而不是换一张矩阵的事。
+    {
+        "id": "bt2020",
+        "label": (
+            "BT.2020 宽色母版（基色按 BT.2020 公布表换过去，曲线仍是 709；"
+            "浏览器不做宽色域管理，所以预览会比成片淡，导出的那一份才是按标准算式量过的那一张。"
+            "按容器标记解回纯色，表里五种画面格式（含 8 位 4:2:0）都不差 1 阶）"
+        ),
+        "primaries": "bt2020",
+        "transfer": "bt709",
+        "matrix": "bt2020nc",
+        "zscale_matrix": "2020_ncl",
+        "zscale_range": "tv",
+        "shift_from": "rec709",
+        "shift_to": "rec2020",
+    },
+    # P3-D65（`smpte432`）这一档仍**不做**，1.153 量过才写下的：同一张立方体的路子，把 709 的
+    # 画面换进 P3-D65 之后按标记解回来，蓝通道被夹掉 30 个色阶（709 的绿原色在 P3-D65 之外），
+    # 折叠本身倒是逐位对得上。那不是换一张矩阵的事，是真的要做色域压缩（clip 与压缩曲线的取舍）
+    # 才兑得了现，所以宁可空着这一档，也不交一张会把颜色读歪的标签。
 )
 
 # The closed vocabulary an Agent may name. It is derived from the table, never written twice.
 COLOUR_TAG_CODES = tuple(str(row["id"]) for row in OUTPUT_COLOUR_TAGS)
+
+
+def colour_tag_presets() -> dict[str, list[str]]:
+    """每一档带得出去的预设 id——只在这一处算，引擎的拒绝与界面的灰态共读这一份。
+
+    三档是同一份名单：能不能挂标记只由「有没有容器、有没有画面」说话，与是哪一档无关。
+    宽色域那一档一度在这里额外要求 10 位 4:4:4，把那条要求撤掉是因为撑它的那把量具自己不成
+    立：那条渐变每两个像素换一次色度，4:2:0（乃至 4:2:2）本来就带不动，同一份像素上连不带
+    立方体的控制档都解到 126 阶——那个数说的是抽样，不是「基色是 2020」这句话。换成一纯色
+    去量（基色声明真假所指的就是这个）：五种画面格式各取一条、五片 709 之外的边缘色，最差
+    是 8 位 4:2:0 的 2 阶，控制档 1 阶。判据与这两个数都由 `colour_tag_check` 当场重量。
+    """
+    picture = [
+        str(item["id"])
+        for item in render_presets()
+        if not item["sequence"] and item["codec"] is not None
+    ]
+    return {str(row["id"]): picture for row in OUTPUT_COLOUR_TAGS}
 
 
 class GradeCurve(Contract):
@@ -2965,6 +3013,9 @@ def capabilities(
         # 1.151: the one claim a master may make about its own colour, and the flags that
         # make it true. An interface that listed its own tag names would drift from this.
         "output_colour_tags": [dict(row) for row in OUTPUT_COLOUR_TAGS],
+        # 每一档带得出去的预设（宽色那一档要 10 位 4:4:4）：界面据此灰态，引擎据此拒绝，
+        # 两处读同一份，不许界面自己再判一次像素格式。
+        "output_colour_tag_presets": colour_tag_presets(),
         "output_frame_rates": [
             {"numerator": numerator, "denominator": denominator, "label": label}
             for numerator, denominator, label in OUTPUT_FRAME_RATES

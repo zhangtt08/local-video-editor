@@ -304,6 +304,11 @@ def main():
                     ("-color_primaries bt709", "-color_trc bt709", "-colorspace smpte170m"),
                     "zscale=matrix=170m:range=tv",
                 ),
+                (
+                    "bt2020",
+                    ("-color_primaries bt2020", "-color_trc bt709", "-colorspace bt2020nc"),
+                    "zscale=matrix=2020_ncl:range=tv",
+                ),
             ]
             for code, claims, fold in tiers:
                 status, tagged = call(base, token, "GET", f"{plan_base}&colour_tag={code}")
@@ -312,6 +317,9 @@ def main():
                 for claim in claims:
                     assert claim in argv, (code, claim, argv[-320:])
                 assert fold in argv, (code, fold, argv[-320:])
+                if code == "bt2020":
+                    # 宽色那一档必须真带一站基色转换；只写标签不转换，就是 1.152 拒过的那种谎。
+                    assert "lut3d=file=primaries-" in argv, (code, "少了基色那一站", argv[-320:])
                 assert tagged["plan"]["colour_tag"] == code, (code, tagged["plan"])
             status, unknown = call(base, token, "GET", f"{plan_base}&colour_tag=p3-dci")
             assert status == 422, unknown
@@ -324,8 +332,8 @@ def main():
                 "each published tier adds its own trio + fold, an unknown id is refused"
             )
             print(
-                "PASS: the engine inside the package serves 1.152 over real HTTP, and its "
-                "refusal writes nothing"
+                f"PASS: the engine inside the package serves {caps['app_version']} over real HTTP, "
+                "and its refusal writes nothing"
             )
         finally:
             proc.terminate()

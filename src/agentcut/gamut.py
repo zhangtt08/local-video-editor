@@ -24,6 +24,8 @@ XYZ；两档之间 M = inv(A_target) @ A_source。行=输出通道，列=输入�
 
 from __future__ import annotations
 
+from typing import Callable
+
 # 名字 → (三原色 xy, 白点 xy, 那一档实际用的传递函数名)。传递函数名与 `contracts.ColorSpace`
 # 同一套词：界面上「基色」与「曲线」是两件事，但说话时一起说，所以随表交出去（本模块不用它算矩阵）。
 PRIMARIES: dict[str, tuple[tuple[tuple[float, float], ...], tuple[float, float], str]] = {
@@ -177,3 +179,86 @@ def gamut_presets() -> list[dict]:
             }
         )
     return said
+
+
+# 交付母版那一端的「曲线」只认容器声明的那一档：写 bt709 就得按 ITU-R BT.709 的
+# α=1.099、β=0.099、线性段斜率 4.5、光侧拐点 0.018 来折。链子里那个 `rec709` 是纯 γ2.4
+# （`grade.GAMMA_BY_SPACE`，那是对人眼的显示端建模），两件事不是一回事，所以这里单独一对。
+# 这四个数是 ITU-R BT.709 的公开定义本身：α=1.099、β=0.099、编码侧指数 0.45、线性段斜率 4.5
+# （拐点在光侧 0.018、信号侧 0.081）。别拿 zscale 的 TRC 当权威去对表——那一站连着 re-range 一起做，
+# 量的不是同一条式子（1.153 试过，两边差一成）。钉住这条曲线的是 `tests/colour_tag_check.py`：
+# 交出去的 YUV 要等于按它折的那一组，且按标记解回来要落回源色。
+BT709_ALPHA = 1.099
+BT709_BETA = 0.099
+BT709_TURN = 0.018
+BT709_SLOPE = 4.5
+BT709_SIGNAL_TURN = BT709_TURN * BT709_SLOPE  # 0.081：信号侧的直线段上限
+BT709_GAMMA = 0.45  # 编码侧的指数
+BT709_GAMMA_INVERSE = 1 / 0.45  # 解码侧的指数（别与上面那行对调）
+
+
+def bt709_eotf(signal: float) -> float:
+    """声明成 bt709 的那格信号换回线性光。"""
+    if signal <= BT709_SIGNAL_TURN:
+        return signal / BT709_SLOPE
+    return ((signal + BT709_BETA) / BT709_ALPHA) ** BT709_GAMMA_INVERSE
+
+
+def bt709_oetf(light: float) -> float:
+    """`bt709_eotf` 的逆：线性光落回那一档信号。
+
+    两个指数一边一个，别对调——1.153 就对调过一次：那对函数仍然互逆，于是纯色往返与恒等控制组
+    全都绿，只有碰到色域边界（换基色后某一通道本该是极小值）才把信号算成负数、被夹成 0，
+    解回来差到 85 阶。互逆的一对错曲线是自洽检查抓不到的，所以 `tests/colour_tag_check.py` 拿
+    随包 FFmpeg 的 709 TRC 对表。
+    """
+    if light < BT709_TURN:
+        return BT709_SLOPE * light
+    return BT709_ALPHA * light**BT709_GAMMA - BT709_BETA
+
+
+def _clamp(value: float) -> float:
+    return 0.0 if value < 0.0 else (1.0 if value > 1.0 else value)
+
+
+# 33^3 ≈ 3.6 万格、文本 947 KB（65^3 要 7.2 MB，129^3 上百 MB，每张交付目录都装不下）。
+# 这一档不是拍的：格子中点与两端平均的最大差（插值的地板）在 33^3 上是 0.17 阶，65^3 上是
+# 0.07 阶——差别在交付上量不出来（同一份渐变在 65/33/17/9 格上都量到 7 阶，那 7 阶是有损编码
+# 器在奈奎斯特图案上的账）。地板由 `tests/colour_tag_check.py` 的 cube 档判在 0.5 阶以内。
+DELIVERY_CUBE_SIZE = 33
+
+
+def delivery_cube(
+    source: str,
+    target: str,
+    size: int = DELIVERY_CUBE_SIZE,
+    curve: Callable[[float], float] = bt709_eotf,
+    inverse: Callable[[float], float] = bt709_oetf,
+) -> str:
+    """把「换基色」那一步写成 FFmpeg 认得的 `.cube`：每一格都是标准算式本身。
+
+    为什么不直接写 `colorchannelmixer`：那一站乘的是**存储值**，而基色转换必须在线性光里做；
+    1.152 实测「zscale 进线性 → colorchannelmixer → 回 709」这一对在 16 位上仍与标准算式差
+    3–7 阶，而按这张表切的立方体交出的折叠与独立预测逐位相同。矩阵出自本模块的
+    `primaries_matrix`（`tests/gamut_check.py` 已经用色度坐标那条独立路量过它），曲线出自上面
+    那一对，与容器声明的那一档同一条。`.cube` 的既定次序是红变化最快、蓝最慢，与
+    `grade.parse_3d_cube` 的读法同一句。
+    """
+    matrix = primaries_matrix(source, target)
+    lines = [
+        f'TITLE "AgentCut {source} -> {target} primaries"',
+        f"LUT_3D_SIZE {size}",
+        "DOMAIN_MIN 0.0 0.0 0.0",
+        "DOMAIN_MAX 1.0 1.0 1.0",
+    ]
+    top = size - 1
+    for blue in range(size):
+        for green in range(size):
+            for red in range(size):
+                encoded = (red / top, green / top, blue / top)
+                light = [
+                    sum(matrix[row][k] * curve(value) for k, value in enumerate(encoded))
+                    for row in range(3)
+                ]
+                lines.append(" ".join(f"{_clamp(inverse(value)):.6f}" for value in light))
+    return "\n".join(lines) + "\n"

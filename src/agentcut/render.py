@@ -41,6 +41,7 @@ from .contracts import (
     render_presets,
     spatial_radius,
 )
+from .gamut import delivery_cube
 from .grade import composite_stages, grade_filter
 from .masks import (
     alpha_expression,
@@ -438,6 +439,23 @@ def colour_tag_row(tag: str | None) -> dict | None:
         colour_tag=tag,
         known=[str(row["id"]) for row in OUTPUT_COLOUR_TAGS],
     )
+
+
+def primaries_shift_stage(plan, row: dict) -> str:
+    """那一档要换基色时，把「换基色」写成立方体交给 `lut3d`；不换的档一个字都不加。
+
+    矩阵出自 `gamut.primaries_matrix`（`tests/gamut_check.py` 用色度坐标那条独立路量过它，1.153
+    又把它对回 ITU-R BT.2020 公布的九个数），曲线是那一张表声明的 `bt709`——两端同一条，才有
+    「按标记解回来还是那个颜色」这句话的根据。立方体按内容寻址落进作业目录，与 3D LUT 那一站
+    同一套机制（`grade_filter` 里那条），所以同一次导出里两张一样的表只写一份。
+    """
+    target = str(row.get("shift_to") or "")
+    if not target:
+        return ""
+    body = delivery_cube(str(row["shift_from"]), target)
+    name = "primaries-" + hashlib.sha1(body.encode()).hexdigest()[:16] + ".cube"
+    plan.text_files[name] = body
+    return f"lut3d=file={name}:interp=tetrahedral,"
 
 
 def colour_flags(tag: str | None, preset: dict) -> list[str]:
@@ -1000,6 +1018,7 @@ def compile_render_plan(
         # 而容器那句「按 709 折」是实话。
         fit_post = (
             f"format={rgb_planar_for(pixel_format)},"
+            f"{primaries_shift_stage(plan, tag_row)}"
             f"zscale=matrix={tag_row['zscale_matrix']}:range={tag_row['zscale_range']},"
             f"format={pixel_format},settb=AVTB"
         )

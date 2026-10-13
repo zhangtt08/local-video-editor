@@ -2848,9 +2848,41 @@ H.264，装不下透明度，于是整条被让掉并在悬停里说清为什么
   带标记母版认成 `rec709`（于是 `clip.color_manage` 的 `auto_source` 接得上自己导的片），同一
   夹具不带标记那份回 `no_color_tags`；ffprobe 从带标记那份读回 `color_space`、`color_primaries`、
   `color_transfer` 三样都是 `bt709`，画面格式仍是 `yuv420p`。
-- 边界说清楚：**今天只有一档**，`bt709`，而加第二档不是界面的事。它是 `OUTPUT_COLOUR_TAGS` 这张
+- 边界说清楚：**1.153 起这张表有三档**（`bt709`／`bt601`／`bt2020`），加一档不是界面的事。它是 `OUTPUT_COLOUR_TAGS` 这张
   契约表多一行，连带要定 `zscale` 的那两个拼法，且 `COLOR_TRANSFER_TAGS[row["transfer"]]` 必须
   仍在 `COLOR_SPACES` 里（capabilities 套件钉住这一条：标记承诺了一条引擎算不出来的曲线，比少一档
   更糟）。面板那边什么都不必改，它排的就是引擎下发的那张表。
-- 证据是七个套件：capabilities／compile／pixels／round trip／refusals／http／receipts
+- 证据是十二个套件：capabilities／compile／pixels／round trip／refusals／http／receipts／tiers／flat／cube／ramp
   （`tests/colour_tag_check.py`），加界面那一份 `tests/desktop_colour_tag_check.ts`。
+
+
+## 1.153 交付色彩标记的第三档：换基色在图里做，判它兑不兑得了现要用纯色
+
+- 第三行 `bt2020` 比前两档多两件事：图里多一站立方体，容器多一句基色声明。立方体由
+  `gamut.delivery_cube` 算——两端基色的九个系数出自 `gamut.primaries_matrix`（色度坐标那条独立路
+  已由 `tests/gamut_check.py` 量过），曲线出自 `gamut.bt709_eotf`／`bt709_oetf`，即容器声明的那一档；
+  文本按 `.cube` 既定次序（红变化最快）写成 33³ 张格，`render.primaries_shift_stage` 把它落成作业
+  目录里的 `primaries-<sha16>.cube`，图里那一站是 `lut3d=file=…:interp=tetrahedral`。旁路文件走的是
+  oversized filter graph 早就在用的 `plan.text_files`，所以同一次导出里两张一样的表只写一份。
+- 为什么不用 `colorchannelmixer`：那一站乘的是**存储值**，而基色转换必须在线性光里做。1.152 实测
+  「进线性 → colorchannelmixer → 回 709」这一对在 16 位上仍与标准算式差 3–7 阶。
+- `capabilities.output_colour_tags` 与 `output_colour_tag_presets` 一起下发，后者每一档给的是
+  「这一档带得出去的预设 id」。三档给的是**同一份名单**（15 条有画面又有容器的预设）：能不能挂标记
+  只由容器与画面说话。界面 `colourTagAllowed` 与引擎 `render.colour_flags` 读同一份判断，因此
+  界面不存在「这一档在这条预设上能不能兑」的第二份算法。
+- 拒绝仍是那三条，且都在**能问出这句话的地方**问：图像序列 → `COLOUR_TAG_NEEDS_CONTAINER`
+  （EXR／DPX 没有容器 VUI），纯声带 → `COLOUR_TAG_NEEDS_PICTURE`（标记是给画面写的），
+  透明母版 → `COLOUR_TAG_NOT_WITH_ALPHA`（rgba 一路带到编码器才折，用哪组系数折不由这条图决定）。
+  `COLOUR_TAG_NEEDS_WIDE_RASTER` 这一条**已删除**：撑它的两个数事后证明是量具的账而不是标签的账
+  （详见 `docs/optimization.md` 的 1.153 一节），换成由 `tests/colour_tag_check.py` 的纯色档正面判。
+- 判这一档真假的两把尺，各判各的：
+  1. `flat_suite`——一句基色声明所指的是**一个颜色**，所以拿 709 之外的边缘纯色去量：每一种画面格式
+     取一条代表，按容器那四样标记解回来，判据 4 阶（实测 1 阶）。
+  2. `ramp_suite`——立方体是插值的，所以格与格之间也要量：图案是 2×2 的块（与最粗的那一档抽样对齐），
+     判据是与同一条预设上「不带转换那一档」的差（实测多 5~6 阶，判据 7 阶）与绝对 9 阶。哪一份像素
+     量得动由控制档当场决定，量不动的就明说并交给前一把尺。
+  3. `cube_suite`——格数不经过 FFmpeg：格点值与独立参考比（0.04 阶）、相邻格中点与两端平均之差算插值
+     地板（0.17 阶），判据 0.5 阶。渐变那把尺看不见这件事（65³ 与 9³ 在它上面量到的一模一样），所以
+     这件事必须由数学判。
+- P3-D65 仍不做，且是量过才写的：同一张立方体的路子把 709 画面换进 P3-D65，蓝通道被夹掉 30 阶
+  （709 的绿原色在 P3-D65 之外）。那是色域压缩的事，不是再换一张矩阵的事，所以这一档宁可空着。
