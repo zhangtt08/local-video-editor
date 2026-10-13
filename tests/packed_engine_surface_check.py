@@ -309,7 +309,15 @@ def main():
                     ("-color_primaries bt2020", "-color_trc bt709", "-colorspace bt2020nc"),
                     "zscale=matrix=2020_ncl:range=tv",
                 ),
+                (
+                    "p3-d65",
+                    ("-color_primaries smpte432", "-color_trc bt709", "-colorspace bt709"),
+                    "zscale=matrix=709:range=tv",
+                ),
             ]
+            assert [item[0] for item in tiers] == [str(row["id"]) for row in OUTPUT_COLOUR_TAGS], (
+                "装机版这一档点名的档位与契约表不符：加一档而不在这儿量它，等于没量"
+            )
             for code, claims, fold in tiers:
                 status, tagged = call(base, token, "GET", f"{plan_base}&colour_tag={code}")
                 assert status == 200, (code, tagged)
@@ -317,15 +325,15 @@ def main():
                 for claim in claims:
                     assert claim in argv, (code, claim, argv[-320:])
                 assert fold in argv, (code, fold, argv[-320:])
-                if code == "bt2020":
-                    # 宽色那一档必须真带一站基色转换；只写标签不转换，就是 1.152 拒过的那种谎。
+                if code in {"bt2020", "p3-d65"}:
+                    # 换基色那两档必须真带一站基色转换；只写标签不转换，就是 1.152 拒过的那种谎。
                     assert "lut3d=file=primaries-" in argv, (code, "少了基色那一站", argv[-320:])
                 assert tagged["plan"]["colour_tag"] == code, (code, tagged["plan"])
             status, unknown = call(base, token, "GET", f"{plan_base}&colour_tag=p3-dci")
             assert status == 422, unknown
             assert unknown["error"]["code"] == "UNKNOWN_COLOUR_TAG", unknown
             assert unknown["error"]["details"]["known"] == [item[0] for item in tiers], (
-                "那句拒绝点名的出路与这两档不符：" + str(unknown["error"]["details"])
+                "那句拒绝点名的出路与表里那几档不符：" + str(unknown["error"]["details"])
             )
             print(
                 "   render-plan over the packed build: untagged argv carries no claim, "

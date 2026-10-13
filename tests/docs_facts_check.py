@@ -120,6 +120,34 @@ def main() -> None:
             "这条门禁与 README 那一行都要跟着改回来"
         )
 
+    # 2c. 1.156：「709 的绿原色在 P3-D65 之外」是 1.153 记反了方向留下的一句假话（那个会夹的动作
+    #     属于 P3→709 那张收窄表），而这一档已经在 1.156 量过交出。双向钉：文档再说这句红；
+    #     表里这一档哪天没了也红——那时这句话也许重新是实话，得再量一遍，不能让门禁替新实测做主。
+    retired_p3 = "709 的绿原色在 P3-D65 之外"
+    for claimed in (text, agents):
+        if retired_p3 in claimed:
+            problems.append(
+                f"文档又把 P3-D65 说成要色域压缩，而那一档是量过才交出去的：{retired_p3!r}"
+            )
+    if "p3-d65" not in contracts.COLOUR_TAG_CODES:
+        problems.append(
+            "契约表里 p3-d65 这一档没了——那句「绿原色在 P3-D65 之外」也许重新成了实话，"
+            "这条门禁、README 那一行与表里那一行都要跟着重新量"
+        )
+
+    # 2d. 1.156：重跑验收那一页教人把 win-unpacked 里那支 exe 抄到根目录，而门禁比的是便携版——
+    #     照文档做会当场红。这条钉住「文档指的那一支就是门禁读的那一支」，两句任一被改就红。
+    portable = 'Copy-Item "desktop/release/AgentCut-便携版.exe" AgentCut.exe'
+    if portable not in text:
+        problems.append(
+            "README 的重新打包那一步不再指向便携版那支 exe，而 released_package_check 比的就是"
+            "根目录那份与 desktop/release/AgentCut-便携版.exe 逐字节相同"
+        )
+    if "desktop/release/win-unpacked/AgentCut.exe AgentCut.exe" in text:
+        problems.append(
+            "README 又把 win-unpacked 里那支抄到根目录了——那句会让照做的人把门禁弄红"
+        )
+
     # 3. The schema number README quotes must be the live one.
     expected = f"本轮量到的值是 {contracts.SCHEMA_VERSION}"
     if expected not in text:

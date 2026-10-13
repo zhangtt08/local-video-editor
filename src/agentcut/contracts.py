@@ -14,7 +14,7 @@ SCHEMA_VERSION = (
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.154.0"
+APP_VERSION = "1.156.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -445,8 +445,8 @@ OUTPUT_COLOUR_TAGS: tuple[dict[str, str], ...] = (
     # 推到极暗时才会把它算成负数、被夹成 0，量到解回差 85 阶。渐变逐列比就是为这个洞放的。
     # 为什么不用 `colorchannelmixer`：那一站乘的是存储值，基色转换必须在线性光里做；1.152 实测
     # 「zscale 进线性 → colorchannelmixer → 回 709」这一对在 16 位上仍与标准算式差 3–7 阶。
-    # P3-D65 仍**不交**：同一张立方体的路子量出来蓝通道被夹掉 30 阶（709 的绿原色在 P3-D65 之外），
-    # 那是需要真正的色域压缩而不是换一张矩阵的事。
+    # 下一档（P3-D65）见下面那一段：1.153 在这里写下的那句「要做真正的色域压缩」是错的，
+    # 错的缘由与这一条同族——一对互为逆阵的矩阵，方向用反了也仍然自洽。
     {
         "id": "bt2020",
         "label": (
@@ -462,10 +462,37 @@ OUTPUT_COLOUR_TAGS: tuple[dict[str, str], ...] = (
         "shift_from": "rec709",
         "shift_to": "rec2020",
     },
-    # P3-D65（`smpte432`）这一档仍**不做**，1.153 量过才写下的：同一张立方体的路子，把 709 的
-    # 画面换进 P3-D65 之后按标记解回来，蓝通道被夹掉 30 个色阶（709 的绿原色在 P3-D65 之外），
-    # 折叠本身倒是逐位对得上。那不是换一张矩阵的事，是真的要做色域压缩（clip 与压缩曲线的取舍）
-    # 才兑得了现，所以宁可空着这一档，也不交一张会把颜色读歪的标签。
+    # P3-D65（容器里写 `smpte432`）这一档 1.156 交出去了，交出去的第一步是把 1.153 写在这里的
+    # 那句谎话推翻：当时记的是「把 709 的画面换进 P3-D65 之后按标记解回来，蓝通道被夹掉 30 阶
+    # （709 的绿原色在 P3-D65 之外），那是需要真正的色域压缩」。量的数是反的——那句话说的
+    # 是 **P3→709** 那张表的动作，而不是交付要乘的那一张。两张表都在 `tests/gamut_check.py`
+    # 那颗锚上（1.52 对过公布值的九个数除以行和）：
+    #   709→P3-D65 = 0.82246 0.17754 0 / 0.03319 0.96681 0 / 0.01708 0.07240 0.91052，
+    #     九个系数全非负、每行和为 1，33³ 的 35937 格里**一格都不出 [0,1]**；
+    #   P3-D65→709 = 1.22494 -0.22494 0 / …，最小系数 -0.22494，35937 格里 16413 格出界。
+    # 几何上这件事没有争议：两档同蓝原色 (0.150,0.060)、同 D65 白点，P3 只是把红与绿往外推，
+    # 所以 709 的整张三角形在 P3 之内——把画面搬进 P3 是**放宽**，不夹不压，一张矩阵就说完了。
+    # 于是这一档与 `bt709`／`bt2020` 同进同退：折叠与曲线照旧是 BT.709 的那一组（`matrix=709`、
+    # 容器写 `bt709`/`bt709`/`smpte432`——广色屏的 Y′CbCr 用 709 系数是这一档的常规写法，
+    # 也是这一条链真正做了的两件事，标签只写做了的），换基色那一站由立方体做。
+    # 「哪一张矩阵才会夹」这一条不是记在文档里，是钉在 `tests/colour_tag_check.py` 的
+    # `compression_suite` 上：它对表里每一个换基色的档双向判——前向那张必须一格都不出界，
+    # 反向那张必须真出界（谁把矩阵写成反方向，立方体立刻被夹，那条当场红）。
+    {
+        "id": "p3-d65",
+        "label": (
+            "P3-D65 广色母版（基色按 P3-D65 原色换过去，曲线与折叠仍是 709；"
+            "709 的三原色都在 P3-D65 之内，这一档是放宽不是压缩，立方体每一格都落在画面里。"
+            "浏览器不做宽色域管理，所以预览会比成片淡）"
+        ),
+        "primaries": "smpte432",
+        "transfer": "bt709",
+        "matrix": "bt709",
+        "zscale_matrix": "709",
+        "zscale_range": "tv",
+        "shift_from": "rec709",
+        "shift_to": "p3-d65",
+    },
 )
 
 # The closed vocabulary an Agent may name. It is derived from the table, never written twice.

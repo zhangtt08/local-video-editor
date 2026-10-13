@@ -150,12 +150,20 @@ def check_table() -> None:
         "rec2020": (((0.708, 0.292), (0.170, 0.797), (0.131, 0.046)), (0.3127, 0.3290)),
         "p3-d65-g22": (((0.680, 0.320), (0.265, 0.690), (0.150, 0.060)), (0.3127, 0.3290)),
         "display-p3": (((0.680, 0.320), (0.265, 0.690), (0.150, 0.060)), (0.3127, 0.3290)),
+        # 交付母版那一档（`contracts.OUTPUT_COLOUR_TAGS` 的 `p3-d65`）用的就是这三个原色，
+        # 它与 `p3-d65-g22` 的差别只在曲线名，故锚里的 xy 与白点抄同一行出处。
+        "p3-d65": (((0.680, 0.320), (0.265, 0.690), (0.150, 0.060)), (0.3127, 0.3290)),
     }
     for name, (primaries, white) in published.items():
         got_primaries, got_white, _curve = PRIMARIES[name]
         assert got_white == white, (name, got_white, white)
         assert got_primaries == primaries, (name, got_primaries, primaries)
-    print("   数据锚：五个档的原色与白点逐个对着出处念过（Rec.709／SMPTE-C／BT.2020-2 表 4／P3）")
+    # 锚必须盖住表里每一个档：新加一档却不给它出处，上面那个循环就只核它自己认识的那几个。
+    assert set(published) == set(PRIMARIES), (set(PRIMARIES) - set(published), "没有数据锚")
+    print(
+        f"   数据锚：{len(published)} 个档的原色与白点逐个对着出处念过"
+        "（Rec.709／SMPTE-C／BT.2020-2 表 4／P3 三档）"
+    )
     # 标签不许说数据没做过的事。这一档存的是 P3 原色 + **D65 白** + γ2.2，那它就不该念
     # 「影院／DCI-P3 母带」——真影院 DCI-P3 的白点是 0.314,0.351、传递特性是 γ2.6，而白点不同的
     # 两档本模块是直接拒的（不做半套色适应）。1.148 对着权威表念数据时抓到的就是这一处，
@@ -184,7 +192,7 @@ def check_table() -> None:
     print(
         f"   表：{len(tables)} 档，每行和 1、正逆往返恒等、三列分别落在源档三原色的射线上"
         "（与独立的 XYZ 换算成比例，同一白点故不需色适应），另钉一颗外部锚"
-        "（709→Display P3，取自 1.52 的测量记录除以它的行和 1.11971；五个档的原色另有数据锚）"
+        "（709→Display P3，取自 1.52 的测量记录除以它的行和 1.11971；表里每一个档的原色另有数据锚）"
     )
 
 

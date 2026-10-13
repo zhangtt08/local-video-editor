@@ -450,6 +450,17 @@ PUBLISHED_709_TO_2020 = (
 )
 IDENTITY_3X3 = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 
+# 1.156 第二对：709 ⇄ P3-D65。前向那九个数抄的是本仓库自己的外部锚——`tests/gamut_check.py`
+# 钉着 1.52 那次对着公布值量过的 [0.92092 0.19879 0; 0.03717 1.08255 0; 0.01913 0.08106 1.01952]，
+# 那颗锚的行和是 1.11971（整张表被乘了同一个 1.12），除以它就得到行和为 1 的这一份。
+# P3-D65 与 Display P3 的原色、白点同表（只差曲线名），所以那颗锚对这一档一样管用。
+# 反向那张不抄第二份记忆，由本文件从前向算（见下面 `invert3`）。
+PUBLISHED_709_TO_P3 = (
+    (0.82247, 0.17754, 0.0),
+    (0.03320, 0.96682, 0.0),
+    (0.01709, 0.07240, 0.91053),
+)
+
 
 def invert3(m):
     """3×3 求逆（高斯消元）。反向那张表**由本文件从前向表算出来**，不抄第二份记忆。"""
@@ -477,6 +488,8 @@ PUBLISHED_2020_TO_709 = invert3(PUBLISHED_709_TO_2020)
 SHIFT_MATRICES = {
     ("rec709", "rec2020"): PUBLISHED_709_TO_2020,
     ("rec2020", "rec709"): PUBLISHED_2020_TO_709,
+    ("rec709", "p3-d65"): PUBLISHED_709_TO_P3,
+    ("p3-d65", "rec709"): invert3(PUBLISHED_709_TO_P3),
     ("rec709", "rec709"): IDENTITY_3X3,
 }
 
@@ -860,7 +873,9 @@ FLAT_LIMIT = 4
 RAMP_LIMIT = 8  # 量具自己的地板：控制档（不带任何转换）在这份画面上也得过得了这一条
 TIER_LIMIT = 9  # 三种 10 位画面上量到的最大是 8 阶（prores-4444-alpha），留一阶
 TIER_SPREAD = 7  # 比同一条的控制档多出来的那几阶：量到的是 5~6，留一阶
-WIDE_CODE = "bt2020"
+# 换基色的档不止一个（1.153 的 bt2020、1.156 的 p3-d65）。凡原来写死「宽色域那一档」的断言
+# 都改成对这份名单逐个判——第二条宽色域挂在表里却没人量它，就等于没交。
+SHIFT_CODES = tuple(str(row["id"]) for row in OUTPUT_COLOUR_TAGS if row.get("shift_to"))
 
 
 def picture_presets() -> list[dict]:
@@ -972,21 +987,23 @@ def flat_suite(folder: Path) -> None:
     lines = []
     for item in representative_presets():
         preset_id = str(item["id"])
-        for code in (control, WIDE_CODE):
+        for code in (control, *SHIFT_CODES):
             worst, detail = flat_recovery(folder, projects, preset_id, code)
             seen[(preset_id, code)] = worst
             assert worst <= FLAT_LIMIT, (
                 f"{preset_id} 挂 {code} 把纯色解偏 {worst} 阶，过不了 {FLAT_LIMIT} 阶那条线"
             )
-            if code == WIDE_CODE:
+            if code in SHIFT_CODES:
                 lines.append(
                     f"{preset_id} {item['pixel_format']} 控制 "
-                    f"{seen[(preset_id, control)]} 阶 / 宽色 {worst} 阶（{'  '.join(detail)}）"
+                    f"{seen[(preset_id, control)]} 阶 / {code} {worst} 阶（{'  '.join(detail)}）"
                 )
-        wide, base = seen[(preset_id, WIDE_CODE)], seen[(preset_id, control)]
-        assert wide <= base + 2, (
-            f"{preset_id} 换基色那一档比不带转换多出 {wide - base} 阶：立方体把颜色搬出了画面"
-        )
+        base = seen[(preset_id, control)]
+        for code in SHIFT_CODES:
+            wide = seen[(preset_id, code)]
+            assert wide <= base + 2, (
+                f"{preset_id} 挂 {code} 比不带转换多出 {wide - base} 阶：立方体把颜色搬出了画面"
+            )
     print("PASS flat: 基色声明按纯色逐格式量过——" + "；".join(lines) + f"（判据 {FLAT_LIMIT} 阶）")
 
 
@@ -1083,6 +1100,30 @@ def cube_interpolation_bound(size: int, shift) -> float:
     return worst
 
 
+def lattice_out_of_range(size: int, matrix) -> tuple[str, int]:
+    """这一张表搬立方体时，未钳位的算式里有几格会掉出画面。
+
+    只问「钳位之后的立方体对不对」查不出方向用反：钳位把负数抹成 0，抹完的那一张仍然是合法的
+    立方体、仍然与「钳了位的参考」逐格相同。所以这里要问的是**钳位之前**的那个数。
+
+    判「出界」的松弛度不是拍的：抄来的公布值只到五位小数，行和因而会差出 ~1e-5，而纯白 (1,1,1)
+    映出去按定义必须还是纯白——所以 `max|行和-1|` 就是这份抄写自己能造成的最大假出界。
+    真正的方向错误是另一个量级（P3→709 的最小系数 -0.22494），松弛度挡不住它，也不该挡住。
+    """
+    slack = max(abs(sum(row) - 1.0) for row in matrix)
+    lowest, highest, outside = 1.0, 0.0, 0
+    for red in range(size):
+        for green in range(size):
+            for blue in range(size):
+                signal = [bt709_eotf(value / (size - 1)) for value in (red, green, blue)]
+                moved = [sum(matrix[row][k] * signal[k] for k in range(3)) for row in range(3)]
+                lowest = min(lowest, min(moved))
+                highest = max(highest, max(moved))
+                if min(moved) < -slack or max(moved) > 1.0 + slack:
+                    outside += 1
+    return (f"{lowest:+.5f}~{highest:+.5f}（抄写松弛 {slack:.0e}）", outside)
+
+
 def cube_suite(folder: Path) -> None:
     """立方体用数学判，不必等一趟编码：格点的值对不对、格子够不够疏，都有解析解。
 
@@ -1092,22 +1133,44 @@ def cube_suite(folder: Path) -> None:
     平均之差。这一条判的就是那个数，以及格点上的值与独立参考是否同一份。
     """
     project = build_project(folder)
-    wide = next(row for row in OUTPUT_COLOUR_TAGS if row.get("shift_to"))
-    source, target = shift_pair(wide)
-    shift = SHIFT_MATRICES[(source, target)]
-    plan = compile_render_plan(project, "prores-422hq", colour_tag=str(wide["id"]))
-    names = sorted(name for name in plan.text_files if name.startswith("primaries-"))
-    assert len(names) == 1, names
-    size, cells = parse_delivery_cube(plan.text_files[names[0]])
-    point = cube_lattice_error(cells, size, shift)
-    bound = cube_interpolation_bound(size, shift)
-    # 格点的值：与独立算的那一份对。文本只写到小数点后六位（合 0.0003 阶），0.5 阶是宽裕的。
-    assert point <= 0.5, f"立方体格点与独立算的参考最大差 {point:.2f} 阶"
-    # 插值的地板：这一档的格子必须细到中间误差 0.5 阶以内。
-    assert bound <= 0.5, f"{size}³ 的格子插值误差地板 {bound:.2f} 阶，过不了 0.5 阶"
+    seen = []
+    for code in SHIFT_CODES:
+        row_spec = next(row for row in OUTPUT_COLOUR_TAGS if str(row["id"]) == code)
+        source, target = shift_pair(row_spec)
+        shift = SHIFT_MATRICES[(source, target)]
+        plan = compile_render_plan(project, "prores-422hq", colour_tag=code)
+        names = sorted(name for name in plan.text_files if name.startswith("primaries-"))
+        assert len(names) == 1, (code, names)
+        size, cells = parse_delivery_cube(plan.text_files[names[0]])
+        point = cube_lattice_error(cells, size, shift)
+        bound = cube_interpolation_bound(size, shift)
+        # 先问方向，再问格点：「这一档到底需不需要色域压缩」是比「立方体抄对没有」更前面的
+        # 一件事，报错也该先说前者。这一条是 1.156 推翻 1.153 那句「P3-D65 要做真正的色域压缩」
+        # 的地方——那句量的其实是反方向那张表。
+        span, outside = lattice_out_of_range(size, shift)
+        assert outside == 0, (
+            f"{code} 的基色转换把 {outside} 格搬出 [0,1]（未钳位的值域 {span}）：这一档要先有"
+            "真正的色域压缩才兑得了现，交出去的立方体却在替它钳位"
+        )
+        back_span, back_out = lattice_out_of_range(size, SHIFT_MATRICES[(target, source)])
+        assert back_out > 0, (
+            f"{code} 的反方向那张表也不出界（{back_span}）：上面那句「一格不出界」就对任何"
+            "矩阵都说得通了，这颗锚已经在空转"
+        )
+        # 格点的值：与独立算的那一份对。文本只写到小数点后六位（合 0.0003 阶），0.5 阶是宽裕的。
+        assert point <= 0.5, f"{code} 立方体格点与独立算的参考最大差 {point:.2f} 阶"
+        # 插值的地板：这一档的格子必须细到中间误差 0.5 阶以内。
+        assert bound <= 0.5, f"{code} 的 {size}³ 格子插值误差地板 {bound:.2f} 阶，过不了 0.5 阶"
+        seen.append((code, size, point, bound, span, back_out))
+    assert len(seen) == len(SHIFT_CODES), seen
     print(
-        f"PASS cube: 引擎写的 {size}³ 立方体（{len(plan.text_files[names[0]]) // 1024} KB 文本）"
-        f"格点值与独立参考最大差 {point:.2f} 阶，插值地板 {bound:.2f} 阶——都在 0.5 阶以内"
+        "PASS cube: "
+        + "；".join(
+            f"{code} 的 {size}³ 立方体格点与独立参考差 {point:.2f} 阶、插值地板 {bound:.2f} 阶"
+            f"（都在 0.5 阶以内）；前向值域 {span} 一格不出界，反向却有 {back_out} 格出界——"
+            "「这一档是放宽不是压缩」是量出来的"
+            for code, size, point, bound, span, back_out in seen
+        )
     )
 
 
@@ -1392,35 +1455,42 @@ def refusal_suite(folder: Path) -> None:
             assert error.code == "COLOUR_TAG_NEEDS_PICTURE", (preset_id, error.code)
             assert error.details["preset_id"] == preset_id
 
-    # 宽色域那一档现在与另两档同进同退：挂得上标记的画面都挂得上它，挂不上的还是原来那两条理由。
-    # 这一条是「撤掉一条拒绝」的反向保险——把守卫写反（只放行宽色域、把另两档挡在门外）照样红。
+    # 换基色的那几档（1.153 的 bt2020、1.156 的 p3-d65）与不带转换的那一档同进同退：挂得上标记的
+    # 画面都挂得上它们，挂不上的还是原来那两条理由。这一条是「撤掉一条拒绝」的反向保险——把守卫
+    # 写反（只放行宽色域、把另两档挡在门外）照样红。
     table = colour_tag_presets()
-    assert table[COLOUR_TAG_CODES[0]] == table[COLOUR_TAG_CODES[1]] == table[WIDE_CODE], table
-    assert table[WIDE_CODE] == [str(item["id"]) for item in picture_presets()], table
+    for code in COLOUR_TAG_CODES:
+        assert table[code] == table[COLOUR_TAG_CODES[0]], (code, table)
+    pictures = [str(item["id"]) for item in picture_presets()]
+    assert table[COLOUR_TAG_CODES[0]] == pictures, table
     for preset_id in ("prores-422hq", "mxf-prores-422hq", "h264-720p-web", "vp9-1080p-web-alpha"):
-        wide = compile_render_plan(project, preset_id, colour_tag=WIDE_CODE)
-        assert any("lut3d=file=primaries-" in line for line in wide.filters), preset_id
-        assert "-color_primaries bt2020" in " ".join(
-            wide.ffmpeg_argv(str(FFMPEG), f"wide-{preset_id}.bin")
-        ), preset_id
+        for code in SHIFT_CODES:
+            spec = next(row for row in OUTPUT_COLOUR_TAGS if str(row["id"]) == code)
+            wide = compile_render_plan(project, preset_id, colour_tag=code)
+            assert any("lut3d=file=primaries-" in line for line in wide.filters), (preset_id, code)
+            argv = " ".join(wide.ffmpeg_argv(str(FFMPEG), f"wide-{preset_id}-{code}.bin"))
+            assert f"-color_primaries {spec['primaries']}" in argv, (preset_id, code, argv[-300:])
     for preset_id in ("exr-sequence", "dpx-sequence"):
+        for code in SHIFT_CODES:
+            try:
+                compile_render_plan(project, preset_id, colour_tag=code)
+                raise AssertionError(f"{preset_id} 挂上了容器里没有的标记")
+            except EditorError as error:
+                assert error.code == "COLOUR_TAG_NEEDS_CONTAINER", (preset_id, code, error)
+    for code in SHIFT_CODES:
         try:
-            compile_render_plan(project, preset_id, colour_tag=WIDE_CODE)
-            raise AssertionError(f"{preset_id} 挂上了容器里没有的标记")
+            output_args(presets["audio-mp3"], 48_000, 30.0, colour_tag=code)
+            raise AssertionError("纯声带交出的那份东西没有画面可以写基色")
         except EditorError as error:
-            assert error.code == "COLOUR_TAG_NEEDS_CONTAINER", (preset_id, error)
-    try:
-        output_args(presets["audio-mp3"], 48_000, 30.0, colour_tag=WIDE_CODE)
-        raise AssertionError("纯声带交出的那份东西没有画面可以写基色")
-    except EditorError as error:
-        assert error.code == "COLOUR_TAG_NEEDS_PICTURE", error.code
+            assert error.code == "COLOUR_TAG_NEEDS_PICTURE", (code, error.code)
     try:
         compile_render_plan(project, "h264-720p-web", colour_tag="p3-dci")
         raise AssertionError("an unknown tag was accepted")
     except EditorError as error:
         assert error.code == "UNKNOWN_COLOUR_TAG", error.code
         # 钉成字面量：加一档却不改这里，这条就红——那句拒绝必须点齐表里所有的出路。
-        assert error.details["known"] == ["bt709", "bt601", "bt2020"], (
+        # 1.156 加 p3-d65 时这一条就红过一次，红得对：那一档确实要能被点名出来。
+        assert error.details["known"] == ["bt709", "bt601", "bt2020", "p3-d65"], (
             "那句拒绝点名的出路与表不符：" + str(error.details["known"])
         )
         assert error.details["known"] == list(COLOUR_TAG_CODES), error.details
@@ -1605,7 +1675,13 @@ def capability_suite() -> None:
                 f"档位 {item['id']} 不换基色却声明了 {item['primaries']} 基色"
             )
             continue
-        assert str(item["primaries"]) == {"rec2020": "bt2020"}.get(target), (
+        # 引擎那张基色表的名字与容器那一侧的枚举名不是一回事：`rec2020` 写进容器是 `bt2020`，
+        # P3 那一档写进去是 `smpte432`（随包 FFmpeg 6.1.1 实测 mp4／webm／MXF 都原样读回）。
+        # 这份清单就是「一档基色只许有一个说法」的锚：加一档却不在这儿登记，下面那句当场红——
+        # 1.156 的 p3-d65 第一次跑就红在这条上，红得对。
+        primaries_tag = {"rec2020": "bt2020", "p3-d65": "smpte432"}
+        assert target in primaries_tag, f"档位 {item['id']} 换去的 {target} 没有对应的容器枚举名"
+        assert str(item["primaries"]) == primaries_tag[target], (
             f"档位 {item['id']} 的基色声明 {item['primaries']} 与要换去的 {target} 对不上"
         )
         assert "基色" in str(item["label"]), f"档位 {item['id']} 的标签没说它换了基色"
