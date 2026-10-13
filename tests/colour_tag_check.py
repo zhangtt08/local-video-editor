@@ -1170,6 +1170,207 @@ def ramp_suite(folder: Path) -> None:
     )
 
 
+ALPHA_COLOUR = (126, 63, 30)
+ALPHA_LEVEL = 128  # 半透明：authored 的 alpha 是 0.5，读回来要能看到它没被丢掉
+
+
+def build_alpha_project(folder: Path):
+    """一帧**带半透明**的纯色 PNG。先探它：那一格必须正是 (126,63,30,128)，不然量到的都是素材。"""
+    png = folder / "half.png"
+    run(
+        [
+            FFMPEG,
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c=0x7E3F1E:size={WIDTH}x{HEIGHT}:rate=30:duration=0.1",
+            "-vf",
+            "format=rgba,colorchannelmixer=aa=0.5",
+            "-frames:v",
+            "1",
+            str(png),
+        ]
+    )
+    raw = run(
+        [
+            FFMPEG,
+            "-v",
+            "error",
+            "-i",
+            str(png),
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgba",
+            "pipe:1",
+        ]
+    )
+    centre = (HEIGHT // 2) * WIDTH + (WIDTH // 2)
+    assert len(raw) >= (centre + 1) * 4, (len(raw), centre)
+    got = tuple(raw[centre * 4 + i] for i in range(4))
+    # 素材自己得先对：`color=0x7E3F1E` 走一趟 YUV 再回 RGB 落在 (125,62,29)，不是名义那格——
+    # 预测因此按**读回来的那一格**算，不按名字里的数算（同 `reference_yuv` 那句的理由）。
+    assert all(abs(g - w) <= 1 for g, w in zip(got[:3], ALPHA_COLOUR)), got
+    assert abs(got[3] - ALPHA_LEVEL) <= 1, got
+    media = MediaService(folder / "half.sqlite3", [folder], folder / "half-cache", FFMPEG, FFPROBE)
+    store = ProjectStore(media.db_path, media)
+    probe = media.import_file(str(png))
+    project = store.create(
+        CreateProject(
+            request_id="half-new",
+            name="half",
+            settings={"width": WIDTH, "height": HEIGHT},
+        )
+    ).project
+    batch = EditBatch.model_validate(
+        {
+            "request_id": "half-seed",
+            "expected_revision": project.revision,
+            "commands": _commands(probe),
+        }
+    )
+    return apply_commands(project, batch.commands), got[:3]
+
+
+def delivered_alpha(path: Path) -> int:
+    """交付那一格里 alpha 到底是多少：`alphaextract` 把 alpha 平面搬进 gray 流再按字节读。
+
+    与 `alphamaster_check.alpha_byte` 同一把尺——VP9 的 alpha 不走 `pix_fmt`，解码成 yuva 只会
+    读到 255（1.154 就这么差点把一条好端端的交付判成丢帧），所以这里不接解码器的解释。
+    """
+    stream = probe_stream(path)
+    width, height = int(stream["width"]), int(stream["height"])
+    decode = ["-c:v", "libvpx-vp9"] if path.suffix == ".webm" else []
+    raw = run(
+        [
+            FFMPEG,
+            "-v",
+            "error",
+            *decode,
+            "-i",
+            path,
+            "-frames:v",
+            "1",
+            "-vf",
+            "alphaextract",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "gray",
+            "pipe:1",
+        ]
+    )
+    assert len(raw) >= width * height, (len(raw), width, height)
+    centre = (height // 2) * width + (width // 2)
+    return raw[centre]
+
+
+def alpha_planes(path: Path, fmt: str, count: int = 4):
+    """读回中心那一格的 yuva 码字（**按文件自己那一帧的尺寸**），刻度跟着位深走。"""
+    stream = probe_stream(path)
+    width, height = int(stream["width"]), int(stream["height"])
+    raw = run(
+        [
+            FFMPEG,
+            "-v",
+            "error",
+            "-i",
+            path,
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            fmt,
+            "pipe:1",
+        ]
+    )
+    size = width * height
+    centre = (height // 2) * width + (width // 2)
+    if "10" in fmt or "12" in fmt:
+        samples = array("H", raw)
+    else:
+        samples = list(raw)
+    assert len(samples) >= size * count, (len(samples), size)
+    return tuple(samples[i * size + centre] for i in range(count))
+
+
+def alpha_suite(folder: Path) -> None:
+    """透明母版也可以老实声明自己的颜色：折叠做在图里，alpha 整条带走。
+
+    1.154 之前这条是被拒的（`COLOUR_TAG_NOT_WITH_ALPHA`），理由是「rgba 一路带到编码器才折，那一折
+    用的是谁家系数这条图说不上」。量过之后这句话只对**不接 zscale** 的那一路成立：带 alpha 的平面
+    RGB 喂进 `zscale` 时，色度按声明的那组系数折，alpha 平面原样通过。判据故意是**比较两个预测**，
+    不是比一个绝对数——ProRes 自己有噪声，而 601 与 709 的预测差得远，谁近一目了然。
+    """
+    project, authored_rgb = build_alpha_project(folder)
+    control = COLOUR_TAG_CODES[0]
+    by_id = {str(item["id"]): item for item in render_presets()}
+    for preset_id, dump in (
+        ("prores-4444-alpha", "yuva444p10le"),
+        ("vp9-1080p-web-alpha", "yuva444p"),
+    ):
+        scale = 4 if "10" in dump else 1
+        held = str(by_id[preset_id]["pixel_format"])
+        container = str(by_id[preset_id]["container"])
+        untagged = compile_render_plan(project, preset_id, transparent=True, range_ticks=(0, T))
+        assert "zscale" not in json.dumps(untagged.filters), untagged.filters
+        assert any("format=rgba[vout]" in line for line in untagged.filters), untagged.filters
+
+        plain = folder / f"alpha-plain-{preset_id}.{container}"
+        run(untagged.ffmpeg_argv(str(FFMPEG), str(plain)), cwd=folder)
+        base = alpha_planes(plain, dump)
+        print(f"    {preset_id} 不带标记：yuva={base}（那一折是编码器 swscale 的 601）")
+
+        plan = compile_render_plan(
+            project, preset_id, colour_tag=control, transparent=True, range_ticks=(0, T)
+        )
+        argv = " ".join(plan.ffmpeg_argv(str(FFMPEG), f"alpha-{preset_id}.{container}"))
+        for claim in ("-color_primaries bt709", "-color_trc bt709", "-colorspace bt709"):
+            assert claim in argv, (preset_id, claim, argv[-300:])
+        graph = json.dumps(plan.filters)
+        assert f"format=gbrap{'10le' if scale == 4 else ''}" in graph, plan.filters
+        assert "zscale=matrix=709:range=tv" in graph, plan.filters
+        assert any(f"format={held}[vout]" in line for line in plan.filters), plan.filters
+
+        out = folder / f"alpha-{preset_id}.{container}"
+        run(plan.ffmpeg_argv(str(FFMPEG), str(out)), cwd=folder)
+        stream = probe_stream(out)
+        # 探针只认编码名：VP9 的 alpha 走 WebM 的 side channel，容器那一行读不出来
+        # （`alphamaster_check` 早量过），所以 alpha 只由 `alphaextract` 那一格说话。
+        for key, want in (
+            ("color_primaries", "bt709"),
+            ("color_transfer", "bt709"),
+            ("color_space", "bt709"),
+        ):
+            assert stream.get(key) == want, (preset_id, key, stream)
+        got = alpha_planes(out, dump)
+        # 比的是**两个预测谁更近**：ProRes 自己会带噪声，而 601 与 709 的预测差得远。
+        want709 = reference_yuv(authored_rgb, *FOLD_COEFFICIENTS["bt709"])
+        want601 = reference_yuv(authored_rgb, *FOLD_COEFFICIENTS["smpte170m"])
+        got8 = tuple(round(value / scale) for value in got[:3])
+        near709 = max(abs(g - w) for g, w in zip(got8, want709))
+        near601 = max(abs(g - w) for g, w in zip(got8, want601))
+        assert near601 - near709 >= 3, (preset_id, got8, want709, want601)
+        assert near709 <= 3, f"{preset_id} 带标记折出 {got8}，与 709 预测 {want709} 差 {near709} 阶"
+        # alpha 不能被这一趟弄丢：与 authored 那一格比，也与不带标记那一份比。
+        alpha8 = delivered_alpha(out)
+        assert abs(alpha8 - ALPHA_LEVEL) <= 8, (preset_id, alpha8, ALPHA_LEVEL)
+        assert abs(alpha8 - delivered_alpha(plain)) <= 8, (preset_id, alpha8, base[3])
+        print(
+            f"{preset_id} 带 bt709：{held} yuva={got} 折到 8 位尺 {got8}，"
+            f"709 预测 {want709}（差 {near709}），601 预测 {want601}（差 {near601}），"
+            f"alpha {alpha8}（authored {ALPHA_LEVEL}）"
+        )
+    print(
+        "PASS alpha: 透明母版带上标记时折叠改由图里那一趟做，色度离 709 的预测比离 601 的近，"
+        "alpha 平面还在；不带标记那一路的编译串一个字没动"
+    )
+
+
 def refusal_suite(folder: Path) -> None:
     project = build_project(folder)
     presets = {str(item["id"]): item for item in render_presets()}
@@ -1223,20 +1424,9 @@ def refusal_suite(folder: Path) -> None:
             "那句拒绝点名的出路与表不符：" + str(error.details["known"])
         )
         assert error.details["known"] == list(COLOUR_TAG_CODES), error.details
-    # A transparent master carries its rgba all the way to the encoder, so which matrix folded the
-    # picture is not this graph's business: the claim is refused rather than guessed at...
-    try:
-        compile_render_plan(project, "vp9-1080p-web-alpha", colour_tag="bt709", transparent=True)
-        raise AssertionError("an alpha master accepted a colour claim it cannot back")
-    except EditorError as error:
-        assert error.code == "COLOUR_TAG_NOT_WITH_ALPHA", error.code
-        assert error.details["colour_tag"] == "bt709", error.details
-    # ...and the same preset asked honestly (no tag) still compiles the alpha chain it always did.
-    plain_alpha = compile_render_plan(project, "vp9-1080p-web-alpha", transparent=True)
-    assert any("format=rgba[vout]" in line for line in plain_alpha.filters), plain_alpha.filters
     print(
-        "PASS refusals: sequences, audio, unknown ids and alpha masters each name the reason, "
-        "and the untagged alpha chain is untouched"
+        "PASS refusals: sequences and audio each name their reason, an unknown id names the "
+        "whole table, and every tier still compiles on the presets the table admits"
     )
 
 
@@ -1515,6 +1705,7 @@ def main() -> None:
     for suite in (
         refusal_suite,
         cube_suite,
+        alpha_suite,
         video_suite,
         http_suite,
         receipt_suite,

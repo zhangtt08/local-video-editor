@@ -142,15 +142,14 @@ export function ExportPanel(): JSX.Element {
   // 真正带得出去的标记只在这一处算：没有画面、是一串图像文件、或这一份是透明母版，就带不出去。
   // 界面念的（那行 mono 与那句提示）、待发清单里存的、写进请求体的必须都是它——两处各算一份
   // 的 bug 本项目交付过一次，这里不再犯第二遍。
-  const sendColourTag = colourTagAllowed(preset, audioOnly, isSequence, matte, pickedTag?.id ?? null);
+  const sendColourTag = colourTagAllowed(preset, audioOnly, isSequence, pickedTag?.id ?? null);
   // 带不出去的时候要点名是哪一个原因，并给一条真走得通的路（写法同 matteHint）。
+  // 1.154 起「背景透明」不再是理由：那一路的折叠也在图里做，声明与画面从此一致。
   const tagBlocker = audioOnly
     ? "这一条交付只有声音，标记是给画面写的；要带标记的母版请换一条有画面的交付（mov／mp4／mxf／webm）。"
     : isSequence
       ? "这一条交出的是一串图像文件，没有容器可以挂那三样标记；要带标记的母版请换一条 mov／mp4／mxf／webm 的交付。"
-      : matte
-        ? "背景透明这一路是把 rgba 一路带到编码器才折的，用哪一组系数折不由这条滤镜图决定，容器上写任何矩阵都成了与画面无关的话；要带标记请把「背景透明」去掉，要么这一栏留空。"
-        : null;
+      : null;
   const tagHint =
     tagBlocker ??
     (tagRows.length

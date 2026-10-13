@@ -413,10 +413,16 @@ def row_id_of(row: dict | None) -> str | None:
     return None if row is None else str(row["id"])
 
 
-def rgb_planar_for(pixel_format: str) -> str:
-    """The planar-RGB format holding the same bit depth as this preset's YUV format."""
+def rgb_planar_for(pixel_format: str, alpha: bool = False) -> str:
+    """The planar-RGB format holding this preset's bit depth — and, when asked, its alpha plane.
+
+    `gbrap` is not a cosmetic variant: `zscale` on a planar RGB input that *carries* alpha folds
+    with the declared matrix and passes the alpha plane straight through (measured 1.154), which
+    is what lets a transparent master say anything about its colour at all.
+    """
     depth = next((bit for bit in ("16", "14", "12", "10") if f"p{bit}" in pixel_format), "")
-    return f"gbrp{depth}le" if depth else "gbrp"
+    stem = "gbrap" if alpha else "gbrp"
+    return f"{stem}{depth}le" if depth else stem
 
 
 def colour_tag_row(tag: str | None) -> dict | None:
@@ -1595,19 +1601,19 @@ def compile_render_plan(
                 current = blend_track(plan, lower, current, mode)
             painted.append(len(entries))
         if alpha_out and tag_row is not None:
-            # 透明母版的最后一步是把 rgba 直接交给编码器去折，那一折用的是谁家的系数这条图说不上；
-            # 在文件上写 bt709 就成了与画面无关的一句话。要么交不透明的母版并带上标记，要么这份
-            # 透明母版什么都不声明——取后者时这个字段留空即可。
-            raise EditorError(
-                "COLOUR_TAG_NOT_WITH_ALPHA",
-                "透明母版这一步是先把 rgba 一路带到编码器再折的，折的那一组系数不由这条图决定，"
-                "所以容器上写任何 matrix 都会与画面不符。要么交不透明的那份并带上标记，"
-                "要么这份透明母版留空（不声明）",
-                422,
-                preset_id=preset["id"],
-                colour_tag=row_id_of(tag_row),
+            # 透明母版也老实声明颜色：折叠做在图里这一趟。`zscale` 接**带 alpha 的平面 RGB**
+            # 时按声明的那组系数折，alpha 平面整条带走（1.154 量的：半透明那一格 (126,63,30,128)
+            # 交出去是 (314,429,628,516)，色度正是 BT.709 的预测；不接这一趟是 (329,417,632,514)，
+            # 正是编码器 swscale 的 BT.601——1.153 之前那句拒绝说的其实是后一路，不是不可能）。
+            alpha_tail = (
+                f"format={rgb_planar_for(pixel_format, alpha=True)},"
+                f"{primaries_shift_stage(plan, tag_row)}"
+                f"zscale=matrix={tag_row['zscale_matrix']}:range={tag_row['zscale_range']},format="
+                f"{pixel_format}"
             )
-        plan.filters.append(f"{current}format={'rgba' if alpha_out else pixel_format}[vout]")
+        else:
+            alpha_tail = f"format={'rgba' if alpha_out else pixel_format}"
+        plan.filters.append(f"{current}{alpha_tail}[vout]")
         plan.summary["layers"] = len(layers)
     if not audio_only:
         plan.video_label = "[vout]"

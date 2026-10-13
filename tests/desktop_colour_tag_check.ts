@@ -42,20 +42,24 @@ const SEQUENCE = { id: "exr-sequence", container: "exr", codec: "exr", alpha: fa
 const ALPHA = { id: "prores-4444-alpha", container: "mov", codec: "prores_ks", alpha: true, sequence: false };
 
 assert.equal(
-  colourTagAllowed(PICTURE as never, false, false, false, TAG),
+  colourTagAllowed(PICTURE as never, false, false, TAG),
   TAG,
   "带画面、有容器、不透明：这个标记就该照原样带出去（正向给不出来的门禁，反向也拦不住东西）"
 );
-assert.equal(colourTagAllowed(AUDIO as never, true, false, false, TAG), null, "音频交付根本没有画面，标记没地方落");
-assert.equal(colourTagAllowed(SEQUENCE as never, false, true, false, TAG), null, "一串图像文件没有容器 VUI 可写");
-assert.equal(colourTagAllowed(ALPHA as never, false, false, true, TAG), null, "透明母版那一折不由这条滤镜图决定，写上去就是谎话");
-assert.equal(colourTagAllowed(PICTURE as never, false, false, false, null), null, "没挑就是 null：连这个键都不该发出去");
-assert.equal(colourTagAllowed(null, false, false, false, TAG), null, "还没选到预设就不发标记");
+assert.equal(colourTagAllowed(AUDIO as never, true, false, TAG), null, "音频交付根本没有画面，标记没地方落");
+assert.equal(colourTagAllowed(SEQUENCE as never, false, true, TAG), null, "一串图像文件没有容器 VUI 可写");
+assert.equal(
+  colourTagAllowed(ALPHA as never, false, false, TAG),
+  TAG,
+  "1.154：透明母版那一折也在图里做，标记与画面从此一致——把这一条再挡回去就是倒退"
+);
+assert.equal(colourTagAllowed(PICTURE as never, false, false, null), null, "没挑就是 null：连这个键都不该发出去");
+assert.equal(colourTagAllowed(null, false, false, TAG), null, "还没选到预设就不发标记");
 // 反方向：同一份预设只要那三个布尔翻回来，标记就得重新带得出去——判的是调用方算好的那三个条件，
 // 而不是界面再按预设长相猜第四套。
-assert.equal(colourTagAllowed(ALPHA as never, false, false, false, TAG), TAG, "能装 alpha 的预设在不透明那一次照样能带标记");
-assert.equal(colourTagAllowed(SEQUENCE as never, false, false, false, TAG), TAG, "序列那一条是靠 isSequence 拦的，不是靠预设名");
-assert.equal(colourTagAllowed(AUDIO as never, false, false, false, TAG), TAG, "音频那一条是靠 audioOnly 拦的，不是另判一遍 codec");
+assert.equal(colourTagAllowed(ALPHA as never, false, false, TAG), TAG, "能装 alpha 的预设在不透明那一次照样能带标记");
+assert.equal(colourTagAllowed(SEQUENCE as never, false, false, TAG), TAG, "序列那一条是靠 isSequence 拦的，不是靠预设名");
+assert.equal(colourTagAllowed(AUDIO as never, false, false, TAG), TAG, "音频那一条是靠 audioOnly 拦的，不是另判一遍 codec");
 
 // —— ③ 发出去的形状：挑了才写，没挑一个字都不多 ——————————————————————
 await engine.render("p1", 7, "h264-1080p", "母版.mp4", undefined, null, "contain", "full", false, null, null, TAG);
@@ -122,7 +126,7 @@ const extraCallers = files
   .filter((entry) => read(entry).includes("colourTagAllowed("))
   .map((entry) => entry);
 assert.deepEqual(extraCallers, [], `第二个算值的地方长出来了：${extraCallers.join("、")}`);
-assert.match(panel, /const sendColourTag = colourTagAllowed\(preset, audioOnly, isSequence, matte, pickedTag\?\.id \?\? null\);/, "算值那一处的形状与 matteAllowed 同源：三个布尔是调用方算好交进来的");
+assert.match(panel, /const sendColourTag = colourTagAllowed\(preset, audioOnly, isSequence, pickedTag\?\.id \?\? null\);/, "算值那一处的形状与 matteAllowed 同源：布尔是调用方算好交进来的");
 assert.match(panel, /value=\{sendColourTag \?\? ""\}/, "那个下拉念的就是真发出去的值，不是人手里那个原始选择");
 assert.match(panel, /\{sendColourTag \?\? "不写"\}/, "mono 尾巴念的还是同一个值");
 assert.equal((panel.match(/colour_tag: sendColourTag/g) ?? []).length, 2, "待发清单里主版本与竖屏副本存的就是发出去的那一个值，正好两条");
@@ -143,15 +147,14 @@ assert.ok(
 for (const phrase of ["这一条交付照旧不带标记", "capabilities 里没有 output_colour_tags 这一档"]) {
   assert.ok(panel.includes(phrase), `引擎没下发这张表时要念得出「没有这一档」：缺 ${phrase}`);
 }
-for (const phrase of ["只有声音", "一串图像文件", "背景透明"]) {
+for (const phrase of ["只有声音", "一串图像文件"]) {  // 只剩这两条理由：透明那一条 1.154 起不成立了
   assert.ok(panel.includes(phrase), `带不出去的时候要点名叫得出是哪一条：缺 ${phrase}`);
 }
-for (const phrase of ["mov／mp4／mxf／webm", "把「背景透明」去掉"]) {
+for (const phrase of ["mov／mp4／mxf／webm"]) {
   assert.ok(panel.includes(phrase), `那句拒绝要配一条真走得通的出路：缺 ${phrase}`);
 }
-assert.ok(panel.includes("容器上写任何矩阵都成了与画面无关的话"), "透明那一句要说清为什么写上是谎话");
 assert.ok(panel.includes("DaVinci") && panel.includes("它是什么"), "那句提示要说清带标记的母版是给下游读的");
-for (const code of ["UNKNOWN_COLOUR_TAG", "COLOUR_TAG_NEEDS_CONTAINER", "COLOUR_TAG_NEEDS_PICTURE", "COLOUR_TAG_NOT_WITH_ALPHA"]) {
+for (const code of ["UNKNOWN_COLOUR_TAG", "COLOUR_TAG_NEEDS_CONTAINER", "COLOUR_TAG_NEEDS_PICTURE"]) {
   assert.equal(
     (engineTs.match(new RegExp(`^ {6}${code}: "`, "gm")) ?? []).length,
     1,

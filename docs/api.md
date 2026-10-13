@@ -2818,7 +2818,7 @@ H.264，装不下透明度，于是整条被让掉并在悬停里说清为什么
   - `COLOUR_TAG_NEEDS_PICTURE`（`colour_flags`）——`audio-mp3`／`audio-wav`／`audio-flac` 只有
     声音，标记是给画面写的。这一问排在 `output_args` 最前面，所以后面那几条先 `return` 的分支
     也照样挡得住。
-  - `COLOUR_TAG_NOT_WITH_ALPHA`（`compile_render_plan` 分层那一路）——透明母版是把 rgba 一路带到
+  - `COLOUR_TAG_NOT_WITH_ALPHA`（`compile_render_plan` 分层那一路；**1.154 起这一条已删除**）——透明母版是把 rgba 一路带到
     编码器才折的，用哪一组系数折不由这条图说，容器写任何 matrix 都会与画面不符；句子给两条出路：
     交不透明的那份并带上标记，或者这一份留空。同一预设（`vp9-1080p-web-alpha`）不勾透明时那条
     alpha 链一字未改，仍带 `format=rgba[vout]`。
@@ -2872,7 +2872,7 @@ H.264，装不下透明度，于是整条被让掉并在悬停里说清为什么
   界面不存在「这一档在这条预设上能不能兑」的第二份算法。
 - 拒绝仍是那三条，且都在**能问出这句话的地方**问：图像序列 → `COLOUR_TAG_NEEDS_CONTAINER`
   （EXR／DPX 没有容器 VUI），纯声带 → `COLOUR_TAG_NEEDS_PICTURE`（标记是给画面写的），
-  透明母版 → `COLOUR_TAG_NOT_WITH_ALPHA`（rgba 一路带到编码器才折，用哪组系数折不由这条图决定）。
+  透明母版当年 → `COLOUR_TAG_NOT_WITH_ALPHA`（1.154 起不再拒，见本节末）（rgba 一路带到编码器才折，用哪组系数折不由这条图决定）。
   `COLOUR_TAG_NEEDS_WIDE_RASTER` 这一条**已删除**：撑它的两个数事后证明是量具的账而不是标签的账
   （详见 `docs/optimization.md` 的 1.153 一节），换成由 `tests/colour_tag_check.py` 的纯色档正面判。
 - 判这一档真假的两把尺，各判各的：
@@ -2886,3 +2886,20 @@ H.264，装不下透明度，于是整条被让掉并在悬停里说清为什么
      这件事必须由数学判。
 - P3-D65 仍不做，且是量过才写的：同一张立方体的路子把 709 画面换进 P3-D65，蓝通道被夹掉 30 阶
   （709 的绿原色在 P3-D65 之外）。那是色域压缩的事，不是再换一张矩阵的事，所以这一档宁可空着。
+
+## 1.154 透明母版也可以声明色彩：折叠改由图里那一趟做
+
+- `transparent=true` 与 `colour_tag` 从「二选一」变成「可以同时」。收尾那一段现在是有条件的两条：
+  带标记时 `format=gbrap10le[,lut3d=file=primaries-…],zscale=matrix=…:range=tv,format=<预设 yuva>`，
+  不带标记时仍是 `format=rgba`——**未标记那一路的编译串一字未改**，老工程与老回执不受影响。
+- 为什么以前必须拒：`format=rgba` 交给编码器后，RGB→YUV 那一折发生在编码器的 swscale 上下文，
+  它用的是 BT.601（量的：`yuva=(329,417,632)`），容器上写 `bt709` 就是对着一张 601 折出来的画面宣称
+  另一组系数。`zscale` 接**带 alpha 的平面 RGB** 时会照声明的系数折、并把 alpha 平面原样带走，
+  所以这句话现在能兑现：ProRes 4444 与 VP9/webm 两条透明预设都量过（色度逐位或差 1 阶对上 709 预测，
+  alpha 那一格 128 → 129 / 130）。
+- 量 alpha 必须用对尺：`ffprobe` 对 VP9 的 matte 报 `yuv420p`，原生解码器 `alphaextract` 会失败；
+  要点名 `-c:v libvpx-vp9` 再取平面（`tests/alphamaster_check.py` 与 `tests/colour_tag_check.py`
+  的 `alpha_suite` 都是这一把）。
+- 拒绝剩下两条：`COLOUR_TAG_NEEDS_CONTAINER`（EXR／DPX 序列没有容器 VUI）与
+  `COLOUR_TAG_NEEDS_PICTURE`（mp3／wav／flac 没有画面）。`COLOUR_TAG_NOT_WITH_ALPHA` 已从引擎与
+  渲染层删除，界面那三条布尔收成两条（`colourTagAllowed(preset, audioOnly, isSequence, requested)`）。

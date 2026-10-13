@@ -509,10 +509,10 @@ export function colourTagAllowed(
   preset: Preset | null,
   audioOnly: boolean,
   isSequence: boolean,
-  matte: boolean,
   requested: string | null,
 ): string | null {
-  return requested && !audioOnly && !isSequence && !matte && preset !== null ? requested : null;
+  // 1.154：背景透明不再是理由——折叠做在图里那一趟之后，透明母版那句声明也是实话。
+  return requested && !audioOnly && !isSequence && preset !== null ? requested : null;
 }
 
 /**
@@ -780,7 +780,6 @@ export class EngineError extends Error {
       UNKNOWN_COLOUR_TAG: "这个交付色彩标记不在引擎那张表里（表由 capabilities.output_colour_tags 下发，档数以那张表为准，引擎那句拒绝还会点名它认识的全部档位）。要么从那张表里挑，要么留空——留空就是照今天的老样子，一个标记都不写。",
       COLOUR_TAG_NEEDS_CONTAINER: "EXR／DPX 交出的是一串图像文件，没有容器可以写这三样标记（primaries／transfer／matrix 都住在容器的 VUI 里）。要带标记的母版请选 mov／mp4／mxf／webm；序列这边由文件自己的像素格式说话。",
       COLOUR_TAG_NEEDS_PICTURE: "这一条交付只有声音，色彩标记是给画面写的。要带标记的母版请选一条带画面的交付，或者把这一栏留空。",
-      COLOUR_TAG_NOT_WITH_ALPHA: "透明母版是把 rgba 一路带到编码器才折成 YUV 的，用哪一组系数折不由这条滤镜图决定，所以在容器上写 matrix 就成了与画面无关的话。要么交不透明的那份并带上标记，要么这份透明母版把这一栏留空。",
       MEDIA_CACHE_ENTRY_MISSING: "这份派生数据已经不在了（缓存被清过）。重新打开一次素材就会自动重建。",
       MEDIA_EMPTY: "这个文件是空的或者读不出内容。确认文件完整后重新导入。",
       MEDIA_NOT_FOUND: "原文件不在这个位置了。把素材放回原来的文件夹，或者在素材库里重新指向新位置。",

@@ -5639,3 +5639,24 @@ YUV mp4**（1.151 那次界面真点抓到缺陷，用的就是这种素材）�
   一份「只折回 RGB、不做基色转换」的数学。改成直接 import 门禁那把尺（`viewer_recovers`）之后才是这组数。
   同一份色彩数学写第二遍，就是这一轮那条假红的成因。
 - `gamut.DELIVERY_CUBE_SIZE` 是 33；`APP_VERSION` 是 `1.153.0`；工程 schema 未动（仍是 v17）。
+
+## 1.154 的账：透明母版的色彩声明，以及一次「量具差点把好消息读成坏消息」
+
+- 交出去的能力：带 `colour_tag` 的透明母版把 RGB→YUV 那一折从编码器手里接回图里（
+  `format=gbrap…` → 立方体（换基色那一档才加）→ `zscale=matrix=…:range=tv` → `format=<预设 yuva>`），
+  于是容器上那三样标记第一次在**带 alpha 的交付**上也是实话。量的两格：
+  `prores-4444-alpha` 交出 `yuva=(314,429,628,516)`，8 位尺 (78,107,157) 对 709 预测 (79,107,157) 差 1、
+  对 601 预测 (82,104,158) 差 4；`vp9-1080p-web-alpha` 交出 (79,107,157)，与 709 预测逐位相同。
+  两次的 alpha 都在（128 → 129 / 130）。
+- 撤掉一条拒绝与一个入参：`COLOUR_TAG_NOT_WITH_ALPHA` 从 `render.py`、渲染层提示表与面板的
+  `tagBlocker` 三处一起删；`colourTagAllowed` 的 `matte` 入参没了，`tests/desktop_colour_tag_check.ts`
+  改钉新的形状，并把「透明也能带标记」这句判断钉在**只有一处**（面板不许自己再判一次）。
+- 新档 `alpha_suite` 两边都判：未标记那一路 `format=rgba` 收尾、图里没有 `zscale`（老交付一字不变）；
+  带标记那一路容器三样齐全、色度**离 709 的预测比离 601 的近**（判据是这两个预测之差 ≥3，不是某个
+  绝对数——ProRes/VP9 自己有损，绝对数说不清），alpha 那一格与 authored 差 ≤8。
+- 差点误判的那一次值得记：VP9 的 matte 在 WebM 里走 side channel，`ffprobe` 说 `yuv420p`、
+  对原生解码输出用 `alphaextract` 直接报 "Requested planes not available"。用这两样去量会得出
+  「透明 webm 交付把 alpha 丢了」，于是要给编码器加 `-auto-alt-ref 0`。`tests/alphamaster_check.py`
+  早就写着正确读法（点名 `-c:v libvpx-vp9`），照它量 alpha 完好无损。那条开关被撤回——
+  **没有实测支撑的编码器参数不进交付路径**，而这一轮的教训是：读不到某个平面，先怀疑读法，
+  再怀疑交付。
