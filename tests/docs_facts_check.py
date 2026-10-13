@@ -148,6 +148,20 @@ def main() -> None:
             "README 又把 win-unpacked 里那支抄到根目录了——那句会让照做的人把门禁弄红"
         )
 
+    # 2e. 1.156：显示端那一条的墙别记错对象——`COLOR_SPACES` 是曲线的词表、不含基色，缺的是
+    #     「工程级基色」那个概念。哪天契约里真出现了它（下面那种词表名），这条红，该跟着改的是
+    #     AGENTS 第 1 项与这句话本身，而不是让门禁替新一轮设计做主。
+    if "里没有宽基色那一档" in agents:
+        problems.append(
+            "AGENTS 又把「显示端没有宽基色」记在 `COLOR_SPACES` 头上——那是曲线的词表，"
+            "工程级基色才是那一档的墙"
+        )
+    if hasattr(contracts, "COLOR_PRIMARIES"):
+        problems.append(
+            "契约里出现了工程级基色的词表：显示端对齐不再是说不出口的话，"
+            "AGENTS 第 1 项与这条门禁都要跟着重新量"
+        )
+
     # 3. The schema number README quotes must be the live one.
     expected = f"本轮量到的值是 {contracts.SCHEMA_VERSION}"
     if expected not in text:
