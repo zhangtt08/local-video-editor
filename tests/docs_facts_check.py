@@ -104,6 +104,22 @@ def main() -> None:
         if retired in text:
             problems.append(f"README states {retired!r} again, which the engine contradicts")
 
+    # 2b. 1.155：README 与 AGENTS 都不许再说「跟踪与稳定不估计旋转」——`stabilize.py` 从 1.67
+    #     起就按四个锚点做 Arun 刚体拟合写 `rotation`。这条双向钉：句子回来红，代码不估了也红。
+    retired_roll = "跟踪与稳定不估计旋转"
+    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    for claimed in (text, agents):
+        if retired_roll in claimed:
+            problems.append(
+                f"文档又把稳定说成不估旋转，而 stabilize.py 正在写 rotation：{retired_roll!r}"
+            )
+    stabilize_src = (ROOT / "src/agentcut/stabilize.py").read_text(encoding="utf-8")
+    if "best carries" not in stabilize_src or "rotation" not in stabilize_src:
+        problems.append(
+            "stabilize.py 不再估 roll 了——那句「不估计旋转」就重新成了实话，"
+            "这条门禁与 README 那一行都要跟着改回来"
+        )
+
     # 3. The schema number README quotes must be the live one.
     expected = f"本轮量到的值是 {contracts.SCHEMA_VERSION}"
     if expected not in text:
