@@ -1368,9 +1368,12 @@ def alpha_suite(folder: Path) -> None:
     用的是谁家系数这条图说不上」。量过之后这句话只对**不接 zscale** 的那一路成立：带 alpha 的平面
     RGB 喂进 `zscale` 时，色度按声明的那组系数折，alpha 平面原样通过。判据故意是**比较两个预测**，
     不是比一个绝对数——ProRes 自己有噪声，而 601 与 709 的预测差得远，谁近一目了然。
+
+    1.156 把它从「只带 bt709 走一遍」改成**表里每一档都走一遍**：宽色那两档在透明母版上必须真带
+    `lut3d` 那一站（否则容器那句基色就是空话），必须比「不换基色直接折」那个预测明显更近（否则
+    一张恒等立方体也能绿），并且按自己那四样标记解回来还得是 authored 那一格。
     """
     project, authored_rgb = build_alpha_project(folder)
-    control = COLOUR_TAG_CODES[0]
     by_id = {str(item["id"]): item for item in render_presets()}
     for preset_id, dump in (
         ("prores-4444-alpha", "yuva444p10le"),
@@ -1388,49 +1391,96 @@ def alpha_suite(folder: Path) -> None:
         base = alpha_planes(plain, dump)
         print(f"    {preset_id} 不带标记：yuva={base}（那一折是编码器 swscale 的 601）")
 
-        plan = compile_render_plan(
-            project, preset_id, colour_tag=control, transparent=True, range_ticks=(0, T)
-        )
-        argv = " ".join(plan.ffmpeg_argv(str(FFMPEG), f"alpha-{preset_id}.{container}"))
-        for claim in ("-color_primaries bt709", "-color_trc bt709", "-colorspace bt709"):
-            assert claim in argv, (preset_id, claim, argv[-300:])
-        graph = json.dumps(plan.filters)
-        assert f"format=gbrap{'10le' if scale == 4 else ''}" in graph, plan.filters
-        assert "zscale=matrix=709:range=tv" in graph, plan.filters
-        assert any(f"format={held}[vout]" in line for line in plan.filters), plan.filters
+        for code in COLOUR_TAG_CODES:
+            spec = next(row for row in OUTPUT_COLOUR_TAGS if str(row["id"]) == code)
+            source, target = shift_pair(spec)
+            coefficients = FOLD_COEFFICIENTS[str(spec["matrix"])]
+            plan = compile_render_plan(
+                project, preset_id, colour_tag=code, transparent=True, range_ticks=(0, T)
+            )
+            argv = " ".join(plan.ffmpeg_argv(str(FFMPEG), f"alpha-{preset_id}-{code}.{container}"))
+            for claim in (
+                f"-color_primaries {spec['primaries']}",
+                f"-color_trc {spec['transfer']}",
+                f"-colorspace {spec['matrix']}",
+            ):
+                assert claim in argv, (preset_id, code, claim, argv[-300:])
+            graph = json.dumps(plan.filters)
+            assert f"format=gbrap{'10le' if scale == 4 else ''}" in graph, plan.filters
+            fold = f"zscale=matrix={spec['zscale_matrix']}:range={spec['zscale_range']}"
+            assert fold in graph, (preset_id, code, plan.filters)
+            if source != target:
+                # 换基色的那一档在透明母版上也得真带那一站，不然容器那句基色就是张空话。
+                assert "lut3d=file=primaries-" in graph, (preset_id, code, "少了基色那一站")
+            assert any(f"format={held}[vout]" in line for line in plan.filters), plan.filters
 
-        out = folder / f"alpha-{preset_id}.{container}"
-        run(plan.ffmpeg_argv(str(FFMPEG), str(out)), cwd=folder)
-        stream = probe_stream(out)
-        # 探针只认编码名：VP9 的 alpha 走 WebM 的 side channel，容器那一行读不出来
-        # （`alphamaster_check` 早量过），所以 alpha 只由 `alphaextract` 那一格说话。
-        for key, want in (
-            ("color_primaries", "bt709"),
-            ("color_transfer", "bt709"),
-            ("color_space", "bt709"),
-        ):
-            assert stream.get(key) == want, (preset_id, key, stream)
-        got = alpha_planes(out, dump)
-        # 比的是**两个预测谁更近**：ProRes 自己会带噪声，而 601 与 709 的预测差得远。
-        want709 = reference_yuv(authored_rgb, *FOLD_COEFFICIENTS["bt709"])
-        want601 = reference_yuv(authored_rgb, *FOLD_COEFFICIENTS["smpte170m"])
-        got8 = tuple(round(value / scale) for value in got[:3])
-        near709 = max(abs(g - w) for g, w in zip(got8, want709))
-        near601 = max(abs(g - w) for g, w in zip(got8, want601))
-        assert near601 - near709 >= 3, (preset_id, got8, want709, want601)
-        assert near709 <= 3, f"{preset_id} 带标记折出 {got8}，与 709 预测 {want709} 差 {near709} 阶"
-        # alpha 不能被这一趟弄丢：与 authored 那一格比，也与不带标记那一份比。
-        alpha8 = delivered_alpha(out)
-        assert abs(alpha8 - ALPHA_LEVEL) <= 8, (preset_id, alpha8, ALPHA_LEVEL)
-        assert abs(alpha8 - delivered_alpha(plain)) <= 8, (preset_id, alpha8, base[3])
-        print(
-            f"{preset_id} 带 bt709：{held} yuva={got} 折到 8 位尺 {got8}，"
-            f"709 预测 {want709}（差 {near709}），601 预测 {want601}（差 {near601}），"
-            f"alpha {alpha8}（authored {ALPHA_LEVEL}）"
-        )
+            # 换基色的那一档会多一张内容寻址的立方体旁路文件：真作业里引擎自己落盘，
+            # 这里也得落，否则 FFmpeg 只会回「No such file or directory」。
+            for file_name, body in plan.text_files.items():
+                (folder / file_name).write_text(body, encoding="utf-8")
+            out = folder / f"alpha-{preset_id}-{code}.{container}"
+            run(plan.ffmpeg_argv(str(FFMPEG), str(out)), cwd=folder)
+            stream = probe_stream(out)
+            # 探针只认编码名：VP9 的 alpha 走 WebM 的 side channel，容器那一行读不出来
+            # （`alphamaster_check` 早量过），所以 alpha 只由 `alphaextract` 那一格说话。
+            for key, want in (
+                ("color_primaries", spec["primaries"]),
+                ("color_transfer", spec["transfer"]),
+                ("color_space", spec["matrix"]),
+            ):
+                assert stream.get(key) == want, (preset_id, code, key, stream)
+            got = alpha_planes(out, dump)
+            got8 = tuple(round(value / scale) for value in got[:3])
+            # 期望值两份都是本文件独立算的：先按这一档要换的基色搬一次，再按这一档声明的系数折。
+            moved = (
+                authored_rgb
+                if source == target
+                else shift_signal(authored_rgb, SHIFT_MATRICES[(source, target)])
+            )
+            want_fold = reference_yuv(moved, *coefficients)
+            near_fold = max(abs(g - w) for g, w in zip(got8, want_fold))
+            assert near_fold <= 3, (
+                f"{preset_id} 挂 {code} 折出 {got8}，独立算式是 {want_fold}（差 {near_fold} 阶）"
+            )
+            if str(spec["matrix"]) == "bt709":
+                # 1.154 那句比较原样留着：不接图里这一趟，编码器自己那一折是 601，差得远。
+                want601 = reference_yuv(moved, *FOLD_COEFFICIENTS["smpte170m"])
+                near601 = max(abs(g - w) for g, w in zip(got8, want601))
+                assert near601 - near_fold >= 3, (preset_id, code, got8, want_fold, want601)
+            recovered = got8
+            if source != target:
+                # 反向保险：立方体必须真的动了画面。拿「不换基色直接折」那个预测比，必须明显更远，
+                # 否则「带上了那一站」这句话靠一张恒等立方体就能蒙过去。
+                still = reference_yuv(authored_rgb, *coefficients)
+                near_still = max(abs(g - w) for g, w in zip(got8, still))
+                assert near_still - near_fold >= 3, (
+                    preset_id,
+                    code,
+                    got8,
+                    want_fold,
+                    still,
+                    "这一档的立方体没把画面搬过去",
+                )
+                shift_back = SHIFT_MATRICES[(target, source)]
+                recovered = viewer_recovers(got, coefficients, shift_back, scale)
+                worst = max(abs(b - a) for b, a in zip(recovered, authored_rgb))
+                assert worst <= FLAT_LIMIT, (
+                    f"{preset_id} 挂 {code} 的透明母版按自己那四样标记解回 {recovered}，"
+                    f"不是 authored 的 {authored_rgb}（差 {worst} 阶）"
+                )
+            # alpha 不能被这一趟弄丢：与 authored 那一格比，也与不带标记那一份比。
+            alpha8 = delivered_alpha(out)
+            assert abs(alpha8 - ALPHA_LEVEL) <= 8, (preset_id, code, alpha8, ALPHA_LEVEL)
+            assert abs(alpha8 - delivered_alpha(plain)) <= 8, (preset_id, code, alpha8, base[3])
+            print(
+                f"    {preset_id} 带 {code}：{held} yuva={got} 折到 8 位尺 {got8}，"
+                f"这一档的独立预测 {want_fold}（差 {near_fold}），解回 {recovered}"
+                f"（authored {authored_rgb}），alpha {alpha8}（authored {ALPHA_LEVEL}）"
+            )
     print(
-        "PASS alpha: 透明母版带上标记时折叠改由图里那一趟做，色度离 709 的预测比离 601 的近，"
-        "alpha 平面还在；不带标记那一路的编译串一个字没动"
+        "PASS alpha: 透明母版把表里每一档都走了一遍——折叠由图里那一趟做、色度离自己那一档的独立预测"
+        "最近、换基色的那两档真带立方体那一站、按标记解回 authored 那一格，alpha 平面还在；"
+        "不带标记那一路的编译串一个字没动"
     )
 
 
