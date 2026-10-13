@@ -1708,6 +1708,32 @@ def http_suite(folder: Path) -> None:
     )
 
 
+def container_tag_names(flag: str) -> set[str]:
+    """随包 FFmpeg 自己念得出的那三句标记的合法名字，当场从它的帮助里读。
+
+    名单不抄第二份记忆：抄来的清单迟早与随包那支不一致，而那种不一致在成片里是「标签写进去了、
+    下游读不出」，正是要拦的那类事。
+    """
+    help_text = run([FFMPEG, "-hide_banner", "-h", "full"]).decode(errors="replace")
+    lines = help_text.splitlines()
+    names: set[str] = set()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if f" {flag} " in line and "<" in line:
+            index += 1
+            while index < len(lines):
+                row = lines[index].split()
+                if len(row) >= 3 and row[1].lstrip("-").isdigit():
+                    names.add(row[0])
+                    index += 1
+                    continue
+                break
+            continue
+        index += 1
+    return names
+
+
 def capability_suite() -> None:
     # Every preset that can carry a claim folds through YUV. Asserted here rather than branched on
     # in the exporter: an RGB video preset added later must make this red, not quietly ride a
@@ -1779,7 +1805,28 @@ def capability_suite() -> None:
     # A tag may only name a curve this engine can actually convert to: the delivery table and the
     # probe table have to stay joined, or a tagged master would promise a transfer nothing can read.
     assert dict(COLOR_TRANSFER_TAGS)[row["transfer"]] in COLOR_SPACES, row
-    print(f"PASS capabilities: {len(COLOUR_TAG_CODES)} tag(s) published from one table")
+    # 容器那三句标记必须由随包 FFmpeg 自己念得出名字：写一个它不认的拼法，画面照折，
+    # 标签却落不进 VUI——那等于交出一张没人接得住的话。名单是当场读来的，不是抄来的。
+    spelled = {flag: container_tag_names(flag) for flag in ("color_primaries", "color_trc", "colorspace")}
+    for flag, key in (("color_primaries", "primaries"), ("color_trc", "transfer"), ("colorspace", "matrix")):
+        assert spelled[flag], f"随包 FFmpeg 的帮助里读不出 {flag} 的名单，这条门禁已经空转"
+        for item in OUTPUT_COLOUR_TAGS:
+            assert str(item[key]) in spelled[flag], (
+                f"档位 {item['id']} 声明的 {key}={item[key]!r} 不在随包 FFmpeg 认得的名单里"
+            )
+    # 影院 DCI-P3 的传递特性是 γ2.6，而这份 FFmpeg 只有 gamma22（BT.470M）与 gamma28（BT.470BG）——
+    # 「影院那一档交不出去」的墙在这句上，不在色适应：本轮量过，Bradford 适过去之后九个系数全正、
+    # 行和 1，33³ 的格子一格不出界。这条双向钉着：哪天随包 FFmpeg 认了 γ2.6，它当场红，
+    # 那时该重量 DCI-P3 那一档并按结果决定加不加行，而不是让这句话一直当既成事实。
+    assert not ({"gamma26", "gamma2.6", "smpte432-2"} & spelled["color_trc"]), (
+        "随包 FFmpeg 现在念得出 γ2.6 那一档了——影院 DCI-P3 的墙换了地方，"
+        "重新量它（色适应本轮已经量过是走得通的），再决定加不加那一行"
+    )
+    print(
+        f"PASS capabilities: {len(COLOUR_TAG_CODES)} tag(s) published from one table，"
+        f"容器那三句的名单（{len(spelled['color_primaries'])}/{len(spelled['color_trc'])}/"
+        f"{len(spelled['colorspace'])} 个名字）当场从随包 FFmpeg 读出来逐档对过"
+    )
 
 
 # The digest the previous release stored for the request built below. Captured by parsing that
