@@ -24,8 +24,8 @@ from agentcut.http_api import create_app
 from agentcut.projects import ProjectStore
 from agentcut.render import compile_render_plan
 
-ROOT = Path(r"C:\Users\Administrator\Desktop\项目\agentcut")
-FFMPEG = ROOT / "desktop/node_modules/ffmpeg-static/ffmpeg.exe"
+ROOT = Path(__file__).resolve().parent.parent
+FFMPEG = ROOT / "desktop/resources/bin/ffmpeg.exe"
 
 RGB_CURVE = {
     "kind": "curve",

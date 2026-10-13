@@ -9,10 +9,12 @@
  跑的是真 `Engine`（假 `fetch` 收请求），再加上两份源码的接线检查。
  */
 
+// `REPO_ROOT` is defined by tests/desktop_ts_check.py at bundle time.
+declare const REPO_ROOT: string;
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const SRC = "C:/Users/Administrator/Desktop/项目/agentcut/";
+const SRC = REPO_ROOT;
 
 type Sent = { url: string; method: string; body: string | undefined };
 const sent: Sent[] = [];

@@ -32,7 +32,6 @@ from agentcut.render import compile_render_plan, timeline_duration  # noqa: E402
 
 WORK = Path(os.environ.get("AGENTCUT_CHECK_DIR", str(ROOT / "data" / "media-check")))
 FAILURES: list[str] = []
-BIN_DIR = ROOT / "desktop" / "node_modules"
 RES_BIN = ROOT / "desktop" / "resources" / "bin"
 
 
@@ -40,9 +39,6 @@ def find_binary(name: str) -> str:
     candidates = [
         os.environ.get(f"AGENTCUT_{name.upper()}", ""),
         str(RES_BIN / f"{name}.exe"),
-        str(BIN_DIR / "ffmpeg-static" / f"{name}.exe"),
-        str(BIN_DIR / "ffprobe-static" / "bin" / "win32" / "x64" / f"{name}.exe"),
-        shutil.which(name) or "",
     ]
     for candidate in candidates:
         if candidate and Path(candidate).is_file():

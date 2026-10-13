@@ -13,7 +13,7 @@ No media and no engine: it reads the two sources and compares the vocabularies.
 import re
 from pathlib import Path
 
-ROOT = Path(r"C:\Users\Administrator\Desktop\项目\agentcut")
+ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src/agentcut"
 ENGINE_TS = ROOT / "desktop/src/engine.ts"
 

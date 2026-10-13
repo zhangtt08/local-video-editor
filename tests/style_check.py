@@ -8,12 +8,12 @@ from pathlib import Path
 from agentcut.contracts import TIMEBASE, Project
 from agentcut.render import compile_render_plan
 
-ROOT = Path(r"C:\Users\Administrator\Desktop\项目\agentcut")
+ROOT = Path(__file__).resolve().parent.parent
 T = TIMEBASE
 
 
 def ffmpeg() -> Path:
-    return ROOT / "desktop/node_modules/ffmpeg-static/ffmpeg.exe"
+    return ROOT / "desktop/resources/bin/ffmpeg.exe"
 
 
 def frame_brightness(path: Path, y0: float, y1: float) -> float:

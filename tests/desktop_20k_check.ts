@@ -15,6 +15,8 @@
  *    每一段都必须存在；④ 建多少卡片与段的总数无关（两万段也只建这么多）。
  */
 
+// `REPO_ROOT` is defined by tests/desktop_ts_check.py at bundle time.
+declare const REPO_ROOT: string;
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
 
@@ -31,7 +33,7 @@ import {
   WINDOW_NOTE,
 } from "../desktop/src/timelineWindow";
 
-const SRC = "C:/Users/Administrator/Desktop/项目/agentcut/";
+const SRC = REPO_ROOT;
 const timeline = readFileSync(SRC + "desktop/src/views/Timeline.tsx", "utf8");
 const harness = SRC + "scripts/renderer_scale.cjs";
 

@@ -26,7 +26,7 @@ from agentcut.http_api import create_app
 from agentcut.jobs import JobRuntime, ffmpeg_support, parse_ffmpeg_help
 from agentcut.media import MediaService
 
-ROOT = Path(r"C:\Users\Administrator\Desktop\项目\agentcut")
+ROOT = Path(__file__).resolve().parent.parent
 FFMPEG = ROOT / "desktop/resources/bin/ffmpeg.exe"
 FFPROBE = ROOT / "desktop/resources/bin/ffprobe.exe"
 PRESET = "h264-source-quality"

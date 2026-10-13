@@ -26,7 +26,7 @@ from agentcut.http_api import create_app
 from agentcut.jobs import JobRuntime
 from agentcut.media import MediaService
 
-ROOT = Path(r"C:\Users\Administrator\Desktop\项目\agentcut")
+ROOT = Path(__file__).resolve().parent.parent
 FFMPEG = ROOT / "desktop/resources/bin/ffmpeg.exe"
 FFPROBE = ROOT / "desktop/resources/bin/ffprobe.exe"
 SRC_W, SRC_H = 320, 180

@@ -14,7 +14,7 @@ SCHEMA_VERSION = (
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.151.0"
+APP_VERSION = "1.152.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -411,6 +411,31 @@ OUTPUT_COLOUR_TAGS: tuple[dict[str, str], ...] = (
         "zscale_matrix": "709",
         "zscale_range": "tv",
     },
+    # 1.152 第二档。名字要说它真的做的事：这一档改的是**折叠**，不是基色。工程的 RGB 就是
+    # 709/sRGB 那套基色，所以基色与曲线照旧声明 bt709，只有 RGB→YUV 那组系数换成 601，交出的
+    # 是一张「按 601 折、按 709 读」的老式母版——标清带与不少硬件/播放器就认这一套。
+    # 三个数都是量回来的（64×36 纯色 (126,63,30)，随包 FFmpeg 6.1.1）：`zscale=matrix=170m` 折出
+    # (83,104,158)，与 ITU-R BT.601 那组 0.299/0.587/0.114 的独立算式一字不差；mp4 与 MXF 两个
+    # 容器都把 `color_space=smpte170m`+`color_primaries=bt709`+`color_trc=bt709`+`color_range=tv`
+    # 原样读回；按这四样解回 RGB 得 (126,63,30)，与源差 (0,0,0)。
+    {
+        "id": "bt601",
+        "label": "BT.601 折叠（标清与老母版：矩阵按 601，基色与曲线仍是工程的 709）",
+        "primaries": "bt709",
+        "transfer": "bt709",
+        "matrix": "smpte170m",
+        # 随包 zscale 认的短拼法是 `170m`（`-h filter=zscale` 那张表先列它），长拼法 `smpte170m`
+        # 也在表里；容器那一侧要写的值是 FFmpeg 的枚举名 `smpte170m`，两边不是一回事，所以分开写。
+        "zscale_matrix": "170m",
+        "zscale_range": "tv",
+    },
+    # 宽色域（bt2020 / P3）这一档 1.152 **不做**，理由是量出来的而不是想到的：要让「基色是 2020」
+    # 这句话成真，图里得先做 709→2020 的基色转换，而随包 zscale 那一步与标准算式不符——
+    # `zscale=primariesin=709:primaries=2020:matrix=2020_ncl:range=tv` 交出 (83,110,146)，独立预测
+    # 是 (90,113,169)，Cr 差 23 个色阶；P3-D65 那一路（`primaries=432`）当场
+    # `no path between colorspaces`。只换矩阵不换基色（`zscale=matrix=2020_ncl`）能精确折出
+    # (83,106,157)，但那等于给 709 基色的画面盖一张 2020 的标签——正是本表存在的目的所要防止的
+    # 谎话。要做这一档，得先把线性化→基色矩阵→重新编码那三步从 zscale 手里接回引擎自己的图。
 )
 
 # The closed vocabulary an Agent may name. It is derived from the table, never written twice.

@@ -8,10 +8,12 @@
  跑的是真 `Engine` 导出的那几个函数（`codecText`／`matteAllowed`），再加上面板的接线检查。
  */
 
+// `REPO_ROOT` is defined by tests/desktop_ts_check.py at bundle time.
+declare const REPO_ROOT: string;
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const SRC = "C:/Users/Administrator/Desktop/项目/agentcut/";
+const SRC = REPO_ROOT;
 
 type Sent = { url: string; body: string | undefined };
 const sent: Sent[] = [];

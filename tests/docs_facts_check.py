@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from agentcut import contracts  # noqa: E402
 
-ROOT = Path(r"C:\Users\Administrator\Desktop\项目\agentcut")
+ROOT = Path(__file__).resolve().parent.parent
 README = ROOT / "README.md"
 
 CN_DIGITS = "零一二三四五六七八九"

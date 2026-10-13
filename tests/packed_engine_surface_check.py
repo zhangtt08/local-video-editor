@@ -24,7 +24,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-ROOT = Path(r"C:\Users\Administrator\Desktop\项目\agentcut")
+ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
 from agentcut.contracts import (  # noqa: E402
@@ -137,9 +137,9 @@ def main():
             assert caps["project_schema_version"] == SCHEMA_VERSION
             assert caps["features"]["color_manage_auto"] is True, caps["features"]
             assert caps["features"]["colour_tag_delivery"] is True, caps["features"]
-            assert caps["output_colour_tags"] == [
-                dict(item) for item in OUTPUT_COLOUR_TAGS
-            ], caps["output_colour_tags"]
+            assert caps["output_colour_tags"] == [dict(item) for item in OUTPUT_COLOUR_TAGS], caps[
+                "output_colour_tags"
+            ]
             assert caps["color_transfer_tags"] == [
                 {"tag": tag, "space": space} for tag, space in COLOR_TRANSFER_TAGS
             ], caps["color_transfer_tags"]
@@ -291,23 +291,40 @@ def main():
             argv = " ".join(untagged["argv_preview"])
             assert "-colorspace" not in argv and "zscale=matrix" not in argv, argv[-260:]
             assert untagged["plan"]["colour_tag"] is None, untagged["plan"]
-            status, tagged = call(base, token, "GET", f"{plan_base}&colour_tag=bt709")
-            assert status == 200, tagged
-            argv = " ".join(tagged["argv_preview"])
-            for claim in ("-color_primaries bt709", "-color_trc bt709", "-colorspace bt709"):
-                assert claim in argv, (claim, argv[-320:])
-            assert "zscale=matrix=709:range=tv" in argv, argv[-320:]
-            assert tagged["plan"]["colour_tag"] == "bt709", tagged["plan"]
+            # 每一档都要在装机版那支引擎上单独问一遍：容器 trio 与折叠那一句都是钉死的字面量，
+            # 表里加一档而这里不跟着加，那条「点名的出路与表相符」当场就红。
+            tiers = [
+                (
+                    "bt709",
+                    ("-color_primaries bt709", "-color_trc bt709", "-colorspace bt709"),
+                    "zscale=matrix=709:range=tv",
+                ),
+                (
+                    "bt601",
+                    ("-color_primaries bt709", "-color_trc bt709", "-colorspace smpte170m"),
+                    "zscale=matrix=170m:range=tv",
+                ),
+            ]
+            for code, claims, fold in tiers:
+                status, tagged = call(base, token, "GET", f"{plan_base}&colour_tag={code}")
+                assert status == 200, (code, tagged)
+                argv = " ".join(tagged["argv_preview"])
+                for claim in claims:
+                    assert claim in argv, (code, claim, argv[-320:])
+                assert fold in argv, (code, fold, argv[-320:])
+                assert tagged["plan"]["colour_tag"] == code, (code, tagged["plan"])
             status, unknown = call(base, token, "GET", f"{plan_base}&colour_tag=p3-dci")
             assert status == 422, unknown
             assert unknown["error"]["code"] == "UNKNOWN_COLOUR_TAG", unknown
-            assert unknown["error"]["details"]["known"] == ["bt709"], unknown["error"]
-            print(
-                "   render-plan over the packed build: untagged argv carries no claim, tagged adds "
-                "the trio + the 709 fold, an unknown id is refused"
+            assert unknown["error"]["details"]["known"] == [item[0] for item in tiers], (
+                "那句拒绝点名的出路与这两档不符：" + str(unknown["error"]["details"])
             )
             print(
-                "PASS: the engine inside the package serves 1.151 over real HTTP, and its "
+                "   render-plan over the packed build: untagged argv carries no claim, "
+                "each published tier adds its own trio + fold, an unknown id is refused"
+            )
+            print(
+                "PASS: the engine inside the package serves 1.152 over real HTTP, and its "
                 "refusal writes nothing"
             )
         finally:

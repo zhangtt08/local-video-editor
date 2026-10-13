@@ -5436,3 +5436,119 @@ enabled；选中后导出按钮的 title 念「按 r1 导出 ui1151.mp4，色彩
 - `error_vocabulary_check.py`：155 个码 / 159 句中文 / 0 句落回英文；`docs_facts_check.py`：
   九个容器点名、schema 17、四类属性与混合模式条数、以及这一轮新加的「README 那一行的 N 档
   必须等于 `COLOUR_TAG_CODES` 的长度」（把 README 那行改成两档，它当场红）。
+
+## 1.152 的账：验收先要能在交付后的树里跑起来，加一档色彩标记要能红
+
+### 三处「门禁全绿但话已经不对」
+
+1. **套件在交付后的那棵树里跑不起来**。按 1.151 的停放点重跑基线，第 13 项 `bundle_check` 当场
+   `FileNotFoundError: [WinError 2] 系统找不到指定的文件`。数出来的根因是三类写死：61 个 Python
+   检查把这台机器的主目录钉在 `ROOT = Path(r"C:\\Users\\…")`，10 个壳层检查把同一个目录钉在
+   `const SRC`，另有 14 处直接指 `desktop/node_modules` 里 npm 装来的 FFmpeg。上一轮按「只留软件与
+   功能本身」清掉了 `node_modules` 与 `.venv`，于是 1.151 记的那句「105/105 单独跑全绿」在这棵交付
+   树里**已经不可能重跑**——工程挪个位置也是同样的全红。
+2. **兜底那条更坏**：`media_check` 与 `self_check` 找 FFmpeg 的顺序是 npm→随包→`shutil.which`。
+   npm 那一份被删掉之后，它们会静默改用 PATH 上的 FFmpeg 9，而装机版内嵌的是随包那支 6.1.1；
+   「验收测的就是发布包的行为」这句话从此没有依据（本机 PATH 上那支连 `-filter_complex_script`
+   都没有，1.146 就是被这一条咬过）。
+3. **界面那句拒绝在数档数**：`desktop/src/engine.ts` 的 `UNKNOWN_COLOUR_TAG` 那句写着「目前只有
+   BT.709 一档」。表一涨它就是假话，所以改成「档数以那张表为准，引擎那句拒绝还会点名它认识的全部
+   档位」——由引擎的话去说，不由界面复述。
+
+### 改法：一处来源，一条门禁
+
+- Python 检查一律 `ROOT = Path(__file__).resolve().parent.parent`；壳层检查的根目录由它自己的
+  runner `tests/desktop_ts_check.py` 以 esbuild `--define:REPO_ROOT=…` 注入（`declare const
+  REPO_ROOT: string;` 由 runner 认识、`tsc --noEmit` 也过）。
+- 媒体验收只准用 `desktop/resources/bin` 那两支——装机版内嵌的就是它们；npm 与 PATH 两条兜底整个
+  删掉，缺了就当场红，而不是换一支 FFmpeg 继续绿。
+- 新门禁 `tests/mediabinary_check.py`：扫 **242 个**可执行源码（tests/scripts/src/desktop）不许出现
+  任何用户主目录形状的绝对路径；对 **107 个**验收文件按语法树判两件事——不许调用 `which(…)` 取媒体
+  程序、字符串常量里不许出现 npm 那两份；任何写出来的 `desktop/…ffmpeg.exe|ffprobe.exe` 路径必须落在
+  随包那一层。它还真跑那两支把版本首行念出来（`ffmpeg 6.1.1-essentials_build`、`ffprobe 4.0.2`）。
+  按 AST 判而不是按文字判是必要的：`tests/ffmpegpath_check.py` 要在临时目录里搭打包形状、把诱饵摆上
+  PATH 才证得动引擎自己的搜索顺序，那是产品行为的证据，文字匹配会把它当违规。
+- 六条突变各自红在自己那句上：本机路径／npm 那一份／`which` 兜底／随包之外的又一份／随包 ffmpeg 改名
+  后存在性那条／把门禁拷到一棵几乎没有源码的树里让扫描面宽度那条红。恢复后门禁立刻回绿。
+  其中第一条第一次没红对地方：needle 写的是我以为的消息，而 `docs_facts_check` 实际说的是
+  「does not say 1 档」——它当场红了，但我差点把「红在别处」记成「拦不住」。
+
+### 第二档交付色彩标记：先量 zscale 认什么，再写表
+
+1.151 那句「加一档是改 `OUTPUT_COLOUR_TAGS` 一处」是对的，但前提是那一档说得出口。随包 6.1.1 的
+`-h filter=zscale` 量回来的枚举名：
+
+- `matrix`：`709` `470bg` `170m` `2020_ncl` `2020_cl`（长拼法 `bt709` `bt470bg` `smpte170m`
+  `smpte240m` `bt2020nc` `bt2020c` 同表）；**没有** `601` 这一拼。
+- `primaries`：`709` `170m` `2020` `bt470bg` `smpte428` `smpte431` `smpte432` 等。
+- 输入侧的拼法是 `primariesin` / `matrixin` / `rangein` / `transferin`（含 `pin` `min` 等短名），
+  **没有** `in_primaries`：两次 `Option not found` 都是按别处的习惯猜了这个前缀。
+
+用 64×36 纯色格 (126,63,30) 真编码量的三条路（预测值一律由公开系数在本文件之外独立算一遍）：
+
+| 链 | 量到的 YUV | 独立预测 | 结论 |
+|---|---|---|---|
+| `zscale=matrix=170m:range=tv` | (83,104,158) | BT.601-6 的 0.299/0.587/0.114 → (83,104,158) | **逐位相同**，可交 |
+| `zscale=matrix=2020_ncl:range=tv` | (83,106,157) | 2020-NCL 系数 → (83,106,157) | 折叠精确，但基色仍是 709 |
+| `primariesin=709:primaries=2020:matrix=2020_ncl` | (83,110,146) | 先 709→2020 换基色再折 → (90,113,169) | Cr 差 **23 阶**，不可交 |
+| `primariesin=709:primaries=432`（P3-D65） | 当场 `no path between colorspaces` | — | 不可交 |
+
+所以这一版加的第二档是 `bt601`：只换**折叠**（`-colorspace smpte170m`），基色与曲线照旧声明 `bt709`，
+因为图里那份 RGB 本来就是 709 那套基色。名字要说它真的做的事——`capability_suite` 现在钉着「只要
+`matrix` 与 `primaries` 不同，标签里必须出现「折叠」」，另有「任何一档的 primaries/transfer 都必须是
+bt709」这条硬断言，理由就是上面那张表：换基色的那句话今天的 FFmpeg 兑不了现。宽色域那一档要做通，
+得先把「线性化 → 九个数的基色矩阵 → 重新编码」这三步从 zscale 手里接回引擎自己的滤镜图。
+
+新加的 `tiers_suite` 把「表里每一档」变成会被量的事：逐档编译（容器 trio 与折叠那一句都等于表里的值）、
+逐档**真编码**（探针读 `color_space`/`color_primaries`/`color_transfer`/`color_range`）、逐档比独立系数
+算出的 YUV、逐档「按自己的标记解回 RGB」（这就是一台老实的色彩管理观看者做的事），并顺手把同一张图
+交一份 **MXF** 再读一次——1.151 那句「MXF 那一侧只在 mp4 上量过」现在有了数：`mxf-mpeg2` 交出
+`color_space=smpte170m`＋`bt709`＋`bt709`＋`tv` 原样读回。量到的两档：bt709 折成 (80,107,157)、解回
+(127,64,30)；bt601 折成 (83,104,158)、解回 (126,63,30)，与源差 (0,0,0)。表里多一档而没人给它独立的
+系数出处，这条检查当场红。
+
+六条突变（改的都是 `contracts.OUTPUT_COLOUR_TAGS` 那一行，逐条红在自己那句画上，恢复后立刻回绿）：
+矩阵换成没有系数出处的 `bt470bg`、`zscale_matrix` 写成合法但不同的 `2020_ncl`、这一档改名、标签不再
+说「折叠」、primaries 谎称 `bt470bg`、整档删掉之后 `docs_facts_check` 红在 README 那句「2 档」。
+
+### 界面真点：打包渲染层连打包引擎（标题栏「引擎在线 v1.152.0」）
+
+把 `desktop/dist/renderer` 服务起来连 `desktop/resources/bin/agentcut/agentcut.exe`，素材是一条**真
+YUV mp4**（1.151 那次界面真点抓到缺陷，用的就是这种素材）。「交付色彩标记」那一栏现在念的是引擎下发
+的三行：不带标记／BT.709（高清显示端交接母版）／BT.601 折叠（标清与老母版：矩阵按 601，基色与曲线仍
+是工程的 709）。选到 bt601 之后导出按钮的 title 是「按 r1 导出 ui1152.mp4，色彩标记 bt601」；点下去
+任务 `succeeded`、`colour_tag=bt601` 存进任务记录、`output_checked=True`，产物 320×180 `yuv420p`，
+探针读 `color_space=smpte170m`＋`primaries=bt709`＋`transfer=bt709`＋`range=tv`，画面中心按这四样解回
+(126,63,30)，与源同一格**差 (0,0,0)**。界面一行代码都没改就念出第二档——那张表是唯一来源，这就是它
+应有的样子。
+
+第一次的 fixture 是我自己选的 `testsrc2`（细节丰富的活动图案），量出成片中心与源差 (0,1,4)：不是引擎
+的错，是**用错量具**——放大加有损编码之后拿 busy 图案做颜色断言，那 4 级是量化与滤波的账。换成纯色
+素材才有上面那句 (0,0,0)。
+
+### 全量套件
+
+- 全量套件**空闲机器单独跑：106/106 checks passed，EXIT=0**（01:02→01:16，约 14 分钟；106 = 1.151 的 105 项加本轮新增的 `tests/mediabinary_check.py`）。这一份才是可引用的那一份：同一套检查在交付后的树里第 13 项就红过一次，红的原因是检查自己写死了本机路径与 npm 那支 FFmpeg。
+
+### 发布包与那一条自己也会过时的门禁
+
+- `scripts/build_engine.py --verify`：verification passed，裸冷启动 **662→654 ms**；`tools` 模式自报
+  的 ffmpeg/ffprobe 就是随包那两支（与新门禁同一判断，两条互不引用）。
+- Windows 发布包：便携版 **189,915,022 B**、安装版 **190,075,728 B**，根目录 `AgentCut.exe` 与便携版
+  SHA256 相同（`9ec80762…5fb6202`）。`released_package_check.py` 绿：asar 带 **1.152.0**、84 个文件、
+  内嵌引擎就是刚构建那一份、渲染层 27 句读得通的中文。
+- `packed_engine_surface_check.py` 用打包版引擎真跑 HTTP：capabilities 报 1.152.0／schema 17，
+  render-plan 逐档问——**它第一次是红的，红在自己身上**：那句 `known == ["bt709"]` 是 1.151 写死的，
+  表涨到两档之后它把新档当成违规。这是 1.150「schema 涨到 17 时两处写死 16」那一类的第三次复发，
+  所以现在是逐档字面量清单＋「拒绝那句与这张表相符」两条一起钉。
+
+### 仍然开着的
+
+- 宽色域那一档（BT.2020／P3）：按上面那三个数，先把基色转换接回图里再说。
+- 交付标记与工程色彩管理的**显示端**对齐：今天两档都恒声明 709 基色，若某条链的显示端选了 rec2020，
+  那张 bt709 标签就又成了假话——改这一条要同时改 `capability_suite` 那句 primaries 硬断言的口径。
+- 多目标跟踪、跟踪与稳定估计旋转、`lut3d` 的浏览器预览（`features.lut3d_preview` 仍是 false）。
+- 随包的 `desktop/resources/bin` 两支与 `release/` 那几个 exe 都不在版本控制里（`*.exe` 被 ignore），
+  所以「交付后的树」里跑套件的前置条件是 `npm ci` + `scripts/build_engine.py`；这条要变成长治规矩，
+  得把 README 与 AGENTS 的前置说明与 `mediabinary_check` 的那句提示词对齐。
+

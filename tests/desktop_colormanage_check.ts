@@ -8,13 +8,15 @@
  * ④ 交出去的载荷就是那一条命令的四个字段，一个字节都不多。
  */
 
+// `REPO_ROOT` is defined by tests/desktop_ts_check.py at bundle time.
+declare const REPO_ROOT: string;
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import { manageFits, manageSpaces, managedPair, managedWords, taggedCount } from "../desktop/src/colorManage";
 import { COLOR_SPACES, type ColorSpace, type GradeNode } from "../desktop/src/engine";
 
-const SRC = "C:/Users/Administrator/Desktop/项目/agentcut/desktop/src/";
+const SRC = REPO_ROOT + "desktop/src/";
 const store = readFileSync(SRC + "store.ts", "utf8");
 const grade = readFileSync(SRC + "views/GradeFields.tsx", "utf8");
 const engine = readFileSync(SRC + "engine.ts", "utf8");

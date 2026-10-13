@@ -15,7 +15,7 @@ count below cannot be trusted.
 
 from pathlib import Path
 
-ROOT = Path(r"C:\Users\Administrator\Desktop\项目\agentcut")
+ROOT = Path(__file__).resolve().parent.parent
 DOCS = [ROOT / "README.md", ROOT / "AGENTS.md"] + sorted((ROOT / "docs").glob("*.md"))
 
 

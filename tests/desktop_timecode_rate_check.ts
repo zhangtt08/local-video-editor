@@ -10,10 +10,12 @@
  ③ 引擎那句中文提示也说清是「这一条交付画面的帧率」。
  */
 
+// `REPO_ROOT` is defined by tests/desktop_ts_check.py at bundle time.
+declare const REPO_ROOT: string;
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const SRC = "C:/Users/Administrator/Desktop/项目/agentcut/";
+const SRC = REPO_ROOT;
 const panel = readFileSync(SRC + "desktop/src/views/ExportPanel.tsx", "utf8");
 const engine = readFileSync(SRC + "desktop/src/engine.ts", "utf8");
 

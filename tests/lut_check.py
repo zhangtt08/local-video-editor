@@ -23,8 +23,8 @@ from agentcut.grade import grade_filter, grade_tables, parse_1d_cube
 from agentcut.http_api import create_app
 from agentcut.render import compile_render_plan
 
-ROOT = Path(r"C:\Users\Administrator\Desktop\项目\agentcut")
-FFMPEG = ROOT / "desktop/node_modules/ffmpeg-static/ffmpeg.exe"
+ROOT = Path(__file__).resolve().parent.parent
+FFMPEG = ROOT / "desktop/resources/bin/ffmpeg.exe"
 SAFE = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,()-+*/=':")
 BANDS = (4, 20, 64, 128, 196, 250)
 TOLERANCE = 1.5

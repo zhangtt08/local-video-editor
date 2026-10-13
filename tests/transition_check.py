@@ -266,8 +266,8 @@ def main():
 
 def real_render(folder: Path):
     folder.mkdir(parents=True, exist_ok=True)
-    ffmpeg = ROOT / "desktop/node_modules/ffmpeg-static/ffmpeg.exe"
-    ffprobe = ROOT / "desktop/node_modules/ffprobe-static/bin/win32/x64/ffprobe.exe"
+    ffmpeg = ROOT / "desktop/resources/bin/ffmpeg.exe"
+    ffprobe = ROOT / "desktop/resources/bin/ffprobe.exe"
 
     def run(args):
         return subprocess.run(

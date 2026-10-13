@@ -5,10 +5,12 @@
  `preview_grade` 里整条丢掉这一级，界面就必须把这句说出来，而不是画一张没有数字的原语。
  */
 
+// `REPO_ROOT` is defined by tests/desktop_ts_check.py at bundle time.
+declare const REPO_ROOT: string;
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const SRC = "C:/Users/Administrator/Desktop/项目/agentcut/";
+const SRC = REPO_ROOT;
 const engineSrc = readFileSync(SRC + "desktop/src/engine.ts", "utf8");
 const graph = readFileSync(SRC + "desktop/src/gradeGraph.ts", "utf8");
 const fields = readFileSync(SRC + "desktop/src/views/GradeFields.tsx", "utf8");

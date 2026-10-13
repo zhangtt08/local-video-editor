@@ -16,7 +16,7 @@ from agentcut.http_api import create_app
 from agentcut.jobs import JobRuntime
 from agentcut.media import MediaService, cache_limit_bytes
 
-ROOT = Path(r"C:\Users\Administrator\Desktop\项目\agentcut")
+ROOT = Path(__file__).resolve().parent.parent
 FFMPEG = ROOT / "desktop/resources/bin/ffmpeg.exe"
 FFPROBE = ROOT / "desktop/resources/bin/ffprobe.exe"
 

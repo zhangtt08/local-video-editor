@@ -777,7 +777,7 @@ export class EngineError extends Error {
       COLOR_MANAGE_LIMIT: "这一对要占调色链额度里的两个节点，取下旧的一对之后这条链还是装不下。先在调色节点里删掉几个不要的节点，或者这一段干脆不套色彩管理，只在输出端手动改一个转换。",
       COLOR_MANAGE_NO_CHANGE: "这一段已经是按你选的来源读入、按你选的输出写出了，再套一次不会改变任何东西，所以引擎没有写入。想换一套色彩空间就改上面两个下拉菜单再按「套上」；想重新来就按「取下」再套。",
       COLOR_SPACE_UNDETECTED: "这份素材自己没有说清它是按哪条曲线写的（引擎读的是文件里的 transfer characteristic，色域与基色那两种标记定不出曲线，所以不算答案）。「按素材自带标记」这一档因此用不了：请在「来源空间」里手工选一条（屏幕录制一般是 sRGB，广播时间线是 Rec.709，SD 带子多是 Gamma 2.4），或者用「+LUT」把厂家给的查找表套上再调。",
-      UNKNOWN_COLOUR_TAG: "这个交付色彩标记不在引擎那张表里（表由 capabilities.output_colour_tags 下发，目前只有 BT.709 一档）。要么从那张表里挑，要么留空——留空就是照今天的老样子，一个标记都不写。",
+      UNKNOWN_COLOUR_TAG: "这个交付色彩标记不在引擎那张表里（表由 capabilities.output_colour_tags 下发，档数以那张表为准，引擎那句拒绝还会点名它认识的全部档位）。要么从那张表里挑，要么留空——留空就是照今天的老样子，一个标记都不写。",
       COLOUR_TAG_NEEDS_CONTAINER: "EXR／DPX 交出的是一串图像文件，没有容器可以写这三样标记（primaries／transfer／matrix 都住在容器的 VUI 里）。要带标记的母版请选 mov／mp4／mxf／webm；序列这边由文件自己的像素格式说话。",
       COLOUR_TAG_NEEDS_PICTURE: "这一条交付只有声音，色彩标记是给画面写的。要带标记的母版请选一条带画面的交付，或者把这一栏留空。",
       COLOUR_TAG_NOT_WITH_ALPHA: "透明母版是把 rgba 一路带到编码器才折成 YUV 的，用哪一组系数折不由这条滤镜图决定，所以在容器上写 matrix 就成了与画面无关的话。要么交不透明的那份并带上标记，要么这份透明母版把这一栏留空。",

@@ -21,7 +21,7 @@ from agentcut.masks import alpha_expression
 from agentcut.render import compile_render_plan
 from agentcut.timeline import validate_timeline
 
-ROOT = Path(r"C:\Users\Administrator\Desktop\项目\agentcut")
+ROOT = Path(__file__).resolve().parent.parent
 FFMPEG = ROOT / "desktop/resources/bin/ffmpeg.exe"
 FRAME = T // 30
 MASK = {

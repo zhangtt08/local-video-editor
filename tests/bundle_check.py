@@ -26,8 +26,8 @@ def main():
         media_dir = folder / "media"
         media_dir.mkdir()
         src = media_dir / "clip.mp4"
-        ffmpeg = ROOT / "desktop/node_modules/ffmpeg-static/ffmpeg.exe"
-        ffprobe = ROOT / "desktop/node_modules/ffprobe-static/bin/win32/x64/ffprobe.exe"
+        ffmpeg = ROOT / "desktop/resources/bin/ffmpeg.exe"
+        ffprobe = ROOT / "desktop/resources/bin/ffprobe.exe"
         import subprocess
 
         subprocess.run(

@@ -50,7 +50,7 @@ from agentcut.projects import ProjectStore
 from agentcut.render import compile_render_plan, output_args, render_presets
 from agentcut.timeline import apply_commands
 
-ROOT = Path(r"C:\Users\Administrator\Desktop\项目\agentcut")
+ROOT = Path(__file__).resolve().parent.parent
 FFMPEG = ROOT / "desktop/resources/bin/ffmpeg.exe"
 FFPROBE = ROOT / "desktop/resources/bin/ffprobe.exe"
 T = TIMEBASE
@@ -424,6 +424,141 @@ def video_suite(folder: Path) -> None:
     )
 
 
+# 每一档的折叠系数在这里有**独立出处**，不向引擎要：新加一档却没登记它该折成什么样，本检查当场红。
+FOLD_COEFFICIENTS = {
+    "bt709": (0.2126, 0.7152, 0.0722),  # ITU-R BT.709-6
+    "smpte170m": (0.299, 0.587, 0.114),  # ITU-R BT.601-6（525 行）/ SMPTE 170M
+}
+
+
+def plane_triple(path: Path) -> tuple[int, int, int]:
+    """Y/U/V of the corner pixel, indexed by the raster the file really holds (yuv444p dump)."""
+    raw = run(
+        [
+            FFMPEG,
+            "-v",
+            "error",
+            "-i",
+            path,
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "yuv444p",
+            "pipe:1",
+        ]
+    )
+    stream = probe_stream(path)
+    size = int(stream["width"]) * int(stream["height"])
+    assert len(raw) >= size * 3, (len(raw), size)
+    return raw[0], raw[size], raw[2 * size]
+
+
+def unfold_rgb(triple: tuple[int, int, int], coefficients: tuple[float, float, float]):
+    """按标记把画面解回 RGB：限制性量程、这组矩阵、不做色域映射。
+
+    这就是一台老实的色彩管理观看者会做的事，所以「标签是真话」在这里是可量的一件事。
+    """
+    kr, kg, kb = coefficients
+    y = (triple[0] - 16) / 219
+    cb = (triple[1] - 128) / 224
+    cr = (triple[2] - 128) / 224
+    b = y + 2 * (1 - kb) * cb
+    r = y + 2 * (1 - kr) * cr
+    g = (y - kr * r - kb * b) / kg
+    return tuple(round(max(0.0, min(1.0, value)) * 255) for value in (r, g, b))
+
+
+def tiers_suite(folder: Path) -> None:
+    """表里每一档都真跑一次：编译串、真编码、探针读回四样标记、按标记解回源色。
+
+    1.151 那一版只有一档，所以各处断言写的是那一档的数。这一条把「加一档」变成会被量的事：
+    每一档都要 (a) 容器 trio 等于表里那三个值、(b) 图里那道折叠等于表里那两个 zscale 拼法、
+    (c) 折出来的 YUV 等于按独立系数算的那一组、(d) 按标记解回的 RGB 等于源色——(d) 才是
+    「这张标签是真话」的定义。(e) 顺带把 MXF 也交一次：1.151 只在 mp4 上量过回读。
+    """
+    project = build_project(folder)
+    solid = run(
+        [
+            FFMPEG,
+            "-v",
+            "error",
+            "-i",
+            folder / "solid.png",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "pipe:1",
+        ]
+    )
+    rgb = tuple(solid[:3])
+    seen = []
+    for row in OUTPUT_COLOUR_TAGS:
+        code = str(row["id"])
+        if str(row["matrix"]) not in FOLD_COEFFICIENTS:
+            raise AssertionError(
+                f"档位 {code} 声明的矩阵 {row['matrix']!r} 没有独立系数出处，这条检查拦不住它"
+            )
+        coefficients = FOLD_COEFFICIENTS[str(row["matrix"])]
+        argv = " ".join(plan_for(project, code).ffmpeg_argv(str(FFMPEG), f"tier-{code}.mp4"))
+        for flag, value in (
+            ("-color_primaries", row["primaries"]),
+            ("-color_trc", row["transfer"]),
+            ("-colorspace", row["matrix"]),
+        ):
+            assert f"{flag} {value}" in argv, (code, flag, argv[-400:])
+        fold = f"zscale=matrix={row['zscale_matrix']}:range={row['zscale_range']}"
+        assert any(fold in line for line in plan_for(project, code).filters), (code, fold)
+
+        master = export(folder, project, code, f"tier-{code}.mp4")
+        stream = probe_stream(master)
+        for key, want in (
+            ("color_primaries", row["primaries"]),
+            ("color_transfer", row["transfer"]),
+            ("color_space", row["matrix"]),
+        ):
+            assert stream.get(key) == want, (code, key, stream)
+        assert stream.get("color_range") in (None, "tv"), (code, stream)
+        got = plane_triple(master)
+        want_fold = reference_yuv(rgb, *coefficients)
+        assert all(abs(g - w) <= 1 for g, w in zip(got, want_fold)), (
+            f"档位 {code} 折出 {got}，独立系数算出的是 {want_fold}"
+        )
+        back = unfold_rgb(got, coefficients)
+        assert all(abs(b - s) <= 2 for b, s in zip(back, rgb)), (
+            f"档位 {code} 按自己的标记解回 {back}，不是源色 {rgb}"
+        )
+
+        # MXF 那一侧：写进去的标记要能原样读回（1.152 量到的三样都读回了）。
+        mxf_plan = compile_render_plan(project, "mxf-mpeg2", colour_tag=code, range_ticks=(0, T))
+        for file_name, body in mxf_plan.text_files.items():
+            (folder / file_name).write_text(body, encoding="utf-8")
+        mxf_out = folder / f"tier-{code}.mxf"
+        run(mxf_plan.ffmpeg_argv(str(FFMPEG), str(mxf_out)))
+        mxf_stream = probe_stream(mxf_out)
+        for key, want in (
+            ("color_primaries", row["primaries"]),
+            ("color_transfer", row["transfer"]),
+            ("color_space", row["matrix"]),
+        ):
+            assert mxf_stream.get(key) == want, (code, "mxf", key, mxf_stream)
+        seen.append((code, got, back))
+
+    # 一档与另一档必须真的折得不一样，否则这张表只是在重复自己。
+    triples = {item[1] for item in seen}
+    assert len(triples) == len(seen), seen
+    assert COLOUR_TAG_CODES == tuple(str(row["id"]) for row in OUTPUT_COLOUR_TAGS)
+    print(
+        "PASS tiers: "
+        + "；".join(
+            f"{code} 折成 {got}、按标记解回 {back}（源 {rgb}），mp4 与 MXF 都读回标记"
+            for code, got, back in seen
+        )
+    )
+
+
 def refusal_suite(folder: Path) -> None:
     project = build_project(folder)
     presets = {str(item["id"]): item for item in render_presets()}
@@ -450,7 +585,12 @@ def refusal_suite(folder: Path) -> None:
         raise AssertionError("an unknown tag was accepted")
     except EditorError as error:
         assert error.code == "UNKNOWN_COLOUR_TAG", error.code
-        assert error.details["known"] == ["bt709"], error.details
+        # 钉成字面量：加一档却不改这里，这条就红——那句拒绝必须点齐表里所有的出路。
+        assert error.details["known"] == ["bt709", "bt601"], (
+            "那句拒绝点名的出路与表不符："
+            + str(error.details["known"])
+        )
+        assert error.details["known"] == list(COLOUR_TAG_CODES), error.details
     # A transparent master carries its rgba all the way to the encoder, so which matrix folded the
     # picture is not this graph's business: the claim is refused rather than guessed at...
     try:
@@ -474,9 +614,7 @@ def http_suite(folder: Path) -> None:
     store = ProjectStore(media.db_path, media)
     # One database for the store and the render queue, the way the app runs it: the worker reads the
     # project snapshot out of the file the store wrote it to.
-    runtime = JobRuntime(
-        media.db_path, FFMPEG, folder / "exports", [folder / "exports", folder]
-    )
+    runtime = JobRuntime(media.db_path, FFMPEG, folder / "exports", [folder / "exports", folder])
     png = folder / "solid.png"
     run(
         [
@@ -624,6 +762,26 @@ def capability_suite() -> None:
     assert caps["features"]["colour_tag_delivery"] is True
     assert row["matrix"] == row["primaries"] == row["transfer"] == "bt709", row
     assert row["zscale_matrix"] == "709", row
+    # 每一档的两条 zscale 拼法都要在随包 FFmpeg 自己的帮助里出现：这就是「先量 zscale 认什么」
+    # 那句话落成的门禁——写一个它不认的名字，图当场崩，而这条检查不必等崩。
+    help_text = run([FFMPEG, "-hide_banner", "-h", "filter=zscale"]).decode(errors="replace")
+    enums = {line.strip().split()[0] for line in help_text.splitlines() if line.startswith("     ")}
+    assert enums, "zscale 的帮助没读到任何枚举名，这条门禁就成了空话"
+    for item in OUTPUT_COLOUR_TAGS:
+        # 折叠与基色不是一回事：只换折叠的那一档，标签必须说它只换了折叠。
+        assert str(item["zscale_matrix"]) in enums, (item["id"], str(item["zscale_matrix"]))
+        assert str(item["zscale_range"]) in enums, (item["id"], str(item["zscale_range"]))
+        if str(item["matrix"]) != str(item["primaries"]):
+            assert "折叠" in str(item["label"]), (
+                f"档位 {item['id']} 只换了折叠却没在标签里说清"
+            )
+        # 图里那份 RGB 就是 709 那套基色（色彩管理链的显示端默认 rec709），所以任何一档都不许声明
+        # 别的基色：1.152 实测随包 zscale 做 709→2020 与标准算式差 23 个色阶、P3 那一路当场拒绝，
+        # 换基色的那句话现在说出口就是假标签。真要加宽色域，得先把基色转换从 zscale 手里接回图里。
+        assert str(item["primaries"]) == "bt709", (
+            f"档位 {item['id']} 声明的基色 {item['primaries']} 不是图里那份 709"
+        )
+        assert str(item["transfer"]) == "bt709", item
     # A tag may only name a curve this engine can actually convert to: the delivery table and the
     # probe table have to stay joined, or a tagged master would promise a transfer nothing can read.
     assert dict(COLOR_TRANSFER_TAGS)[row["transfer"]] in COLOR_SPACES, row
@@ -653,9 +811,9 @@ def receipt_suite(folder: Path) -> None:
     assert request_fingerprint("proj_pin_1", base) == PRE_1151_FINGERPRINT, (
         "an untagged request no longer replays as the receipt 1.150 wrote"
     )
-    assert (
-        hashlib.sha256(PRE_1151_CANONICAL.encode()).hexdigest() == PRE_1151_FINGERPRINT
-    ), "the two pins disagree about what joined the hash"
+    assert hashlib.sha256(PRE_1151_CANONICAL.encode()).hexdigest() == PRE_1151_FINGERPRINT, (
+        "the two pins disagree about what joined the hash"
+    )
     # A 1.151 client that names the new field and leaves it null must not split the receipt either:
     # that is the same delivery, spelled with one more key.
     assert (
@@ -699,7 +857,7 @@ def main() -> None:
         folder = Path(tmp)
         master = pixels_suite(folder)
         roundtrip_suite(folder, master)
-    for suite in (refusal_suite, video_suite, http_suite, receipt_suite):
+    for suite in (refusal_suite, video_suite, http_suite, receipt_suite, tiers_suite):
         with tempfile.TemporaryDirectory() as tmp:
             suite(Path(tmp))
 

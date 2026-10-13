@@ -24,7 +24,7 @@ from agentcut.contracts import CreateProject, EditBatch, Project
 from agentcut.http_api import create_app
 from agentcut.projects import ProjectStore
 
-ROOT = Path(r"C:\Users\Administrator\Desktop\项目\agentcut")
+ROOT = Path(__file__).resolve().parent.parent
 TOKEN = "summary-" + "a" * 52
 
 

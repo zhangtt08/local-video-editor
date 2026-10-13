@@ -23,7 +23,7 @@ from agentcut.jobs import JobRuntime
 from agentcut.media import MediaService
 from agentcut.projects import ProjectStore
 
-ROOT = Path(r"C:\Users\Administrator\Desktop\项目\agentcut")
+ROOT = Path(__file__).resolve().parent.parent
 FFMPEG = ROOT / "desktop/resources/bin/ffmpeg.exe"
 FFPROBE = ROOT / "desktop/resources/bin/ffprobe.exe"
 FRAME = 2_352_000

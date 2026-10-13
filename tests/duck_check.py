@@ -19,7 +19,7 @@ from agentcut.http_api import create_app
 from agentcut.media import MediaService
 from agentcut.render import compile_render_plan
 
-ROOT = Path(r"C:\Users\Administrator\Desktop\项目\agentcut")
+ROOT = Path(__file__).resolve().parent.parent
 FFMPEG = ROOT / "desktop/resources/bin/ffmpeg.exe"
 FFPROBE = ROOT / "desktop/resources/bin/ffprobe.exe"
 RATE = 48000

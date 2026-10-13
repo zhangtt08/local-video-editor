@@ -1592,22 +1592,17 @@ def running_api(env, port, log, media_root=None, ffmpeg="", ffprobe=""):
 
 
 def media_tools() -> tuple[str, str]:
-    """Locate ffmpeg/ffprobe the same way the packaged app does; empty means skip media."""
-    root = Path(__file__).resolve().parent.parent / "desktop" / "node_modules"
-    candidates = {
-        "ffmpeg": [root / "ffmpeg-static" / "ffmpeg.exe", shutil.which("ffmpeg") or ""],
-        "ffprobe": [
-            root / "ffprobe-static" / "bin" / "win32" / "x64" / "ffprobe.exe",
-            shutil.which("ffprobe") or "",
-        ],
-    }
-    found = []
-    for name in ("ffmpeg", "ffprobe"):
-        hit = next(
-            (str(item) for item in candidates[name] if item and Path(str(item)).is_file()), ""
-        )
-        found.append(hit)
-    return found[0], found[1]
+    """The bundled ffmpeg/ffprobe -- the same two files the installer carries.
+
+    No PATH or npm fallback on purpose: a gate that quietly picked up a different FFmpeg would
+    report green for a binary no user ever gets, so a missing bundled one fails loudly.
+    """
+    root = Path(__file__).resolve().parent.parent / "desktop" / "resources" / "bin"
+    candidates = {"ffmpeg": root / "ffmpeg.exe", "ffprobe": root / "ffprobe.exe"}
+    missing = [str(path) for path in candidates.values() if not path.is_file()]
+    if missing:
+        raise SystemExit("随包 FFmpeg 不在，媒体验收一条都不能跳：" + "、".join(missing))
+    return str(candidates["ffmpeg"]), str(candidates["ffprobe"])
 
 
 def main():

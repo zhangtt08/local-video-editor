@@ -25,7 +25,7 @@ from agentcut.render import compile_render_plan
 from agentcut.silence import _detect, analyse, cut_plan
 from agentcut.timeline import apply_commands, validate_timeline
 
-ROOT = Path(r"C:\Users\Administrator\Desktop\项目\agentcut")
+ROOT = Path(__file__).resolve().parent.parent
 FFMPEG = ROOT / "desktop/resources/bin/ffmpeg.exe"
 FFPROBE = ROOT / "desktop/resources/bin/ffprobe.exe"
 WIDTH, HEIGHT, FPS = 320, 180, 30

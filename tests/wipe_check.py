@@ -21,7 +21,7 @@ from agentcut.jobs import JobRuntime
 from agentcut.media import MediaService
 from agentcut.transitions import WIPE_FEATHER, ZOOM_START, envelopes
 
-ROOT = Path(r"C:\Users\Administrator\Desktop\项目\agentcut")
+ROOT = Path(__file__).resolve().parent.parent
 FFMPEG = ROOT / "desktop/resources/bin/ffmpeg.exe"
 FFPROBE = ROOT / "desktop/resources/bin/ffprobe.exe"
 W, H = 320, 180

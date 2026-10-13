@@ -9,10 +9,12 @@
  批量那两条各留各的答案。最后是面板那侧的接线与「不许出现第二个正则」。
  */
 
+// `REPO_ROOT` is defined by tests/desktop_ts_check.py at bundle time.
+declare const REPO_ROOT: string;
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const SRC = "C:/Users/Administrator/Desktop/项目/agentcut/";
+const SRC = REPO_ROOT;
 
 type Sent = { url: string; method: string; body: string | undefined };
 const sent: Sent[] = [];

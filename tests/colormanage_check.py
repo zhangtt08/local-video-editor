@@ -45,7 +45,7 @@ from agentcut.http_api import create_app
 from agentcut.render import compile_render_plan
 from agentcut.timeline import apply_commands
 
-ROOT = Path(r"C:\Users\Administrator\Desktop\项目\agentcut")
+ROOT = Path(__file__).resolve().parent.parent
 FFMPEG = ROOT / "desktop/resources/bin/ffmpeg.exe"
 
 CURVE = {

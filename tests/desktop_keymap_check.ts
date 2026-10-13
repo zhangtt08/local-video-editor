@@ -15,10 +15,12 @@
  *  ⑥ 每条命令都得有那条鼠标路：表里 `twin` 不为空，而 `runKeyCommand` 的开关里每个 id 都有一格。
  */
 
+// `REPO_ROOT` is defined by tests/desktop_ts_check.py at bundle time.
+declare const REPO_ROOT: string;
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const SRC = "C:/Users/Administrator/Desktop/项目/agentcut/";
+const SRC = REPO_ROOT;
 
 const store = new Map<string, string>();
 // 改键的成功与拒绝都要念一句话出来，而那句话经由 `store.toast` 的定时器挂在窗口上；

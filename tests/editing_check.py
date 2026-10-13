@@ -326,8 +326,8 @@ def main():
 
 
 def real_render(folder):
-    ffmpeg = ROOT / "desktop/node_modules/ffmpeg-static/ffmpeg.exe"
-    assert ffmpeg.is_file(), "npm ci first"
+    ffmpeg = ROOT / "desktop/resources/bin/ffmpeg.exe"
+    assert ffmpeg.is_file(), "bundled ffmpeg is missing: desktop/resources/bin/ffmpeg.exe"
 
     def run(args):
         return subprocess.run(
@@ -465,7 +465,7 @@ def real_render(folder):
             )
             pixel = rgb[(90 * 320 + 160) * 3 : (90 * 320 + 160) * 3 + 3]
             assert pixel[color] > 240 and pixel[(color + 1) % 3] < 15, (op, at, pixel)
-        probe = ROOT / "desktop/node_modules/ffprobe-static/bin/win32/x64/ffprobe.exe"
+        probe = ROOT / "desktop/resources/bin/ffprobe.exe"
         meta = json.loads(
             subprocess.check_output(
                 [str(probe), "-v", "error", "-show_format", "-of", "json", str(placed_out)],
@@ -565,7 +565,7 @@ def real_render(folder):
     assert sum(min(frame[i : i + 3]) > 180 for i in range(0, len(frame), 3)) > 100, (
         "title not rendered"
     )
-    ffprobe = ROOT / "desktop/node_modules/ffprobe-static/bin/win32/x64/ffprobe.exe"
+    ffprobe = ROOT / "desktop/resources/bin/ffprobe.exe"
     metadata = json.loads(
         subprocess.check_output(
             [str(ffprobe), "-v", "error", "-show_format", "-show_streams", "-of", "json", str(out)],

@@ -24,12 +24,12 @@ from agentcut.render import compile_render_plan
 from agentcut.timeline import apply_commands, link_status
 
 T = TIMEBASE
-ROOT = Path(r"C:\Users\Administrator\Desktop\项目\agentcut")
+ROOT = Path(__file__).resolve().parent.parent
 GREEN_START = 1 * T  # how much of the second shot's source sits before its timeline head
 
 
 def ffmpeg():
-    return ROOT / "desktop/node_modules/ffmpeg-static/ffmpeg.exe"
+    return ROOT / "desktop/resources/bin/ffmpeg.exe"
 
 
 def ffprobe():

@@ -31,7 +31,7 @@ from agentcut.jobs import JobRuntime, ffprobe_beside, verify_output
 from agentcut.media import MediaService
 from agentcut.render import RenderPlan
 
-ROOT = Path(r"C:\Users\Administrator\Desktop\项目\agentcut")
+ROOT = Path(__file__).resolve().parent.parent
 FFMPEG = ROOT / "desktop/resources/bin/ffmpeg.exe"
 FFPROBE = ROOT / "desktop/resources/bin/ffprobe.exe"
 SECONDS = 3.0

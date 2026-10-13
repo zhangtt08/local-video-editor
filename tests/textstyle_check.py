@@ -28,8 +28,8 @@ from agentcut.contracts import TIMEBASE as T
 from agentcut.http_api import create_app
 from agentcut.render import compile_render_plan, text_font_path, text_fonts_available
 
-ROOT = Path(r"C:\Users\Administrator\Desktop\项目\agentcut")
-FFMPEG = ROOT / "desktop/node_modules/ffmpeg-static/ffmpeg.exe"
+ROOT = Path(__file__).resolve().parent.parent
+FFMPEG = ROOT / "desktop/resources/bin/ffmpeg.exe"
 WIDTH, HEIGHT = 320, 180
 BODY = "文字样式"
 

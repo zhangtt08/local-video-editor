@@ -11,10 +11,12 @@
  首帧仍然是有界的。
  */
 
+// `REPO_ROOT` is defined by tests/desktop_ts_check.py at bundle time.
+declare const REPO_ROOT: string;
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const SRC = "C:/Users/Administrator/Desktop/项目/agentcut/";
+const SRC = REPO_ROOT;
 
 const store = new Map<string, string>([["agentcut.edit", JSON.stringify({ pxPerSec: 0, tool: "select" })]]);
 Object.assign(globalThis, {

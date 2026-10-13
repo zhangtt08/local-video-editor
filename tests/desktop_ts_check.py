@@ -6,6 +6,7 @@ This check bundles each `.ts` with the shell's own esbuild and runs it under nod
 loudly when either tool is missing rather than reporting a skip as a pass.
 """
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -15,7 +16,16 @@ DESKTOP = ROOT / "desktop"
 NODE = "node"
 # `scope_check.ts` is the one that is not prefixed `desktop_`; both patterns are shell checks.
 PATTERNS = ("desktop_*_check.ts", "scope_check.ts")
-ESBUILD_FLAGS = ["--bundle", "--format=esm", "--platform=node", "--log-level=error"]
+# `REPO_ROOT` is handed to every shell check as a define, so no check has to carry this
+# machine's path; the value keeps a trailing slash and reads like a directory.
+REPO_ROOT_URL = ROOT.as_posix() + "/"
+ESBUILD_FLAGS = [
+    "--bundle",
+    "--format=esm",
+    "--platform=node",
+    "--log-level=error",
+    f"--define:REPO_ROOT={json.dumps(REPO_ROOT_URL)}",
+]
 
 
 def esbuild() -> list[str]:

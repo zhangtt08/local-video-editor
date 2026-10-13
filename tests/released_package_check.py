@@ -29,7 +29,7 @@ import struct
 import sys
 from pathlib import Path
 
-ROOT = Path(r"C:\Users\Administrator\Desktop\项目\agentcut")
+ROOT = Path(__file__).resolve().parent.parent
 DESKTOP = ROOT / "desktop"
 RELEASE = DESKTOP / "release"
 ROOT_EXE = ROOT / "AgentCut.exe"
