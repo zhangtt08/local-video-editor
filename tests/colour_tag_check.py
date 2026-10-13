@@ -864,7 +864,7 @@ def ramp_rows(path: Path) -> tuple[list[list[tuple[int, int, int]]], int]:
 FLAT_WIDTH, FLAT_HEIGHT = 64, 36
 FLAT_COLUMN, FLAT_ROW = 32, 18
 # 一句基色声明所指的是**一个颜色**，不是一幅画：所以判它兑不兑得了现，要拿纯色去量。
-# `FLAT_LIMIT` 是判据（1.153 拿五种画面格式各取一条、三片 709 之外的边缘色量到的最差是 2 阶）。
+# `FLAT_LIMIT` 是判据（拿五种画面格式各取一条、三片贴着 709 边界的暗饱和纯色，量到的最差是 2 阶）。
 FLAT_COLOURS = ((20, 5, 5), (0, 128, 0), (5, 5, 20))
 FLAT_LIMIT = 4
 # 那条每两像素换一次色度的渐变只量得出**带得动它**的画面（10 位 4:4:4）。其余画面上连不带立方体
@@ -1004,7 +1004,30 @@ def flat_suite(folder: Path) -> None:
             assert wide <= base + 2, (
                 f"{preset_id} 挂 {code} 比不带转换多出 {wide - base} 阶：立方体把颜色搬出了画面"
             )
-    print("PASS flat: 基色声明按纯色逐格式量过——" + "；".join(lines) + f"（判据 {FLAT_LIMIT} 阶）")
+    # README 那一行替这几档报了一个「按纯色量到的最差」，那是会被人和 Agent 引用的数。
+    # 1.156 它就说过头一次（写 1 阶，量到 2 阶），所以这一条由量它的那把尺亲自判：
+    # 引用的数必须等于本轮逐格式重量的最大值，也不许比判据还宽。
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    marker = "按标记解回最差 "
+    index = readme.find(marker)
+    assert index >= 0, (
+        "README 那一行不再报纯色尺量到的最差阶数——这个数没人对着了，改回去或改这里"
+    )
+    measured = max(seen.values())
+    assert readme[index + len(marker)].isdigit(), repr(readme[index + len(marker) : index + 24])
+    quoted = int(readme[index + len(marker)])
+    assert quoted == measured, (
+        f"README 报的纯色最差是 {quoted} 阶，本轮逐格式重量到的是 {measured} 阶"
+    )
+    assert measured <= FLAT_LIMIT, (measured, FLAT_LIMIT, seen)
+    assert "709 之外的边缘色" not in readme, (
+        "README 又把那三片纯色说成 709 之外——夹具 (20,5,5)/(0,128,0)/(5,5,20) 就在 709 里，"
+        "要说的是「贴着边界」"
+    )
+    print(
+        "PASS flat: 基色声明按纯色逐格式量过——" + "；".join(lines)
+        + f"（判据 {FLAT_LIMIT} 阶，本轮最差 {measured} 阶，README 那句报的就是 {quoted} 阶）"
+    )
 
 
 def ramp_worst(folder: Path, project, preset_id: str, code: str) -> tuple[int, int, int]:
