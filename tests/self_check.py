@@ -430,6 +430,7 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
                 "track_fade_adoption",
                 "grade_capacity",
                 "track_grade_apply",
+                "clip_attribute_plan",
             }
             assert set(tools) == expected, set(tools) ^ expected
             assert "request" in tools["timeline_edit"].inputSchema["properties"]
@@ -463,6 +464,10 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
             assert tools["track_fade_adoption"].annotations.readOnlyHint is True
             assert tools["grade_capacity"].annotations.readOnlyHint is True
             assert tools["track_grade_apply"].annotations.readOnlyHint is True
+            # 1.163: 粘贴属性 is the same shape again — a plan in, ordinary commands out, and
+            # `timeline_edit` remains the only writer of project state.
+            assert tools["clip_attribute_plan"].annotations.readOnlyHint is True
+            assert "sequence_id" in json.dumps(tools["clip_attribute_plan"].inputSchema)
             assert "sequence_id" in json.dumps(tools["track_fade_adoption"].inputSchema)
             assert "clip.fade_adopt" in json.dumps(tools["timeline_edit"].inputSchema), (
                 "1.96 的命令没出现在 Agent 的 schema 里"

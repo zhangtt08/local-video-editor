@@ -31,6 +31,7 @@ from . import markers as marker_plan
 from . import reframe as reframe_plan
 from . import stabilize as stabilize_module
 from .animation import graph_curve, preview_manifest, sample_values
+from .attributes import attribute_plan
 from .bundles import MAX_BUNDLE_BYTES, export_bundle, import_bundle
 from .colortags import detect_space
 from .contracts import (
@@ -38,6 +39,7 @@ from .contracts import (
     COLOR_SPACES,
     TIMEBASE,
     TRACK_FRAMES_MIN,
+    AttributePlanRequest,
     AutoGradeRequest,
     BundleImport,
     CachePrune,
@@ -1351,6 +1353,34 @@ def create_app(
         )
         mutation = projects.mutate(project_id, batch).model_dump()
         return {**mutation, "grade_application": body}
+
+    @app.post("/v1/projects/{project_id}/clips/{clip_id}/attribute-plan", dependencies=auth)
+    def clip_attribute_plan(
+        project_id: Identifier,
+        clip_id: Identifier,
+        request: AttributePlanRequest,
+        projects: Store,
+    ):
+        """Which aspects of one clip would become which other clips', as ordinary commands.
+
+        剪映 calls it 粘贴属性，达芬奇 Paste Attributes，AE copies an effect stack: one promise that
+        these aspects travel while nothing about where the clips sit moves. The categories are the
+        ones `capabilities.attribute_categories` publishes, and what each one writes is decided by
+        the reducer itself — `attributes.attribute_plan` replays the candidate commands per target,
+        so a clip that cannot take one category comes back with the reducer's own code and sentence,
+        while the categories that do land are still returned. Read-only: submit `commands` through
+        `/edits` to write them as one batch at one revision.
+        """
+        root = projects.get(project_id)
+        project = sequence_view(root, request.sequence_id)
+        body = attribute_plan(
+            project,
+            clip_id,
+            request.target_clip_ids,
+            request.categories,
+            request.sequence_id,
+        )
+        return {"committed": False, "project": root.model_dump(), "attribute_plan": body}
 
     @app.post("/v1/projects/{project_id}/tracks/{track_id}/fade-adopt", dependencies=auth)
     def fade_adopt_track(

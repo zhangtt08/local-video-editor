@@ -16,6 +16,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from .contracts import (
+    AttributePlanRequest,
     AutoGradeRequest,
     CachePrune,
     Clip,
@@ -409,6 +410,26 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         refused with GRADE_INLINE_BUDGET.
         """
         return await call("GET", f"/v1/projects/{project_id}/grade-capacity")
+
+    @server.tool(annotations=read)
+    async def clip_attribute_plan(
+        project_id: Identifier, clip_id: Identifier, request: AttributePlanRequest
+    ) -> dict[str, Any]:
+        """Plan copying chosen aspects of one clip onto other clips — 剪映's 粘贴属性, 达芬奇's
+        Paste Attributes, AE's copy/paste of an effect stack.
+
+        Read-only: `categories` are the ids `capabilities.attribute_categories` publishes, and each
+        one becomes the ordinary commands that write it (`clip.color`、`clip.effects`、
+        `keyframes.replace`、`clip.mask`、`clip.fade`、`clip.speed`、`clip.text`). The reducer
+        decides per target, so a clip that cannot take one category comes back with its own code
+        and sentence while the categories that do land are still returned. Submit `commands` with
+        `timeline_edit` — one batch, one revision; undo returns the whole paste at once.
+        """
+        return await call(
+            "POST",
+            f"/v1/projects/{project_id}/clips/{clip_id}/attribute-plan",
+            request.model_dump(mode="json"),
+        )
 
     @server.tool(annotations=read)
     async def track_fade_adoption(

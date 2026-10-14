@@ -22,7 +22,7 @@ SCHEMA_VERSION = (
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.162.0"
+APP_VERSION = "1.163.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -2395,6 +2395,55 @@ class LoudnessRequest(Contract):
     dry_run: bool = False
 
 
+# 「粘贴属性」能搬的那几类，一张表说清三件事：id（命令与回执里写的）、界面念的中文名，
+# 以及这一类到底搬什么。剪映叫「粘贴属性」、达芬奇叫 Paste Attributes、AE 是复制粘贴效果栈——
+# 三家给的是同一个承诺，所以这张表是唯一的名单：对话框排出它，能力表下发它，规划按它建命令。
+# 为什么没有「画面稳定」与「转场」两行：前者是**这一段素材**被量出来的相机运动，后者属于
+# 这一段与邻居之间的那对关系，都不是这一段自己的属性，搬过去就是一句没人能核对的声明。
+ATTRIBUTE_CATEGORIES: tuple[dict[str, str], ...] = (
+    {
+        "id": "color",
+        "label": "调色链",
+        "note": "整条链一起搬，包括套着的色彩管理那一对与 3D LUT；每链的节点上限仍由引擎判。",
+    },
+    {
+        "id": "effects",
+        "label": "效果与变换",
+        "note": "位置、缩放、旋转、不透明度、增益、柔焦、清晰与降噪这些静止的值，整份替换。",
+    },
+    {
+        "id": "animation",
+        "label": "关键帧动画",
+        "note": "一条曲线一次替换；落在目标段尾之后的针仍在工程里但不渲染，数目照实报。",
+    },
+    {
+        "id": "mask",
+        "label": "遮罩",
+        "note": "形状、柔边、反相，加上遮罩那四条曲线的针与路径轮廓的关键帧。",
+    },
+    {
+        "id": "fade",
+        "label": "淡入淡出",
+        "note": "两头的窗口长度与形状；对面那头装不下时这一段整类跳过，不会写半个。",
+    },
+    {
+        "id": "speed",
+        "label": "变速",
+        "note": "改的是这一段怎么播：这一段自己的长度按速率换算（源窗口不变），"
+        "后面的片段不被推开；已经稳定过的段会点名拒绝。",
+    },
+    {
+        "id": "text",
+        "label": "文字样式",
+        "note": "只搬这行字长什么样，每段自己打的内容留着。",
+    },
+)
+ATTRIBUTE_CATEGORY_IDS = tuple(row["id"] for row in ATTRIBUTE_CATEGORIES)
+# 一次粘多少段：规划要把每一类都交给 reducer 验一遍，而每次验都要深拷贝这份工程，
+# 所以这是一个由实测出来的代价决定的数，不是「够用了」的猜测（数记在 attributes 那轮的验收里）。
+ATTRIBUTE_PASTE_TARGET_LIMIT = 64
+
+
 class GradeApplyTrackRequest(Contract):
     """Copy one clip's grade chain onto every other clip of that track, in one edit.
 
@@ -2413,6 +2462,25 @@ class GradeApplyTrackRequest(Contract):
     sequence_id: Identifier | None = None
     apply: bool = False
     dry_run: bool = False
+
+
+class AttributePlanRequest(Contract):
+    """Which aspects of one clip should be copied onto which other clips.
+
+    Read-only by design: the response carries the ordinary commands (`clip.color`、`clip.effects`、
+    `keyframes.replace`、`clip.mask`、`clip.fade`、`clip.speed`、`clip.text`) plus one entry for
+    each clip the reducer would refuse, in the reducer's own words. The caller submits that list
+    through `timeline_edit`, so a human click and an Agent batch write the same commands and this
+    route never becomes a second writer of project state. The per-target decision is
+    `apply_commands` itself — see `attributes.attribute_plan`.
+    """
+
+    request_id: Identifier
+    expected_revision: Revision
+    source_clip_id: Identifier
+    target_clip_ids: list[Identifier]
+    categories: list[str]
+    sequence_id: Identifier | None = None
 
 
 class FadeAdoptTrackRequest(Contract):
@@ -3093,6 +3161,9 @@ def capabilities(
         # 基色转换表：矩阵由引擎算（`gamut.py`），界面与 Agent 都从这一处读。手抄的九个数迟早和
         # 另一侧不一样，而这种不一致在成片里只表现为「颜色有点偏」。
         "gamut_matrices": gamut_presets(),
+        # 1.163：「粘贴属性」能搬的那几类，连界面念的中文名与「这一类到底搬什么」那句话一起交。
+        # 对话框排出这一份，界面不许自己再列一遍名单。
+        "attribute_categories": [dict(row) for row in ATTRIBUTE_CATEGORIES],
         # 1.159：工程基色可选的那几档，由 `gamut.PRIMARIES` 现算——界面那张下拉菜单列的就是
         # 这一份，抄一份就会与引擎拒收的那一份不一致。
         "working_primaries": list(WORKING_PRIMARIES),
@@ -3276,6 +3347,8 @@ def capabilities(
             "grade_capacity": True,
             # 一条片段的调色链能不能一次套到整轨（规划与写入同一条规矩）。
             "grade_apply_track": True,
+            # 一段的这几类属性一次粘到别的段上（规划与写入同一条 reducer，见 attributes）。
+            "attribute_paste": True,
             "text_styling": True,
             "clip_blur": True,
             "clip_sharpen": True,
@@ -3346,6 +3419,7 @@ def capabilities(
             "track_min_frames": TRACK_FRAMES_MIN,
             "track_max_frames": TRACK_FRAMES_MAX,
             "track_max_targets": TRACK_TARGET_LIMIT,
+            "attribute_paste_targets": ATTRIBUTE_PASTE_TARGET_LIMIT,
             "sample_rates": [44_100, 48_000, 96_000],
         },
         "render_presets": render_presets(),
