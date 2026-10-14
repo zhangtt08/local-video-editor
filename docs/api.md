@@ -2976,3 +2976,22 @@ H.264，装不下透明度，于是整条被让掉并在悬停里说清为什么
 界面：多选里遮罩区会出现「跟踪所选 N 段」，每段量几帧仍由 `effects.ts` 的 `trackGroup` 逐段去问
 `trackWindow`（一处判断，太短那段沿用同一句话），段数上限来自 `capabilities.limits.track_max_targets`。
 没有可动画遮罩的段被跳过时报出几段，而不是让整组看起来像「都跟过了」。
+## 1.158 按表换基色：`gamut_matrices` 的那九个数有了消费者（工程 schema 仍 v17）
+
+1.146 把基色转换表交出去（六档、每档九个系数加两端传递函数名），1.158 给它接上界面那一颗按钮，
+**没有新命令、没有新字段、没有 schema 变更**：折进来写的是早就存在的 `clip.grade`，节点是早就存在的
+`matrix`，位置是 `clip.color_manage` 那一对的中间。
+
+选择这一档的候选名单来自 `capabilities.gamut_matrices`，那九个系数也来自同一处——`gamut.primaries_matrix`
+是唯一的算法所有者。因此界面不许出现档位名、系数或任何兜底数字，`tests/gamutfold_check.py` 把这条
+字面量纪律逐字数过；`desktop/src/gamutFold.ts` 是唯一的判断处（哪一格能放、什么时候不能、说完还指
+一条走得通的出路），`tests/desktop_gamutfold_check.ts` 判那四种场合的正反两面。
+
+那一次点击交的是**一个批次**：先 `clip.color_manage` 套上「进线性 / 出线性」那一对（若还没套），
+再 `clip.grade` 整条链交回，落到工程里的 `[transfer, matrix, transfer]` 与能力表那九个数一字不差，
+版本只涨一格。被引擎拒掉的那一种（系数越过 `matrix_limit`）当场 422、版本不涨、链子留空——上面那些
+「收下了」才不是因为没在检查。
+
+边界照实说：只换基色，不替你判断素材的曲线（那是 `clip.color_manage` 与 `auto_source` 的事）；
+没套色彩管理的链子上这颗按钮不亮；那一格里已经有人手工填了九个数时界面不覆盖，只把出路说出来；
+老引擎不回 `gamut_matrices` 时这一档名单是空的，按钮不亮并说明「这一版引擎没把表交下来」。

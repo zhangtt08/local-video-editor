@@ -115,6 +115,18 @@ export const COLOR_SPACES: [ColorSpace, string][] = [
   ["linear", "线性（场景光）"],
 ];
 export const DEFAULT_TRANSFER = { input_space: "srgb", output_space: "rec709" } as const;
+
+/** 引擎那张基色表的一行（`gamut.gamut_presets()`）：两端档位、两端曲线，加上算好的九个系数。
+ *  界面只搬这一行，不自己算——`tests/gamutfold_check.py` 钉的就是「TS 里不许出现系数与档位名」。 */
+export type GamutMatrixPreset = {
+  id: string;
+  label: string;
+  source: string;
+  target: string;
+  source_transfer: string;
+  target_transfer: string;
+  coefficients: number[];
+};
 export type GradeTables = { id: string; stages: GradeStage[] };
 /** 引擎把一条调色链编译成有序阶段：每通道一张表，或一个 3x3 通道混合。顺序有意义 ——
  *  「曲线→通道混合」与「通道混合→曲线」是两张不同的图，两端都按这份列表走。 */
@@ -578,6 +590,10 @@ export type Capabilities = {
   /** 1.150：引擎认得的「文件自带的传递函数标记 → 曲线」对照表。界面只念它，不用它算。
    *  老引擎不回这一字段——那时这一行干脆不出现（`features.color_manage_auto` 也没有）。 */
   color_transfer_tags?: ColorTransferTag[];
+
+  /** 1.158：基色转换表（引擎算好的九个数，一档一行）。老引擎不回这一档——那时界面那颗按钮不亮，
+   *  并把出路说清楚（`gamutFold.foldBlocker`）；界面不替引擎编一份表。 */
+  gamut_matrices?: GamutMatrixPreset[];
   /** 调色链的形状上限（节点数、并联支数、曲线点数、LUT 采样数）由引擎下发，界面照此限制。 */
   grade_limits?: {
     max_nodes: number;

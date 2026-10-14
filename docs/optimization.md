@@ -5830,3 +5830,25 @@ YUV mp4**（1.151 那次界面真点抓到缺陷，用的就是这种素材）�
   `agentcut-1157/mutate_style_rotation.py`：每次改完立刻按字节还原，还原失败即整轮作废，末了两份
   对照复跑为绿）。S4 第一次跑红在了「样本行没超过 120 格」那句上——那是 self_proof 先说话，说明
   这把尺确实会自己发现自己被换掉；把 `LIMIT == 100` 那句挪到最前面之后，它红在该红的那句上。
+
+## 1.158 按表换基色：那张基色表有了消费者
+
+1.146 交出 `capabilities.gamut_matrices`（六档、每档九个系数与两端传递函数名）时，第一方代码里没有
+一处消费者；1.158 补的就是这一处。判断只写在 `desktop/src/gamutFold.ts` 一个文件里，界面读它，
+`tests/desktop_gamutfold_check.ts` 也读它；九个数字的唯一来源仍是 `gamut.primaries_matrix`。
+
+行为要点（详细数字见 `AGENTS.md` 的「当前停放点（1.158）」）：折进去的那一枚普通通道混合节点只落在
+色彩管理那一对盖章的转换节点中间；没套那一对、只有半对、那一格里是手工填的数、中间已经有两枚以上、
+链子已满——这五种场合各有自己的一句中文，且每句都指着一条此刻真走得通的出路；再点一次是换同一格，
+不是叠第二枚。
+
+验收：`tests/gamutfold_check.py`（新增，第 110 项）+ `tests/desktop_gamutfold_check.ts`（第 56 份壳层
+检查）+ 打包版真点一次（`agentcut-验收脚本/ui_fold_1158.py`：引擎从 r1 走到 r3，读回
+`[transfer, matrix, transfer]` 与首档那九个数字）+ `package_check_1158.py`（冻结引擎自报 1.158.0、
+表与源码逐字节相同、随包两支与 npm 那一份同哈希、asar 里数得到按钮）。突变八次全红在自己那句上。
+
+一处值得记住的事故：`scripts/build_engine.py` 先清空 `desktop/resources/bin/` 再检查那两支 FFmpeg 在
+不在，于是 `npm ci --ignore-scripts` 之后跑它，会把装机用的 `ffmpeg.exe`/`ffprobe.exe`/`media-stamp.json`
+删掉后自己失败。恢复用的是 npmmirror 的 b6.1.1 二进制镜像（82,797,568 B、6.1.1-essentials_build），
+重新打戳后随包两支与 `node_modules` 那一份同哈希。下一轮起：**跑引擎构建之前先确认
+`desktop/node_modules/ffmpeg-static/ffmpeg.exe` 存在**。

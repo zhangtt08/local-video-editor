@@ -5,6 +5,7 @@ import {blendLabel, DEFAULT_TRANSFER, COLOR_SPACES, DEFAULT_CURVE_POINTS, DEFAUL
 import { applyGradeToTrack, editableProject, setClipColor, useApp, applyLut, autoGradeClip, colorManageClip, fetchGradeCapacity, readClipColorSpace } from "../store";
 import { autoSourceBlocker, autoSourceOffered, colorSpaceWords, handPickLive, handPickWords, managedPair, managedWords, manageFits, manageSourceValue, manageSpaces, shouldReadColorSpace, taggedCount, transferTagWords, type ColorSpacePhase } from "../colorManage";
 import { autoGradeBlocker, gradeCapacityLine } from "../effects";
+import { foldBlocker, foldedRow, foldIn, foldWords, usableRows } from "../gamutFold";
 
 const CHANNELS: [GradeChannel, string][] = [["rgb", "主色"], ["red", "红"], ["green", "绿"], ["blue", "蓝"]];
 const GREEN_MAGENTA = [0.70710678, -0.70710678, 0];
@@ -420,6 +421,15 @@ export function GradeFields({ clipId }: { clipId: string }) {
   const spaceLabel = (name: ColorSpace) => spaces.find(([entry]) => entry === name)?.[1] ?? name;
   const managed = managedPair(nodes);
   const managedTagged = taggedCount(nodes);
+  // 1.158：基色表那颗「折进来」。九个数字一律从 capabilities.gamut_matrices 搬，这里不出现任何一个
+  //  系数、也不出现任何一个档位名（tests/gamutfold_check.py 逐字钉住）；能落的那一格只认色彩管理盖过
+  //  章的那一对，不亮的时候每一句都指着一条真走得通的出路（判法在 ../gamutFold.ts，只此一处）。
+  const [foldPick, setFoldPick] = useState("");
+  const gamutRows = usableRows(app.caps?.gamut_matrices);
+  const foldPicked = gamutRows.find((row) => row.id === foldPick) ?? null;
+  const folded = foldedRow(nodes, gamutRows);
+  const foldBlock = foldBlocker(nodes, gamutRows, limits.nodes)
+    ?? (foldPicked ? null : "先在左边选一档，再按这颗——没选档就不知道该写哪九个数字。");
   const [manageSource, setManageSource] = useState<ColorSpace>(managed?.source ?? "srgb");
   const [manageDisplay, setManageDisplay] = useState<ColorSpace>(managed?.display ?? "rec709");
   useEffect(() => {
@@ -638,6 +648,22 @@ export function GradeFields({ clipId }: { clipId: string }) {
         {autoOn ? <p className="hint">{spaceLine}</p> : null}
         {tagTable ? <p className="hint dim">{tagTable}</p> : null}
         <p className="hint">{managedWords(managed, managedTagged, spaceLabel)} 同一条曲线在线性光里调与按存储值调，中点落点是两个数——越暗差别越大，而导出的文件读的就是这一份。</p>
+      </div>
+      <div className="batch-actions grade-auto-row">
+        <label className="mask-shape">按表换基色
+          <select className="input" aria-label="基色转换档" value={foldPick} onChange={(event) => setFoldPick(event.target.value)}>
+            <option value="">（选一档）</option>
+            {gamutRows.map((row) => <option key={row.id} value={row.id}>{row.label}</option>)}
+          </select>
+        </label>
+        <button className="btn tiny" disabled={Boolean(foldBlock) || locked || Boolean(app.busy)}
+          title={foldBlock ?? "把引擎算好的那九个数字写成一枚通道混合，落在色彩管理那一对中间。同一格再折一次是换档，不是叠第二枚。"}
+          onClick={() => {
+            const next = foldPicked ? foldIn(nodes, foldPicked, gamutRows) : null;
+            if (next) write(next);
+          }}>折进这一格</button>
+        <p className="hint">{foldWords(folded)}</p>
+        <p className="hint dim">这张表由引擎算（基色矩阵），界面只搬数字：预览那张九宫格与导出那条链子读的是同一枚节点，所以「预览一个色、成片另一个色」在这一步上没有发生的余地。</p>
       </div>
 
       {nodes.length ? <div className="grade-graph" role="list" aria-label="调色节点链">

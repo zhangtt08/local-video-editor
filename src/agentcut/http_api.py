@@ -779,14 +779,20 @@ def create_app(
         clip = project.clips.get(target.clip_id)
         if clip is None:
             raise EditorError(
-                "NOT_FOUND", "clip is not in this project", 404, clip_id=target.clip_id,
+                "NOT_FOUND",
+                "clip is not in this project",
+                404,
+                clip_id=target.clip_id,
                 target_position=position,
             )
         asset = project.assets.get(clip.asset_id)
         if asset is None or asset.kind != "video" or asset.verified is None:
             raise EditorError(
-                "INVALID_TRACK_TARGET", "only verified video clips can be tracked", 422,
-                clip_id=clip.id, target_position=position,
+                "INVALID_TRACK_TARGET",
+                "only verified video clips can be tracked",
+                422,
+                clip_id=clip.id,
+                target_position=position,
             )
         # A free-form outline can be followed by position, but its drawn size is fixed for the
         # clip, so the scale estimator is switched off rather than silently resized away.
@@ -1005,9 +1011,7 @@ def create_app(
                     ],
                     "merged": target.merge,
                     **(
-                        {}
-                        if plan["frames"] == target.frames
-                        else {"budget_frames": plan["frames"]}
+                        {} if plan["frames"] == target.frames else {"budget_frames": plan["frames"]}
                     ),
                     **({} if not target.merge else track_seam(clip, points)),
                     "first_at_ticks": points[0]["at_ticks"],
