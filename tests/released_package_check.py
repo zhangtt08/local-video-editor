@@ -56,6 +56,10 @@ RENDERER_SENTENCES = (
     "ProRes 4444 透明母版",
     # 1.138：交付帧率在人眼前就是这一栏、这一句出路，以及「不选」的原话。
     "交付帧率",
+    # 1.163「粘贴属性」在人眼前就是这两颗按钮与那一句来源说明。
+    "复制属性",
+    "粘贴属性",
+    "还没有复制过属性",
     "跟时间线",
     "就是时间线那一档",
     "可交的帧率是引擎那张闭表",
@@ -85,6 +89,9 @@ RENDERER_LITERALS = (
     "OUTPUT_RATE_NEEDS_PICTURE",
     "SEQUENCE_NEEDS_CONTAINER",
     "COMPOSITE_LIMIT",
+    "attribute-plan",
+    "attribute_categories",
+    "ATTRIBUTE_PASTE_LIMIT"
 )
 
 
@@ -170,6 +177,24 @@ def main() -> None:
         "the app ships a different engine than the one built"
     )
 
+    # 1.163 装机复核抓到的一类空交付：`stage_asr_models()` 找不到模型时只打一行 step 就继续，
+    # 于是 `npm run dist` 照常绿、包里的引擎自报 `speech_captions=false`，而 README 那句
+    # 「自动语音字幕」成了空话。这一条把「随包的语音模型」钉成与暂存那一份同一堆，且不许为空。
+    staged_asr = DESKTOP / "resources/bin/agentcut/asr"
+    shipped_asr = UNPACKED / "resources/bin/agentcut/asr"
+    require(staged_asr, engine)
+    require(shipped_asr, build)
+    complete = sorted(
+        model.name
+        for model in staged_asr.iterdir()
+        if (model / "am").is_dir() and (model / "graph").is_dir()
+    )
+    assert complete, f"{staged_asr} 里没有一份完整的语音模型（要 `am` 与 `graph` 两个目录）"
+    shipped_names = sorted(item.name for item in shipped_asr.iterdir() if item.is_dir())
+    assert shipped_names == complete, (
+        f"包里那几份模型与暂存的那几份不是同一堆：{shipped_names} vs {complete}"
+    )
+
     bundles = sorted(
         path for path in files if path.startswith("/dist/renderer/assets/") and path.endswith(".js")
     )
@@ -196,6 +221,7 @@ def main() -> None:
         f"PASS: AgentCut.exe == portable build, app.asar carries {APP_VERSION} with {len(files)}"
         " files, the shipped engine is the built one, and the renderer says"
         f" {len(RENDERER_SENTENCES)} sentences a person can read"
+        f"，随包的语音模型 {len(complete)} 份与暂存那一堆同名"
     )
 
 
