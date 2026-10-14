@@ -356,7 +356,7 @@ def stabilize_suite() -> dict:
     )
     plan = attribute_plan(project, "src", ["b"], list(ATTRIBUTE_CATEGORY_IDS))
     assert ("b", "STABILIZE_LOCKED") in codes(plan), f"稳定过的那段没被点名：{plan['refusals']}"
-    refused = [row["category"] for row in plan["refusals"] if row["clip_id"] == "b"]
+    refused = [row.get("category") for row in plan["refusals"] if row["clip_id"] == "b"]
     assert refused == ["speed"], f"只有「变速」该被拒，实际拒了这些：{refused}"
     assert "color" in categories_for(plan, "b"), "一类被拒就把整段跳过了：类别之间连坐了"
     assert project.clips["b"].stabilization is not None, "规划把稳定记录动了"

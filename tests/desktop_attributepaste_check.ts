@@ -190,7 +190,8 @@ assert.ok(
   "两颗按钮没挂在那一处唯一的判断上",
 );
 assert.ok(toolbar.includes("attributeSourceCopy()"), "工具条读的来源不是 store 那一份");
-assert.ok(sheet.includes(".attribute-row") && sheet.includes(".attribute-refusals"), "对话框那两排样式不存在（画不出就等于没有）");
+assert.ok(sheet.includes(".attribute-row {"), "对话框那一排的样式规则不存在（画不出就等于没有）");
+assert.ok(sheet.includes(".attribute-refusals {"), "拒绝那几行的样式规则不存在（那几行画不出来就是没说）");
 assert.ok(help.includes("时间线·粘贴属性"), "帮助页没念这一格");
 assert.ok(help.includes("attribute-plan"), "帮助页没把 Agent 那条路指出来");
 

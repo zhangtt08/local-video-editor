@@ -3089,3 +3089,13 @@ sRGB 而不是 rec709，而这一档只管原色不管曲线（素材自己从�
 
 Agent 侧不需要任何新接口：`GET /v1/projects/{id}/render-plan` 交回的滤镜串里就能看到这一档走的是
 哪一路（装机复核那条读的就是这个路由）。
+
+## 1.163 粘贴属性：一段的几类属性，一次粘到选中的那些段
+
+| HTTP | MCP | 语义 |
+|---|---|---|
+| `POST /v1/projects/{id}/clips/{id}/attribute-plan` | `clip_attribute_plan` | 把来源那一段在人勾中的类别上排成普通命令；接不下的那段连着 reducer 自己的 code 与句子交回 |
+
+请求体是 `AttributePlanRequest{request_id, expected_revision, source_clip_id, target_clip_ids, categories, sequence_id?}`。路由是只读的（MCP 工具 `readOnlyHint=true`，也不写库）：回执 `attribute_plan` 里 `commands` 就是将要提交的那一批普通命令（`clip.color`、`clip.effects`、`keyframes.replace`／`keyframes.remove`、`clip.mask`、`mask.shape.set`／`mask.shape.remove`、`clip.fade`、`clip.speed`／`clip.speed_curve`、`clip.text`），由调用方交给 `POST /edits`——所以写入仍只有那一处。`written` 逐段列出真被排进命令的类别，`unchanged` 是「已经一样」的那些段，`refusals` 每条带 `clip_id`、`category` 与 reducer 那句 `code`／`message`／`details`；`beyond_tail_keyframes` 是落在目标段尾之外的针数（仍在工程里，那一帧之后不渲染）。
+
+类别名单只有一个主人：`contracts.ATTRIBUTE_CATEGORIES`，随 `capabilities.attribute_categories`（id／label／note）下发，额度走 `capabilities.limits.attribute_paste_targets`，开关是 `features.attribute_paste`。规划不重写规则：`attributes.attribute_plan` 逐目标把候选命令交给 `apply_commands` 重放，整段试不过就一类一类试，因此「计划」与「提交」不可能分家，而一类之内要么整类写进去要么整类不写。「变速」那一条发的是 `ripple=False`：这一段自己的长度按速率换算，后面的片段不被推开。「文字样式」只搬样式，`body` 仍是目标自己打的那行字。画面稳定与转场不在名单里（前者是那一段素材量出来的相机运动，后者属于这一段与邻居之间的那对关系）。
