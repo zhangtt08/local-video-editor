@@ -31,6 +31,13 @@
   （63,059,968 B），两份都重新打了 `media-stamp.json`（sha256 04e1307997530f9c… 与 4303ec8585534068…），
   打包复核要求随包那支与 `node_modules` 里那一份**同哈希**。**规则：跑引擎构建之前，先确认
   `desktop/node_modules/ffmpeg-static/ffmpeg.exe` 真的存在**——它不在，构建就先毁掉上一版的证据。
+  这一笔把那个顺序也改对了（`scripts/build_engine.py`：先 `find_source` 定下那两支，再 `rmtree(DEST)`）。
+  改完当场把那个场景重跑一遍：把 `ffmpeg-static/ffmpeg.exe` 挪开再跑构建，它退出 1，而
+  `desktop/resources/bin/` 四名（含那两支与 `media-stamp.json`）的 sha256 一字未动；把文件放回去再跑，
+  `--verify` 与 `npm run dist` 照常绿——拒绝与正常两头都要跑，只测拒绝那一头不知道正常路径被谁断了。
+  第一次插预检时我把它放在了 `stage_media()` 前面、也就是清目录**之后**，那个位置一点用也没有：正是
+  这个实验把它抓出来的（它第二次清空了 `resources/bin`，只能整包重建）。修脚本也不放过文档：
+  `tests/mediabinary_check.py` 里那段讲「退路」的说明现在同处记着第二个缺陷与它的修法。
 - 门禁：新增 `tests/gamutfold_check.py`（表就是源码现算的那份、每档都在 `matrix_limit` 内、写进链子
   /预览清单/导出图 `colorchannelmixer` 的九个数字一字不差、越上限那一份被当场拒且不涨版本、界面
   数不出档位名与系数）与 `tests/desktop_gamutfold_check.ts`（四种场合正反都判、半行不进名单、满了

@@ -212,7 +212,7 @@ def binary_version(path: Path) -> str:
     return first[0][:100] if first else f"no output (exit {proc.returncode})"
 
 
-def stage_media() -> list[Path]:
+def stage_media(sources: dict[str, Path]) -> list[Path]:
     """Copy the pinned media binaries in, then write down exactly what they are.
 
     那张 `media-stamp.json` 是「装机的那支就是验收量的那支」这句话的可判版本：
@@ -223,7 +223,7 @@ def stage_media() -> list[Path]:
     staged = []
     stamp: dict[str, dict[str, object]] = {}
     for kind in ("ffmpeg", "ffprobe"):
-        source = find_source(kind)
+        source = sources[kind]
         target = DEST / f"{kind}.exe"
         shutil.copy2(source, target)
         note = " [32-bit build]" if "ia32" in str(source) else ""
@@ -652,6 +652,12 @@ def main() -> None:
     if not IS_WINDOWS:
         step("non-Windows host: produced bundle is only usable for smoke checks")
 
+    # 先把那两支定下来，再动 DEST。1.158 就是这么丢过一次证据的：`npm ci --ignore-scripts`
+    # 留下的 ffmpeg-static 是空的，而原本的顺序是先 rmtree(DEST) 再 stage_media()，于是清掉了
+    # 装机用的 ffmpeg / ffprobe / media-stamp（三名都不在 git 里）才报「没有可随包的 ffmpeg.exe」。
+    # 缺输入应当一步都不毁；真要换一支，用 AGENTCUT_FFMPEG_BIN / AGENTCUT_FFPROBE_BIN 交进来。
+    sources = {kind: find_source(kind) for kind in ("ffmpeg", "ffprobe")}
+
     if DEST.exists() and not args.keep:
         kill_staged_engines()
         step(f"clearing {DEST}")
@@ -663,7 +669,8 @@ def main() -> None:
         exe = build_engine(args.layout, use_uv=not args.no_uv)
         exe = stage_engine(exe, args.layout)
         step(f"staged engine executable {exe} ({human(exe.stat().st_size)})")
-    stage_media()
+
+    stage_media(sources)
     stage_asr_models()
     report()
     if args.verify:

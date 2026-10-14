@@ -156,6 +156,11 @@ def media_identity(banner: dict) -> list[str]:
     `C:/ffmpeg/bin` 或 PATH 拿一支顶上——`--verify` 照常绿，而装机的包里换成了本机 winget 的
     9.0.2 full build。文档里每一个 zscale 与折叠的实测数都是随包 6.1.1 量的，所以「发布包里的
     媒体程序就是验收量的那支」必须由字节与版本行来判，而不是由构建脚本的礼貌退路来保证。
+
+    1.158 又量到同一处的第二件事：它原本**先**清空 `desktop/resources/bin/` 才去要那两支，于是静态包
+    还没落地的时候（`npm ci --ignore-scripts` 之后就是这种状态），它在报「没有可随包的」之前已经把
+    装机用的那三名删掉了——而那些不在 git 里。现在先要、再清：把 `desktop/node_modules` 里那份可执行
+    文件挪开重跑，它退出 1，而 `resources/bin` 四名一字未动；放回去再跑照常绿。
     """
     stamp_path = BIN_DIR / STAMP_FILE
     if not stamp_path.is_file():
