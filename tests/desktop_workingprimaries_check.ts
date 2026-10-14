@@ -12,7 +12,10 @@ import { readFileSync } from "node:fs";
 import { feColorMatrixValues } from "../desktop/src/engine";
 import {
   DISPLAY_PRIMARIES,
+  foldChoices,
+  foldDefault,
   foldsForDisplay,
+  foldWords,
   workingChoices,
   workingWords,
 } from "../desktop/src/workingSpace";
@@ -107,8 +110,61 @@ const paint = (v: number): number[] => {
 };
 assert.deepEqual(paint(0.5), [0.5, 0.5, 0.5], "每行和为 1 的矩阵乘不动中性轴");
 
+// 1.161 折叠曲线：名单、默认档与句子同样只认引擎那一份，界面不许自列一档也不许自抄一个名字。
+const CURVE_ROWS = [
+  { id: "bt709", label: "甲那句" },
+  { id: "gamma24", label: "乙那句" },
+];
+assert.deepEqual(foldChoices(undefined), [], "老引擎不回这张表时不许凭空列出曲线档");
+assert.deepEqual(foldChoices([]), [], "空名单就是空的");
+const curves = foldChoices(CURVE_ROWS);
+assert.deepEqual(curves.map((choice) => choice.value), ["bt709", "gamma24"], "可选项只能是引擎下发的那些");
+assert.equal(curves[1].label, "乙那句", "那句话由引擎下发，界面不许自己编一遍");
+assert.equal(foldDefault(CURVE_ROWS), "bt709", "默认档必须是名单第一行——界面不许自己认一个名字");
+assert.equal(foldDefault(undefined), "", "没有那张表就没有默认档，界面不许猜一条");
+
+const foldPlain = foldWords("bt709", CURVE_ROWS);
+assert.ok(foldPlain.includes("逐字节相同"), `默认档要说清与 1.161 之前一致：${foldPlain}`);
+assert.ok(foldPlain.includes("分段"), `要说清这一档是哪条曲线：${foldPlain}`);
+assert.ok(foldPlain.includes("纯幂 2.4"), `默认那句必须提醒链子里同名另一条：${foldPlain}`);
+const foldOther = foldWords("gamma24", CURVE_ROWS);
+assert.ok(foldOther.includes("抬进线性光"), `要说清这一格管的是哪一步：${foldOther}`);
+assert.ok(foldOther.includes("立方体"), `要说清预览与导出同一条：${foldOther}`);
+assert.ok(foldOther.includes("foldcurve_check"), `量过的那两个数要有个出处：${foldOther}`);
+assert.ok(foldOther.includes("哪条曲线编出来的"), `要说清这一格问的是谁：${foldOther}`);
+assert.ok(!foldOther.includes("逐字节相同"), `非默认档不许声称与旧版逐字节相同：${foldOther}`);
+const foldStale = foldWords("srgb", CURVE_ROWS);
+assert.ok(foldStale.includes("改不进去") && foldStale.includes("拒收"), `名单里没有就要说改不进去：${foldStale}`);
+assert.ok(foldStale.includes("fold_transfers"), `要点名那张表：${foldStale}`);
+assert.ok(foldStale.includes("出路") && foldStale.includes("bt709、gamma24"), `拒绝要给此刻走得通的路：${foldStale}`);
+const foldNone = foldWords(undefined, undefined);
+assert.ok(foldNone.includes("fold_transfers") && foldNone.includes("出路"), `老引擎也要点名出路：${foldNone}`);
+assert.ok(foldNone.includes("逐字节相同"), `没有那张表就按它唯一认得的那一条：${foldNone}`);
+
+const foldBlock = view.slice(view.indexOf("折叠曲线"), view.indexOf("</div>", view.indexOf("折叠曲线")));
+assert.ok(foldBlock.length > 0 && foldBlock.includes('aria-label="折叠曲线"'), "那一格要在工程面板里且认得出来");
+assert.ok(foldBlock.includes("foldChoices(app.caps?.fold_transfers)"), "下拉菜单读的是能力表");
+for (const literal of ['?? "bt709"', '?? "gamma24"', 'value="bt709"']) {
+  assert.ok(!foldBlock.includes(literal), `视图不许自己抄曲线名：${literal}`);
+}
+assert.ok(foldBlock.includes("foldDefault(app.caps?.fold_transfers)"), "视图读的默认档是那张表的第一行");
+assert.ok(foldBlock.includes("disabled={Boolean(app.busy) || foldChoices(app.caps?.fold_transfers).length === 0}"), "没有那张表时这格是灰的，不是点了必被拒");
+const foldSetterBlock = store.slice(store.indexOf("setFoldTransfer"), store.indexOf("\n}", store.indexOf("setFoldTransfer")));
+assert.ok(foldSetterBlock.length > 0, "store 要有这一格的开关");
+for (const literal of ['"bt709"', '"gamma24"']) {
+  assert.ok(!foldSetterBlock.includes(literal), `store 不许自己抄曲线名：${foldSetterBlock}`);
+}
+assert.ok(foldSetterBlock.includes("foldDefault(state.caps?.fold_transfers)"), "store 读的也是那张表的第一行");
+const help = readFileSync(REPO_ROOT + "desktop/src/views/Help.tsx", "utf8");
+assert.ok(help.includes('key: "工程·折叠曲线"'), "帮助页必须念到这一格，不能只留在检查器里");
+assert.ok(help.includes("TRANSFER_CURVES"), `帮助页要点名名单的出处：工程·折叠曲线那一条`);
+assert.ok(!module.includes("gamma22") && !module.includes("iec61966"), "界面不许摆一条引擎名单里的没有的曲线");
+assert.equal(foldWords("gamma24", CURVE_ROWS).includes("BT.1886"), false, "曲线是谁由引擎那句 label 说话，界面不再判一次");
+
 console.log(
   `PASS: 工程基色的可选名单只来自 capabilities.working_primaries（没下发就是空的，认不得的照原样念）；`
     + `${DISPLAY_PRIMARIES} 这一档预览一个字都不折、其余档必须折；三句话各自说清各自的范围；`
-    + "默认值只写在 workingSpace 一处，视图与 store 都读它，界面既不算九个数也不写 primaries_matrix",
+    + "默认值只写在 workingSpace 一处，视图与 store 都读它，界面既不算九个数也不写 primaries_matrix；"
+    + "1.161 折叠曲线那一档同样只认 capabilities.fold_transfers，默认读那张表的第一行，"
+    + "视图与 store 都不自抄曲线名，帮助页念到这一格",
 );

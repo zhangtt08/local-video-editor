@@ -349,6 +349,7 @@ export type Project = {
     safe_area?: "off" | "action" | "title";
     /** 1.159：调色之后那幅图按哪档基色解释。缺这个字段就是 Rec.709——老工程与老引擎同一个意思。 */
     working_primaries?: string;
+    fold_transfer?: string;
   };
   assets: Record<string, Asset>;
   tracks: Track[];
@@ -598,6 +599,7 @@ export type Capabilities = {
   gamut_matrices?: GamutMatrixPreset[];
   /** 1.159：工程基色可选的那几档（引擎从 `gamut.PRIMARIES` 现算）。老引擎不回就没有这一行。 */
   working_primaries?: string[];
+  fold_transfers?: { id: string; label: string }[];
   /** 调色链的形状上限（节点数、并联支数、曲线点数、LUT 采样数）由引擎下发，界面照此限制。 */
   grade_limits?: {
     max_nodes: number;

@@ -44,7 +44,7 @@ import { FIT_MODES, verifiedFromProbe, type ColorSpace, type MaskTrackReceipt, t
 import { align, frameTicks, sampleTicks, ticks, TIMEBASE } from "./time";
 import { clipboardAssetsToReprobe, copyClips, pasteCommands, relatedClips, reviveClipboardAssets, selectionQuantum, timelineTracks, type ClipClipboard } from "./selection";
 import { linkSplitTrim } from "./splitTrim";
-import { DISPLAY_PRIMARIES } from "./workingSpace";
+import { DISPLAY_PRIMARIES, foldDefault } from "./workingSpace";
 import { CLIP_KEY, MARKS_KEY, isClipClipboard, isSourceMarks, readBrowser, writeBrowser, type SourceMark } from "./clipboardStore";
 import type { FadeOp, FadeProperty, FadeShape, FadeSide, TrackTarget } from "./effects";
 import { fadeAdoptSummary } from "./effects";
@@ -2422,6 +2422,14 @@ export function setWorkingPrimaries(value: string) {
   const project = state.project;
   if (!project || (project.settings.working_primaries ?? DISPLAY_PRIMARIES) === value) return;
   void updateProjectMeta({ settings: { ...project.settings, working_primaries: value } });
+}
+
+export function setFoldTransfer(value: string) {
+  const project = state.project;
+  // 默认档只由引擎那张表的第一行说话（`foldDefault`），这一格不自己抄一个名字。
+  if (!project || (project.settings.fold_transfer ?? foldDefault(state.caps?.fold_transfers)) === value)
+    return;
+  void updateProjectMeta({ settings: { ...project.settings, fold_transfer: value } });
 }
 
 export async function updateProjectMeta(patch: { name?: string; notes?: string; settings?: object }) {

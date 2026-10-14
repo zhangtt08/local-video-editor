@@ -247,20 +247,76 @@ def _clamp(value: float) -> float:
     return 0.0 if value < 0.0 else (1.0 if value > 1.0 else value)
 
 
+GAMMA_24 = 2.4  # 纯幂那一条：BT.1886 的显示端建模，也是链子里 `rec709` 那一格实际的数
+
+
+def gamma24_eotf(signal: float) -> float:
+    """声明成「纯幂 2.4」的那格信号换回线性光。"""
+    return _clamp(signal) ** GAMMA_24
+
+
+def gamma24_oetf(light: float) -> float:
+    """`gamma24_eotf` 的逆。两个指数一边一个，别对调——对调的那次记在 `bt709_oetf` 的说明里。"""
+    return _clamp(light) ** (1 / GAMMA_24)
+
+
+# 折叠那一步（抬进线性光 → 乘九个数 → 落回信号）按哪档曲线，可选的就这两档，名字只在这里写一次。
+# 分叉是量出来的：同一个名字，链子那端（`grade.GAMMA_BY_SPACE`）按纯幂 2.4 解，容器那一格本来的
+# 意思按分段 0.45 解，8 位上最坏差 27.2 阶（`tests/primariestags_check.py` 的 `curve_suite`）；
+# 而随包那支 FFmpeg 的 zscale 把 `bt709` 实现成纯幂 2.4——逐格差 0.011 阶，与分段差 18.5 阶
+# （`agentcut-验收脚本/zscale_curve_1161.py`）。哪一条才对，说的是「那幅像素实际是谁编的」，
+# 引擎不替某一档素材猜，所以这一格交给人和 Agent 声明。默认仍取分段那一条：1.153／1.156／1.159
+# 那几批交付实测全是按它量的，改默认等于把已经交出去的成片重算一遍。
+TRANSFER_CURVES: dict[str, dict] = {
+    "bt709": {
+        "label": "BT.709 分段曲线（容器那一格本来的意思）",
+        "eotf": bt709_eotf,
+        "oetf": bt709_oetf,
+    },
+    "gamma24": {
+        "label": "纯幂 2.4（链子里 rec709 用的那一条）",
+        "eotf": gamma24_eotf,
+        "oetf": gamma24_oetf,
+    },
+}
+DEFAULT_FOLD_TRANSFER = "bt709"
+FOLD_TRANSFERS: tuple[str, ...] = tuple(TRANSFER_CURVES)
+
+
+def transfer_pair(name: str) -> tuple[Callable[[float], float], Callable[[float], float]]:
+    """那一档曲线的正反两个方向。认不得的名字点名拒绝，并把名单一起交回去。"""
+    row = TRANSFER_CURVES.get(name)
+    if row is None:
+        raise ValueError(
+            "折叠那一步只认 "
+            + "、".join(FOLD_TRANSFERS)
+            + f"（名单在 gamut，别处不另写一份），来的是 {name}"
+        )
+    return row["eotf"], row["oetf"]
+
+
+def fold_transfer_rows() -> list[dict]:
+    """给人和 Agent 的那张表：id 加那句「这一档是谁」，界面不许自己再抄一份句子。"""
+    return [{"id": name, "label": str(TRANSFER_CURVES[name]["label"])} for name in FOLD_TRANSFERS]
+
+
 # 浏览器那两条每通道表与 `grade.grade_tables` 那张同为 256 格——同一把尺，两处不该分家。
 PREVIEW_TABLE_SIZE = 256
 
 
-def transfer_tables(size: int = PREVIEW_TABLE_SIZE) -> tuple[list[float], list[float]]:
-    """把 bt709 那条曲线切成两张每通道表：抬进线性光的那一张与落回信号的那一张。
+def transfer_tables(
+    name: str = DEFAULT_FOLD_TRANSFER, size: int = PREVIEW_TABLE_SIZE
+) -> tuple[list[float], list[float]]:
+    """把声明的那档曲线切成两张每通道表：抬进线性光的那一张与落回信号的那一张。
 
     换基色那九个数是乘在**线性光**上的（`delivery_cube` 就是这个形状：eotf → 矩阵 → oetf）。浏览器
     画不出立方体，但画得出「每通道表 → 通道混合 → 每通道表」这一串，所以折到监视器那一趟交三段：
     而不是直接把九个数乘在存储值上——后者本轮量到最坏 71 阶偏差（(105, 254, 210) 的蓝被
     推成 0），而 256 格这两张表的插值地板只有 1 阶。
     """
-    decode = [round(bt709_eotf(index / (size - 1)), 9) for index in range(size)]
-    encode = [round(bt709_oetf(index / (size - 1)), 9) for index in range(size)]
+    eotf, oetf = transfer_pair(name)
+    decode = [round(eotf(index / (size - 1)), 9) for index in range(size)]
+    encode = [round(oetf(index / (size - 1)), 9) for index in range(size)]
     return decode, encode
 
 

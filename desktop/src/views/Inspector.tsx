@@ -8,8 +8,16 @@ import { GradeFields } from "./GradeFields";
 import { SpeedFields } from "./SpeedFields";
 import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeAdoptHint, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, INTERPOLATIONS, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackGroup, trackingKnobs, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
 import { frameTicks, TIMEBASE, align, humanDuration, offsetWords, seconds, timecode, ticks } from "../time";
-import { DISPLAY_PRIMARIES, foldsForDisplay, workingChoices, workingWords } from "../workingSpace";
-import { setWorkingPrimaries } from "../store";
+import {
+  DISPLAY_PRIMARIES,
+  foldChoices,
+  foldDefault,
+  foldsForDisplay,
+  foldWords,
+  workingChoices,
+  workingWords,
+} from "../workingSpace";
+import { setFoldTransfer, setWorkingPrimaries } from "../store";
 import { linkOffsetSentence } from "../linkOffset";
 import {
   adoptFade,
@@ -778,6 +786,22 @@ function ProjectSettings() {
         {foldsForDisplay(project.settings.working_primaries)
           ? <p className="hint dim">预览里那一趟折叠是引擎算的九个系数（抬进线性光、乘一次、落回信号），监视器因此与宽色域成片同色；导出仍按交付声明的那个标记折。</p>
           : null}
+      </div>
+      <div className="ps-working">
+        <label className="mask-shape">折叠曲线
+          <select
+            className="input"
+            aria-label="折叠曲线"
+            value={project.settings.fold_transfer ?? foldDefault(app.caps?.fold_transfers)}
+            disabled={Boolean(app.busy) || foldChoices(app.caps?.fold_transfers).length === 0}
+            onChange={(event) => setFoldTransfer(event.target.value)}
+          >
+            {foldChoices(app.caps?.fold_transfers).map((choice) => (
+              <option key={choice.value} value={choice.value}>{choice.label}</option>
+            ))}
+          </select>
+        </label>
+        <p className="hint">{foldWords(project.settings.fold_transfer, app.caps?.fold_transfers)}</p>
       </div>
       <div className="ps-master">
         <span>母带音量 <b className="mono">{(project.settings.master_gain ?? 1).toFixed(3)}</b></span>

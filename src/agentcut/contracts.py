@@ -5,17 +5,24 @@ from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .gamut import WORKING_PRIMARIES, gamut_presets
+from .gamut import (
+    DEFAULT_FOLD_TRANSFER,
+    FOLD_TRANSFERS,
+    WORKING_PRIMARIES,
+    fold_transfer_rows,
+    gamut_presets,
+)
 
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = (
-    18  # v18 names the primaries the picture is worked in; older rows are Rec.709, which is
-    #     what every one of them was actually rendered as, so they read unchanged
+    19  # v19 names the tone curve the primaries fold unfolds through; v18 rows leave it unset and
+    #     the default (`bt709`) is the very curve every one of those deliveries was measured
+    #     against, so they read unchanged
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.159.0"
+APP_VERSION = "1.161.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -60,6 +67,23 @@ class SequenceSettings(Contract):
                 "工程基色只认 "
                 + "、".join(WORKING_PRIMARIES)
                 + f"（名单在 gamut，这里不另写一份），来的是 {self.working_primaries}"
+            )
+        return self
+
+    # 上面那一趟折叠在乘那九个数之前，把存储值抬进线性光用的是哪档曲线。名单在
+    # `gamut.TRANSFER_CURVES`，这里不另写一份；默认那一档就是 1.153 以来一直在用的那一条，
+    # 所以任何一份旧工程读进来，那张立方体与预览那两级表都不变。为什么要交出来声明：同一个
+    # 名字有两条曲线是量出来的（两条各自差多少写在 `gamut` 那张表上面），而「这一幅实际是谁
+    # 编的」引擎不知道——猜一次就把一个已经量过的折叠换成另一个没量过的。
+    fold_transfer: str = DEFAULT_FOLD_TRANSFER
+
+    @model_validator(mode="after")
+    def known_fold_transfer(self):
+        if self.fold_transfer not in FOLD_TRANSFERS:
+            raise ValueError(
+                "折叠曲线只认 "
+                + "、".join(FOLD_TRANSFERS)
+                + f"（名单在 gamut，这里不另写一份），来的是 {self.fold_transfer}"
             )
         return self
 
@@ -3072,6 +3096,9 @@ def capabilities(
         # 1.159：工程基色可选的那几档，由 `gamut.PRIMARIES` 现算——界面那张下拉菜单列的就是
         # 这一份，抄一份就会与引擎拒收的那一份不一致。
         "working_primaries": list(WORKING_PRIMARIES),
+        # 1.161：折叠那一步走哪档曲线，连同「这一档是谁」那句话一起交出去——一个名字两条
+        # 曲线，所以名单必须带着区分说话，界面不许自己再编一遍句子。
+        "fold_transfers": fold_transfer_rows(),
         "output_containers": list(OUTPUT_CONTAINERS),
         # 哪几条预设真的装得下透明度。界面那个勾和引擎那句拒绝读的都是同一份预设表，
         # 所以「勾了透明却导出一个不透明的文件」这件事没有发生的余地。

@@ -10,7 +10,7 @@ same list, so preview and render stay one authority rather than merely similar.
 
 import hashlib
 
-from .gamut import transfer_tables, working_collapse
+from .gamut import DEFAULT_FOLD_TRANSFER, transfer_tables, working_collapse
 
 KNOT_GRID = 64
 KNOT_BUDGET = 256
@@ -535,7 +535,9 @@ def grade_tables(color) -> dict | None:
     return {"id": f"g{hashlib.sha1(payload).hexdigest()[:16]}", "stages": built}
 
 
-def preview_grade(color, working_primaries: str = "rec709") -> dict | None:
+def preview_grade(
+    color, working_primaries: str = "rec709", fold_transfer: str = DEFAULT_FOLD_TRANSFER
+) -> dict | None:
     """The stage list the browser can composite, or None when the chain has nothing it can draw.
 
     `preview: false` is the engine's own flag on a cross-channel stage, and this is the one place
@@ -551,12 +553,12 @@ def preview_grade(color, working_primaries: str = "rec709") -> dict | None:
     stages = [stage for stage in tables["stages"] if stage.get("preview", True)] if tables else []
     if collapse is not None:
         # 工程基色不是 709：浏览器那块画布是，所以这一趟折在链子最后，让监视器说的是同一句话。
-        # 形状与导出那张立方体同一条——先按 bt709 抬进线性光，乘那九个数，再落回信号。把九个数直接
+        # 形状与导出那张立方体同一条——先按声明的那档曲线抬进线性光，乘那九个数，再落回信号。把九个数
         # 乘在存储值上不是同一件事（本轮量到最坏 71 阶），而这三段浏览器本来就画得出，不必赌它对
         # `linearRGB` 的原语插值。两张表与链子上其余每通道表同尺（256 格）。
         # id 按最终那一份阶段列表重算，与 `grade_tables` 同一个算法——不重算就会把两张不同的图
         # 挂到同一个 `<filter id>` 上，浏览器认 id 不认内容。
-        decode, encode = transfer_tables()
+        decode, encode = transfer_tables(fold_transfer)
         stages = [
             *stages,
             {"type": "lut", "r": decode, "g": decode, "b": decode, "id": f"l{_stage_id(decode)}"},

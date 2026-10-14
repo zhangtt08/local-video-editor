@@ -41,7 +41,7 @@ from .contracts import (
     render_presets,
     spatial_radius,
 )
-from .gamut import delivery_cube
+from .gamut import DEFAULT_FOLD_TRANSFER, delivery_cube, transfer_pair
 from .grade import composite_stages, grade_filter
 from .masks import (
     alpha_expression,
@@ -447,11 +447,14 @@ def colour_tag_row(tag: str | None) -> dict | None:
     )
 
 
-def primaries_shift_stage(plan, row: dict, working: str | None = None) -> str:
+def primaries_shift_stage(
+    plan, row: dict, working: str | None = None, fold_transfer: str = DEFAULT_FOLD_TRANSFER
+) -> str:
     """那一档要换基色时，把「换基色」写成立方体交给 `lut3d`；不换的档一个字都不加。
 
     矩阵出自 `gamut.primaries_matrix`（`tests/gamut_check.py` 用色度坐标那条独立路量过它，1.153
-    又把它对回 ITU-R BT.2020 公布的九个数），曲线是那一张表声明的 `bt709`——两端同一条，才有
+    又把它对回 ITU-R BT.2020 公布的九个数），曲线是工程那一格声明的那一档（默认 `bt709`）——
+    两端同一条，才有
     「按标记解回来还是那个颜色」这句话的根据。立方体按内容寻址落进作业目录，与 3D LUT 那一站
     同一套机制（`grade_filter` 里那条），所以同一次导出里两张一样的表只写一份。
     """
@@ -464,7 +467,8 @@ def primaries_shift_stage(plan, row: dict, working: str | None = None) -> str:
     if source == target:
         # 图已经是容器声明的那一档，再折一次就是凭空多一层矩阵。
         return ""
-    body = delivery_cube(source, target)
+    eotf, oetf = transfer_pair(fold_transfer)
+    body = delivery_cube(source, target, curve=eotf, inverse=oetf)
     name = "primaries-" + hashlib.sha1(body.encode()).hexdigest()[:16] + ".cube"
     plan.text_files[name] = body
     return f"lut3d=file={name}:interp=tetrahedral,"
@@ -1028,9 +1032,12 @@ def compile_render_plan(
         # 「开始导出」就是这一条红。所以先按预设自己的位深把画面摆成平面 RGB，再折。
         # RGB 这一趟与后面那一趟系数互逆：实测 (126,63,30) 出去 (125,62,29) 回来，观感不损，
         # 而容器那句「按 709 折」是实话。
+        shift_stage = primaries_shift_stage(
+            plan, tag_row, settings.working_primaries, settings.fold_transfer
+        )
         fit_post = (
             f"format={rgb_planar_for(pixel_format)},"
-            f"{primaries_shift_stage(plan, tag_row, settings.working_primaries)}"
+            f"{shift_stage}"
             f"zscale=matrix={tag_row['zscale_matrix']}:range={tag_row['zscale_range']},"
             f"format={pixel_format},settb=AVTB"
         )
@@ -1611,9 +1618,12 @@ def compile_render_plan(
             # 时按声明的那组系数折，alpha 平面整条带走（1.154 量的：半透明那一格 (126,63,30,128)
             # 交出去是 (314,429,628,516)，色度正是 BT.709 的预测；不接这一趟是 (329,417,632,514)，
             # 正是编码器 swscale 的 BT.601——1.153 之前那句拒绝说的其实是后一路，不是不可能）。
+            shift_stage = primaries_shift_stage(
+                plan, tag_row, settings.working_primaries, settings.fold_transfer
+            )
             alpha_tail = (
                 f"format={rgb_planar_for(pixel_format, alpha=True)},"
-                f"{primaries_shift_stage(plan, tag_row, settings.working_primaries)}"
+                f"{shift_stage}"
                 f"zscale=matrix={tag_row['zscale_matrix']}:range={tag_row['zscale_range']},format="
                 f"{pixel_format}"
             )
