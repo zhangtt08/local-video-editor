@@ -40,7 +40,7 @@ import type {
   RenderRange,
   RenderBatchItem,
 } from "./engine";
-import { FIT_MODES, verifiedFromProbe, type ColorSpace, type OutputRate, type TransitionKind, type VerifiedMedia } from "./engine";
+import { FIT_MODES, verifiedFromProbe, type ColorSpace, type MaskTrackReceipt, type OutputRate, type TransitionKind, type VerifiedMedia } from "./engine";
 import { align, frameTicks, sampleTicks, ticks, TIMEBASE } from "./time";
 import { clipboardAssetsToReprobe, copyClips, pasteCommands, relatedClips, reviveClipboardAssets, selectionQuantum, timelineTracks, type ClipClipboard } from "./selection";
 import { linkSplitTrim } from "./splitTrim";
@@ -725,6 +725,35 @@ function clipName(project: Project, clipId: string): string {
   return label ? `${label}` : clipId;
 }
 
+/** 「这一次跑到哪儿为止」那句账：跟丢、被单次上限收短、被这条片段的曲线预算收短、量满了，
+ *  四种说法只有这一处来源——单段与一组都念它，出路那句不会在两处各自漂移。 */
+function trackTailNote(
+  stats: { lost_at_ticks: number | null; last_at_ticks: number; budget_frames?: number },
+  tail: number,
+  frames: number,
+): string {
+  return stats.lost_at_ticks !== null
+    ? `在 ${(stats.lost_at_ticks / TIMEBASE).toFixed(2)} 秒处跟丢目标，之后遮罩停在最后找到的位置。`
+    : tail > 0
+      ? stats.budget_frames
+        ? `这条片段的曲线预算只装得下 ${stats.budget_frames} 帧（一个跟踪点要占几条曲线由引擎算），量到 ${(stats.last_at_ticks / TIMEBASE).toFixed(1)} 秒就停了，后面 ${(tail / TIMEBASE).toFixed(1)} 秒遮罩停在最后跟到的位置。预算已经用满，「接着跟」不会再量出新的一帧；要覆盖后面那段，可以关掉「遮罩随远近缩放」再点「从头重跟」（遮罩盒不再随远近呼吸，但同一条片段能多跟将近一倍长度），或者把片段切成两段分别跟。`
+        : `单次最多量 ${frames} 帧，片段还剩 ${(tail / TIMEBASE).toFixed(1)} 秒没分析，那段里遮罩停在最后跟到的位置；把播放头挪过去再点「接着跟」就能续上。`
+      : "导出使用同一份关键帧。";
+}
+
+/** 一组跟踪的每段一行：跟丢、没量完、被预算收短都念 `trackTailNote` 那一句，不另写一套说法。 */
+function trackLine(receipt: MaskTrackReceipt, project: Project): string {
+  const clip = project.clips[receipt.clip_id];
+  const tail = clip && receipt.lost_at_ticks === null
+    ? clip.duration_ticks - receipt.last_at_ticks - frameTicks(project.settings.frame_rate)
+    : 0;
+  const notes = [`${receipt.tracked_frames} 帧`];
+  if (receipt.predicted_frames > 0) notes.push(`其中 ${receipt.predicted_frames} 帧被挡住按匀速补`);
+  const ending = trackTailNote(receipt, tail, receipt.sampled_frames);
+  if (ending !== "导出使用同一份关键帧。") notes.push(ending);
+  return `${clipName(project, receipt.clip_id)}：${notes.join("，")}`;
+}
+
 /** 跟踪一组遮罩：一次分析、一批命令、一个版本，撤销一步整批退回。
  *  引擎把每个目标各自的曲线预算算好交回来，界面只照着写：段数上限、每段量几帧、被预算收短了多少，
  *  全部来自同一份回执（`trackWindow`/`trackGroup` 那一个判断），这里不再数第二遍。 */
@@ -754,15 +783,7 @@ export async function trackMasks(targets: TrackTarget[]) {
     );
     if (receipts.length > 1) {
       const total = receipts.reduce((count, receipt) => count + receipt.tracked_frames, 0);
-      const lines = receipts.map((receipt) => {
-        const notes = [`${receipt.tracked_frames} 帧`];
-        if (receipt.predicted_frames > 0) notes.push(`其中 ${receipt.predicted_frames} 帧被挡住按匀速补`);
-        if (receipt.lost_at_ticks !== null) {
-          notes.push(`在 ${(receipt.lost_at_ticks / TIMEBASE).toFixed(2)} 秒处跟丢`);
-        }
-        if (receipt.budget_frames) notes.push(`曲线预算只装得下 ${receipt.budget_frames} 帧`);
-        return `${clipName(project, receipt.clip_id)}：${notes.join("，")}`;
-      });
+      const lines = receipts.map((receipt) => trackLine(receipt, project));
       toast(
         "ok",
         `已跟踪 ${receipts.length} 段 · 共 ${total} 帧`,
@@ -793,13 +814,7 @@ export async function trackMasks(targets: TrackTarget[]) {
       stats.reacquired_frames > 0
         ? `在 ${(stats.reacquired_at_ticks[0] / TIMEBASE).toFixed(2)} 秒处重新找到了目标，之后是量出来的位置；`
         : "",
-      stats.lost_at_ticks !== null
-        ? `在 ${(stats.lost_at_ticks / TIMEBASE).toFixed(2)} 秒处跟丢目标，之后遮罩停在最后找到的位置。`
-        : tail > 0
-          ? stats.budget_frames
-            ? `这条片段的曲线预算只装得下 ${stats.budget_frames} 帧（一个跟踪点要占几条曲线由引擎算），量到 ${(stats.last_at_ticks / TIMEBASE).toFixed(1)} 秒就停了，后面 ${(tail / TIMEBASE).toFixed(1)} 秒遮罩停在最后跟到的位置。预算已经用满，「接着跟」不会再量出新的一帧；要覆盖后面那段，可以关掉「遮罩随远近缩放」再点「从头重跟」（遮罩盒不再随远近呼吸，但同一条片段能多跟将近一倍长度），或者把片段切成两段分别跟。`
-            : `单次最多量 ${frames} 帧，片段还剩 ${(tail / TIMEBASE).toFixed(1)} 秒没分析，那段里遮罩停在最后跟到的位置；把播放头挪过去再点「接着跟」就能续上。`
-          : "导出使用同一份关键帧。",
+      trackTailNote(stats, tail, frames),
     ].join("");
     toast("info", `已跟踪 ${stats.points.length} 帧`, detail);
   } catch (error) {

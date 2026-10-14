@@ -6,7 +6,7 @@ import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionCh
 import { Icon, Modal } from "../ui";
 import { GradeFields } from "./GradeFields";
 import { SpeedFields } from "./SpeedFields";
-import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeAdoptHint, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, INTERPOLATIONS, readTrackingDefaults, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackGroup, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
+import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeAdoptHint, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, INTERPOLATIONS, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackGroup, trackingKnobs, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
 import { frameTicks, TIMEBASE, align, humanDuration, offsetWords, seconds, timecode, ticks } from "../time";
 import { linkOffsetSentence } from "../linkOffset";
 import {
@@ -459,7 +459,7 @@ const maskRows = (mask: ShapeMask) => (mask.shape === "path" ? [] : MASK_ROWS);
 function GroupTrackFields() {
   const app = useApp();
   const project = editableProject(app);
-  const knobs = readTrackingDefaults(app.caps?.limits?.track_gap_default ?? 60, app.caps?.limits?.track_max_gap_frames ?? 240);
+  const knobs = trackingKnobs(app.caps?.limits);
   const perFrame = project ? frameTicks(project.settings.frame_rate) : 1;
   const picked = project ? Object.values(project.clips).filter((one) => (app.selectedClips ?? []).includes(one.id) && canAnimateMask(one.mask)) : [];
   const skipped = project ? (app.selectedClips ?? []).length - picked.length : 0;
@@ -487,10 +487,10 @@ function MaskFields({ clip }: { clip: Clip }) {
   const frames = clip.keyframes ?? [];
   const animatable = canAnimateMask(mask);
   // 遮挡期间最多猜几帧、要不要在整幅画面上重找：这两个旋钮 Agent 有，人也该有。
-  const gapCeiling = app.caps?.limits?.track_max_gap_frames ?? 240;
+  const storedKnobs = trackingKnobs(app.caps?.limits);
+  const gapCeiling = storedKnobs.gapCeiling;
   // 三个旋钮记在应用偏好里，换一个工程、重开一次窗口都还在（1.93）。不写进工程状态是有意的：
   // 元数据那条路每点一次就涨一个 revision 并清空撤销栈，等于拿用户的编辑历史换一个勾选。
-  const storedKnobs = readTrackingDefaults(app.caps?.limits?.track_gap_default ?? 60, gapCeiling);
   const [trackGap, setTrackGapState] = useState(storedKnobs.gap);
   const [trackSweep, setTrackSweepState] = useState(storedKnobs.sweep);
   const [trackScale, setTrackScaleState] = useState(storedKnobs.scale);

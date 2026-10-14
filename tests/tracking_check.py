@@ -27,6 +27,7 @@ from agentcut.contracts import (
     EditorError,
     FrameRate,
     MaskTrackRequest,
+    MaskTrackTarget,
     Project,
     VerifiedMedia,
 )
@@ -412,24 +413,35 @@ def interface_suite() -> None:
     ]
     # 1.87: the two tracking knobs the Agent can pass have controls in the Inspector, and the
     # ceiling they clamp to is the engine's number rather than one the interface invented.
-    assert "{ reacquire: trackSweep, maxGapFrames: trackGap" in inspector
+    assert inspector.count("reacquire: trackSweep, maxGapFrames: trackGap, scale: trackScale") == 2, (
+        "both single-clip tracking buttons must carry all three knobs"
+    )
+    assert "reacquire: knobs.sweep, maxGapFrames: knobs.gap, scale: knobs.scale" in inspector, (
+        "the group entry must carry the same stored knobs, not a fourth default"
+    )
     assert inspector.count("maxGapFrames: trackGap") == 2, (
         "both single-clip tracking buttons must carry the knobs"
     )
-    assert inspector.count("readTrackingDefaults(") == 2, (
-        "the mask panel and the group panel must read the same stored knobs"
+    assert "readTrackingDefaults(" not in inspector, (
+        "面板不许自己读偏好与兜底：那一处读数在 effects.ts 的 trackingKnobs 里"
     )
     assert (
         "max_gap_frames: target.maxGapFrames" in store
         and "reacquire: target.reacquire" in store
     ), "the client never sends the knobs the interface shows"
-    assert "estimate_scale: options.scale" in store, (
+    assert "estimate_scale: target.scale" in store, (
         "the 遮罩随远近缩放 knob is decoration: the client never sends it"
     )
     assert inspector.count("scale: trackScale") == 2, "both buttons must carry the scale knob"
-    assert "app.caps?.limits?.track_max_gap_frames" in inspector, "the ceiling is hardcoded"
-    assert inspector.count("240") == 1 and "?? 240" in inspector, (
-        "only the fallback may carry the engine number"
+    assert "app.caps?.limits?.track_max_gap_frames" not in inspector, (
+        "两个面板各自兜一次底，「引擎没回这个字段时算几」就有了第二个说法"
+    )
+    assert inspector.count("trackingKnobs(app.caps?.limits)") == 2, (
+        "单段面板与多选面板必须共用同一处旋钮读数"
+    )
+    knob_source = (ROOT / "desktop/src/effects.ts").read_text(encoding="utf-8")
+    assert knob_source.count("?? 240") == 1 and knob_source.count("?? 60") == 1, (
+        "兜底数字只许写在 effects.ts 里一次"
     )
     assert "max={gapCeiling}" in inspector, "the field does not clamp to the issued ceiling"
     assert 'aria-label="跟踪时让遮罩盒随远近缩放"' in inspector
@@ -1088,13 +1100,10 @@ def http_suite(folder: Path) -> None:
         revision = seeded.json()["project"]["revision"]
 
         off = client.post(
-            path + "/clips/c2/track",
+            path + "/mask-track",
             json={
-                "request_id": "no-sweep",
-                "expected_revision": revision,
-                "frames": 90,
-                "reacquire": False,
-                "dry_run": True,
+                "request_id": "no-sweep", "expected_revision": revision, "dry_run": True,
+                "targets": [{"clip_id": "c2", "frames": 90, "reacquire": False}],
             },
         )
         assert off.status_code == 200, off.text[:300]
@@ -1104,8 +1113,11 @@ def http_suite(folder: Path) -> None:
         assert blind["lost_at_ticks"] is not None and blind["tracked_frames"] < 45, blind
 
         swept = client.post(
-            path + "/clips/c2/track",
-            json={"request_id": "sweep", "expected_revision": revision, "frames": 90},
+            path + "/mask-track",
+            json={
+                "request_id": "sweep", "expected_revision": revision,
+                "targets": [{"clip_id": "c2", "frames": 90}],
+            },
         )
         assert swept.status_code == 200, swept.text[:300]
         body = swept.json()
@@ -1132,12 +1144,10 @@ def http_suite(folder: Path) -> None:
         )
 
         beyond = client.post(
-            path + "/clips/c2/track",
+            path + "/mask-track",
             json={
-                "request_id": "beyond",
-                "expected_revision": body["project"]["revision"],
-                "frames": 90,
-                "max_gap_frames": TRACK_GAP_MAX + 1,
+                "request_id": "beyond", "expected_revision": body["project"]["revision"],
+                "targets": [{"clip_id": "c2", "frames": 90, "max_gap_frames": TRACK_GAP_MAX + 1}],
             },
         )
         assert beyond.status_code == 422, beyond.text[:200]
@@ -1155,7 +1165,7 @@ def http_suite(folder: Path) -> None:
         assert limits["track_max_frames"] == TRACK_FRAMES_MAX, limits
         bounds = {
             (kind, getattr(rule, kind))
-            for rule in MaskTrackRequest.model_fields["frames"].metadata
+            for rule in MaskTrackTarget.model_fields["frames"].metadata
             for kind in ("ge", "le")
             if getattr(rule, kind, None) is not None
         }
@@ -1212,12 +1222,10 @@ def http_suite(folder: Path) -> None:
 
         def window(frames: int, request_id: str) -> dict:
             run = client.post(
-                path + "/clips/c7/track",
+                path + "/mask-track",
                 json={
-                    "request_id": request_id,
-                    "expected_revision": walking.json()["project"]["revision"],
-                    "frames": frames,
-                    "dry_run": True,
+                    "request_id": request_id, "expected_revision": walking.json()["project"]["revision"], "dry_run": True,
+                    "targets": [{"clip_id": "c7", "frames": frames}],
                 },
             )
             assert run.status_code == 200, run.text[:300]
@@ -1284,12 +1292,10 @@ def http_suite(folder: Path) -> None:
         room = (CLIP_KEYFRAME_LIMIT - crowded) // 4
         revision = client.get(path).json()["revision"]
         tight = client.post(
-            path + "/clips/c7/track",
+            path + "/mask-track",
             json={
-                "request_id": "tight",
-                "expected_revision": revision,
-                "frames": tail_frames,
-                "dry_run": True,
+                "request_id": "tight", "expected_revision": revision, "dry_run": True,
+                "targets": [{"clip_id": "c7", "frames": tail_frames}],
             },
         )
         assert tight.status_code == 200, tight.text[:300]
@@ -1379,11 +1385,10 @@ def http_suite(folder: Path) -> None:
         )
         assert moved.status_code == 200, moved.text[:300]
         offset_run = client.post(
-            path + "/clips/c4/track",
+            path + "/mask-track",
             json={
-                "request_id": "offset",
-                "expected_revision": moved.json()["project"]["revision"],
-                "frames": 45,
+                "request_id": "offset", "expected_revision": moved.json()["project"]["revision"],
+                "targets": [{"clip_id": "c4", "frames": 45}],
             },
         )
         assert offset_run.status_code == 200, offset_run.text[:400]
@@ -1458,11 +1463,11 @@ def http_suite(folder: Path) -> None:
         strides = {}
         for clip_id, frames, wanted_rate in (("c5", 45, "15/1"), ("c6", 30, "60/1")):
             run = client.post(
-                path + f"/clips/{clip_id}/track",
+                path + "/mask-track",
                 json={
                     "request_id": f"stride-{clip_id}",
                     "expected_revision": revision,
-                    "frames": frames,
+                    "targets": [{"clip_id": clip_id, "frames": frames}],
                 },
             )
             assert run.status_code == 200, run.text[:400]

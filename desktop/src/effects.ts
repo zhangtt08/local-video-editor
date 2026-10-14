@@ -240,6 +240,15 @@ export function readTrackingDefaults(fallbackGap: number, gapCeiling: number): T
   }
 }
 
+/** 三个旋钮的初值与它们各自的天花板。兜底数字只许写在这里一次：单段面板与多选面板都从这里拿，
+ *  否则「引擎没回这个字段时该当多少」就有了两个说法。传进来的仍是 capabilities 那一份数。 */
+export function trackingKnobs(limits?: {
+  track_gap_default?: number; track_max_gap_frames?: number;
+}): TrackingKnobs & { gapCeiling: number } {
+  const gapCeiling = limits?.track_max_gap_frames ?? 240;
+  return { ...readTrackingDefaults(limits?.track_gap_default ?? 60, gapCeiling), gapCeiling };
+}
+
 export function rememberTrackingDefaults(knobs: Partial<TrackingKnobs>): void {
   try {
     if (knobs.gap !== undefined) localStorage.setItem(KNOB_KEYS.gap, String(knobs.gap));
