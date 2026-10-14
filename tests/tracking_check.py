@@ -39,7 +39,7 @@ from agentcut.timeline import (
     mask_track_capacity,
     validate_timeline,
 )
-from agentcut.tracking import decode_luma, track_box, track_mask
+from agentcut.tracking import analyse_window, decode_luma, follow_window, track_box
 
 ROOT = Path(__file__).resolve().parent.parent
 FFMPEG = ROOT / "desktop/resources/bin/ffmpeg.exe"
@@ -189,20 +189,19 @@ def analyse(
     reacquire: bool = True,
     max_gap: int = TRACK_GAP_DEFAULT,
 ) -> dict:
-    return track_mask(
-        FFMPEG,
-        source,
-        WIDTH,
-        HEIGHT,
-        FrameRate(),
+    width, decoded = analyse_window(
+        FFMPEG, source, WIDTH, HEIGHT, FrameRate(), start, T // FPS, frames
+    )
+    return follow_window(
+        decoded,
+        width,
         (truth_at(start / T, shift)[0], truth_at(start / T, shift)[1], BOX[0], BOX[1]),
-        frames,
-        start,
-        T // FPS,
         search,
-        scale,
-        max_gap,
-        reacquire,
+        FrameRate(),
+        T // FPS,
+        scale=scale,
+        max_gap=max_gap,
+        reacquire=reacquire,
     )
 
 
@@ -396,7 +395,12 @@ def interface_suite() -> None:
     store = (ROOT / "desktop" / "src" / "store.ts").read_text(encoding="utf-8")
     inspector = (ROOT / "desktop" / "src" / "views" / "Inspector.tsx").read_text(encoding="utf-8")
     help_page = (ROOT / "desktop" / "src" / "views" / "Help.tsx").read_text(encoding="utf-8")
-    declaration = engine[engine.index("maskTrack(") : engine.index("silenceScan(")]
+    declaration = engine[
+        engine.index("export type MaskTrackReceipt") : engine.index("export class EngineError")
+    ]
+    assert "MaskTrackReceipt[]" in engine[engine.index("maskTrack(") :], (
+        "the client still declares a single-target reply"
+    )
     for field in ("reacquire", "reacquired_frames", "reacquired_at_ticks", "gap_closure"):
         assert field in declaration, f"the tracking reply type does not declare {field}"
     assert "stats.reacquired_frames > 0" in store, "the toast never says the target was re-found"
@@ -410,10 +414,14 @@ def interface_suite() -> None:
     # ceiling they clamp to is the engine's number rather than one the interface invented.
     assert "{ reacquire: trackSweep, maxGapFrames: trackGap" in inspector
     assert inspector.count("maxGapFrames: trackGap") == 2, (
-        "both tracking buttons must carry the knobs"
+        "both single-clip tracking buttons must carry the knobs"
+    )
+    assert inspector.count("readTrackingDefaults(") == 2, (
+        "the mask panel and the group panel must read the same stored knobs"
     )
     assert (
-        "max_gap_frames: options.maxGapFrames" in store and "reacquire: options.reacquire" in store
+        "max_gap_frames: target.maxGapFrames" in store
+        and "reacquire: target.reacquire" in store
     ), "the client never sends the knobs the interface shows"
     assert "estimate_scale: options.scale" in store, (
         "the 遮罩随远近缩放 knob is decoration: the client never sends it"
@@ -435,6 +443,9 @@ def interface_suite() -> None:
     assert "Math.min(300" not in inspector, "the interface still caps a run at its own number"
     assert "Math.max(2, Math.min(" not in inspector, "the interface still floors a run itself"
     assert inspector.count("trackWindow(") == 2, "both buttons must go through the one decision"
+    assert inspector.count("trackGroup(") == 1, (
+        "the group button must reuse the one window decision, not count a second time"
+    )
     assert "unreached" not in inspector and "unreached" not in store, (
         "the shell is guessing how far a run reached instead of reading it from the reply"
     )
@@ -790,18 +801,24 @@ def http_suite(folder: Path) -> None:
         assert seeded.status_code == 200, seeded.text
 
         dry = client.post(
-            path + "/clips/c/track",
-            json={"request_id": "dry", "expected_revision": 1, "frames": 40, "dry_run": True},
+            path + "/mask-track",
+            json={
+                "request_id": "dry", "expected_revision": 1, "dry_run": True,
+                "targets": [{"clip_id": "c", "frames": 40}],
+            },
         )
         assert dry.status_code == 200, dry.text
         assert dry.json()["committed"] is False
         assert client.get(path).json()["revision"] == 1, "a dry run must not write"
-        preview = dry.json()["tracking"]
+        preview = dry.json()["tracking"]["targets"][0]
         assert preview["tracked_frames"] == 40 and preview["lost_at_ticks"] is None, preview
 
         written = client.post(
-            path + "/clips/c/track",
-            json={"request_id": "track", "expected_revision": 1, "frames": 40},
+            path + "/mask-track",
+            json={
+                "request_id": "track", "expected_revision": 1,
+                "targets": [{"clip_id": "c", "frames": 40}],
+            },
         )
         assert written.status_code == 200, written.text
         body = written.json()
@@ -822,8 +839,11 @@ def http_suite(folder: Path) -> None:
                 assert abs(key["value"] - want_x) < 0.012, (key, want_x)
 
         replay = client.post(
-            path + "/clips/c/track",
-            json={"request_id": "track", "expected_revision": 1, "frames": 40},
+            path + "/mask-track",
+            json={
+                "request_id": "track", "expected_revision": 1,
+                "targets": [{"clip_id": "c", "frames": 40}],
+            },
         )
         assert replay.json()["replayed"] is True and replay.json()["project"]["revision"] == 2
 
@@ -856,12 +876,10 @@ def http_suite(folder: Path) -> None:
         )
         assert anchored.status_code == 200, anchored.text[:300]
         joined = client.post(
-            path + "/clips/c/track",
+            path + "/mask-track",
             json={
-                "request_id": "join",
-                "expected_revision": anchored.json()["project"]["revision"],
-                "from_ticks": 20 * (T // FPS),
-                "frames": 20,
+                "request_id": "join", "expected_revision": anchored.json()["project"]["revision"],
+                "targets": [{"clip_id": "c", "from_ticks": 20 * (T // FPS), "frames": 20}],
             },
         )
         assert joined.status_code == 200, joined.text[:300]
@@ -870,7 +888,7 @@ def http_suite(folder: Path) -> None:
         clip = body["project"]["clips"]["c"]
         marks = sorted(k["at_ticks"] for k in clip["keyframes"] if k["property"] == "mask_x")
         assert marks == [index * (T // FPS) for index in range(40)], marks[:5] + marks[-5:]
-        tracking = body["tracking"]
+        tracking = body["tracking"]["targets"][0]
         assert tracking["merged"] is True, tracking
         assert tracking["kept_frames"] == 20, tracking
         assert tracking["replaced_frames"] == 20, tracking
@@ -887,13 +905,10 @@ def http_suite(folder: Path) -> None:
             f"{tracking['seam_ticks'] * FPS // T} frame apart)"
         )
         restarted = client.post(
-            path + "/clips/c/track",
+            path + "/mask-track",
             json={
-                "request_id": "restart",
-                "expected_revision": 4,
-                "from_ticks": 20 * (T // FPS),
-                "frames": 20,
-                "merge": False,
+                "request_id": "restart", "expected_revision": 4,
+                "targets": [{"clip_id": "c", "from_ticks": 20 * (T // FPS), "frames": 20, "merge": False}],
             },
         )
         assert restarted.status_code == 200, restarted.text[:300]
@@ -907,23 +922,23 @@ def http_suite(folder: Path) -> None:
         )
         print("   http: merge=False still wipes the earlier segment, so 从头重跟 stays available")
         unsized = client.post(
-            path + "/clips/c/track",
+            path + "/mask-track",
             json={
-                "request_id": "noscale",
-                "expected_revision": 5,
-                "frames": 20,
-                "estimate_scale": False,
-                "dry_run": True,
+                "request_id": "noscale", "expected_revision": 5, "dry_run": True,
+                "targets": [{"clip_id": "c", "frames": 20, "estimate_scale": False}],
             },
         )
         assert unsized.status_code == 200, unsized.text
         assert client.get(path).json()["revision"] == 5, "a dry run must not write"
-        assert not any("width" in point for point in unsized.json()["tracking"]["points"]), (
-            unsized.json()["tracking"]["points"][0]
+        assert not any("width" in point for point in unsized.json()["tracking"]["targets"][0]["points"]), (
+            unsized.json()["tracking"]["targets"][0]["points"][0]
         )
         conflict = client.post(
-            path + "/clips/c/track",
-            json={"request_id": "again", "expected_revision": 1, "frames": 20},
+            path + "/mask-track",
+            json={
+                "request_id": "again", "expected_revision": 1,
+                "targets": [{"clip_id": "c", "frames": 20}],
+            },
         )
         assert conflict.status_code == 409, conflict.text
         assert client.get(path).json()["revision"] == 5
@@ -932,13 +947,19 @@ def http_suite(folder: Path) -> None:
         # not hand back size curves the exporter would refuse. Both steps are dry runs so the
         # revision sequence below stays as written.
         too_far = client.post(
-            path + "/clips/c/track",
-            json={"request_id": "far", "expected_revision": 5, "frames": 900},
+            path + "/mask-track",
+            json={
+                "request_id": "far", "expected_revision": 5,
+                "targets": [{"clip_id": "c", "frames": 900}],
+            },
         )
         assert too_far.json()["error"]["code"] == "SOURCE_OUT_OF_BOUNDS", too_far.text
         out_of_clip = client.post(
-            path + "/clips/c/track",
-            json={"request_id": "edge", "expected_revision": 5, "from_ticks": 3 * T, "frames": 10},
+            path + "/mask-track",
+            json={
+                "request_id": "edge", "expected_revision": 5,
+                "targets": [{"clip_id": "c", "from_ticks": 3 * T, "frames": 10}],
+            },
         )
         assert out_of_clip.json()["error"]["code"] == "INVALID_TRACK_TARGET", out_of_clip.text
         no_mask = client.post(
@@ -958,7 +979,7 @@ def http_suite(folder: Path) -> None:
         )
         assert restored.status_code == 200, restored.text
         assert restored.json()["project"]["clips"]["c"]["keyframes"] == []
-        assert client.get(path + "/clips/c/track").status_code in (404, 405, 422)
+        assert client.get(path + "/mask-track").status_code in (404, 405, 422)
 
         # v13: a free-form outline may be tracked too, but only for translation. Written for real
         # (not a dry run) so the reducer, the contract and the exporter all have to agree on what
@@ -1006,15 +1027,14 @@ def http_suite(folder: Path) -> None:
         assert abs(stored["center_x"] - box["center_x"]) < 1e-9, (stored, box)
         assert abs(stored["center_y"] - box["center_y"]) < 1e-9, (stored, box)
         followed = client.post(
-            path + "/clips/c/track",
+            path + "/mask-track",
             json={
-                "request_id": "pathtrack",
-                "expected_revision": swap.json()["project"]["revision"],
-                "frames": 20,
+                "request_id": "pathtrack", "expected_revision": swap.json()["project"]["revision"],
+                "targets": [{"clip_id": "c", "frames": 20}],
             },
         )
         assert followed.status_code == 200, followed.text
-        proof = followed.json()["tracking"]
+        proof = followed.json()["tracking"]["targets"][0]
         assert proof["scale_estimated"] is False, proof
         assert not any("width" in point for point in proof["points"]), proof["points"][0]
         written = {
@@ -1079,7 +1099,7 @@ def http_suite(folder: Path) -> None:
         )
         assert off.status_code == 200, off.text[:300]
         assert client.get(path).json()["revision"] == revision, "a dry run must not write"
-        blind = off.json()["tracking"]
+        blind = off.json()["tracking"]["targets"][0]
         assert blind["reacquire"] is False and blind["reacquired_frames"] == 0, blind
         assert blind["lost_at_ticks"] is not None and blind["tracked_frames"] < 45, blind
 
@@ -1090,7 +1110,7 @@ def http_suite(folder: Path) -> None:
         assert swept.status_code == 200, swept.text[:300]
         body = swept.json()
         assert body["project"]["revision"] == revision + 1, body["project"]["revision"]
-        proof = body["tracking"]
+        proof = body["tracking"]["targets"][0]
         assert proof["reacquired_frames"] == 1 and proof["lost_at_ticks"] is None, proof
         assert proof["tracked_frames"] == 90 == len(proof["points"]), proof
         assert abs(proof["reacquired_at_ticks"][0] / T - HIDDEN[1]) < 0.1, proof
@@ -1201,7 +1221,7 @@ def http_suite(folder: Path) -> None:
                 },
             )
             assert run.status_code == 200, run.text[:300]
-            return run.json()["tracking"]
+            return run.json()["tracking"]["targets"][0]
 
         part, whole = window(300, "window-300"), window(tail_frames, "window-350")
         assert part["lost_at_ticks"] is None and whole["lost_at_ticks"] is None, (
@@ -1273,7 +1293,7 @@ def http_suite(folder: Path) -> None:
             },
         )
         assert tight.status_code == 200, tight.text[:300]
-        scarce = tight.json()["tracking"]
+        scarce = tight.json()["tracking"]["targets"][0]
         assert scarce["tracked_frames"] == room, scarce["tracked_frames"]
         assert scarce["budget_frames"] == room, scarce
         assert scarce["last_at_ticks"] == (room - 1) * frame_ticks, scarce["last_at_ticks"]
@@ -1368,7 +1388,7 @@ def http_suite(folder: Path) -> None:
         )
         assert offset_run.status_code == 200, offset_run.text[:400]
         ran = offset_run.json()
-        assert ran["tracking"]["tracked_frames"] == 45, ran["tracking"]
+        assert ran["tracking"]["targets"][0]["tracked_frames"] == 45, ran["tracking"]["targets"][0]
         curve = sorted(
             (key["at_ticks"], key["value"])
             for key in ran["project"]["clips"]["c4"]["keyframes"]
@@ -1446,7 +1466,7 @@ def http_suite(folder: Path) -> None:
                 },
             )
             assert run.status_code == 200, run.text[:400]
-            reply = run.json()["tracking"]
+            reply = run.json()["tracking"]["targets"][0]
             # The window read has to be the whole one: a `-t` that forgot the speed would hand
             # back a shorter path whose every point is still correct.
             assert reply["tracked_frames"] == frames, (clip_id, reply)

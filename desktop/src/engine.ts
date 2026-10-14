@@ -639,6 +639,21 @@ export type FadeAdoptionPlan = {
   commands: Record<string, unknown>[];
 };
 
+/** 引擎跟踪回执里的一项：一个目标的一份账。界面只读它，不自己再算一遍曲线预算，也不自己数帧——
+ *  1.87 之前界面自己数了 300，才把「没量完」说成了「量完了」。 */
+export type MaskTrackReceipt = {
+  clip_id: string; target_position: number; shared_decode: boolean;
+  analysis_width: number; analysis_height: number; sampled_frames: number;
+  tracked_frames: number; predicted_frames: number; scale_estimated: boolean;
+  reacquire: boolean; reacquired_frames: number; reacquired_at_ticks: number[];
+  gap_closure: number; speed_percent: number; sample_rate: string;
+  gaps: { from_ticks: number; to_ticks: number }[]; lost_at_ticks: number | null;
+  first_at_ticks: number; last_at_ticks: number;
+  merged?: boolean; kept_frames?: number; replaced_frames?: number;
+  budget_frames?: number; seam_ticks?: number; seam_jump?: number;
+  points: { at_ticks: number; center_x: number; center_y: number; width?: number; height?: number }[];
+};
+
 export class EngineError extends Error {
   code: string;
   details: Record<string, unknown>;
@@ -721,6 +736,7 @@ export class EngineError extends Error {
       INVALID_DUCK: "自动闪避要两条不同的声音轨：一条说话、一条被压。目标轨不能给自己闪避。",
       DUCK_PLAN_TOO_LARGE: "一次要闪避的片段太多（上限 90 条）：先用「去空白」把口播切成几段，或把配乐拆成几条片段再分次闪避。",
       INVALID_TRACK_TARGET: "要跟踪的窗口超出了这条片段：缩短帧数，或从更早的一帧开始。",
+      MASK_TRACK_DUPLICATE: "同一段画面在一次运行里只能跟一个遮罩：它只有一条遮罩路径。要跟第二个主体，把这段复制一层、在新的一层上画第二个遮罩，再把两段一起跟踪；一次撤销会把这一批整段退回。",
       MASK_TRACK_BUDGET: "这条片段的曲线已经写满了：一个跟踪点要占 4 条曲线（中心 X/Y 加宽高），片段最多 2000 条。把这段切成几条短片段分别跟、删掉不要的关键帧，或者关掉尺寸估计（一个点只占 2 条）；也能把播放头挪到已经跟好的末尾，用「接着跟」续一小段。",
       TRACK_FAILED: "画面里没有跟得住的东西：把遮罩盖到纹理明显的主体上再试，或加大搜索半径、减少帧数。",
       INVALID_SPEED: "这个速度改不了：图片和文字没有播放速度，曲线变速要真正的媒体片段。",
@@ -1080,21 +1096,11 @@ export class Engine {
     );
   }
 
-  maskTrack(projectId: string, clipId: string, body: Record<string, unknown>) {
+  maskTrack(projectId: string, body: Record<string, unknown>) {
     return this.request<{
-      tracking: {
-        points: { at_ticks: number; center_x: number; center_y: number; width?: number; height?: number }[];
-        tracked_frames: number; predicted_frames: number; scale_estimated: boolean;
-        reacquire: boolean; reacquired_frames: number; reacquired_at_ticks: number[];
-        gap_closure: number;
-        gaps: { from_ticks: number; to_ticks: number }[]; lost_at_ticks: number | null;
-        first_at_ticks: number; last_at_ticks: number;
-        merged?: boolean; kept_frames?: number; replaced_frames?: number;
-        budget_frames?: number;
-        seam_ticks?: number; seam_jump?: number;
-      };
+      tracking: { target_count: number; decoded_passes: number; frames_decoded: number; targets: MaskTrackReceipt[] };
       committed: boolean;
-    }>("POST", `/v1/projects/${projectId}/clips/${clipId}/track`, body, 600000);
+    }>("POST", `/v1/projects/${projectId}/mask-track`, body, 600000);
   }
 
   silenceScan(projectId: string, clipId: string, body: Record<string, unknown>) {

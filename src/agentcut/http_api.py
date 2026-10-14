@@ -57,6 +57,7 @@ from .contracts import (
     LutParse,
     MarkerSplitRequest,
     MaskTrackRequest,
+    MaskTrackTarget,
     MasterLoudnessRequest,
     MediaProbe,
     MutationResult,
@@ -102,7 +103,7 @@ from .timeline import (
     sequence_view,
     validate_timeline,
 )
-from .tracking import track_mask
+from .tracking import analyse_window, follow_window
 
 MEDIA_TYPES = {
     ".jpg": "image/jpeg",
@@ -764,20 +765,28 @@ def create_app(
         mutation = projects.mutate(project_id, batch).model_dump()
         return {**mutation, **body}
 
-    @app.post("/v1/projects/{project_id}/clips/{clip_id}/track", dependencies=auth)
-    def mask_track(
-        project_id: Identifier, clip_id: Identifier, request: MaskTrackRequest, projects: Store
-    ):
-        engine = require_media()
-        root = projects.get(project_id)
-        project = sequence_view(root, request.sequence_id)
-        clip = project.clips.get(clip_id)
+    def plan_mask_track(
+        root: Project, target: MaskTrackTarget, position: int, sequence_id: str | None
+    ) -> dict:
+        """Validate one tracking target and say how far its own run can go.
+
+        Every refusal names the clip and the target's place in the group, so a group that cannot be
+        analysed does not have to be bisected to find out which one blocked it. The clip's curve
+        budget is the second ceiling after the request's own: one sized sighting costs four curves,
+        so the window is shortened to whatever that clip can still hold before anything is decoded.
+        """
+        project = sequence_view(root, sequence_id)
+        clip = project.clips.get(target.clip_id)
         if clip is None:
-            raise EditorError("NOT_FOUND", "clip is not in this project", 404, clip_id=clip_id)
+            raise EditorError(
+                "NOT_FOUND", "clip is not in this project", 404, clip_id=target.clip_id,
+                target_position=position,
+            )
         asset = project.assets.get(clip.asset_id)
         if asset is None or asset.kind != "video" or asset.verified is None:
             raise EditorError(
-                "INVALID_TRACK_TARGET", "only verified video clips can be tracked", 422
+                "INVALID_TRACK_TARGET", "only verified video clips can be tracked", 422,
+                clip_id=clip.id, target_position=position,
             )
         # A free-form outline can be followed by position, but its drawn size is fixed for the
         # clip, so the scale estimator is switched off rather than silently resized away.
@@ -788,16 +797,21 @@ def create_app(
             else "a mask is required before tracking"
         )
         if problem:
-            raise EditorError("INVALID_MASK", problem, clip_id=clip_id)
+            raise EditorError("INVALID_MASK", problem, clip_id=clip.id, target_position=position)
         if clip.speed_curve:
             raise EditorError(
                 "INVALID_MASK",
                 "a tracked mask path cannot follow a speed curve yet",
-                clip_id=clip_id,
+                clip_id=clip.id,
+                target_position=position,
             )
-        if request.from_ticks >= clip.duration_ticks:
+        if target.from_ticks >= clip.duration_ticks:
             raise EditorError(
-                "INVALID_TRACK_TARGET", "tracking starts outside the clip", 422, clip_id=clip_id
+                "INVALID_TRACK_TARGET",
+                "tracking starts outside the clip",
+                422,
+                clip_id=clip.id,
+                target_position=position,
             )
         source = Path(asset.verified.path)
         if not source.is_file():
@@ -808,24 +822,23 @@ def create_app(
                 clip_id=clip.id,
                 asset_id=clip.asset_id,
                 asset_label=source.name,
+                target_position=position,
             )
         frame_ticks = project.settings.frame_ticks
         speed = clip.speed_percent / 100
-        start = clip.source_in_ticks + int(request.from_ticks * speed)
-        # The clip's curve budget decides how far one run can go: a sized sighting costs four
-        # curves per frame, so the request's own ceiling is unreachable long before 900 frames on a
-        # long clip. Ask for what the write can actually hold, and say so in the reply.
-        estimate_scale = request.estimate_scale and not follows_shape
+        start = clip.source_in_ticks + int(target.from_ticks * speed)
+        estimate_scale = target.estimate_scale and not follows_shape
         curves = len(MASK_TRACK_SIZED_CURVES) if estimate_scale else len(MASK_TRACK_CURVES)
-        capacity = mask_track_capacity(clip, curves, request.merge, request.from_ticks, frame_ticks)
-        frames = min(request.frames, capacity)
+        capacity = mask_track_capacity(clip, curves, target.merge, target.from_ticks, frame_ticks)
+        frames = min(target.frames, capacity)
         if frames < TRACK_FRAMES_MIN:
             raise EditorError(
                 "MASK_TRACK_BUDGET",
                 "this clip has no room left for another tracked frame",
                 422,
-                clip_id=clip_id,
-                frames_requested=request.frames,
+                clip_id=clip.id,
+                target_position=position,
+                frames_requested=target.frames,
                 capacity_frames=capacity,
                 curves_per_point=curves,
                 keyframe_limit=CLIP_KEYFRAME_LIMIT,
@@ -837,94 +850,195 @@ def create_app(
                 "SOURCE_OUT_OF_BOUNDS",
                 "tracking runs past the end of the source media",
                 422,
+                clip_id=clip.id,
+                target_position=position,
                 frames=frames,
             )
-        result = track_mask(
-            engine.ffmpeg,
-            source,
-            asset.verified.width or project.settings.width,
-            asset.verified.height or project.settings.height,
-            project.settings.frame_rate,
-            (clip.mask.center_x, clip.mask.center_y, clip.mask.width, clip.mask.height),
-            frames,
-            start,
-            frame_ticks,
-            request.search_radius,
-            estimate_scale,
-            request.max_gap_frames,
-            request.reacquire,
-            clip.speed_percent,
-        )
-        points = [
-            {
-                "at_ticks": request.from_ticks + point["at_ticks"],
-                "center_x": point["mask_x"],
-                "center_y": point["mask_y"],
-                **({"width": point["width"], "height": point["height"]} if estimate_scale else {}),
-            }
-            for point in result["points"]
-        ]
-        if len(points) < 2:
+        return {
+            "clip": clip,
+            "target": target,
+            "position": position,
+            "source": source,
+            "source_width": asset.verified.width or project.settings.width,
+            "source_height": asset.verified.height or project.settings.height,
+            "rate": project.settings.frame_rate,
+            "frame_ticks": frame_ticks,
+            "speed_percent": clip.speed_percent,
+            "start": start,
+            "frames": frames,
+            "capacity": capacity,
+            "curves": curves,
+            "estimate_scale": estimate_scale,
+            "box": (clip.mask.center_x, clip.mask.center_y, clip.mask.width, clip.mask.height),
+            # Everything the decoder actually sees. Two stacked copies of the same shot, asked for
+            # the same window at the same rate, land on one key and so on one decode.
+            "window_key": (
+                str(source),
+                start,
+                frames,
+                frame_ticks,
+                clip.speed_percent,
+                asset.verified.width,
+                asset.verified.height,
+                project.settings.frame_rate.numerator,
+                project.settings.frame_rate.denominator,
+            ),
+        }
+
+    @app.post("/v1/projects/{project_id}/mask-track", dependencies=auth)
+    def mask_track(project_id: Identifier, request: MaskTrackRequest, projects: Store):
+        """Analyse a group of box masks and write every path in one batch.
+
+        The group is compiled before it is measured: targets are validated one by one, and only
+        once every window and budget is settled does the media get decoded. Two targets that read
+        the same window of the same file share that decode.
+        """
+        engine = require_media()
+        root = projects.get(project_id)
+        listed = [target.clip_id for target in request.targets]
+        repeats = sorted({clip_id for clip_id in listed if listed.count(clip_id) > 1})
+        if repeats:
             raise EditorError(
-                "TRACK_FAILED",
-                "too few frames matched to track",
+                "MASK_TRACK_DUPLICATE",
+                "one clip carries one mask path, so the same clip cannot be tracked twice in one "
+                "run; track it once, then move the mask onto the other subject and press "
+                "「接着跟」",
                 422,
-                clip_id=clip_id,
-                matched=len(points),
-                frames=request.frames,
+                clip_ids=repeats,
+                target_count=len(listed),
+            )
+        plans = [
+            plan_mask_track(root, target, position, request.sequence_id)
+            for position, target in enumerate(request.targets, start=1)
+        ]
+        windows: dict[tuple, tuple[int, list[bytes]]] = {}
+        for plan in plans:
+            if plan["window_key"] not in windows:
+                windows[plan["window_key"]] = analyse_window(
+                    engine.ffmpeg,
+                    plan["source"],
+                    plan["source_width"],
+                    plan["source_height"],
+                    plan["rate"],
+                    plan["start"],
+                    plan["frame_ticks"],
+                    plan["frames"],
+                    plan["speed_percent"],
+                )
+        commands: list[dict] = []
+        receipts: list[dict] = []
+        measured: set[tuple] = set()
+        for plan in plans:
+            target = plan["target"]
+            clip = plan["clip"]
+            shared = plan["window_key"] in measured
+            measured.add(plan["window_key"])
+            width, decoded = windows[plan["window_key"]]
+            result = follow_window(
+                decoded,
+                width,
+                plan["box"],
+                target.search_radius,
+                plan["rate"],
+                plan["frame_ticks"],
+                scale=plan["estimate_scale"],
+                max_gap=target.max_gap_frames,
+                reacquire=target.reacquire,
+                speed_percent=plan["speed_percent"],
+            )
+            points = [
+                {
+                    "at_ticks": target.from_ticks + point["at_ticks"],
+                    "center_x": point["mask_x"],
+                    "center_y": point["mask_y"],
+                    **(
+                        {"width": point["width"], "height": point["height"]}
+                        if plan["estimate_scale"]
+                        else {}
+                    ),
+                }
+                for point in result["points"]
+            ]
+            if len(points) < 2:
+                raise EditorError(
+                    "TRACK_FAILED",
+                    "too few frames matched to track",
+                    422,
+                    clip_id=clip.id,
+                    target_position=plan["position"],
+                    matched=len(points),
+                    frames=target.frames,
+                )
+            commands.append(
+                {
+                    "op": "clip.mask_track",
+                    "clip_id": clip.id,
+                    "points": points,
+                    "merge": target.merge,
+                }
+            )
+            receipts.append(
+                {
+                    "clip_id": clip.id,
+                    "target_position": plan["position"],
+                    "shared_decode": shared,
+                    "analysis_width": result["analysis_width"],
+                    "analysis_height": result["analysis_height"],
+                    "sampled_frames": result["sampled_frames"],
+                    "tracked_frames": len(points),
+                    "predicted_frames": result["predicted_frames"],
+                    "reacquire": result["reacquire"],
+                    "reacquired_frames": result["reacquired_frames"],
+                    "reacquired_at_ticks": [
+                        target.from_ticks + at for at in result["reacquired_at"]
+                    ],
+                    "gap_closure": result["gap_closure"],
+                    "scale_estimated": result["scale"],
+                    "speed_percent": result["speed_percent"],
+                    "sample_rate": result["sample_rate"],
+                    "gaps": [
+                        {
+                            "from_ticks": target.from_ticks + gap["from_ticks"],
+                            "to_ticks": target.from_ticks + gap["to_ticks"],
+                        }
+                        for gap in result["gaps"]
+                    ],
+                    "merged": target.merge,
+                    **(
+                        {}
+                        if plan["frames"] == target.frames
+                        else {"budget_frames": plan["frames"]}
+                    ),
+                    **({} if not target.merge else track_seam(clip, points)),
+                    "first_at_ticks": points[0]["at_ticks"],
+                    "last_at_ticks": points[-1]["at_ticks"],
+                    "lost_at_ticks": (
+                        None
+                        if result["lost_at_ticks"] is None
+                        else target.from_ticks + result["lost_at_ticks"]
+                    ),
+                    "points": points,
+                }
             )
         batch = EditBatch(
             request_id=request.request_id,
             expected_revision=request.expected_revision,
             sequence_id=request.sequence_id,
-            commands=[
-                {
-                    "op": "clip.mask_track",
-                    "clip_id": clip_id,
-                    "points": points,
-                    "merge": request.merge,
-                }  # type: ignore[list-item]
-            ],
+            commands=commands,  # type: ignore[arg-type]
             dry_run=request.dry_run,
         )
         mutation = projects.mutate(project_id, batch).model_dump()
         return {
             **mutation,
             "tracking": {
-                "analysis_width": result["analysis_width"],
-                "analysis_height": result["analysis_height"],
-                "sampled_frames": result["sampled_frames"],
-                "tracked_frames": len(points),
-                "predicted_frames": result["predicted_frames"],
-                "reacquire": result["reacquire"],
-                "reacquired_frames": result["reacquired_frames"],
-                "reacquired_at_ticks": [request.from_ticks + at for at in result["reacquired_at"]],
-                "gap_closure": result["gap_closure"],
-                "scale_estimated": result["scale"],
-                "speed_percent": result["speed_percent"],
-                "sample_rate": result["sample_rate"],
-                "gaps": [
-                    {
-                        "from_ticks": request.from_ticks + gap["from_ticks"],
-                        "to_ticks": request.from_ticks + gap["to_ticks"],
-                    }
-                    for gap in result["gaps"]
-                ],
-                "merged": request.merge,
-                **({} if frames == request.frames else {"budget_frames": frames}),
-                **({} if not request.merge else track_seam(clip, points, request)),
-                "first_at_ticks": points[0]["at_ticks"],
-                "last_at_ticks": points[-1]["at_ticks"],
-                "lost_at_ticks": (
-                    None
-                    if result["lost_at_ticks"] is None
-                    else request.from_ticks + result["lost_at_ticks"]
-                ),
-                "points": points,
+                "target_count": len(receipts),
+                "decoded_passes": len(windows),
+                "frames_decoded": sum(len(pair[1]) for pair in windows.values()),
+                "targets": receipts,
             },
         }
 
-    def track_seam(clip, points: list[dict], request) -> dict:
+    def track_seam(clip, points: list[dict]) -> dict:
         """What a continued track joins onto: how much survives, and how far the seam jumps.
 
         The new window's points are clip-local while the clip's curves live on the animation

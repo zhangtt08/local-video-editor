@@ -5780,3 +5780,25 @@ YUV mp4**（1.151 那次界面真点抓到缺陷，用的就是这种素材）�
   3. 模拟一份认 γ2.6 的随包 FFmpeg（把 `gamma26` 塞进读来的名单）→ 红在「墙换了地方，重新量它」那句；
   4. 模拟一份连 `bt709` 都念不出的 FFmpeg（名单只剩 unknown）→ 红在「档位 bt709 声明的 primaries 不在名单里」，
      也就是这份名单一旦被读空，四档一律不放行，而不是照旧绿。
+
+## 1.157（2026-10-14）多目标遮罩跟踪
+
+- 交付：组请求 `POST /mask-track`（MCP `mask_track`）、逐目标的窗口/预算/`merge`、按窗口键共享的
+  一次解码、界面「跟踪所选 N 段」，以及 `MASK_TRACK_DUPLICATE` 这条点名拒绝。旧的每片段路由
+  `/clips/{clip_id}/track` 删干净，两处入口不留分家。
+- 量到的：同一段窗口的 2 个目标 → `decoded_passes=1`、`frames_decoded=60`，第二条目标
+  `shared_decode=true`；两个不同窗口 → `decoded_passes=2`；把 `CLIP_KEYFRAME_LIMIT-1` 条曲线灌进
+  第二段 → 整组 `MASK_TRACK_BUDGET`，`details` 点名 `clip_id` 与 `target_position`，另一段一条
+  `mask_x` 都不许多写、revision 一步都不许多涨；把那段拿掉，同一份请求照旧跟满 60 帧。
+- 修掉两处本轮自己写进去的缺陷：`frames_decoded` 一度把 `(width, frames)` 元组的长度当成帧数
+  （回执报 2），`plan_mask_track` 还在读目标上已删除的 `sequence_id`（`analysis_sweep_check` 与
+  `sequence_plan_check` 当场红，红得对）。
+- 修掉一条既有交付缺陷：`contracts.py` 里 `bt2020` 那一段注释被 newline-join 粘成一行（ruff E501
+  117 列，仓库没有门禁跑 ruff，所以它活了一轮），而粘进去的那句「最差 1 阶」正是 1.156 已经改过口、
+  却漏掉的一处手抄——注释从此不再抄会过期的阶数，那个数只由 `flat_suite` 当场核对 README 那一行。
+- 夹具说过一次谎：`drawbox=x=…t` 的 `t` 不按帧重算，两块板子是静止的，跟踪在第一帧就报跟丢。
+  换成两路 `overlay` 推盒子之后，反向双板各自跟满 60 帧、最差偏差 0.0067 幅宽；`fixture_suite`
+  先把两个盒子单独跟一遍并和解析真值比，之后的判据才站在真实的画面上。
+- 测试面：新增 `tests/multitrack_check.py` 与 `tests/desktop_trackgroup_check.ts`；
+  `tracking_check`、`analysis_sweep_check`、`sequence_plan_check`、`self_check` 跟着组请求与工具改名走
+  （`clip_track` → `mask_track`）。

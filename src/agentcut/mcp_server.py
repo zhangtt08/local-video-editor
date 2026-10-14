@@ -573,25 +573,23 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         )
 
     @server.tool(annotations=write)
-    async def clip_track(
-        project_id: Identifier, clip_id: Identifier, request: MaskTrackRequest
-    ) -> dict[str, Any]:
-        """Follow one box mask across the picture and write the path as mask keyframes.
+    async def mask_track(project_id: Identifier, request: MaskTrackRequest) -> dict[str, Any]:
+        """Follow one or more box masks and write each path as mask keyframes.
 
-        The analysis reads the server-verified media; the write goes through the same transaction as
-        `timeline_edit`, so dry_run saves nothing and a repeated request_id replays. `merge` (on by
-        default) keeps the points outside the analysed window, so a run that loses the subject can
-        be continued from a later frame instead of starting over and wiping the first half.
-        `sequence_id` follows a mask on a clip inside a nested composition. While the subject is
-        hidden `reacquire` searches the whole picture once more per frame, so a target that comes
-        back somewhere else — or after a long occlusion — is found again instead of reported lost;
-        the reply lists the ticks it was re-found at and how far the guesses had to be shifted.
-        A clip's curve list is the second ceiling: one sized sighting costs four curves, so the run
-        is shortened to whatever the clip can still hold and the reply says so with `budget_frames`.
+        A group is one transaction: every target is validated and given its own curve budget before
+        any frame is decoded, all the paths land at one revision, and one undo takes them back
+        together. Targets reading the same window of the same file share one decode, so three
+        subjects in one shot cost one pass over the media. The analysis reads the server-verified
+        media. `merge` (on by default) keeps the points outside each target's own window, so a run
+        that lost a subject can be continued from a later frame instead of starting over and wiping
+        the first half. A clip's curve list is the second ceiling, per target: one sized sighting
+        costs four curves, so that target's window is shortened to whatever its clip can still hold
+        and its receipt says so with `budget_frames`. `sequence_id` applies to the whole group,
+        because one batch is applied inside one composition.
         """
         return await call(
             "POST",
-            f"/v1/projects/{project_id}/clips/{clip_id}/track",
+            f"/v1/projects/{project_id}/mask-track",
             request.model_dump(mode="json"),
             timeout=900,
         )

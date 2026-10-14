@@ -9,7 +9,9 @@ and every frame of that window is also searched again over the whole picture on 
 so a target that comes back somewhere else — or after a long occlusion — is re-found rather than
 guessed past. When a sighting ends such a window the guesses are re-anchored to it, and the shift
 they needed is reported. What comes back are ordinary mask keyframes, so `apply_edits` stays the
-only writer of project state.
+only writer of project state. Decoding and following are two calls (`analyse_window`,
+`follow_window`) so a group of targets that share a window shares one pass over the media while each
+still gets its own path.
 """
 
 import math
@@ -435,25 +437,24 @@ def track_box(
     }
 
 
-def track_mask(
+def analyse_window(
     ffmpeg: Path,
     source: Path,
     source_width: int,
     source_height: int,
     rate: FrameRate,
-    box: tuple[float, float, float, float],
-    frames: int,
     start_ticks: int,
     frame_ticks: int,
-    search: int,
-    scale: bool = True,
-    max_gap: int = GAP_LIMIT,
-    reacquire: bool = True,
+    frames: int,
     speed_percent: int = 100,
-) -> dict:
-    """Track the mask box for `frames` frames and return mask keyframes in clip-local ticks."""
+) -> tuple[int, list[bytes]]:
+    """Decode the samples one tracking run reads, at the analysis width and the clip's own rate.
+
+    Decoding is the expensive half of a run, so it is a call of its own: a group of targets that ask
+    for the same window of the same file asks for it once, which is what makes following three
+    subjects in one shot cost one pass over the media rather than three.
+    """
     duration = frames * frame_ticks / TIMEBASE
-    sample_num, sample_den = analysis_rate(rate, speed_percent)
     width, height, decoded = decode_luma(
         ffmpeg,
         source,
@@ -467,6 +468,28 @@ def track_mask(
     )
     if len(decoded) < 2:
         raise EditorError("TRACK_FAILED", "too few frames to track", 422)
+    return width, decoded
+
+
+def follow_window(
+    decoded: list[bytes],
+    width: int,
+    box: tuple[float, float, float, float],
+    search: int,
+    rate: FrameRate,
+    frame_ticks: int,
+    scale: bool = True,
+    max_gap: int = GAP_LIMIT,
+    reacquire: bool = True,
+    speed_percent: int = 100,
+) -> dict:
+    """Follow one box through frames somebody else decoded, in clip-local ticks.
+
+    Every target runs its own correlation pass over the shared samples, which is why the two calls
+    are separate: the pictures are the same, the boxes — and therefore the answers — are not.
+    """
+    height = len(decoded[0]) // width
+    sample_num, sample_den = analysis_rate(rate, speed_percent)
     result = track_box(
         decoded, width, box, search, scale=scale, max_gap=max_gap, reacquire=reacquire
     )

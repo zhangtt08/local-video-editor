@@ -45,7 +45,7 @@ import { align, frameTicks, sampleTicks, ticks, TIMEBASE } from "./time";
 import { clipboardAssetsToReprobe, copyClips, pasteCommands, relatedClips, reviveClipboardAssets, selectionQuantum, timelineTracks, type ClipClipboard } from "./selection";
 import { linkSplitTrim } from "./splitTrim";
 import { CLIP_KEY, MARKS_KEY, isClipClipboard, isSourceMarks, readBrowser, writeBrowser, type SourceMark } from "./clipboardStore";
-import type { FadeOp, FadeProperty, FadeShape, FadeSide } from "./effects";
+import type { FadeOp, FadeProperty, FadeShape, FadeSide, TrackTarget } from "./effects";
 import { fadeAdoptSummary } from "./effects";
 import {
   changedFromDefault,
@@ -718,30 +718,64 @@ export async function stabilizeClip(clipId: string, strength = 1, maxCrop = 0.1)
   }
 }
 
-export async function trackMask(
-  clipId: string, fromTicks: number, frames: number, merge = true,
-  options?: { reacquire?: boolean; maxGapFrames?: number; scale?: boolean },
-) {
+/** 回执里只有 clip_id，人认的是那一段画面上写的名字。 */
+function clipName(project: Project, clipId: string): string {
+  const clip = project.clips[clipId];
+  const label = clip ? project.assets[clip.asset_id]?.label : undefined;
+  return label ? `${label}` : clipId;
+}
+
+/** 跟踪一组遮罩：一次分析、一批命令、一个版本，撤销一步整批退回。
+ *  引擎把每个目标各自的曲线预算算好交回来，界面只照着写：段数上限、每段量几帧、被预算收短了多少，
+ *  全部来自同一份回执（`trackWindow`/`trackGroup` 那一个判断），这里不再数第二遍。 */
+export async function trackMasks(targets: TrackTarget[]) {
   const project = state.project;
-  if (!engine || !project) return;
-  set({ busy: "跟踪遮罩主体…" });
+  if (!engine || !project || !targets.length) return;
+  set({ busy: targets.length > 1 ? `跟踪 ${targets.length} 段遮罩…` : "跟踪遮罩主体…" });
   try {
-    const analysed = await engine.maskTrack(project.id, clipId, {
+    const analysed = await engine.maskTrack(project.id, {
       request_id: newId("track-"), expected_revision: project.revision,
       sequence_id: state.sequenceId,
-      from_ticks: fromTicks, frames, merge, dry_run: true,
-      ...(options?.reacquire === undefined ? {} : { reacquire: options.reacquire }),
-      ...(options?.maxGapFrames === undefined ? {} : { max_gap_frames: options.maxGapFrames }),
-      ...(options?.scale === undefined ? {} : { estimate_scale: options.scale }),
+      targets: targets.map((target) => ({
+        clip_id: target.clipId, from_ticks: target.fromTicks, frames: target.frames, merge: target.merge,
+        ...(target.reacquire === undefined ? {} : { reacquire: target.reacquire }),
+        ...(target.maxGapFrames === undefined ? {} : { max_gap_frames: target.maxGapFrames }),
+        ...(target.scale === undefined ? {} : { estimate_scale: target.scale }),
+      })),
+      dry_run: true,
     });
-    const points = analysed.tracking.points;
-    if (points.length < 2) {
-      toast("warn", "找不到可跟踪的目标", "这段画面里没有稳定的主体，遮罩保持不变。可以把遮罩先盖在主体上再试。");
+    const receipts = analysed.tracking.targets;
+    submit(
+      receipts.map((receipt) => ({
+        op: "clip.mask_track" as const, clip_id: receipt.clip_id, points: receipt.points,
+        merge: receipt.merged ?? true,
+      })),
+      targets.length > 1 ? `跟踪 ${targets.length} 段遮罩主体` : "跟踪遮罩主体",
+    );
+    if (receipts.length > 1) {
+      const total = receipts.reduce((count, receipt) => count + receipt.tracked_frames, 0);
+      const lines = receipts.map((receipt) => {
+        const notes = [`${receipt.tracked_frames} 帧`];
+        if (receipt.predicted_frames > 0) notes.push(`其中 ${receipt.predicted_frames} 帧被挡住按匀速补`);
+        if (receipt.lost_at_ticks !== null) {
+          notes.push(`在 ${(receipt.lost_at_ticks / TIMEBASE).toFixed(2)} 秒处跟丢`);
+        }
+        if (receipt.budget_frames) notes.push(`曲线预算只装得下 ${receipt.budget_frames} 帧`);
+        return `${clipName(project, receipt.clip_id)}：${notes.join("，")}`;
+      });
+      toast(
+        "ok",
+        `已跟踪 ${receipts.length} 段 · 共 ${total} 帧`,
+        `${lines.join("；")}。这几段一起分析、写进同一个版本，撤销一步整批退回；`
+          + `${analysed.tracking.target_count} 个目标共读了 ${analysed.tracking.decoded_passes} 趟画面`
+          + `（同一段画面叠几层、各盖一个主体时共用同一趟）。`,
+      );
       return;
     }
-    submit([{ op: "clip.mask_track", clip_id: clipId, points, merge }], "跟踪遮罩主体");
-    const stats = analysed.tracking;
-    const clip = project.clips[clipId];
+    const stats = receipts[0];
+    const merge = stats.merged ?? true;
+    const frames = targets[0].frames;
+    const clip = project.clips[stats.clip_id];
     // 这一次跑到哪儿为止，只由回复里的数算：引擎既按单次上限、也按这条片段的曲线预算收过窗口，
     // 界面不再自己数一遍——1.87 及以前就是自己数了 300，才把「没量完」说成了「量完了」。
     const tail = clip && stats.lost_at_ticks === null
@@ -767,10 +801,15 @@ export async function trackMask(
             : `单次最多量 ${frames} 帧，片段还剩 ${(tail / TIMEBASE).toFixed(1)} 秒没分析，那段里遮罩停在最后跟到的位置；把播放头挪过去再点「接着跟」就能续上。`
           : "导出使用同一份关键帧。",
     ].join("");
-    toast("info", `已跟踪 ${points.length} 帧`, detail);
+    toast("info", `已跟踪 ${stats.points.length} 帧`, detail);
   } catch (error) {
     const { title, detail } = describe(error);
-    toast("error", title, detail);
+    // 一组里被点名拒绝的是哪一段，引擎在 details 里说了；不把它带出来的话，「这一段」到底是哪一段
+    // 只有 Agent 看得见。整批没有被写入，所以这里不需要说「已保存了一部分」。
+    const named = error instanceof EngineError && typeof error.details.clip_id === "string"
+      ? `${clipName(project, error.details.clip_id)}：`
+      : "";
+    toast("error", title, `${named}${detail}`);
   } finally {
     set({ busy: "" });
   }

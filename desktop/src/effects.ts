@@ -173,6 +173,49 @@ export function trackWindow(
   return { frames: Math.min(max, remainingFrames), blocked: null };
 }
 
+/** 一组遮罩跟踪的目标：一条片段一份窗口，三个旋钮整组共用（它们本来就是应用偏好）。 */
+export type TrackTarget = {
+  clipId: string; fromTicks: number; frames: number; merge: boolean;
+  reacquire?: boolean; maxGapFrames?: number; scale?: boolean;
+};
+
+/** 一次跟踪一组遮罩。每段各按自己的长度决定「量几帧」，判断仍然只在 `trackWindow` 里，这里只是把它
+ *  逐段调一遍——「这一段太短」那句话和单段完全一样，不存在第二套说法。
+ *  播放头不参与：一组的语义就是「把这几段各自从片段开头量到量得完的地方」。若跟着播放头，选中两段时
+ *  它只落在其中一段里，另一段会被判成「只剩 0 帧」，那是在挑时段而不是在跟一组。
+ *  段数的天花板是引擎的数（`capabilities.limits.track_max_targets`），界面不自带一个：超了就点名要求
+ *  少选几段，而不是偷偷截断——截断会让人以为剩下那几段也跟过了。 */
+export function trackGroup(
+  clips: { id: string; duration_ticks: number }[],
+  perFrame: number,
+  limits?: { track_min_frames?: number; track_max_frames?: number; track_max_targets?: number },
+  knobs?: { reacquire: boolean; maxGapFrames: number; scale: boolean }
+): { targets: TrackTarget[]; blocked: string | null } {
+  const ceiling = limits?.track_max_targets ?? 8;
+  if (clips.length > ceiling) {
+    return {
+      targets: [],
+      blocked: `一次最多跟 ${ceiling} 段（这个数由引擎下发），这次选了 ${clips.length} 段。少选几段再点，或者分几次跟。`,
+    };
+  }
+  const targets: TrackTarget[] = [];
+  for (const clip of clips) {
+    const window = trackWindow(Math.floor(clip.duration_ticks / perFrame), true, limits);
+    if (window.blocked) {
+      return { targets: [], blocked: `第 ${targets.length + 1} 段量不动：${window.blocked}` };
+    }
+    targets.push({
+      clipId: clip.id,
+      fromTicks: 0,
+      frames: window.frames,
+      merge: true,
+      ...(knobs ? { reacquire: knobs.reacquire, maxGapFrames: knobs.maxGapFrames, scale: knobs.scale } : {}),
+    });
+  }
+  return { targets, blocked: null };
+}
+
+
 /** 遮罩跟踪的三个旋钮：挡住最多猜几帧、要不要在整幅画面上重找、遮罩随远近缩放。
  *  它们是「下一次请求怎么发」的默认值，不是工程数据——写进工程要经 `updateProjectMeta`，那会每
  *  点一次涨一个 revision 并清空撤销栈，等于拿用户的编辑历史换一个勾选。所以它们跟着应用走

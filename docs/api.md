@@ -23,7 +23,7 @@ HTTP 使用 `Authorization: Bearer <AGENTCUT_TOKEN>`。JSON 请求严格校验�
 | POST /v1/projects/{id}/markers/split | marker_split | 按标记分割：只出普通 `clip.split` 计划，`apply` 才写入 |
 | POST /v1/projects/{id}/speech-captions | captions_auto | 本地语音识别成字幕线索并取回 `captions.import` 计划（`apply`/`dry_run` 在该工具里固定为 false） |
 | `clip.slip` / `clip.slide`（`/edits`） | timeline_edit | 划动素材窗口 / 左右滑移，两侧相邻段各自补让 |
-| POST /v1/projects/{id}/clips/{c}/track | clip_track | 分析画面并把遮罩路径一次写成关键帧（与 `/edits` 同一事务语义） |
+| POST /v1/projects/{id}/mask-track | mask_track | 一组目标一起分析画面，每个遮罩各把自己的路径写成关键帧：读同一段窗口的目标只解码一次，整组落进一个批次（与 `/edits` 同一事务语义） |
 | GET /v1/projects/{id}/frame | preview_frame | 取成片的一帧：导出渲染器算出的 PNG（长边压到 256 便于传输，宽高比不变），附 `sha256` 与真正取样的 tick；`sequence_id` 取合成里的画面 |
 | GET /v1/media/cache | media_cache_read | 派生缓存清单：条目、字节、上限 |
 | POST /v1/media/cache/prune | media_cache_prune | 按预算整项淘汰派生缓存（LRU），`dry_run` 先看会删什么、`keep` 保护正在看的哈希 |
@@ -2950,3 +2950,29 @@ H.264，装不下透明度，于是整条被让掉并在悬停里说清为什么
 - 界面一字未改：那一栏排的就是 `capabilities.output_colour_tags`，档名、标签、能挂哪些预设
   全从引擎那张表下来（`tests/desktop_colour_tag_check.ts` 逐行扫 `desktop/src`，标记值出现的
   清单仍是空表）。
+
+## 1.157 多目标遮罩跟踪：一组目标一次跑完
+
+`POST /v1/projects/{project_id}/mask-track`（MCP 的 `mask_track`）取代了每片段那一条
+`/clips/{clip_id}/track`。载荷是 `{request_id, expected_revision, sequence_id?, targets, dry_run?}`，
+`targets` 有 1..`capabilities.limits.track_max_targets`（契约 `TRACK_TARGET_LIMIT`）项，每项写着
+`{clip_id, from_ticks=0, frames=120(2..900), search_radius=10(2..16), estimate_scale=true,`
+`max_gap_frames=60(0..240), reacquire=true, merge=true}`。`sequence_id` 留在请求一级：一个批次只落在
+一处合成里，所以整组共读它，目标不许各自挑合成。
+
+回执里的 `tracking` 变成 `{target_count, decoded_passes, frames_decoded, targets: [...]}`。每一项就是
+1.85–1.88 那一份单目标回执（`sampled_frames`、`tracked_frames`、`predicted_frames`、
+`reacquired_at_ticks`、`gap_closure`、`scale_estimated`、`budget_frames`、`kept_frames`、`seam_jump`、
+`lost_at_ticks`、`points` 都在），另加 `clip_id`、`target_position` 与 `shared_decode`（这一项是否搭了
+前面某个目标已经读好的那一趟）。`decoded_passes` 是真正解码了几趟：量到的两份都写在
+`tests/multitrack_check.py`——同一段窗口的两个目标是 1 趟 60 帧，两个不同窗口的是 2 趟。
+
+拒绝都点名，而且整组一起站住：同一段排两个目标回 422 `MASK_TRACK_DUPLICATE`（`details.clip_ids`）；
+某一段的曲线预算装不下下一帧回 422 `MASK_TRACK_BUDGET`（`details` 带着 `clip_id`、`target_position`
+和原来那五个数）。两种判定都在解码之前完成，revision 一步不涨，另一段一条曲线都不许多写；把挤不动
+的那段从组里拿掉，同一份请求照旧交得出整条路径。写入仍是 N 条普通 `clip.mask_track` 命令进一个
+`EditBatch`：一个版本、一步撤销整批退回，reducer 那一站一字未改。
+
+界面：多选里遮罩区会出现「跟踪所选 N 段」，每段量几帧仍由 `effects.ts` 的 `trackGroup` 逐段去问
+`trackWindow`（一处判断，太短那段沿用同一句话），段数上限来自 `capabilities.limits.track_max_targets`。
+没有可动画遮罩的段被跳过时报出几段，而不是让整组看起来像「都跟过了」。

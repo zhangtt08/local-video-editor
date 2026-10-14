@@ -14,7 +14,7 @@ SCHEMA_VERSION = (
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.156.0"
+APP_VERSION = "1.157.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -275,6 +275,10 @@ TRACK_REAQUIRE_SCALE = 4
 # a window narrower than the clip is what makes a tracked mask silently hold still.
 TRACK_FRAMES_MIN = 2
 TRACK_FRAMES_MAX = 900
+# How many subjects one run may follow. Each target costs its own correlation pass, so the
+# ceiling bounds the synchronous call the way TRACK_FRAMES_MAX bounds one target's window; the
+# interface reads this number from capabilities.limits and must not carry its own.
+TRACK_TARGET_LIMIT = 8
 
 
 def spatial_radius(fraction: float, frame_height: int) -> float:
@@ -436,10 +440,11 @@ OUTPUT_COLOUR_TAGS: tuple[dict[str, str], ...] = (
     # (81,109,146)，与「BT.2020 公布的 rec709→rec2020 那张表 + 0.2627/0.6780/0.0593 系数」独立算出
     # 的 (82,109,145) 差 (1,0,1)；容器读回 `color_space=bt2020nc`＋`color_primaries=bt2020`＋
     # `bt709`＋`tv`，mp4 与 MXF 都一样；一台老实的观看者按这四样解回来得 (126,62,28)，与源差
-    # (0,1,2)。判「这句基色兑不兑得了现」用纯色（`flat_suite`）：五种画面格式各取一条代表、三片
-    # 贴着 709 边界的三片暗饱和纯色，按容器那四样标记解回来最差 1 阶——8 位 4:2:0 也算得过，    # 所以这一档不挑预设。
-    # 立方体在格与格之间的插值用 2×2 块的渐变判（`ramp_suite`，10 位上最大 8 阶、控制档 1~2 阶），
-    # 格数本身用数学判（`cube_suite`：33³ 的插值地板 0.17 阶）。
+    # (0,1,2)。判「这句基色兑不兑得了现」用纯色（`flat_suite`）：五种画面格式各取一条代表，
+    # 每片纯色按容器那四样标记解回来，最差的一条不超过判据 4 阶就算过，所以这一档不挑预设。
+    # 量到的阶数由那把尺当场核对 README 那一行；注释不再抄一份会过期的数——1.156 就是被这种
+    # 手抄绊过一次。立方体在格与格之间的插值用 2×2 块的渐变判（`ramp_suite`），格数本身用
+    # 数学判（`cube_suite`：33³ 的格子）。
     # 这一档也是那条规矩的来源：**互逆的一对错曲线是自洽检查抓不到的**。把 BT.709 编码侧的 0.45
     # 与解码侧的 1/0.45 对调之后，纯色往返、恒等立方体的控制组全都照常绿，只有换基色把某个通道
     # 推到极暗时才会把它算成负数、被夹成 0，量到解回差 85 阶。渐变逐列比就是为这个洞放的。
@@ -2216,18 +2221,17 @@ class ProxyRequest(Contract):
     width: Literal[480, 640, 960, 1280]
 
 
-class MaskTrackRequest(Contract):
-    """Analyse the clip's media and move its box mask along with the picture.
+class MaskTrackTarget(Contract):
+    """One subject to follow: a clip whose own box mask says where the target sits.
 
-    While the target is hidden the centre is guessed from recent motion for at most
-    `max_gap_frames` frames, and every one of those frames is searched again over the whole picture
-    when `reacquire` is on, so a subject that comes back somewhere else is found rather than lost.
+    The window and the knobs belong to the target, not to the run. Two subjects in one shot often
+    need different lengths (one leaves the frame early) and different settings (a face does not
+    need the scale estimate, a car walking toward the camera does). One clip carries one mask path,
+    so listing the same clip twice in one run is refused by name rather than letting the second
+    target quietly rewrite the first.
     """
 
-    request_id: Identifier
-    expected_revision: Revision
-    # Read the ids below -- and apply the batch -- inside one nested composition.
-    sequence_id: Identifier | None = None
+    clip_id: Identifier
     from_ticks: Ticks = 0
     frames: Annotated[int, Field(ge=TRACK_FRAMES_MIN, le=TRACK_FRAMES_MAX)] = 120
     search_radius: Annotated[int, Field(ge=2, le=16)] = 10
@@ -2235,8 +2239,29 @@ class MaskTrackRequest(Contract):
     max_gap_frames: Annotated[int, Field(ge=0, le=TRACK_GAP_MAX)] = TRACK_GAP_DEFAULT
     reacquire: bool = True
     merge: bool = True
-    dry_run: bool = False
 
+
+class MaskTrackRequest(Contract):
+    """Follow one or more box masks across the picture in a single run.
+
+    A group is one decision. Every target's clip, mask, media and curve budget are checked before a
+    single frame is decoded, so a group that cannot be analysed refuses by naming the target instead
+    of half-writing the easy ones; all the paths then land in one batch at one revision, and one
+    undo takes them back together. Targets that read the same window of the same file share one
+    decode, so following three subjects in one shot costs one pass over the media rather than three.
+
+    While a target is hidden its centre is guessed from recent motion for at most
+    `max_gap_frames` frames, and every one of those frames is searched again over the whole picture
+    when `reacquire` is on, so a subject that comes back somewhere else is found rather than lost.
+    """
+
+    request_id: Identifier
+    expected_revision: Revision
+    # The whole group is applied inside one composition: a batch carries one sequence id, so
+    # targets in two different compositions are two runs rather than one that silently picks one.
+    sequence_id: Identifier | None = None
+    targets: Annotated[list[MaskTrackTarget], Field(min_length=1, max_length=TRACK_TARGET_LIMIT)]
+    dry_run: bool = False
 
 class ClipStabilizeRequest(Contract):
     """Analyse the clip's own frames and write the inverse of the camera's jitter as keyframes.
@@ -3151,6 +3176,7 @@ def capabilities(
             # window list, so this says "the shape steps on both ends", not "the shape is smooth".
             "path_shape_keys": True,
             "mask_tracking": media_ready,
+            "mask_track_group": media_ready,
             "silence_detection": media_ready,
             "loudness_metering": media_ready,
             # A local speech model turns one clip's own audio into an SRT the importer lands.
@@ -3273,6 +3299,7 @@ def capabilities(
             "track_gap_default": TRACK_GAP_DEFAULT,
             "track_min_frames": TRACK_FRAMES_MIN,
             "track_max_frames": TRACK_FRAMES_MAX,
+            "track_max_targets": TRACK_TARGET_LIMIT,
             "sample_rates": [44_100, 48_000, 96_000],
         },
         "render_presets": render_presets(),

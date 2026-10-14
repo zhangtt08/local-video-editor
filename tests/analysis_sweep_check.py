@@ -66,12 +66,12 @@ CASES = {
             ("strength too wide", {"strength": 400.0}),
         ],
     ),
-    "/clips/vid/track": (
+    "/mask-track": (
         "clip_id",
         [
-            ("in the comp", {"sequence_id": COMP, "frames": 20}),
-            ("ghost comp", {"sequence_id": "nope"}),
-            ("one frame", {"frames": 1}),
+            ("in the comp", {"sequence_id": COMP, "targets": [{"clip_id": "vid", "frames": 20}]}),
+            ("ghost comp", {"sequence_id": "nope", "targets": [{"clip_id": "vid"}]}),
+            ("one frame", {"targets": [{"clip_id": "vid", "frames": 1}]}),
         ],
     ),
     "/tracks/b/silence": (
@@ -388,7 +388,14 @@ def main() -> None:
             gone = []
             for route, body in (
                 ("/clips/s/silence", {"sequence_id": COMP, "apply": False}),
-                ("/clips/vid/track", {"sequence_id": COMP, "frames": 20, "dry_run": True}),
+                (
+                    "/mask-track",
+                    {
+                        "sequence_id": COMP,
+                        "dry_run": True,
+                        "targets": [{"clip_id": "vid", "frames": 20}],
+                    },
+                ),
                 ("/tracks/b/duck", {"sequence_id": COMP, "apply": False}),
             ):
                 answer = client.post(
@@ -422,7 +429,7 @@ def main() -> None:
             )
 
 
-ASKED_COMMIT_ONLY = ["/clips/vid/stabilize", "/clips/vid/track"]
+ASKED_COMMIT_ONLY = ["/clips/vid/stabilize", "/mask-track"]
 
 if __name__ == "__main__":
     main()

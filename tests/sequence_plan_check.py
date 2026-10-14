@@ -355,9 +355,9 @@ def main() -> None:
             )
 
             path = api.analyse(
-                "/clips/c/track",
+                "/mask-track",
                 "comp-track",
-                {"from_ticks": 0, "frames": 10, "merge": False},
+                {"targets": [{"clip_id": "c", "from_ticks": 0, "frames": 10, "merge": False}]},
                 comp=COMP,
             )
             tracked = curves(path["project"]["sequences"][COMP]["clips"]["c"], {"mask_x", "mask_y"})

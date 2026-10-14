@@ -6,7 +6,7 @@ import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionCh
 import { Icon, Modal } from "../ui";
 import { GradeFields } from "./GradeFields";
 import { SpeedFields } from "./SpeedFields";
-import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeAdoptHint, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, INTERPOLATIONS, readTrackingDefaults, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
+import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeAdoptHint, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, INTERPOLATIONS, readTrackingDefaults, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackGroup, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
 import { frameTicks, TIMEBASE, align, humanDuration, offsetWords, seconds, timecode, ticks } from "../time";
 import { linkOffsetSentence } from "../linkOffset";
 import {
@@ -61,7 +61,7 @@ import {
   nestSelection,
   openSequence,
   updateSequence,
-  reframeClip, stabilizeClip, trackMask,
+  reframeClip, stabilizeClip, trackMasks,
   cutSilence,
   autoCaptions,
   adoptTrackFades,
@@ -100,6 +100,7 @@ export function Inspector() {
         <p className="hint">涟漪删除只关闭所选片段独占的时间；其他镜头使用的转场重叠区间会保留。整组操作可一次撤销。</p>
       </section> : null}
 
+      {multiple ? <GroupTrackFields /> : null}
       {!multiple ? <section className="insp-section">
         <div className="row-title">
           <span className="panel-label">片段</span>
@@ -452,6 +453,30 @@ const MASK_ROWS = [['center_x', '中心 X', 0, 100, 'mask_x'], ['center_y', '中
  * there is no numeric box to edit — the centre curves come from 跟踪主体 or the curve editor. */
 const maskRows = (mask: ShapeMask) => (mask.shape === "path" ? [] : MASK_ROWS);
 
+/** 一组遮罩跟踪：多选里每段各按自己的长度量，段数上限与窗口都只由 `trackGroup` 那一处判断。
+ *  放在「成组剪辑」旁边是有意的——一条片段只有一条遮罩路径，所以「一组」就是叠层上的几段各跟各的
+ *  主体；这一节在多选时才出现，正是它该在的地方（放在单段遮罩区里会根本点不到）。 */
+function GroupTrackFields() {
+  const app = useApp();
+  const project = editableProject(app);
+  const knobs = readTrackingDefaults(app.caps?.limits?.track_gap_default ?? 60, app.caps?.limits?.track_max_gap_frames ?? 240);
+  const perFrame = project ? frameTicks(project.settings.frame_rate) : 1;
+  const picked = project ? Object.values(project.clips).filter((one) => (app.selectedClips ?? []).includes(one.id) && canAnimateMask(one.mask)) : [];
+  const skipped = project ? (app.selectedClips ?? []).length - picked.length : 0;
+  const group = trackGroup(picked, perFrame, app.caps?.limits, { reacquire: knobs.sweep, maxGapFrames: knobs.gap, scale: knobs.scale });
+  if (!picked.length) {
+    return <section className="insp-section"><span className="panel-label">遮罩跟踪</span>
+      <p className="hint">多选里没有任何一段带着可以动的遮罩：先在某一段上画好遮罩，再回来一次跟完整组。</p></section>;
+  }
+  return <section className="insp-section">
+    <div className="row-title"><span className="panel-label">遮罩跟踪</span><span className="tag accent">{picked.length} 段</span></div>
+    <fieldset className="effects-fields" disabled={Boolean(app.busy)}>
+      <div className="batch-actions"><button className="btn" disabled={Boolean(app.busy || group.blocked)} title={group.blocked ?? "每段各自从片段开头量到量得完的地方：一次分析、写进同一个版本，撤销一步整批退回；同一段画面叠几层、各盖一个主体时，它们共用同一趟读片"} onClick={() => trackMasks(group.targets)}>跟踪所选 {picked.length} 段</button></div>
+      <p className="hint">三个旋钮沿用应用偏好：挡住最多猜 {knobs.gap} 帧、{knobs.sweep ? "被挡住时在整幅画面上重找" : "被挡住时只按匀速猜"}、{knobs.scale ? "遮罩随远近缩放" : "遮罩不随远近缩放"}（一个跟踪点占 4 条曲线，另一段开着时只占 2 条），每段还各自受自己片段的曲线预算收短，装不下时整组被点名拒绝而不是写一半。{skipped ? ` 另有 ${skipped} 段没有遮罩或遮罩不能动，这一批不跟。` : ""}</p>
+    </fieldset>
+  </section>;
+}
+
 function MaskFields({ clip }: { clip: Clip }) {
   const app = useApp();
   const play = usePlay();
@@ -492,8 +517,8 @@ function MaskFields({ clip }: { clip: Clip }) {
         <div className="effect-row"><label htmlFor="mask-feather">向内羽化</label><EffectInput id="mask-feather" value={mask.feather * 100} min={0} max={100} step={1} onCommit={(value) => setClipMask(clip.id, { ...mask, feather: value / 100 })} /><span className="dim">%</span></div>
         <label><input type="checkbox" checked={mask.inverted} onChange={(e) => setClipMask(clip.id, { ...mask, inverted: e.target.checked })} />反转遮罩</label>
         <div className="insp-actions"><button className={`btn tiny${app.maskEditing ? " active" : ""}`} aria-pressed={app.maskEditing} onClick={() => setMaskEditing(!app.maskEditing)}>画面中编辑</button>
-          {animatable && project ? <button className="btn tiny" disabled={disabled || Boolean(runOn.blocked)} title={runOn.blocked ?? (mask.shape === "path" ? "从播放头开始逐帧分析画面，把轮廓的中心写成关键帧，一直量到片段结尾（单次上限由引擎的 capabilities 下发，量不完会在提示里说清）；路径遮罩只整体搬动，不改形状与大小。主体被挡住时按匀速补一段，同时每一帧都在整幅画面里重新找它，找回后把补的那段按真实位置校正；跟丢时会停下来说明" : "从播放头开始逐帧分析画面，把遮罩中心与大小写成关键帧，一直量到片段结尾（单次上限由引擎的 capabilities 下发，量不完会在提示里说清）；主体被挡住时按匀速补一段，同时每一帧都在整幅画面里重新找它，找回后把补的那段按真实位置校正；跟丢时会停下来说明")} onClick={() => trackMask(clip.id, at, runOn.frames, true, { reacquire: trackSweep, maxGapFrames: trackGap, scale: trackScale })}>{(clip.keyframes ?? []).some((key) => key.property === "mask_x") ? "接着跟" : "跟踪主体"}</button> : null}
-          {animatable && project && (clip.keyframes ?? []).some((key) => key.property === "mask_x") ? <button className="btn tiny subtle" disabled={disabled || Boolean(runAll.blocked)} title={runAll.blocked ?? "整条重跟：从片段开头重新分析，播放头之前已有的路径会被这一段的结果替换"} onClick={() => trackMask(clip.id, 0, runAll.frames, false, { reacquire: trackSweep, maxGapFrames: trackGap, scale: trackScale })}>从头重跟</button> : null}
+          {animatable && project ? <button className="btn tiny" disabled={disabled || Boolean(runOn.blocked)} title={runOn.blocked ?? (mask.shape === "path" ? "从播放头开始逐帧分析画面，把轮廓的中心写成关键帧，一直量到片段结尾（单次上限由引擎的 capabilities 下发，量不完会在提示里说清）；路径遮罩只整体搬动，不改形状与大小。主体被挡住时按匀速补一段，同时每一帧都在整幅画面里重新找它，找回后把补的那段按真实位置校正；跟丢时会停下来说明" : "从播放头开始逐帧分析画面，把遮罩中心与大小写成关键帧，一直量到片段结尾（单次上限由引擎的 capabilities 下发，量不完会在提示里说清）；主体被挡住时按匀速补一段，同时每一帧都在整幅画面里重新找它，找回后把补的那段按真实位置校正；跟丢时会停下来说明")} onClick={() => trackMasks([{ clipId: clip.id, fromTicks: at, frames: runOn.frames, merge: true, reacquire: trackSweep, maxGapFrames: trackGap, scale: trackScale }])}>{(clip.keyframes ?? []).some((key) => key.property === "mask_x") ? "接着跟" : "跟踪主体"}</button> : null}
+          {animatable && project && (clip.keyframes ?? []).some((key) => key.property === "mask_x") ? <button className="btn tiny subtle" disabled={disabled || Boolean(runAll.blocked)} title={runAll.blocked ?? "整条重跟：从片段开头重新分析，播放头之前已有的路径会被这一段的结果替换"} onClick={() => trackMasks([{ clipId: clip.id, fromTicks: 0, frames: runAll.frames, merge: false, reacquire: trackSweep, maxGapFrames: trackGap, scale: trackScale }])}>从头重跟</button> : null}
           {animatable && project ? <label className="dim" title="被挡住的那段时间最多猜多少帧；猜窗用完还没找回，路径就停在最后一次看到的地方。上限由引擎的 capabilities.limits 下发">挡住最多猜
             <input className="input tiny" type="number" min={0} max={gapCeiling} step={5} value={trackGap} aria-label="遮挡时最多猜几帧"
               onChange={(e) => setTrackGap(Math.max(0, Math.min(gapCeiling, Math.round(Number(e.target.value) || 0))))} />帧
