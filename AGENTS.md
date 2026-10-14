@@ -37,6 +37,16 @@
   `tests/desktop_trackgroup_check.ts`（分组不许自己数帧、超上限点名、太短那段沿用同一句话）。
   本轮还修掉两处自己写的缺陷：`frames_decoded` 一度把 `(width, frames)` 元组的长度当成了帧数
   （报 2），以及 `plan_mask_track` 还去读目标上已经不存在的 `sequence_id`。
+- 两处「同一件事只许有一处说法」的门禁这一轮各抓出一遍重复，改法记下来给后面用：三个跟踪旋钮的
+  兜底数字（`?? 240` / `?? 60`）收进 `effects.ts` 的 `trackingKnobs(limits)`，单段面板与多选面板都
+  调它；「跟丢 / 被单次上限收短 / 被曲线预算收短 / 量满了」那句账收进 `store.ts` 的
+  `trackTailNote(stats, tail, frames)`，单段那条长账与一组那每段一行都念它。
+- 「跟踪所选 N 段」必须挂在**多选**才渲染的那一节（`GroupTrackFields`，挨着「成组剪辑」）：第一次
+  放在单段遮罩区里，而多选时那一段根本不挂载，按钮在唯一用得上它的状态下不存在——类型检查与
+  55 份壳层检查都绿，是真点了一次才暴露的。加选择态相关的控件，就要把那个态真点一遍。
+- 本轮还改口了三处指向旧写法的门禁字面量（`MaskTrackRequest.model_fields["frames"]` →
+  `MaskTrackTarget`、`options.scale` → `target.scale`、拼出来的 `f"/clips/{clip_id}/track"`）：
+  断言数的还是同一个数、要求的还是同一句话，只是指向它现在真正住的地方。
 - 下一轮的具体入口：
   1. 交付标记与工程色彩管理的显示端对齐（1.152 起挂着，工程级基色那一半仍缺）。
   2. 影院 DCI-P3：色适应不是墙，墙是随包 FFmpeg 念不出 γ2.6（1.156 量过并双向钉住）。
