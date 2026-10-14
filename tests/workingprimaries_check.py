@@ -33,8 +33,6 @@ from agentcut.contracts import TIMEBASE as T
 from agentcut.gamut import (
     PRIMARIES,
     WORKING_PRIMARIES,
-    bt709_eotf,
-    bt709_oetf,
     delivery_cube,
     primaries_matrix,
     transfer_tables,
@@ -134,7 +132,10 @@ def vocabulary_suite() -> None:
 
     decode, encode = transfer_tables()
     assert len(decode) == len(encode) == 256, (len(decode), len(encode))
-    assert decode[0] == 0.0 and abs(decode[-1] - 1.0) < 1e-9, (decode[0], decode[-1])
+    assert decode[0] == 0.0 and abs(decode[-1] - 1.0) < 1e-9, (
+        f"抬进线性光那张表两端不是 0 与 1，而是 {(decode[0], decode[-1])}："
+        "预览那两步会把最亮的一格推下去，曲线的常数或那两级表的切法被改过"
+    )
     assert all(later > earlier for earlier, later in zip(decode, decode[1:])), (
         "抬进线性光那张表不单调，预览那两步会把颜色折回退"
     )
@@ -153,7 +154,39 @@ def vocabulary_suite() -> None:
     ], "没挂调色链的那一段在宽档工程里也必须折：折的是工程那一档，与链子在不在无关"
 
 
-def fold_math_suite() -> tuple[int, int]:
+def anchor_eotf(signal: float) -> float:
+    """公布常数写死的 BT.709 摄像机曲线（α=1.099、β=0.099、指数 0.45、线性段斜率 4.5）。
+
+    这条门禁的尺**不读产品那份曲线**：第一版的 `exact()` 直接 import `gamut.bt709_eotf/oetf` 算
+    「真折叠」，于是产品曲线一动，基准与被测一起动——本仓把这类耦合量成过 29 阶的偏差，也定过
+    「自己当自己的尺」这条戒。两张表另有一条断言拿这把尺逐格量（`table_suite`）。
+    """
+    if signal <= 0.081:
+        return signal / 4.5
+    return ((signal + 0.099) / 1.099) ** (1 / 0.45)
+
+
+def anchor_oetf(light: float) -> float:
+    """`anchor_eotf` 的逆。两条各写一次指数，别对调——1.153 就对调过一次。"""
+    if light < 0.018:
+        return 4.5 * light
+    return 1.099 * light**0.45 - 0.099
+
+
+def table_suite() -> int:
+    """预览那两张表必须逐格等于这把独立的尺；返回比过的格数。"""
+    decode, encode = transfer_tables()
+    anchor_decode = [round(anchor_eotf(index / 255.0), 9) for index in range(256)]
+    anchor_encode = [round(anchor_oetf(index / 255.0), 9) for index in range(256)]
+    assert decode == anchor_decode, (
+        "预览那两级表不再是那条公布的 BT.709 曲线切的：曲线的出处被换过，1.153/1.156/1.159 那几批"
+        "交付实测要一起重量，别只把这条断言改成新曲线"
+    )
+    assert encode == anchor_encode, "落回信号那张表对不上那条公布曲线，同上"
+    return 2 * len(decode)
+
+
+def fold_math_suite() -> tuple[int, int, int]:
     """预览那三段与导出那张立方体必须是同一条函数——把九个数乘在存储值上不是。
 
     这一条是本轮自己抓出来的缺陷放出来的门禁：第一版预览只交一个 `matrix` 阶段，浏览器就把九个系数
@@ -179,8 +212,8 @@ def fold_math_suite() -> tuple[int, int]:
         return [round(sample(encode, max(0.0, min(1.0, value))) * 255) for value in mid]
 
     def exact(pixel: tuple[int, int, int]) -> list[int]:
-        mid = middle([bt709_eotf(value / 255.0) for value in pixel])
-        return [round(bt709_oetf(max(0.0, min(1.0, value))) * 255) for value in mid]
+        mid = middle([anchor_eotf(value / 255.0) for value in pixel])
+        return [round(anchor_oetf(max(0.0, min(1.0, value))) * 255) for value in mid]
 
     def on_stored(pixel: tuple[int, int, int]) -> list[int]:
         mid = middle([value / 255.0 for value in pixel])
@@ -452,9 +485,13 @@ def http_suite() -> dict[str, tuple[int, int, int]]:
 
 
 def main() -> None:
+    # 尺子先立起来：`table_suite` 拿独立的公布曲线逐格量那两张表，跑在别的断言前面，
+    # 这样「曲线常数被换过」红在那条说清出处的断言上，而不是某一条只报元组的结构检查。
+    cells = table_suite()
     vocabulary_suite()
     worst_fold, worst_stored, samples = fold_math_suite()
     delivered = http_suite()
+    print(f"   预览那两级表逐格对过独立的公布曲线：{cells} 格")
     print(
         "   名单 " + "、".join(WORKING_PRIMARIES) + f"（schema {SCHEMA_VERSION}）；"
         f"p3-d65→rec709 首行 {[round(v, 4) for v in (working_collapse('p3-d65') or [])[:3]]}"

@@ -87,9 +87,12 @@
   `ps-working`×4、「逐字节相同」×5、`primaries_matrix`×2、`working_primaries`×11，而 `?? "rec709"` 一次也没有
   ——默认值只写在 `desktop/src/workingSpace.ts` 那一处，视图与 store 读同一个 `DISPLAY_PRIMARIES`。
 - 门禁：新增第 111 项 `tests/workingprimaries_check.py` 与第 57 份壳检
-  `tests/desktop_workingprimaries_check.ts`。14 条突变逐条红在自己那条断言上（`mutate_1159.log`）：M7 把
-  `transfer_tables` 换成恒等表（正是本轮那个缺陷的形状）红在「两端那两张表不是按同一条曲线切的」，M8 撤掉
-  没挂链子那一段的折叠红在「没挂调色链的那一段在宽档工程里也必须折」。另有一刀试下来是**惰突变**：把
+  `tests/desktop_workingprimaries_check.ts`。16 条突变逐条红在自己那条断言上（`mutate_1159.log`）：M7 与
+  M10 把 `transfer_tables` 那两张表一张一张换成恒等表（正是本轮那个缺陷的形状），M9 把那条曲线的一个公布
+  常数挪 0.001，三条都红在「预览那两级表不再是那条公布的 BT.709 曲线切的」那一对断言上——这把尺不读产品
+  那份曲线：那两张表共 512 格，逐格比的是门禁里照公布常数（α=1.099、β=0.099、指数 0.45、线性段斜率 4.5）
+  另写一遍的那条 BT.709，`exact()` 读的也是这一把。M8 撤掉没挂链子那一段的折叠红在「没挂调色链的那一段
+  在宽档工程里也必须折」。另有一刀试下来是**惰突变**：把
   `update_project` 的整份替换改成 settings 深合并，门禁照旧绿——`ProjectUpdate.settings` 是类型化模型，
   契约边界就把没写的键补成默认值，于是撤掉那一刀而不是放宽容差让它「算过了」。
   `tests/docs_facts_check.py` 从此按 `gamut.WORKING_PRIMARIES` 数 README 那一行的档数，并且不许「当前停放点」
