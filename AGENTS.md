@@ -34,6 +34,7 @@
 - **一轮里被自己夹具骗到的一次**：第一版给图像素材写了 `speed_percent=150` 和 `text`，于是每次规划都被
   reducer 整份拒回，报的是「images have no playback speed」，看着像规划坏了。夹具换成视频素材与真正的
   文字片段后，拒绝才真的是在拒这次要搬的东西——记下这条，因为「全绿」与「全红」都可能是夹具在说谎。
+- **验收账（交付后的树里，空机单跑）**：`uv run python tests/suite_check.py` **114/114**（新增 `attributepaste_check.py` 一项）；`tests/desktop_ts_check.py` 58 份壳检全过；`released_package_check` 绿——asar 带 1.163.0、根 `AgentCut.exe` 与便携版逐字节相同、随包语音模型一堆与暂存同名；`package_check_1163.py` 十项全绿。
 - **装机复核**：见本节末「发布包」那条（本轮重建：引擎自报 1.163.0、schema 19，随包两支仍是 b6.1.1
   那一对）；界面那半在打包版渲染层里真点一次「复制属性 → 勾类别 → 粘贴到所选段」，凭据是工程回执的
   revision 与逐段读回的字段，不是页面上的字。
