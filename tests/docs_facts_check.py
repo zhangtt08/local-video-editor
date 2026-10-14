@@ -146,19 +146,42 @@ def main() -> None:
     if "desktop/release/win-unpacked/AgentCut.exe AgentCut.exe" in text:
         problems.append("README 又把 win-unpacked 里那支抄到根目录了——那句会让照做的人把门禁弄红")
 
-    # 2e. 1.156：显示端那一条的墙别记错对象——`COLOR_SPACES` 是曲线的词表、不含基色，缺的是
-    #     「工程级基色」那个概念。哪天契约里真出现了它（下面那种词表名），这条红，该跟着改的是
-    #     AGENTS 第 1 项与这句话本身，而不是让门禁替新一轮设计做主。
+    # 2e. 1.156 那半条仍然成立：`COLOR_SPACES` 是**曲线**的词表，从来不含基色，谁把「显示端没有宽
+    #     基色」记在它头上就是记错了对象。
     if "里没有宽基色那一档" in agents:
         problems.append(
             "AGENTS 又把「显示端没有宽基色」记在 `COLOR_SPACES` 头上——那是曲线的词表，"
             "工程级基色才是那一档的墙"
         )
-    if hasattr(contracts, "COLOR_PRIMARIES"):
+
+    # 2f. 1.159：那一堵墙这一轮拆了——名单在 `gamut.WORKING_PRIMARIES`（由 `PRIMARIES` 现算），
+    #     设置在 `SequenceSettings.working_primaries`，界面读 `capabilities.working_primaries`。
+    #     所以「当前停放点」那一节不许再说工程级基色仍缺（历史那几节的原话留着，它们是账不是承诺）；
+    #     README 那一行档数必须由那份名单现数。反向也钉：名单哪天没了，这句红，该重新量的是
+    #     AGENTS 与这两句话，而不是让门禁替新一轮设计做主。
+    live = agents.split("## 当前停放点", 1)
+    assert len(live) == 2, "AGENTS 没有「当前停放点」那一节"
+    live = live[1].split("\n## ")[0]
+    if "工程级基色" in live and "仍缺" in live:
         problems.append(
-            "契约里出现了工程级基色的词表：显示端对齐不再是说不出口的话，"
-            "AGENTS 第 1 项与这条门禁都要跟着重新量"
+            "AGENTS 的当前停放点仍把工程级基色列为缺口，而 WORKING_PRIMARIES 与 "
+            "SequenceSettings.working_primaries 已经在契约里了"
         )
+    if not hasattr(contracts, "WORKING_PRIMARIES"):
+        problems.append(
+            "契约里再也没有工程级基色的名单：上面那两条红要撤，README 那一行也得跟着重新量"
+        )
+    else:
+        want_working = len(contracts.WORKING_PRIMARIES)
+        rows = [line for line in text.splitlines() if "working_primaries" in line]
+        assert len(rows) == 1, f"README 提到 working_primaries 的行数是 {len(rows)}，应为 1"
+        digits = f"{want_working} 档"
+        chinese = cn_number(want_working) + " 档"
+        if digits not in rows[0] and chinese not in rows[0]:
+            problems.append(
+                f"README 那一行没把可选基色数成 {want_working} 档（{cn_number(want_working)} 档），"
+                f"而 gamut.WORKING_PRIMARIES 现在交的是 {list(contracts.WORKING_PRIMARIES)}"
+            )
 
     # 3. The schema number README quotes must be the live one.
     expected = f"本轮量到的值是 {contracts.SCHEMA_VERSION}"

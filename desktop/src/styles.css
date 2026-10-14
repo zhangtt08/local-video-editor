@@ -946,6 +946,9 @@ table.table tr.current td { background: var(--accent-soft); }
 .ruler-marker em { font-style: normal; cursor: pointer; margin-left: 2px; padding: 0 2px; color: #12100c; background: currentColor; border-radius: 2px; }
 .ps-limiter { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; }
 .ps-limiter input { accent-color: #d9a441; }
+.ps-working { display: grid; gap: 4px; margin: 4px 0 6px; }
+.ps-working select { width: 100%; }
+.ps-working .hint { margin: 0; font-size: 11px; }
 .ps-master { display: flex; gap: 8px; align-items: center; justify-content: space-between; font-size: 12px; margin: 4px 0 6px; }
 .batch-row { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--text, #e8e2d6); margin: 6px 0; }
 .batch-row input { accent-color: #d9a441; }

@@ -5,16 +5,17 @@ from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .gamut import gamut_presets
+from .gamut import WORKING_PRIMARIES, gamut_presets
 
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = (
-    17  # v17 stores the colour tags a probe read off the file; older rows read them as unsaid
+    18  # v18 names the primaries the picture is worked in; older rows are Rec.709, which is
+    #     what every one of them was actually rendered as, so they read unchanged
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.158.0"
+APP_VERSION = "1.159.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -47,6 +48,20 @@ class SequenceSettings(Contract):
     # Which broadcast guide to draw over the monitor. Display state, not render state: nothing about
     # the export changes, so the inset numbers below are the single authority for the overlay.
     safe_area: Literal["off", "action", "title"] = "off"
+    # 工程图（调色之后那一幅）按哪档基色解释。默认 `rec709` 就是今天的老样子：不多一级、不折
+    # 任何东西，任何一份旧工程读进来画面都不变。可选名单在 `gamut.WORKING_PRIMARIES`，这里不
+    # 另写一份；素材自己从哪档来仍由那一段的色彩管理判断（`clip.color_manage` 只管曲线）。
+    working_primaries: str = "rec709"
+
+    @model_validator(mode="after")
+    def known_working_primaries(self):
+        if self.working_primaries not in WORKING_PRIMARIES:
+            raise ValueError(
+                "工程基色只认 "
+                + "、".join(WORKING_PRIMARIES)
+                + f"（名单在 gamut，这里不另写一份），来的是 {self.working_primaries}"
+            )
+        return self
 
     @model_validator(mode="after")
     def exact_frame_clock(self):
@@ -3054,6 +3069,9 @@ def capabilities(
         # 基色转换表：矩阵由引擎算（`gamut.py`），界面与 Agent 都从这一处读。手抄的九个数迟早和
         # 另一侧不一样，而这种不一致在成片里只表现为「颜色有点偏」。
         "gamut_matrices": gamut_presets(),
+        # 1.159：工程基色可选的那几档，由 `gamut.PRIMARIES` 现算——界面那张下拉菜单列的就是
+        # 这一份，抄一份就会与引擎拒收的那一份不一致。
+        "working_primaries": list(WORKING_PRIMARIES),
         "output_containers": list(OUTPUT_CONTAINERS),
         # 哪几条预设真的装得下透明度。界面那个勾和引擎那句拒绝读的都是同一份预设表，
         # 所以「勾了透明却导出一个不透明的文件」这件事没有发生的余地。

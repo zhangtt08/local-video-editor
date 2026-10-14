@@ -160,6 +160,24 @@ def primaries_matrix(source: str, target: str) -> list[list[float]]:
     return _multiply(_inverse(_rgb_to_xyz(target)), _rgb_to_xyz(source))
 
 
+# 工程级基色可以选的那几档：`PRIMARIES` 里「曲线就是交付那一档」的名字。词表只有这一个主人，
+# 契约与界面都从这里读——再抄一份 Literal 就是给同一句话两个答案，而落在成片里的是引擎这一个。
+WORKING_PRIMARIES: tuple[str, ...] = tuple(
+    name for name, entry in PRIMARIES.items() if entry[2] == "rec709"
+)
+
+
+def working_collapse(source: str, display: str = "rec709") -> list[float] | None:
+    """把「按 `source` 那档基色解释的图」落到 `display` 上要乘的九个系数；同一档就没有这一级。
+
+    工程基色与看它的那一端说的不是同一档时才有它：预览那一趟折到显示端（浏览器是 sRGB），交付那一趟
+    折到容器声明的那档。九个系数仍由 `primaries_matrix` 算，这里只配两端并说「相等就不折」。
+    """
+    if source == display:
+        return None
+    return [round(value, 6) for row in primaries_matrix(source, display) for value in row]
+
+
 def chromaticity_rgb(space: str, xy: tuple[float, float]) -> list[float]:
     """某个色度坐标在该档线性 RGB 里的表示（用于性质判据；与矩阵同一条路，不引外部数）。"""
     xw, yw = PRIMARIES[space][1]
@@ -227,6 +245,23 @@ def bt709_oetf(light: float) -> float:
 
 def _clamp(value: float) -> float:
     return 0.0 if value < 0.0 else (1.0 if value > 1.0 else value)
+
+
+# 浏览器那两条每通道表与 `grade.grade_tables` 那张同为 256 格——同一把尺，两处不该分家。
+PREVIEW_TABLE_SIZE = 256
+
+
+def transfer_tables(size: int = PREVIEW_TABLE_SIZE) -> tuple[list[float], list[float]]:
+    """把 bt709 那条曲线切成两张每通道表：抬进线性光的那一张与落回信号的那一张。
+
+    换基色那九个数是乘在**线性光**上的（`delivery_cube` 就是这个形状：eotf → 矩阵 → oetf）。浏览器
+    画不出立方体，但画得出「每通道表 → 通道混合 → 每通道表」这一串，所以折到监视器那一趟交三段：
+    而不是直接把九个数乘在存储值上——后者本轮量到最坏 71 阶偏差（(105, 254, 210) 的蓝被
+    推成 0），而 256 格这两张表的插值地板只有 1 阶。
+    """
+    decode = [round(bt709_eotf(index / (size - 1)), 9) for index in range(size)]
+    encode = [round(bt709_oetf(index / (size - 1)), 9) for index in range(size)]
+    return decode, encode
 
 
 # 33^3 ≈ 3.6 万格、文本 947 KB（65^3 要 7.2 MB，129^3 上百 MB，每张交付目录都装不下）。

@@ -447,7 +447,7 @@ def colour_tag_row(tag: str | None) -> dict | None:
     )
 
 
-def primaries_shift_stage(plan, row: dict) -> str:
+def primaries_shift_stage(plan, row: dict, working: str | None = None) -> str:
     """那一档要换基色时，把「换基色」写成立方体交给 `lut3d`；不换的档一个字都不加。
 
     矩阵出自 `gamut.primaries_matrix`（`tests/gamut_check.py` 用色度坐标那条独立路量过它，1.153
@@ -458,7 +458,13 @@ def primaries_shift_stage(plan, row: dict) -> str:
     target = str(row.get("shift_to") or "")
     if not target:
         return ""
-    body = delivery_cube(str(row["shift_from"]), target)
+    # 工程基色说了话就以它为准；没说就用这张表自己声明的那一档（两张宽色表写的都是 rec709，
+    # 而那正是 1.153 之前唯一的可能——默认值不改任何一份旧工程的画面）。
+    source = working or str(row["shift_from"])
+    if source == target:
+        # 图已经是容器声明的那一档，再折一次就是凭空多一层矩阵。
+        return ""
+    body = delivery_cube(source, target)
     name = "primaries-" + hashlib.sha1(body.encode()).hexdigest()[:16] + ".cube"
     plan.text_files[name] = body
     return f"lut3d=file={name}:interp=tetrahedral,"
@@ -1024,7 +1030,7 @@ def compile_render_plan(
         # 而容器那句「按 709 折」是实话。
         fit_post = (
             f"format={rgb_planar_for(pixel_format)},"
-            f"{primaries_shift_stage(plan, tag_row)}"
+            f"{primaries_shift_stage(plan, tag_row, settings.working_primaries)}"
             f"zscale=matrix={tag_row['zscale_matrix']}:range={tag_row['zscale_range']},"
             f"format={pixel_format},settb=AVTB"
         )
@@ -1607,7 +1613,7 @@ def compile_render_plan(
             # 正是编码器 swscale 的 BT.601——1.153 之前那句拒绝说的其实是后一路，不是不可能）。
             alpha_tail = (
                 f"format={rgb_planar_for(pixel_format, alpha=True)},"
-                f"{primaries_shift_stage(plan, tag_row)}"
+                f"{primaries_shift_stage(plan, tag_row, settings.working_primaries)}"
                 f"zscale=matrix={tag_row['zscale_matrix']}:range={tag_row['zscale_range']},format="
                 f"{pixel_format}"
             )

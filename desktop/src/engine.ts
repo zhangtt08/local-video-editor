@@ -347,6 +347,8 @@ export type Project = {
     out_ticks?: number | null;
     /** 监视器上显示哪一条安全参考线：关 / 动作区 / 字幕区。纯显示状态，不影响导出。 */
     safe_area?: "off" | "action" | "title";
+    /** 1.159：调色之后那幅图按哪档基色解释。缺这个字段就是 Rec.709——老工程与老引擎同一个意思。 */
+    working_primaries?: string;
   };
   assets: Record<string, Asset>;
   tracks: Track[];
@@ -594,6 +596,8 @@ export type Capabilities = {
   /** 1.158：基色转换表（引擎算好的九个数，一档一行）。老引擎不回这一档——那时界面那颗按钮不亮，
    *  并把出路说清楚（`gamutFold.foldBlocker`）；界面不替引擎编一份表。 */
   gamut_matrices?: GamutMatrixPreset[];
+  /** 1.159：工程基色可选的那几档（引擎从 `gamut.PRIMARIES` 现算）。老引擎不回就没有这一行。 */
+  working_primaries?: string[];
   /** 调色链的形状上限（节点数、并联支数、曲线点数、LUT 采样数）由引擎下发，界面照此限制。 */
   grade_limits?: {
     max_nodes: number;

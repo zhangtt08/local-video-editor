@@ -5837,7 +5837,7 @@ YUV mp4**（1.151 那次界面真点抓到缺陷，用的就是这种素材）�
 一处消费者；1.158 补的就是这一处。判断只写在 `desktop/src/gamutFold.ts` 一个文件里，界面读它，
 `tests/desktop_gamutfold_check.ts` 也读它；九个数字的唯一来源仍是 `gamut.primaries_matrix`。
 
-行为要点（详细数字见 `AGENTS.md` 的「当前停放点（1.158）」）：折进去的那一枚普通通道混合节点只落在
+行为要点（详细数字见 `AGENTS.md` 的「上一轮停放点（1.158）」）：折进去的那一枚普通通道混合节点只落在
 色彩管理那一对盖章的转换节点中间；没套那一对、只有半对、那一格里是手工填的数、中间已经有两枚以上、
 链子已满——这五种场合各有自己的一句中文，且每句都指着一条此刻真走得通的出路；再点一次是换同一格，
 不是叠第二枚。
@@ -5852,3 +5852,31 @@ YUV mp4**（1.151 那次界面真点抓到缺陷，用的就是这种素材）�
 删掉后自己失败。恢复用的是 npmmirror 的 b6.1.1 二进制镜像（82,797,568 B、6.1.1-essentials_build），
 重新打戳后随包两支与 `node_modules` 那一份同哈希。下一轮起：**跑引擎构建之前先确认
 `desktop/node_modules/ffmpeg-static/ffmpeg.exe` 存在**。
+
+## 1.159 工程级基色：显示端那一半的墙拆了，附一处自己抓出来的折叠缺陷
+
+`AGENTS.md` 从 1.152 起一直挂着「交付标记与工程色彩管理的显示端对齐」那一条，而它欠的就是
+**工程以哪档原色工作**这个概念——`COLOR_SPACES` 是曲线的词表，从来不含基色。这一轮把它做完：
+`SequenceSettings.working_primaries`（默认 `rec709`，schema 18），名单由 `gamut.WORKING_PRIMARIES`
+现算，界面读 `capabilities.working_primaries`，`desktop/src/workingSpace.ts` 一处收着措辞与
+`DISPLAY_PRIMARIES` 那唯一一份默认值。
+
+**本轮最大的收获是门禁抓到自己上一版的那个缺陷。** 第一版预览折法只交一个 `matrix` 阶段，浏览器于是把
+九个系数乘在 sRGB **存储值**上；这与导出那张立方体（抬进线性光—乘—落回信号）根本不是同一个函数。
+`tests/workingprimaries_check.py` 里新放的 `fold_math_suite` 在 73,824 个颜色上比三种算法，把这两个数钉住：
+三段折法与真折叠最坏差 **1** 阶（256 格表的插值地板），乘在存储值上最坏差 **71** 阶。修法就是交三段
+（`gamut.transfer_tables()` 的两张每通道表夹着那九个数），而不是赌浏览器认得 `linearRGB` 的原语插值。
+第二处是读代码读出来的：`preview_grade` 原本在链子为空时直接回 None，于是**没挂调色链的一段**在宽档工程
+里一个字都不折——折的是工程那一档，与链子在不在无关，现在也折。
+
+行为要点（详细数字见 `AGENTS.md` 的「当前停放点（1.159）」）：默认档与 1.158 逐字节相同（把键删回
+「没写过」也是同一份字节）；同一档就不折（`rec2020` 工程 + `bt2020` 交付的图里没有第二趟立方体）；
+`p3-d65` 工程 + `bt2020` 交出的 cube 逐字等于 `gamut.delivery_cube("p3-d65","rec2020")`；选到名单外的档位
+是 422 且版本不涨；界面既不算九个数也不抄默认值。
+
+验收：`tests/workingprimaries_check.py`（新增，第 111 项）+ `tests/desktop_workingprimaries_check.ts`
+（第 57 份壳检）+ 打包版真点一次（`agentcut-验收脚本/ui_working_1159.py`：引擎从 r1 走到 r2，读回
+`["lut","lut","matrix","lut"]`、滤镜 id 变了，屏幕上 3 个 `feComponentTransfer` + 1 个 `feColorMatrix`）
++ `package_check_1159.py`（冻结引擎自报 1.159.0、随包两支与 `node_modules` 同哈希、asar 里数得到那一行）。
+14 条突变逐条红在自己那条断言上；第 15 刀（把设置合并改成深合并）是**惰突变**——契约边界已经把没写的键
+补成默认值——所以撤掉那一刀，并在门禁与交付记录里写下为什么。

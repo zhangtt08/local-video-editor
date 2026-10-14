@@ -8,6 +8,8 @@ import { GradeFields } from "./GradeFields";
 import { SpeedFields } from "./SpeedFields";
 import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeAdoptHint, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, INTERPOLATIONS, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackGroup, trackingKnobs, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
 import { frameTicks, TIMEBASE, align, humanDuration, offsetWords, seconds, timecode, ticks } from "../time";
+import { DISPLAY_PRIMARIES, foldsForDisplay, workingChoices, workingWords } from "../workingSpace";
+import { setWorkingPrimaries } from "../store";
 import { linkOffsetSentence } from "../linkOffset";
 import {
   adoptFade,
@@ -757,6 +759,25 @@ function ProjectSettings() {
         <span className="dim">
           {Object.keys(project.clips).length} 段 · {project.tracks.length} 轨 · {humanDuration(timelineEnd(project))}
         </span>
+      </div>
+      <div className="ps-working">
+        <label className="mask-shape">工程基色
+          <select
+            className="input"
+            aria-label="工程基色"
+            value={project.settings.working_primaries ?? DISPLAY_PRIMARIES}
+            disabled={Boolean(app.busy) || workingChoices(app.caps?.working_primaries).length === 0}
+            onChange={(event) => setWorkingPrimaries(event.target.value)}
+          >
+            {workingChoices(app.caps?.working_primaries).map((choice) => (
+              <option key={choice.value} value={choice.value}>{choice.label}</option>
+            ))}
+          </select>
+        </label>
+        <p className="hint">{workingWords(project.settings.working_primaries, app.caps?.working_primaries)}</p>
+        {foldsForDisplay(project.settings.working_primaries)
+          ? <p className="hint dim">预览里那一趟折叠是引擎算的九个系数（抬进线性光、乘一次、落回信号），监视器因此与宽色域成片同色；导出仍按交付声明的那个标记折。</p>
+          : null}
       </div>
       <div className="ps-master">
         <span>母带音量 <b className="mono">{(project.settings.master_gain ?? 1).toFixed(3)}</b></span>

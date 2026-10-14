@@ -44,6 +44,7 @@ import { FIT_MODES, verifiedFromProbe, type ColorSpace, type MaskTrackReceipt, t
 import { align, frameTicks, sampleTicks, ticks, TIMEBASE } from "./time";
 import { clipboardAssetsToReprobe, copyClips, pasteCommands, relatedClips, reviveClipboardAssets, selectionQuantum, timelineTracks, type ClipClipboard } from "./selection";
 import { linkSplitTrim } from "./splitTrim";
+import { DISPLAY_PRIMARIES } from "./workingSpace";
 import { CLIP_KEY, MARKS_KEY, isClipClipboard, isSourceMarks, readBrowser, writeBrowser, type SourceMark } from "./clipboardStore";
 import type { FadeOp, FadeProperty, FadeShape, FadeSide, TrackTarget } from "./effects";
 import { fadeAdoptSummary } from "./effects";
@@ -2414,6 +2415,13 @@ export function cycleSafeArea() {
   const order = ["off", "action", "title"] as const;
   const next = order[(order.indexOf(project.settings.safe_area ?? "off") + 1) % order.length];
   void updateProjectMeta({ settings: { ...project.settings, safe_area: next } });
+}
+
+/** 工程基色：这一档是工程状态（与出一点、安全框一样可撤销），名单来自引擎的 capabilities。 */
+export function setWorkingPrimaries(value: string) {
+  const project = state.project;
+  if (!project || (project.settings.working_primaries ?? DISPLAY_PRIMARIES) === value) return;
+  void updateProjectMeta({ settings: { ...project.settings, working_primaries: value } });
 }
 
 export async function updateProjectMeta(patch: { name?: string; notes?: string; settings?: object }) {

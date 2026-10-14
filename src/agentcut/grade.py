@@ -10,6 +10,8 @@ same list, so preview and render stay one authority rather than merely similar.
 
 import hashlib
 
+from .gamut import transfer_tables, working_collapse
+
 KNOT_GRID = 64
 KNOT_BUDGET = 256
 HALF_LEVEL = 0.5 / 255
@@ -533,7 +535,7 @@ def grade_tables(color) -> dict | None:
     return {"id": f"g{hashlib.sha1(payload).hexdigest()[:16]}", "stages": built}
 
 
-def preview_grade(color) -> dict | None:
+def preview_grade(color, working_primaries: str = "rec709") -> dict | None:
     """The stage list the browser can composite, or None when the chain has nothing it can draw.
 
     `preview: false` is the engine's own flag on a cross-channel stage, and this is the one place
@@ -542,9 +544,27 @@ def preview_grade(color) -> dict | None:
     holding no numbers — that is a vanished picture, not the documented 预览不生效.
     """
     tables = grade_tables(color)
-    if tables is None:
+    collapse = working_collapse(working_primaries)
+    if tables is None and collapse is None:
+        # 既没有链子也不折：默认档下这一段没有浏览器要画的东西，与 1.159 之前的回包逐字节相同。
         return None
-    stages = [stage for stage in tables["stages"] if stage.get("preview", True)]
+    stages = [stage for stage in tables["stages"] if stage.get("preview", True)] if tables else []
+    if collapse is not None:
+        # 工程基色不是 709：浏览器那块画布是，所以这一趟折在链子最后，让监视器说的是同一句话。
+        # 形状与导出那张立方体同一条——先按 bt709 抬进线性光，乘那九个数，再落回信号。把九个数直接
+        # 乘在存储值上不是同一件事（本轮量到最坏 71 阶），而这三段浏览器本来就画得出，不必赌它对
+        # `linearRGB` 的原语插值。两张表与链子上其余每通道表同尺（256 格）。
+        # id 按最终那一份阶段列表重算，与 `grade_tables` 同一个算法——不重算就会把两张不同的图
+        # 挂到同一个 `<filter id>` 上，浏览器认 id 不认内容。
+        decode, encode = transfer_tables()
+        stages = [
+            *stages,
+            {"type": "lut", "r": decode, "g": decode, "b": decode, "id": f"l{_stage_id(decode)}"},
+            {"type": "matrix", "m": collapse, "id": f"m{_stage_id(collapse)}"},
+            {"type": "lut", "r": encode, "g": encode, "b": encode, "id": f"l{_stage_id(encode)}"},
+        ]
+        payload = repr(stages).encode()
+        return {"id": f"g{hashlib.sha1(payload).hexdigest()[:16]}", "stages": stages}
     if not stages:
         return None
     return {**tables, "stages": stages}

@@ -2995,3 +2995,40 @@ H.264，装不下透明度，于是整条被让掉并在悬停里说清为什么
 边界照实说：只换基色，不替你判断素材的曲线（那是 `clip.color_manage` 与 `auto_source` 的事）；
 没套色彩管理的链子上这颗按钮不亮；那一格里已经有人手工填了九个数时界面不覆盖，只把出路说出来；
 老引擎不回 `gamut_matrices` 时这一档名单是空的，按钮不亮并说明「这一版引擎没把表交下来」。
+
+## 1.159 工程级基色：`working_primaries`（工程 schema v18）
+
+新字段一个：`SequenceSettings.working_primaries: str = "rec709"`。**没有新命令**——它写在
+`POST /v1/projects`（新建时可给）或 `POST /v1/projects/{id}` 的 `settings` 里，走的就是原来那条元数据
+更新（一次一个 revision，撤销即回）。Agent 与界面走同一条路由、同一处校验。
+
+可选名单只有一个主人：`gamut.WORKING_PRIMARIES`，由 `gamut.PRIMARIES` 现算——「曲线恰为 rec709 的那几档」，
+本轮量到 4 档：`rec709`、`rec601`、`rec2020`、`p3-d65`。**`display-p3` 不在名单里**，因为它的传递特性是
+sRGB 而不是 rec709，而这一档只管原色不管曲线（素材自己从哪档来仍是 `clip.color_manage` 与 `auto_source`
+的判断）。名单随 `capabilities.working_primaries` 下发；`SequenceSettings.known_working_primaries` 拒名单外
+的名字，句子把名单整个念出来（422 VALIDATION，revision 不涨、不落半个字）。
+
+预览这一端：`GET /v1/projects/{id}/preview-manifest` 里每段 `grade.stages` 在链子最后多出**三段**——
+`{"type":"lut"}`（每通道表，把信号抬进线性光）→ `{"type":"matrix","m":[九个数]}` → `{"type":"lut"}`
+（落回信号）。九个数是 `gamut.primaries_matrix(工程档, "rec709")`，两张表是
+`gamut.transfer_tables()` 按同一条 bt709 曲线切的 256 格——与 `gamut.delivery_cube` 那张立方体同一条
+函数。这不是可选的写法：把九个数直接乘在存储值上（也就是只交一个 `matrix` 阶段）与真折叠最坏差 71 阶，
+`tests/workingprimaries_check.py` 的 `fold_math_suite` 在 73,824 个颜色上把这两个数当场量出来。三段与
+精确折叠最坏差 1 阶（256 格的插值地板）。默认档（`rec709`，或整个键不出现）一条不加，回包与 1.158
+逐字节相同；没挂调色链的那一段在宽档工程里也会多出这三段。`grade.id` 按加了这三段之后的整份阶段列表
+重算——浏览器认 id 不认内容。
+
+导出这一端：`render.primaries_shift_stage(plan, row, working)` 的源端读 `settings.working_primaries`
+（工程没说仍用这张表自己声明的 `shift_from`，两张宽色表写的都是 rec709）；源端等于容器那一档就一个字
+都不加。于是 `working=rec2020 + colour_tag=bt2020` 的图里没有 `lut3d=file=primaries-`（`zscale=matrix=2020_ncl`
+照旧在），`working=p3-d65 + colour_tag=bt2020` 落进作业目录的那张 cube 逐字等于
+`gamut.delivery_cube("p3-d65", "rec2020")`。成片实测：橙 (116,55,35)→(124,51,28)，中灰仍是灰（最大通道差
+4），两份文件的视频流都读回 `color_primaries=bt2020`。
+
+界面：`desktop/src/workingSpace.ts` 一处收着 `DISPLAY_PRIMARIES`（浏览器画布就是 sRGB，这一句不跟引擎
+商量）、可选名单的读法与三句话；检查器工程面板那一行「工程基色」下拉列的就是能力表那份，认不得的名字
+照原样念。九个系数与名单都不在界面里，界面也不调用 `primaries_matrix`——`tests/desktop_workingprimaries_check.ts`
+把这几条逐字数过，视图与 store 都必须读那个常量而不是自己抄一个 `"rec709"`。
+
+兼容：1.159 之前写的工程没有这个键，读进来按 `rec709` 解释，预览与导出的画面一字不变（这条门禁钉的就是
+「把键删回没写过的样子，回包与默认档基线逐字节相同」）。schema 由 17 涨到 18，`ge=1` 起的历史文档照常读。
