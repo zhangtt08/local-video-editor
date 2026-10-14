@@ -6,11 +6,14 @@
 1. `color_primaries` 那格能拼出的写法，由随包那支 FFmpeg 6.1.1 当场编一次、当场探针一次，
    分成「写进去读回来同名」「当场拒收」「写了等于没写」三堆。将来任何一张「读素材原色」的表都
    只能从第一堆里取行；谁把第二堆的写法抄进表里，照做的人就会拿到一个根本编不出来的命令。
-2. 同一个名字 `rec709` 在引擎里有两条曲线：`grade.GAMMA_BY_SPACE` 给调色链那一对是**纯幂 2.4**
-   （BT.1886 那条显示端 EOTF），`gamut.bt709_eotf` 给交付立方体与 1.159 那两级预览表是**分段 0.45**
-   （BT.709 摄像机 OETF，也是容器里 `bt709` 那一格本来的意思）。8 位上量：信号域最坏差 27 阶、
-   线性域最坏差 18 阶。所以「先按曲线抬进线性光、乘九个系数、再落回信号」这一趟，两端用的曲线
-   与中间那一级所假设的曲线不是同一条。
+2. 同一个名字 `rec709` 在两个模块里得到两条曲线：`grade.to_linear("rec709", v)` 是纯幂 2.4
+   （BT.1886 那条显示端 EOTF），`gamut.bt709_eotf(v)` 是分段 0.45（BT.709 摄像机 OETF，也是容器里
+   `bt709` 那一格按 H.273 该写的意思）。这一行拿函数比函数，8 位上量到线性域最坏 18.5 阶、信号域
+   最坏 27.2 阶。所以「先按曲线抬进线性光、乘九个系数、再落回信号」这一趟，两端的曲线与中间那一级
+   所假设的曲线不是同一条。
+   别拿随包 FFmpeg 当裁判：它把 `bt709` 实现成纯幂 2.4（与 2.4 差 0.011 阶），可它把
+   `iec61966-2-1`（sRGB）也做成一条近似幂（与 IEC 那条分段差 12.1 阶）——它的 TRC 一站一站是近似值，
+   说不得「那一格本来的意思」。规范与工具链各给一个答案，本轮因此不统一，只把两把哨兵钉上。
 3. 于是那条自动折叠现在**不能交**：`fidelity_1160.py`（在 `agentcut-验收脚本/` 里，可重跑）拿
    一对夹具量过——同一幅颜色分别按 709 与按 P3-D65 存储、容器都写 `bt709` 曲线，把 1.158 那颗
    按钮写下的 `[transfer, matrix, transfer]` 套在 P3 那枚上导出：未折时与基准差 47 阶，折了之后
@@ -39,7 +42,7 @@ from agentcut.gamut import (  # noqa: E402
     bt709_oetf,
     primaries_matrix,
 )
-from agentcut.grade import GAMMA_BY_SPACE  # noqa: E402
+from agentcut.grade import GAMMA_BY_SPACE, from_linear, to_linear  # noqa: E402
 from agentcut.http_api import create_app  # noqa: E402
 from agentcut.jobs import JobRuntime  # noqa: E402
 from agentcut.media import MediaService  # noqa: E402
@@ -135,24 +138,30 @@ def tag_suite(folder: Path) -> dict[str, str]:
 
 
 def curve_suite() -> tuple[float, float]:
-    """同一个名字的两条曲线各自还在，而且它们的差是几十阶那种差。
+    """同一个名字在两个模块里得到的两条曲线：拿函数比函数，不拿字面量比字面量。
 
-    量两件事：`signal^2.4` 与 `bt709_eotf(signal)` 差多少（线性域，也就是那一级矩阵所假设的
-    「线性光」到底是谁），以及把 2.4 那条抬上去的值交给 `bt709_oetf` 落回来还剩多少差（信号域——
-    `[transfer, matrix, transfer]` 那一趟真正走的路径）。
+    `grade.to_linear("rec709", v)` 是调色链那端的「线性光」，`gamut.bt709_eotf(v)` 是交付立方体与
+    1.159 那两级预览表那端的「线性光」。两条都从各自的模块当场求值再逐格比，所以谁被统一了这条就
+    当场变平——那一趟红着，人要重量的就不止这一行。
     """
     linear_worst = max(
-        abs(bt709_eotf(index / 255.0) - (index / 255.0) ** 2.4) * 255 for index in range(256)
+        abs(bt709_eotf(index / 255.0) - to_linear("rec709", index / 255.0)) * 255
+        for index in range(256)
     )
     signal_worst = max(
-        abs(bt709_oetf((index / 255.0) ** 2.4) * 255 - index) for index in range(256)
+        abs(bt709_oetf(to_linear("rec709", index / 255.0)) * 255 - index) for index in range(256)
     )
     assert GAMMA_BY_SPACE["rec709"] == 2.4, (
         "调色链那端不再用 2.4 了——这条分叉可能被统一，第二组的账要重新量"
     )
+    # 两条各自都是自洽的一对：分叉不是「哪边算坏了」，是同一个名字得到两个答案。
+    for index in range(256):
+        value = index / 255.0
+        assert abs(from_linear("rec709", to_linear("rec709", value)) - value) < 1e-9, index
+        assert abs(bt709_oetf(bt709_eotf(value)) - value) < 1e-6, index
     assert linear_worst > 0.02, (
-        f"gamut 那条 bt709 曲线与纯幂 2.4 只差 {linear_worst:.3f} 阶了：统一可能发生在这里，"
-        "先重新量再改文档"
+        f"两个模块给同一个名字的线性光只差 {linear_worst:.3f} 阶了：统一可能发生在这里，"
+        "先重新量 1.151/1.152/1.156 那三批交付实测与 1.159 那两级预览表，再改文档"
     )
     assert signal_worst > 20, f"两条曲线的差只剩 {signal_worst:.1f} 阶了？那分叉的代价要重新量"
     return signal_worst, linear_worst
@@ -184,6 +193,30 @@ TICK = 70_560_000
 
 def clamp01(value: float) -> float:
     return 0.0 if value < 0.0 else (1.0 if value > 1.0 else value)
+
+
+# 夹具那两条曲线是**这里自己写的**（公布常数：α=1.099、β=0.099、编码侧指数 0.45、线性段斜率 4.5）。
+# 不 import `gamut.bt709_*`：那条曲线正是本轮要测的东西之一，用它造夹具就等于让地面跟着尺子动——
+# 第一版就是这么写的，突变 G7 一改 gamut，基准与落点一起挪，那条测的就不再是折叠的落点。
+FIXTURE_ALPHA, FIXTURE_BETA = 1.099, 0.099
+FIXTURE_GAMMA, FIXTURE_SLOPE = 0.45, 4.5
+FIXTURE_SIGNAL_TURN = 0.018 * 4.5
+
+
+def fixture_eotf(signal: float) -> float:
+    return (
+        signal / FIXTURE_SLOPE
+        if signal <= FIXTURE_SIGNAL_TURN
+        else ((signal + FIXTURE_BETA) / FIXTURE_ALPHA) ** (1 / FIXTURE_GAMMA)
+    )
+
+
+def fixture_oetf(light: float) -> float:
+    return (
+        FIXTURE_SLOPE * light
+        if light < 0.018
+        else FIXTURE_ALPHA * light**FIXTURE_GAMMA - FIXTURE_BETA
+    )
 
 
 def encode_plate(folder: Path, name: str, pixels: bytes) -> Path:
@@ -231,12 +264,12 @@ def authored_plates(folder: Path) -> tuple[Path, Path, int]:
     forward = primaries_matrix("rec709", "p3-d65")
     stored = bytearray()
     for index in range(0, len(ref), 3):
-        linear = [bt709_eotf(ref[index + channel] / 255.0) for channel in range(3)]
+        linear = [fixture_eotf(ref[index + channel] / 255.0) for channel in range(3)]
         moved = [
             sum(forward[row][column] * linear[column] for column in range(3)) for row in range(3)
         ]
         for channel in range(3):
-            stored.append(round(clamp01(bt709_oetf(clamp01(moved[channel]))) * 255))
+            stored.append(round(clamp01(fixture_oetf(clamp01(moved[channel]))) * 255))
     gap = max(abs(a - b) for a, b in zip(bytes(stored), bytes(ref), strict=True))
     # 一帧只有 1/30 秒；两枚片段各要 1 秒，所以把那一帧铺满 30 帧再交编码。
     frames = bytes(ref) * 30, bytes(stored) * 30
@@ -455,8 +488,8 @@ def main() -> None:
         f"{SILENT} 写了等于没写"
     )
     print(
-        f"   同一个 rec709 的两条曲线：信号域最坏差 {signal_worst:.1f} 阶、线性域最坏差 "
-        f"{linear_worst:.3f} 阶（2.4 幂 vs 分段 0.45）"
+        f"   同一个 rec709 的两条曲线（函数比函数）：链子那端 γ2.4 对交付那端分段 0.45，"
+        f"信号域最坏差 {signal_worst:.1f} 阶、线性域最坏差 {linear_worst:.3f} 阶"
     )
     print(
         f"   那条按钮的落点：夹具两份存储值差 {authored_gap} 阶，未折时与基准差 {unfold_error} 阶，"
