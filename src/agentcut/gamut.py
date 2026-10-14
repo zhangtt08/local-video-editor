@@ -305,7 +305,7 @@ PREVIEW_TABLE_SIZE = 256
 
 
 def transfer_tables(
-    name: str = DEFAULT_FOLD_TRANSFER, size: int = PREVIEW_TABLE_SIZE
+    name: str = DEFAULT_FOLD_TRANSFER, size: int | None = None
 ) -> tuple[list[float], list[float]]:
     """把声明的那档曲线切成两张每通道表：抬进线性光的那一张与落回信号的那一张。
 
@@ -315,9 +315,59 @@ def transfer_tables(
     推成 0），而 256 格这两张表的插值地板只有 1 阶。
     """
     eotf, oetf = transfer_pair(name)
+    size = size if size is not None else preview_cells(name)
     decode = [round(eotf(index / (size - 1)), 9) for index in range(size)]
     encode = [round(oetf(index / (size - 1)), 9) for index in range(size)]
     return decode, encode
+
+
+# 折叠这一档怎么算，写在同一张表里：立方体还是链条、预览那两张表给几格。三个数都是量回来的
+# （`agentcut-验收脚本/fold_routes_1162.py` 与 `preview_density_1162.py`，20,012 个颜色，期望一律
+# 取「板上那同一份整数按该档解析折一次」）：
+#   · 立方体 33³ + tetrahedral：分段 3 阶、γ2.4 15 阶；65³ 只降到 2／9 阶而文本 7.2 MB；
+#   · 链条（zscale 抬线性 → colorchannelmixer 那九个数 → zscale 落回，16 位中间量）：γ2.4 4 阶；
+#     分段那一条**走不了**——随包 FFmpeg 的 zscale 把容器那一格实现成纯幂 2.4（1.160 量到差 0.011
+#     阶），它念不出分段，所以那一档只有立方体可走；
+#   · 预览那两张表的格数：分段 256 格地板 1 阶（1.159 就是照这个定的），γ2.4 同样 256 格是 8 阶、
+#     1024 格 5 阶、4096 格 3 阶——取 1024，因为再往上每多四倍只换一阶，而清单要带着这些数走线。
+# `route` 与 `trc` 只说导出那一路；`chain` 必须配一个 zscale 念得出的 TRC 名，立方体那一路给 None。
+FOLD_ROUTES: dict[str, dict] = {
+    "bt709": {"route": "cube", "trc": None, "preview_cells": 256},
+    "gamma24": {"route": "chain", "trc": "bt709", "preview_cells": 1024},
+}
+
+
+def fold_route(name: str) -> str:
+    """导出那一路走立方体还是走链条。认不得的名字照名拒绝。"""
+    row = FOLD_ROUTES.get(name)
+    if row is None:
+        raise ValueError(
+            "折叠那一路只认 "
+            + "、".join(FOLD_TRANSFERS)
+            + f"（表在 gamut，别处不另写），来的是 {name}"
+        )
+    return str(row["route"])
+
+
+def fold_trc(name: str) -> str:
+    """链条那一路要念给 zscale 的 TRC 名；立方体那一路没有这个名字。"""
+    row = FOLD_ROUTES[name]
+    trc = row["trc"]
+    if trc is None:
+        raise ValueError(f"{name} 这一档走不了链条：随包 FFmpeg 念不出这条曲线")
+    return str(trc)
+
+
+def preview_cells(name: str) -> int:
+    """预览那两张每通道表给几格。默认那条沿用 1.159 定的 256 格，一字不改。"""
+    return int(FOLD_ROUTES.get(name, {"preview_cells": PREVIEW_TABLE_SIZE})["preview_cells"])
+
+
+def primaries_mix_expression(matrix: list[list[float]]) -> str:
+    """把九个系数写成 FFmpeg 的 `colorchannelmixer` 选项串（选项名＝输出通道＋输入通道）。"""
+    return ":".join(
+        f"{'rgb'[row]}{'rgb'[col]}={matrix[row][col]:.9f}" for row in range(3) for col in range(3)
+    )
 
 
 # 33^3 ≈ 3.6 万格、文本 947 KB（65^3 要 7.2 MB，129^3 上百 MB，每张交付目录都装不下）。

@@ -3063,3 +3063,29 @@ sRGB 而不是 rec709，而这一档只管原色不管曲线（素材自己从�
 兼容：1.161 之前写的工程没有这个键，读进来按 `bt709` 解释，预览清单与导出立方体一字不变（门禁
 与装机各量一遍「把键删回没写过的样子，回包与默认档基线逐字节相同」）。schema 由 18 涨到 19，
 `ge=1` 起的历史文档与旧请求回执同规则。
+
+## 1.162 折叠那一路按曲线选编译法（`fold_transfer` 的消费端，工程 schema 仍 v19）
+
+契约没有变化：`SequenceSettings.fold_transfer` 仍是那一格，`capabilities.fold_transfers` 仍是那份名单
+（`bt709`、`gamma24`，默认取第一行）。这一轮改的是**引擎拿到那一格之后怎么编译**，以及预览那两张
+表的格数。
+
+- `bt709` → 立方体：`gamut.delivery_cube(工程, 容器, curve=分段 eotf, inverse=分段 oetf)` 那张 33³ 的
+  表交给 `lut3d=file=…:interp=tetrahedral`，按内容寻址落进作业目录。走不了链条那一路：随包
+  FFmpeg 的 zscale 念不出分段曲线（`gamut.fold_trc("bt709")` 抛 ValueError）。
+- `gamma24` → 链条：`format=gbrp16le, zscale=transferin=bt709:transfer=linear,
+  colorchannelmixer=<那九个数>, zscale=transferin=linear:transfer=bt709, format=<平面 RGB>`。
+  九个数仍出自 `gamut.primaries_matrix`（`primaries_mix_expression` 只是把它写成选项串），不叫
+  zscale 自己换基色。16 位中间量是要件的：撤成 8 位，收窄那块板上从 6 阶退到 19 阶。
+- 预览：`gamut.transfer_tables(那一档)` 的格数由 `FOLD_ROUTES[…]["preview_cells"]` 给——
+  `bt709` 仍是 1.159 定的 256 格（旧工程的清单字节一字不改），`gamma24` 是 1024 格。
+
+量的口径只有一句：期望＝**板上那同一份整数**按该档解析折一次。本轮交回的数（`tests/foldcurve_check.py`
+的 `precision_suite`）：`bt709` 预览 0 阶／导出 1 阶／两端互差 1 阶／按另一档声明 26 阶，收窄那块板
+本路 3 阶而另一条路走不通；`gamma24` 预览 4 阶／导出 1 阶／互差 4 阶／声明另一档 26 阶，收窄板上
+本路 6 阶、立方体 16 阶。编译法对照用的是产品自己的 `render.fold_stage`，两条路各跑一遍，
+断言是「交出去的那一条不比别人那一条差」——所以这张表红起来的意思是「路由要重新量」，
+而不是「某个绝对容差被越过」。
+
+Agent 侧不需要任何新接口：`GET /v1/projects/{id}/render-plan` 交回的滤镜串里就能看到这一档走的是
+哪一路（装机复核那条读的就是这个路由）。

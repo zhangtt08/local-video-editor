@@ -41,7 +41,15 @@ from .contracts import (
     render_presets,
     spatial_radius,
 )
-from .gamut import DEFAULT_FOLD_TRANSFER, delivery_cube, transfer_pair
+from .gamut import (
+    DEFAULT_FOLD_TRANSFER,
+    delivery_cube,
+    fold_route,
+    fold_trc,
+    primaries_matrix,
+    primaries_mix_expression,
+    transfer_pair,
+)
 from .grade import composite_stages, grade_filter
 from .masks import (
     alpha_expression,
@@ -447,8 +455,40 @@ def colour_tag_row(tag: str | None) -> dict | None:
     )
 
 
+def fold_stage(
+    plan, source: str, target: str, fold_transfer: str, rgb_format: str = "gbrp", route=None
+) -> str:
+    """把「换基色那一趟」编成一段滤镜串。`route` 是给门禁对照用的，产品路径从那张表里读。
+
+    立方体那一路：整段是 `eotf → 九个数 → oetf` 的一张 33³ 表，交给 `lut3d` 按 tetrahedral 读。
+    链条那一路：抬线性与落回交给 zscale，中间那九个数是 `primaries_matrix` 算的那一份，
+    16 位中间量——它只走得通当随包 FFmpeg 念得出那条 TRC 的时候（`fold_trc` 给 None 就是念不出）。
+    """
+    if route is None:
+        route = fold_route(fold_transfer)
+    if route == "chain":
+        trc = fold_trc(fold_transfer)
+        mix = primaries_mix_expression(primaries_matrix(source, target))
+        return (
+            f"format={rgb_format}16le,"
+            f"zscale=transferin={trc}:transfer=linear,"
+            f"colorchannelmixer={mix},"
+            f"zscale=transferin=linear:transfer={trc},"
+            f"format={rgb_format},"
+        )
+    eotf, oetf = transfer_pair(fold_transfer)
+    body = delivery_cube(source, target, curve=eotf, inverse=oetf)
+    name = "primaries-" + hashlib.sha1(body.encode()).hexdigest()[:16] + ".cube"
+    plan.text_files[name] = body
+    return f"lut3d=file={name}:interp=tetrahedral,"
+
+
 def primaries_shift_stage(
-    plan, row: dict, working: str | None = None, fold_transfer: str = DEFAULT_FOLD_TRANSFER
+    plan,
+    row: dict,
+    working: str | None = None,
+    fold_transfer: str = DEFAULT_FOLD_TRANSFER,
+    rgb_format: str = "gbrp",
 ) -> str:
     """那一档要换基色时，把「换基色」写成立方体交给 `lut3d`；不换的档一个字都不加。
 
@@ -467,11 +507,7 @@ def primaries_shift_stage(
     if source == target:
         # 图已经是容器声明的那一档，再折一次就是凭空多一层矩阵。
         return ""
-    eotf, oetf = transfer_pair(fold_transfer)
-    body = delivery_cube(source, target, curve=eotf, inverse=oetf)
-    name = "primaries-" + hashlib.sha1(body.encode()).hexdigest()[:16] + ".cube"
-    plan.text_files[name] = body
-    return f"lut3d=file={name}:interp=tetrahedral,"
+    return fold_stage(plan, source, target, fold_transfer, rgb_format)
 
 
 def colour_flags(tag: str | None, preset: dict) -> list[str]:
@@ -1033,7 +1069,11 @@ def compile_render_plan(
         # RGB 这一趟与后面那一趟系数互逆：实测 (126,63,30) 出去 (125,62,29) 回来，观感不损，
         # 而容器那句「按 709 折」是实话。
         shift_stage = primaries_shift_stage(
-            plan, tag_row, settings.working_primaries, settings.fold_transfer
+            plan,
+            tag_row,
+            settings.working_primaries,
+            settings.fold_transfer,
+            rgb_planar_for(pixel_format),
         )
         fit_post = (
             f"format={rgb_planar_for(pixel_format)},"
@@ -1619,7 +1659,11 @@ def compile_render_plan(
             # 交出去是 (314,429,628,516)，色度正是 BT.709 的预测；不接这一趟是 (329,417,632,514)，
             # 正是编码器 swscale 的 BT.601——1.153 之前那句拒绝说的其实是后一路，不是不可能）。
             shift_stage = primaries_shift_stage(
-                plan, tag_row, settings.working_primaries, settings.fold_transfer
+                plan,
+                tag_row,
+                settings.working_primaries,
+                settings.fold_transfer,
+                rgb_planar_for(pixel_format, alpha=True),
             )
             alpha_tail = (
                 f"format={rgb_planar_for(pixel_format, alpha=True)},"

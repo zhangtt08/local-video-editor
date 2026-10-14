@@ -27,14 +27,23 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from agentcut.contracts import SCHEMA_VERSION, ClipColor, Project, capabilities
+from agentcut.contracts import (
+    SCHEMA_VERSION,
+    ClipColor,
+    Project,
+    capabilities,
+)
 from agentcut.contracts import TIMEBASE as T
 from agentcut.gamut import (
     DEFAULT_FOLD_TRANSFER,
     FOLD_TRANSFERS,
     TRANSFER_CURVES,
     delivery_cube,
+    fold_route,
+    fold_trc,
+    preview_cells,
     primaries_matrix,
+    primaries_mix_expression,
     transfer_pair,
     transfer_tables,
 )
@@ -42,7 +51,7 @@ from agentcut.grade import GAMMA_BY_SPACE, preview_grade
 from agentcut.http_api import create_app
 from agentcut.jobs import JobRuntime
 from agentcut.media import MediaService
-from agentcut.render import compile_render_plan
+from agentcut.render import compile_render_plan, fold_stage
 
 ROOT = Path(__file__).resolve().parent.parent
 FFMPEG = ROOT / "desktop/resources/bin/ffmpeg.exe"
@@ -146,17 +155,30 @@ def vocabulary_suite() -> list[dict]:
 
 
 def fork_suite() -> tuple[float, int]:
-    """两档差多少：抬光那张表上最坏的阶数，与那张立方体里被改动的格数。"""
-    piece, power = transfer_tables("bt709"), transfer_tables("gamma24")
-    worst = max(abs(a - b) * 255 for a, b in zip(piece[0], power[0], strict=True))
-    for index in range(256):
-        cell = index / 255.0
-        assert abs(piece[0][index] - ANCHORS["bt709"][0](cell)) < 5e-10, (
-            f"抬光表第 {index} 格不再是那条公布分段曲线切的（{piece[0][index]}）"
+    """两档差多少：同一把 256 步的尺上最坏的阶数，与那张立方体里被改动的格数。
+
+    两条表各有各的格数（γ2.4 那条 1.162 起换密表），所以这里比的是**两条曲线**，不是两张表——
+    表长不一样时拿 zip 比表，量的就成了「两把尺的刻度不一样」这件事。
+    """
+    worst = max(
+        abs(ANCHORS["bt709"][0](index / 255.0) - ANCHORS["gamma24"][0](index / 255.0)) * 255
+        for index in range(256)
+    )
+    for name in FOLD_TRANSFERS:
+        decode, encode = transfer_tables(name)
+        top = len(decode) - 1
+        assert len(decode) == len(encode) == preview_cells(name), (
+            f"{name} 的预览表不是那张表给的格数：{len(decode)} vs {preview_cells(name)}"
         )
-        assert abs(power[0][index] - ANCHORS["gamma24"][0](cell)) < 5e-10, (
-            f"γ2.4 那张抬光表第 {index} 格不是 幂 {POWER} 切的"
-        )
+        for index in range(len(decode)):
+            cell = index / top
+            eotf, oetf = ANCHORS[name]
+            assert abs(decode[index] - eotf(cell)) < 5e-10, (
+                f"{name} 抬光表第 {index} 格不是那条公布曲线切的（{decode[index]}）"
+            )
+            assert abs(encode[index] - oetf(cell)) < 5e-10, (
+                f"{name} 落回那张表第 {index} 格不是那条公布曲线切的（{encode[index]}）"
+            )
     assert worst > 15.0, (
         f"两档曲线只差 {worst:.3f} 阶了？那这条分叉可能已被统一，1.153/1.156/1.159 那几批"
         "的账与这条门禁要一起重量"
@@ -175,9 +197,130 @@ def fork_suite() -> tuple[float, int]:
     return worst, moved
 
 
+class _StubPlan:
+    """`fold_stage` 只要一个能收 `text_files` 的对象，这里不建整张计划。"""
+
+    def __init__(self) -> None:
+        self.text_files: dict[str, str] = {}
+
+
+def product_fold(
+    curve: str, pixels: bytes, folder: Path, source: str, target: str, route=None
+) -> bytes | None:
+    """把**产品那一条编译法**（`route=None` 时由 `gamut.FOLD_ROUTES` 决定）喂给随包 FFmpeg。
+
+    `route` 只给对照那一次用：同一个 `fold_stage` 编另一条路，两条路各跑一遍——比的是同一段图
+    在同一块板上的两种走法，而不是两种写法各自的手感。走不通（`fold_trc` 给 None，即随包
+    FFmpeg 念不出那条曲线）就交回 None：那是一条测出来的事实，不是崩溃。
+    """
+    plan = _StubPlan()
+    try:
+        stage = fold_stage(plan, source, target, curve, "gbrp", route)
+    except ValueError:
+        return None
+    for name, body in plan.text_files.items():
+        (folder / name).write_text(body, encoding="utf-8")
+    plate = folder / f"prec-{curve}-{source}-{target}-{route or 'own'}.rgb"
+    plate.write_bytes(pixels)
+    out = folder / f"export-{curve}-{source}-{target}-{route or 'own'}.rgb"
+    made = run(
+        [
+            FFMPEG,
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-s",
+            f"{PLATE_W}x{len(PLATE_CELLS)}",
+            "-i",
+            plate.name,
+            "-vf",
+            f"format=gbrp,{stage}format=rgb24",
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            out.name,
+        ],
+        cwd=folder,
+    )
+    assert made.returncode == 0, made.stderr[-400:].decode(errors="replace")
+    data = out.read_bytes()
+    assert len(data) == len(PLATE_CELLS) * PLATE_W * 3, len(data)
+    return data
+
+
+def preview_fold(plate: bytes, name: str, matrix) -> bytes:
+    """浏览器那一端做的事：读交出去的那两张表（线性插值）、乘那九个数、再取整。"""
+    decode, encode = transfer_tables(name)
+    top = len(decode) - 1
+
+    def read(table: list[float], value: float) -> float:
+        position = clamp01(value) * top
+        low = min(int(position), top - 1)
+        rest = position - low
+        return table[low] * (1 - rest) + table[low + 1] * rest
+
+    out = bytearray()
+    for index in range(0, len(plate), 3):
+        linear = [read(decode, plate[index + channel] / 255.0) for channel in range(3)]
+        middle = [
+            clamp01(sum(matrix[row][column] * linear[column] for column in range(3)))
+            for row in range(3)
+        ]
+        out.extend(round(read(encode, value) * 255) for value in middle)
+    return bytes(out)
+
+
+def precision_suite(folder: Path) -> dict:
+    """两端的地板、两端互差、按另一档声明的代价，以及**两条编译法在同一块板上的对照**。
+
+    对照要跑两块板：`p3-d65→rec2020` 是放宽（九个系数几乎全正，格间插值没地方放大），
+    `rec2020→p3-d65` 是收窄（一行里 −0.02·R 与 1.03·G 相消，那才是立方体的考场）。
+    只在放宽那块上比，两条路都是 1 阶，路由表就等于没被证明过。
+    """
+    wide = primaries_matrix("p3-d65", "rec2020")
+    deep = primaries_matrix("rec2020", "p3-d65")
+    other = lambda name: "cube" if fold_route(name) == "chain" else "chain"  # noqa: E731
+    worst = lambda a, b: max(abs(x - y) for x, y in zip(a, b, strict=True))  # noqa: E731
+    reported: dict[str, tuple] = {}
+    for name in FOLD_TRANSFERS:
+        plate = fold_pixels(name)
+        expected = analytic_fold(plate, ANCHORS[name], wide)
+        exported = product_fold(name, plate, folder, "p3-d65", "rec2020")
+        declared_wrong = product_fold(
+            [item for item in FOLD_TRANSFERS if item != name][0], plate, folder, "p3-d65", "rec2020"
+        )
+        preview = preview_fold(plate, name, wide)
+        narrow_plate = fold_pixels(name, "rec2020")
+        narrow_expected = analytic_fold(narrow_plate, ANCHORS[name], deep)
+        shipped_deep = product_fold(name, narrow_plate, folder, "rec2020", "p3-d65")
+        against_deep = product_fold(name, narrow_plate, folder, "rec2020", "p3-d65", other(name))
+        reported[name] = (
+            worst(preview, expected),
+            worst(exported, expected),
+            worst(preview, exported),
+            worst(declared_wrong, expected),
+            None if against_deep is None else worst(against_deep, narrow_expected),
+            worst(shipped_deep, narrow_expected),
+        )
+    return reported
+
+
 def default_suite() -> None:
     """默认那一档必须与「新字段不存在」逐字节相同——旧工程的画面不许被新字段改掉。"""
     assert transfer_tables() == transfer_tables("bt709"), "默认那条曲线不再是名单第一行那一条"
+    assert len(transfer_tables()[0]) == 256 == preview_cells("bt709"), (
+        "默认那一条的预览表不再是 1.159 定的 256 格——旧工程的清单字节被动了"
+    )
+    assert preview_cells("gamma24") > 256, (
+        "γ2.4 又用回 256 格了？本轮在这条曲线上量到的地板是 8 阶，别把量过的退回去"
+    )
     eotf, oetf = transfer_pair(DEFAULT_FOLD_TRANSFER)
     assert delivery_cube("p3-d65", "rec709") == delivery_cube(
         "p3-d65", "rec709", curve=eotf, inverse=oetf
@@ -194,10 +337,10 @@ def default_suite() -> None:
     ], drawn
 
 
-def fold_pixels(stored_name: str) -> bytes:
-    """把八格参考颜色按那一档曲线搬进 P3-D65 存起来：每行一格，横向铺满 8 列。"""
+def fold_pixels(stored_name: str, source: str = "p3-d65") -> bytes:
+    """把八格参考颜色按那一档曲线搬进 `source` 那一档存起来：每行一格，横向铺满 8 列。"""
     load, save = ANCHORS[stored_name]
-    widen = primaries_matrix("rec709", "p3-d65")
+    widen = primaries_matrix("rec709", source)
     frame = bytearray()
     for cell in PLATE_CELLS:
         linear = [load(value / 255.0) for value in cell]
@@ -213,7 +356,7 @@ def fold_pixels(stored_name: str) -> bytes:
 NARROW = primaries_matrix("p3-d65", "rec709")
 
 
-def analytic_fold(plate: bytes, curve) -> bytes:
+def analytic_fold(plate: bytes, curve, matrix=None) -> bytes:
     """把板上那些**整数**存储值按这一档曲线折一次：门禁自己算的那一份期望。
 
     基准读的是板上那同一个整数，不是「最初那格颜色」——后者会被量化的条件数污染：P3-D65 里
@@ -225,7 +368,8 @@ def analytic_fold(plate: bytes, curve) -> bytes:
     for index in range(0, len(plate), 3):
         linear = [load(plate[index + channel] / 255.0) for channel in range(3)]
         folded = [
-            sum(NARROW[row][column] * linear[column] for column in range(3)) for row in range(3)
+            sum((matrix or NARROW)[row][column] * linear[column] for column in range(3))
+            for row in range(3)
         ]
         out.extend(bytes(round(clamp01(save(clamp01(value))) * 255) for value in folded))
     return bytes(out)
@@ -438,19 +582,32 @@ def http_suite() -> dict[str, str]:
             for name in FOLD_TRANSFERS:
                 write(fold_transfer=name)
                 filters, cubes = graph()
-                assert "lut3d=file=primaries-" in filters, filters[:400]
                 eotf, oetf = ANCHORS[name]
-                assert cubes == delivery_cube("p3-d65", "rec2020", curve=eotf, inverse=oetf), (
-                    f"{name}：图里那张立方体不是按这一档曲线切的那一张"
-                )
+                if fold_route(name) == "cube":
+                    assert "lut3d=file=primaries-" in filters, filters[:400]
+                    assert cubes == delivery_cube("p3-d65", "rec2020", curve=eotf, inverse=oetf), (
+                        f"{name}：图里那张立方体不是按这一档曲线切的那一张"
+                    )
+                else:
+                    assert "lut3d=file=primaries-" not in filters, (
+                        f"{name}：这一档改走链条了，图里却还挂着一张立方体——凭空多的一层"
+                    )
+                    assert cubes == "", f"{name}：链条那一路不该往作业目录写立方体"
+                    mix = primaries_mix_expression(primaries_matrix("p3-d65", "rec2020"))
+                    trc = fold_trc(name)
+                    assert f"colorchannelmixer={mix}" in filters, (
+                        f"{name}：链条中间那九个数不是 gamut.primaries_matrix 算的那一份"
+                    )
+                    assert f"zscale=transferin={trc}:transfer=linear" in filters, filters[:400]
+                    assert f"zscale=transferin=linear:transfer={trc}" in filters, filters[:400]
                 pid, tables = preview()
                 decode, encode = transfer_tables(name)
                 assert tables[1:] == [decode, encode], (
                     f"{name}：预览链子最后那两张表不是 transfer_tables(这一档) 切的那两张"
                 )
                 seen[name], ids[name] = (filters, cubes), pid
-            assert seen["bt709"][1] != seen["gamma24"][1], (
-                "换了曲线而立方体一模一样——那这一格是摆设"
+            assert seen["bt709"][0] != seen["gamma24"][0], (
+                "换了曲线而导出图一个字没变——那这一格是摆设"
             )
             assert ids["bt709"] != ids["gamma24"], (
                 "预览那两级表换了而滤镜 id 没变——浏览器认 id，两张图会共用同一个 filter"
@@ -483,6 +640,7 @@ def main() -> None:
     default_suite()
     with tempfile.TemporaryDirectory() as scratch:
         landed = landing_suite(Path(scratch))
+        floors = precision_suite(Path(scratch))
     graphs = http_suite()
     print(
         "   名单："
@@ -510,6 +668,47 @@ def main() -> None:
     assert landed["gamma24"][1] > landed["bt709"][1], (
         f"两边走错曲线的代价不再分高矮（{landed}）——那「哪条更常是错的」这句话要重写"
     )
+    print(
+        "   两端的地板（期望＝同一份整数按该档解析折一次）："
+        + "；".join(
+            f"{name}：预览 {p} 阶／导出 {x} 阶／互差 {g} 阶／按另一档声明 {w} 阶"
+            f"／收窄板上本路 {s} 阶" + ("、另一条走不通" if o is None else f"、另一条 {o} 阶")
+            for name, (p, x, g, w, o, s) in floors.items()
+        )
+    )
+    for name, (
+        preview_worst,
+        export_worst,
+        gap,
+        declared_wrong,
+        other_route,
+        shipped_deep,
+    ) in floors.items():
+        # 判的是「表示」那一级的地板：立方体 33³ 与每通道 256／1024 格都是近似。数来自
+        # 本轮测量（分段：导出 3 阶、预览 1 阶；γ2.4：链条 4 阶、1024 格 5 阶），红起来的意思是
+        # 「地板涨了或两端又分家」，不是我发明的容差。
+        assert preview_worst <= 8, f"{name}：预览那一端 {preview_worst} 阶，{floors}"
+        assert export_worst <= 8, f"{name}：导出那一端 {export_worst} 阶，这一路地板涨了：{floors}"
+        assert gap <= 10, f"{name}：预览与导出互差 {gap} 阶，两端又分家了：{floors}"
+        assert declared_wrong >= 10, (
+            f"{name}：按另一档声明只差 {declared_wrong} 阶，要重量：{floors}"
+        )
+        assert declared_wrong >= 2 * export_worst + 2, (
+            f"{name}：配对与配错的差距不再悬殊（{export_worst} vs {declared_wrong}）"
+        )
+        # 这一条是「选这一路」那句决定的凭据：同一段图、同一块板，两条编译法各跑一遍，
+        # 交出去的那一条不许比另一条差。有人把 γ2.4 换回立方体、或把分段塞进链条，红的是这里。
+        # 对照看的是**收窄**那块板：放宽那一头两条路都几乎没误差，比不出决定。
+        if other_route is None:
+            assert fold_route(name) == "cube", (
+                f"{name}：另一条路对这一档走不通（随包 FFmpeg 念不出这条曲线），"
+                "交出去的却不是唯一走得通的那一条"
+            )
+        else:
+            assert shipped_deep <= other_route, (
+                f"{name}：收窄那块板上交出去的那一路 {shipped_deep} 阶、另一条 {other_route} 阶——"
+                "路由表选错了，这张表要重新量"
+            )
     assert graphs["bt709"] != graphs["gamma24"]
     print(
         "PASS: 折叠曲线只认名单里那两档，认不得的点名拒收且不涨版本；默认那一档与「没写过」"
