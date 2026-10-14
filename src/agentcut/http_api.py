@@ -1373,9 +1373,18 @@ def create_app(
         """
         root = projects.get(project_id)
         project = sequence_view(root, request.sequence_id)
+        if request.source_clip_id != clip_id:
+            # 路径与载荷各指一段时不知道该信谁——与 1.108 那条「clip 不在这条轨上」同一条规矩。
+            raise EditorError(
+                "NOT_FOUND",
+                "path and body name different clips",
+                404,
+                clip_id=clip_id,
+                source_clip_id=request.source_clip_id,
+            )
         body = attribute_plan(
             project,
-            clip_id,
+            request.source_clip_id,
             request.target_clip_ids,
             request.categories,
             request.sequence_id,

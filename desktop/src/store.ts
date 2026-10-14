@@ -40,12 +40,13 @@ import type {
   RenderRange,
   RenderBatchItem,
 } from "./engine";
-import { FIT_MODES, verifiedFromProbe, type ColorSpace, type MaskTrackReceipt, type OutputRate, type TransitionKind, type VerifiedMedia } from "./engine";
+import { FIT_MODES, verifiedFromProbe, type AttributePlan, type ColorSpace, type MaskTrackReceipt, type OutputRate, type TransitionKind, type VerifiedMedia } from "./engine";
 import { align, frameTicks, sampleTicks, ticks, TIMEBASE } from "./time";
 import { clipboardAssetsToReprobe, copyClips, pasteCommands, relatedClips, reviveClipboardAssets, selectionQuantum, timelineTracks, type ClipClipboard } from "./selection";
 import { linkSplitTrim } from "./splitTrim";
 import { DISPLAY_PRIMARIES, foldDefault } from "./workingSpace";
-import { CLIP_KEY, MARKS_KEY, isClipClipboard, isSourceMarks, readBrowser, writeBrowser, type SourceMark } from "./clipboardStore";
+import { CLIP_KEY, MARKS_KEY, isClipClipboard, isSourceMarks, readBrowser, writeBrowser, ATTRIBUTES_KEY, isAttributeCopy, type AttributeCopy, type SourceMark } from "./clipboardStore";
+import { copyBlocker, dialogRows, pasteSaid, pasteTargets, type AttributeRow } from "./attributePaste";
 import type { FadeOp, FadeProperty, FadeShape, FadeSide, TrackTarget } from "./effects";
 import { fadeAdoptSummary } from "./effects";
 import {
@@ -115,6 +116,8 @@ export type AppState = {
   selectedClip: string | null;
   selectedClips: string[];
   clipboardCount: number;
+  /** 1.163：这份「复制属性」的来源那一段（记的是 id，不是那份数）。 */
+  attributeSource: string | null;
   selectedAsset: string | null;
   mode: "instant" | "batch";
   batch: Command[];
@@ -168,6 +171,7 @@ let state: AppState = {
   selectedClip: null,
   selectedClips: [],
   clipboardCount: 0,
+  attributeSource: null,
   selectedAsset: null,
   mode: "instant",
   batch: [],
@@ -1895,6 +1899,116 @@ export async function adoptTrackFades(trackId: string) {
     }
     submit(body.commands as Command[], "整轨把老淡搬成边窗口");
     toast("info", summary.title, summary.detail);
+  } catch (error) {
+    const { title, detail } = describe(error);
+    toast("error", title, detail);
+  } finally {
+    set({ busy: "" });
+  }
+}
+
+// 1.163「复制属性」记的是「来源是哪一段」，不是那一份数：粘的时候向引擎现问一份规划，
+// 所以复制之后又改了来源，粘出去的就是改过的那一份；界面不存第二份工程状态。
+// 形状过的是 clipboardStore 那道门（上一次运行留下的半份 JSON 只当没复制过）。
+let attributeCopy: AttributeCopy | null = readBrowser(ATTRIBUTES_KEY, isAttributeCopy);
+if (attributeCopy) set({ attributeSource: attributeCopy.clipId });
+
+function rememberAttributes(copy: AttributeCopy | null): void {
+  attributeCopy = copy;
+  writeBrowser(ATTRIBUTES_KEY, copy);
+  set({ attributeSource: copy?.clipId ?? null });
+}
+
+function attributeBody(clipId: string, categories: string[], targets: string[]) {
+  const project = state.project;
+  return {
+    request_id: newId("attributepaste-"),
+    expected_revision: project?.revision ?? 0,
+    source_clip_id: clipId,
+    target_clip_ids: targets,
+    categories,
+    sequence_id: state.sequenceId,
+  };
+}
+
+function attributeTargets(): string[] {
+  return attributeCopy ? pasteTargets(attributeCopy.clipId, state.selectedClips) : [];
+}
+
+/** 那颗「复制属性」：一次只认一个来源段；多选时先把主选中留成一段。 */
+export function copyAttributes(): void {
+  const project = state.project;
+  const blocker = copyBlocker(project, state.selectedClips, state.caps?.features);
+  if (!project || blocker) {
+    toast("warn", "现在不能复制属性", blocker ?? "先打开一个工程。");
+    return;
+  }
+  const clipId = state.selectedClips[0];
+  rememberAttributes({ projectId: project.id, clipId });
+  const asset = project.assets[project.clips[clipId]?.asset_id ?? ""];
+  toast(
+    "ok",
+    `已复制这一段的属性 · ${asset?.label || clipId}`,
+    "在时间线上选中要粘上去的段（Shift 点加选，或空白处拉框挑一组），再点「粘贴属性」。换一个工程、重开一次窗口这份复制都还在。",
+  );
+}
+
+export function forgetAttributes(): void {
+  rememberAttributes(null);
+}
+
+/** 视图只读这一份（内存里的那一份与存储里的那一份永远一起换）。 */
+export function attributeSourceCopy(): AttributeCopy | null {
+  return attributeCopy;
+}
+
+/** 打开对话框前问引擎一次：每一类在来源那一段上各有多少东西。对话框那一排勾只排这一份。 */
+export async function askAttributeRows(
+  chosen?: string[],
+): Promise<{ rows: AttributeRow[]; plan: AttributePlan } | null> {
+  const project = state.project;
+  const every = (state.caps?.attribute_categories ?? []).map((row) => row.id);
+  // 类别名单只有一份：对话框要排全部那些行，所以问的可以是勾中的那一串，名单仍从能力表来。
+  const ids = chosen?.length ? chosen : every;
+  if (!engine || !project || !attributeCopy || !every.length) return null;
+  try {
+    const asked = await engine.attributePlan(
+      project.id,
+      attributeCopy.clipId,
+      attributeBody(attributeCopy.clipId, ids, attributeTargets()),
+    );
+    return {
+      rows: dialogRows(state.caps?.attribute_categories, asked.attribute_plan.all_categories),
+      plan: asked.attribute_plan,
+    };
+  } catch (error) {
+    const { title, detail } = describe(error);
+    toast("error", title, detail);
+    return null;
+  }
+}
+
+/** 粘：把人勾的那几类再向引擎问一次规划（选中的段可能在对话框开着时改过），
+ *  交回的都是普通命令，写仍走那一条批次——一次粘贴一个版本，撤销一步整批回来。 */
+export async function pasteAttributes(categories: string[]): Promise<void> {
+  const project = state.project;
+  if (!engine || !project || !attributeCopy || !categories.length) return;
+  const targets = attributeTargets();
+  set({ busy: "问引擎哪几段接得下…" });
+  try {
+    const asked = await engine.attributePlan(
+      project.id,
+      attributeCopy.clipId,
+      attributeBody(attributeCopy.clipId, categories, targets),
+    );
+    const plan = asked.attribute_plan;
+    const said = pasteSaid(plan, targets.length);
+    if (!plan.commands.length) {
+      toast("info", said.title, said.detail);
+      return;
+    }
+    submit(plan.commands as Command[], "粘贴属性");
+    toast("info", said.title, said.detail);
   } catch (error) {
     const { title, detail } = describe(error);
     toast("error", title, detail);

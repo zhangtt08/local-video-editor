@@ -33,6 +33,8 @@ import {
   selectClips,
   copySelection,
   pasteSelection,
+  attributeSourceCopy,
+  copyAttributes,
   removeSelection,
   moveSelection,
   splitSelection,
@@ -52,6 +54,8 @@ import {
   ZOOM_MIN,
 } from "../store";
 import { chordWords } from "../keymap";
+import { copyBlocker, pasteBlocker, pasteTargets } from "../attributePaste";
+import { AttributeDialog } from "./AttributeDialog";
 import { EMPTY_TRACK_HINT, FIELD_LABEL, trackToolBlocker, fadeDragBatch, fadeDragTicks, fadeProperties, fadeWindows, type FadeProperty, type FadeSide } from "../effects";
 import { selectionQuantum, timelineTracks } from "../selection";
 
@@ -168,6 +172,8 @@ export function Timeline() {
   const [markerEdit, setMarkerEdit] = useState<string | null>(null);
   const [dropHint, setDropHint] = useState<{ trackId: string; ticks: number } | null>(null);
   const [marquee, setMarquee] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  // 1.163「粘贴属性」：对话框只在人点开时存在，回执里的数每次改勾都重新问一次引擎。
+  const [attributeOpen, setAttributeOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // 1.131：卡片只建窗口里的那些。view 是这条横向滚动的当前视口，marqueeSpan 是框选正在拖的那一段
   // 时间跨度——被框住的每一条都必须存在，旧的按 DOM 矩形判定命中的逻辑才一个字都不用改。
@@ -242,6 +248,15 @@ export function Timeline() {
       })
     : [];
 
+  const attributeSource = attributeSourceCopy();
+  const attributeTargets = attributeSource ? pasteTargets(attributeSource.clipId, app.selectedClips) : [];
+  const attributeStop = copyBlocker(project, app.selectedClips, app.caps?.features);
+  const attributePasteStop = pasteBlocker(attributeSource, project, attributeTargets, app.caps?.features);
+  const attributeSourceClip = attributeSource ? project?.clips[attributeSource.clipId] : undefined;
+  const attributeSourceLabel = attributeSourceClip
+    ? project?.assets[attributeSourceClip.asset_id]?.label || attributeSourceClip.id
+    : "";
+
   return (
     <section className="timeline" aria-label="时间线">
       <div className="tl-toolbar">
@@ -250,6 +265,22 @@ export function Timeline() {
         <button className="btn tiny subtle" disabled={!canSplit} title={`在播放头处分割选中片段（${chordWords(keymap().split)}）`} onClick={() => splitSelection(playhead.value)}>分割</button>
         <IconBtn icon="copy" label={`复制选中片段（${chordWords(keymap().copy)}）`} disabled={!app.selectedClip} onClick={copySelection} />
         <button className="btn tiny subtle" disabled={!app.clipboardCount} onClick={pasteSelection} title={`粘贴到播放头（${chordWords(keymap().paste)}）`}>粘贴</button>
+        <button
+          className="btn tiny subtle"
+          disabled={Boolean(attributeStop)}
+          title={attributeStop ?? "把这一段当前的调色链、效果与变换、关键帧、遮罩、淡、变速、文字样式记下来，再粘到别的段上（达芬奇 / 剪映那句「粘贴属性」）"}
+          onClick={copyAttributes}
+        >
+          复制属性
+        </button>
+        <button
+          className="btn tiny subtle"
+          disabled={Boolean(attributePasteStop)}
+          title={attributePasteStop ?? `把记下的那几类粘到选中的 ${attributeTargets.length} 段上（来源自己不算目标）`}
+          onClick={() => setAttributeOpen(true)}
+        >
+          粘贴属性
+        </button>
         <IconBtn icon="trash" label={`删除选中片段，保留空隙（${chordWords(keymap()["delete-selection"])}）`} disabled={!app.selectedClip} onClick={() => removeSelection()} />
         <button className="btn tiny subtle" disabled={!app.selectedClip} title={`删除并向左补齐本轨后续片段（${chordWords(keymap()["ripple-delete"])}）`} onClick={() => removeSelection(true)}>涟漪删除</button>
         {app.selectedClips.length > 1 ? <span className="tag accent">{app.selectedClips.length} 段</span> : null}
@@ -447,6 +478,7 @@ export function Timeline() {
           <span>批次预演未通过：{app.dryRunError}</span>
         </div>
       ) : null}
+      {attributeOpen ? <AttributeDialog targets={attributeTargets} sourceLabel={attributeSourceLabel} onClose={() => setAttributeOpen(false)} /> : null}
     </section>
   );
 

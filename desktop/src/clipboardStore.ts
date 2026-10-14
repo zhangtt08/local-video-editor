@@ -16,6 +16,16 @@ export const CLIP_KEY = "agentcut.clipboard";
 export const KEYS_KEY = "agentcut.keyclipboard";
 export const MARKS_KEY = "agentcut.sourceMarks";
 
+/** 1.163「复制属性」存的不是那份数，而是「来源是哪一段」：粘的时候向引擎现问一份规划，
+ *  所以复制之后又改了来源，粘出去的就是改过的那份——界面不存第二份工程状态。 */
+export type AttributeCopy = { projectId: string; clipId: string };
+
+export const ATTRIBUTES_KEY = "agentcut.attributeCopy";
+
+export function isAttributeCopy(value: unknown): value is AttributeCopy {
+  return record(value) && text(value.projectId) && text(value.clipId);
+}
+
 /** 素材预览上那对入／出点：按素材的 key 存，取用时再按目标工程的格子夹。 */
 export type SourceMark = { in_ticks?: number; out_ticks?: number };
 

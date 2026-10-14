@@ -600,6 +600,9 @@ export type Capabilities = {
   /** 1.159：工程基色可选的那几档（引擎从 `gamut.PRIMARIES` 现算）。老引擎不回就没有这一行。 */
   working_primaries?: string[];
   fold_transfers?: { id: string; label: string }[];
+  /** 1.163：「粘贴属性」能搬的那几类。中文名与那句「这一类到底搬什么」都来自引擎，
+   *  对话框排出这一份，界面不许自己再列一遍名单。老引擎不回这一字段时那颗按钮不亮。 */
+  attribute_categories?: AttributeCategory[];
   /** 调色链的形状上限（节点数、并联支数、曲线点数、LUT 采样数）由引擎下发，界面照此限制。 */
   grade_limits?: {
     max_nodes: number;
@@ -629,7 +632,7 @@ export type Capabilities = {
   max_commands_per_batch: number;
   commands: string[];
   features: Record<string, boolean>;
-  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; denoise_db?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number; track_max_gap_frames?: number; track_gap_default?: number; track_min_frames?: number; track_max_frames?: number; mask_shape_keys?: number; mask_shape_schedule_segments?: number; blur_schedule_segments?: number; sharpen_schedule_segments?: number };
+  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; denoise_db?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number; track_max_gap_frames?: number; track_gap_default?: number; track_min_frames?: number; track_max_frames?: number; mask_shape_keys?: number; mask_shape_schedule_segments?: number; blur_schedule_segments?: number; sharpen_schedule_segments?: number; attribute_paste_targets?: number };
   render_presets: Preset[];
   /** 1.137：时间码的写法与「哪两个率才有丢帧码」由引擎说，界面不许自己写一份正则。 */
   timecode_shape?: string;
@@ -640,6 +643,40 @@ export type Capabilities = {
    *  界面只列 id 与 label，不用 primaries／transfer／matrix 算任何东西。老引擎不回这一字段，
    *  那时这一栏干脆念「这一版引擎没有这一档」，导出照旧不带标记地走。 */
   output_colour_tags?: OutputColourTag[];
+};
+
+/** 1.163「粘贴属性」：能搬的那一类（名单、中文名、那句「这一类搬什么」都住在引擎）。 */
+export type AttributeCategory = { id: string; label: string; note: string };
+
+/** 规划对来源那一段每一类的报告：勾不勾得上、有几个可搬，读的是这一份。 */
+export type AttributeCategoryReport = {
+  category: string;
+  label: string;
+  note: string;
+  has_content: boolean;
+  [key: string]: unknown;
+};
+
+export type AttributePlan = {
+  source_clip_id: string;
+  sequence_id: string | null;
+  categories: AttributeCategoryReport[];
+  all_categories: AttributeCategoryReport[];
+  requested: number;
+  targets: number;
+  commands: Record<string, unknown>[];
+  written: { clip_id: string; categories: string[] }[];
+  unchanged: string[];
+  refusals: {
+    clip_id: string;
+    category: string | null;
+    code: string;
+    message: string;
+    details: Record<string, unknown>;
+  }[];
+  beyond_tail_keyframes: number;
+  target_limit: number;
+  command_limit: number;
 };
 
 /** 1.97 整轨规划的一项：要么是能搬的淡（带着将要落库的两个数），要么是搬不动的原因。 */
@@ -676,20 +713,10 @@ export type MaskTrackReceipt = {
   points: { at_ticks: number; center_x: number; center_y: number; width?: number; height?: number }[];
 };
 
-export class EngineError extends Error {
-  code: string;
-  details: Record<string, unknown>;
-  status: number;
-
-  constructor(code: string, message: string, details: Record<string, unknown>, status: number) {
-    super(message);
-    this.code = code;
-    this.details = details;
-    this.status = status;
-  }
-
-  /** 每个错误都要给出下一步动作——这是降低上手难度的关键，不是装饰。 */
-  explain(): string {
+/** 每个错误都要给出下一步动作——这是降低上手难度的关键，不是装饰。
+ *  1.163 起这张表还服务第二件事：粘贴属性的规划把 reducer 的原话一条条交回来（那不是异常），
+ *  界面念的仍是这同一份中文——同一句拒绝不许有两个说法。 */
+export function errorHints(): Record<string, string> {
     const hints: Record<string, string> = {
       UNAUTHORIZED: "引擎密钥不匹配，请重启软件或在 Agent 面板重新复制配置。",
       REVISION_CONFLICT: "时间线刚被 Agent 或另一次操作改过。界面已自动读取最新版本，请重做这一步。",
@@ -857,6 +884,29 @@ export class EngineError extends Error {
       SEQUENCE_NEEDS_CONTAINER: "图像序列交出的是一串文件（每帧一张），没有容器可以挂起始时间码，帧号就是位置。要时间码请换成 mov／mp4／mxf／webm 那几条；这一串的声音也不在里面，需要带声的成片请同时交一份 mp4／mov。",
       UNKNOWN_PRESET: "没有这个导出预设。能力表里列出的 id 才是可用的；界面下拉里选一个即可。",
     };
+    return hints;
+}
+
+
+export function errorHint(code: string): string {
+  return errorHints()[code] ?? "";
+}
+
+export class EngineError extends Error {
+  code: string;
+  details: Record<string, unknown>;
+  status: number;
+
+  constructor(code: string, message: string, details: Record<string, unknown>, status: number) {
+    super(message);
+    this.code = code;
+    this.details = details;
+    this.status = status;
+  }
+
+  /** 每个错误都要给出下一步动作——这是降低上手难度的关键，不是装饰。 */
+  explain(): string {
+    const hints = errorHints();
     const hint = hints[this.code];
     if (!hint) return this.message;
     // 引擎自己就已经说中文的那些拒绝（例如时间码点名是哪一段数字不对），比通用提示更具体：
@@ -1262,6 +1312,16 @@ export class Engine {
   }
 
   /** 1.97：走一遍这条轨，把 1.90 之前写成关键帧的淡排成普通的 `clip.fade_adopt` 命令。只读。 */
+  /** 1.163：向引擎问一份「把这一段这几类搬到那些段」的规划。只读——
+   *  交回来的是普通命令，写仍走 `/edits` 那一条链，所以人和 Agent 写的是同一批命令。 */
+  attributePlan(projectId: string, clipId: string, body: Record<string, unknown>) {
+    return this.request<{
+      committed: boolean;
+      project: Record<string, unknown>;
+      attribute_plan: AttributePlan;
+    }>("POST", `/v1/projects/${projectId}/clips/${clipId}/attribute-plan`, body, 600000);
+  }
+
   fadeAdoptTrack(projectId: string, trackId: string, body: Record<string, unknown>) {
     return this.request<{
       committed: boolean;

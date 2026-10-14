@@ -879,6 +879,13 @@ table.table tr.current td { background: var(--accent-soft); }
 .grade-pick { text-align: left; background: var(--panel); border: 1px solid var(--line); color: var(--ink-2); border-radius: var(--r-sm); padding: 5px 7px; font-size: 11px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .grade-pick.active { border-color: var(--accent); color: var(--ink); background: var(--accent-soft); }
 .grade-switch { display: flex; gap: 3px; align-items: center; font-size: 11px; color: var(--ink-3); white-space: nowrap; }
+
+.attribute-row { display: grid; gap: 2px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+.attribute-row > label { white-space: normal; gap: 6px; font-size: 12px; color: var(--ink-1); }
+.attribute-row .count { color: var(--ink-3); font-size: 11px; }
+.attribute-row .hint { margin: 0; }
+.attribute-refusals { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+.attribute-refusals .hint { color: var(--warn); }
 .grade-body { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
 .curve-pad { display: grid; grid-template-columns: 120px minmax(96px,1fr); gap: 8px; align-items: start; }
 .curve-svg { width: 120px; height: 240px; background: #17191d; border: 1px solid var(--line); border-radius: var(--r-sm); touch-action: none; cursor: crosshair; }
