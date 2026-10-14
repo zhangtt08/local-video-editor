@@ -611,6 +611,21 @@ def http_suite() -> dict:
             assert client.get(path).json()["revision"] == landed["project"]["revision"], (
                 "被拒的一次规划涨了 revision"
             )
+            mixed = client.post(
+                path + "/clips/src/attribute-plan",
+                json={
+                    "request_id": "ap-mixed",
+                    "expected_revision": landed["project"]["revision"],
+                    "source_clip_id": "a",
+                    "target_clip_ids": ["src"],
+                    "categories": ["color"],
+                },
+            )
+            assert mixed.status_code == 404, f"路径与载荷各指一段该拒：{mixed.status_code}"
+            assert mixed.json()["error"]["details"] == {
+                "clip_id": "src",
+                "source_clip_id": "a",
+            }, f"那一句没把两个名字都交回来：{mixed.json()}"
             return {"revision": landed["project"]["revision"]}
 
 
