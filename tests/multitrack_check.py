@@ -51,8 +51,13 @@ def truth(at: float, left: int, top: int, sign: int) -> tuple[float, float]:
 def mask_at(left: int, top: int, sign: int) -> dict:
     centre_x, centre_y = truth(0.0, left, top, sign)
     return {
-        "shape": "ellipse", "center_x": centre_x, "center_y": centre_y,
-        "width": BOX[0], "height": BOX[1], "feather": 0.0, "inverted": False,
+        "shape": "ellipse",
+        "center_x": centre_x,
+        "center_y": centre_y,
+        "width": BOX[0],
+        "height": BOX[1],
+        "feather": 0.0,
+        "inverted": False,
     }
 
 
@@ -62,14 +67,34 @@ def render_plate(source: Path) -> None:
     这是先量过的：同一句 `drawbox=x=…t` 会让跟踪在第一帧就跟丢，夹具自己不说谎，后面的判据才有意义。
     """
     argv = [
-        str(FFMPEG), "-v", "error", "-y",
-        "-f", "lavfi", "-i", f"color=c=0x181818:s={WIDTH}x{HEIGHT}:r={FPS}",
-        "-f", "lavfi", "-i", f"color=c=white:s={SIZE}x{SIZE}:r={FPS}",
-        "-f", "lavfi", "-i", f"color=c=0xd0d0d0:s={SIZE}x{SIZE}:r={FPS}",
+        str(FFMPEG),
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        f"color=c=0x181818:s={WIDTH}x{HEIGHT}:r={FPS}",
+        "-f",
+        "lavfi",
+        "-i",
+        f"color=c=white:s={SIZE}x{SIZE}:r={FPS}",
+        "-f",
+        "lavfi",
+        "-i",
+        f"color=c=0xd0d0d0:s={SIZE}x{SIZE}:r={FPS}",
         "-filter_complex",
         f"[0:v][1:v]overlay=x={A_X0}+{SPEED}*t:y={A_Y}:shortest=1[b];"
         f"[b][2:v]overlay=x={B_X0}-{SPEED}*t:y={B_Y}:shortest=1,format=yuv420p[v]",
-        "-map", "[v]", "-t", str(SECONDS), "-c:v", "libx264", "-preset", "ultrafast", str(source),
+        "-map",
+        "[v]",
+        "-t",
+        str(SECONDS),
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        str(source),
     ]
     done = subprocess.run(argv, capture_output=True, check=False)
     assert done.returncode == 0, done.stderr[-600:].decode(errors="replace")
@@ -115,8 +140,11 @@ def seed(client: TestClient, path: str, probe: dict) -> int:
         {"op": "track.add", "track": {"id": "v1", "kind": "video", "name": "v1"}},
         {"op": "track.add", "track": {"id": "v2", "kind": "video", "name": "v2"}},
         {
-            "op": "asset.import", "asset_id": "a", "label": "plate",
-            "probe_id": probe["id"], "verified": probe["verified"],
+            "op": "asset.import",
+            "asset_id": "a",
+            "label": "plate",
+            "probe_id": probe["id"],
+            "verified": probe["verified"],
         },
     ]
     for clip_id, track_id in (("ca", "v1"), ("cb", "v2")):
@@ -125,8 +153,12 @@ def seed(client: TestClient, path: str, probe: dict) -> int:
             {
                 "op": "clip.add",
                 "clip": {
-                    "id": clip_id, "asset_id": "a", "track_id": track_id, "position_ticks": 0,
-                    "duration_ticks": CLIP_TICKS, "mask": mask_at(left, top, sign),
+                    "id": clip_id,
+                    "asset_id": "a",
+                    "track_id": track_id,
+                    "position_ticks": 0,
+                    "duration_ticks": CLIP_TICKS,
+                    "mask": mask_at(left, top, sign),
                 },
             }
         )
@@ -155,16 +187,17 @@ def shared_decode_suite(folder: Path) -> None:
         assert caps["features"]["mask_track_group"] is True, caps["features"]
         assert caps["limits"]["track_max_targets"] == TRACK_TARGET_LIMIT, caps["limits"]
         probe = client.post("/v1/media/import", json={"path": str(source)}).json()
-        project = client.post(
-            "/v1/projects", json={"request_id": "new", "name": "group"}
-        ).json()["project"]
+        project = client.post("/v1/projects", json={"request_id": "new", "name": "group"}).json()[
+            "project"
+        ]
         path = f"/v1/projects/{project['id']}"
         start = seed(client, path, probe)
 
         first = client.post(
             path + "/mask-track",
             json={
-                "request_id": "both", "expected_revision": start,
+                "request_id": "both",
+                "expected_revision": start,
                 "targets": [group("ca"), group("cb", estimate_scale=False)],
             },
         )
@@ -183,8 +216,7 @@ def shared_decode_suite(folder: Path) -> None:
             marks = [key for key in clips[clip_id]["keyframes"] if key["property"] == "mask_x"]
             assert len(marks) == FRAMES, (clip_id, len(marks))
             worst = max(
-                abs(key["value"] - truth(key["at_ticks"] / T, left, top, sign)[0])
-                for key in marks
+                abs(key["value"] - truth(key["at_ticks"] / T, left, top, sign)[0]) for key in marks
             )
             assert worst < 0.05, (clip_id, worst)
             travel = marks[-1]["value"] - marks[0]["value"]
@@ -206,13 +238,20 @@ def shared_decode_suite(folder: Path) -> None:
         anchored = client.post(
             path + "/edits",
             json={
-                "request_id": "anchor", "expected_revision": start + 1,
+                "request_id": "anchor",
+                "expected_revision": start + 1,
                 "commands": [
                     {
-                        "op": "clip.mask", "clip_id": "ca",
+                        "op": "clip.mask",
+                        "clip_id": "ca",
                         "mask": {
-                            "shape": "ellipse", "center_x": anchor_x, "center_y": anchor_y,
-                            "width": BOX[0], "height": BOX[1], "feather": 0.0, "inverted": False,
+                            "shape": "ellipse",
+                            "center_x": anchor_x,
+                            "center_y": anchor_y,
+                            "width": BOX[0],
+                            "height": BOX[1],
+                            "feather": 0.0,
+                            "inverted": False,
                         },
                     }
                 ],
@@ -222,7 +261,8 @@ def shared_decode_suite(folder: Path) -> None:
         continued = client.post(
             path + "/mask-track",
             json={
-                "request_id": "continue", "expected_revision": start + 2,
+                "request_id": "continue",
+                "expected_revision": start + 2,
                 "targets": [
                     group("ca", frames=30, from_ticks=30 * FRAME_TICKS),
                     group("cb", frames=FRAMES, estimate_scale=False),
@@ -241,7 +281,9 @@ def shared_decode_suite(folder: Path) -> None:
         split = client.post(
             path + "/mask-track",
             json={
-                "request_id": "split", "expected_revision": start + 3, "dry_run": True,
+                "request_id": "split",
+                "expected_revision": start + 3,
+                "dry_run": True,
                 "targets": [
                     group("ca", frames=30),
                     group("cb", frames=20, from_ticks=10 * FRAME_TICKS, estimate_scale=False),
@@ -256,7 +298,8 @@ def shared_decode_suite(folder: Path) -> None:
         twice = client.post(
             path + "/mask-track",
             json={
-                "request_id": "twice", "expected_revision": before,
+                "request_id": "twice",
+                "expected_revision": before,
                 "targets": [group("ca"), group("ca")],
             },
         )
@@ -290,23 +333,28 @@ def budget_suite(folder: Path) -> None:
         app, base_url="http://127.0.0.1", headers={"Authorization": f"Bearer {token}"}
     ) as client:
         probe = client.post("/v1/media/import", json={"path": str(source)}).json()
-        project = client.post(
-            "/v1/projects", json={"request_id": "new", "name": "crowded"}
-        ).json()["project"]
+        project = client.post("/v1/projects", json={"request_id": "new", "name": "crowded"}).json()[
+            "project"
+        ]
         path = f"/v1/projects/{project['id']}"
         start = seed(client, path, probe)
         filled = CLIP_KEYFRAME_LIMIT - 1
         crowd = client.post(
             path + "/edits",
             json={
-                "request_id": "crowd", "expected_revision": start,
+                "request_id": "crowd",
+                "expected_revision": start,
                 "commands": [
                     {
-                        "op": "keyframes.replace", "clip_id": "cb", "property": "opacity",
+                        "op": "keyframes.replace",
+                        "clip_id": "cb",
+                        "property": "opacity",
                         "keyframes": [
                             {
-                                "property": "opacity", "at_ticks": index * FRAME_TICKS,
-                                "value": 1.0, "interpolation": "linear",
+                                "property": "opacity",
+                                "at_ticks": index * FRAME_TICKS,
+                                "value": 1.0,
+                                "interpolation": "linear",
                             }
                             for index in range(filled)
                         ],
@@ -319,7 +367,8 @@ def budget_suite(folder: Path) -> None:
         blocked = client.post(
             path + "/mask-track",
             json={
-                "request_id": "blocked", "expected_revision": head,
+                "request_id": "blocked",
+                "expected_revision": head,
                 "targets": [group("ca"), group("cb")],
             },
         )
@@ -328,14 +377,18 @@ def budget_suite(folder: Path) -> None:
         assert refused["code"] == "MASK_TRACK_BUDGET", refused
         assert refused["details"]["clip_id"] == "cb", refused["details"]
         assert refused["details"]["target_position"] == 2, refused["details"]
-        for key in ("frames_requested", "capacity_frames", "curves_per_point", "keyframe_limit",
-                    "curves_used"):
+        for key in (
+            "frames_requested",
+            "capacity_frames",
+            "curves_per_point",
+            "keyframe_limit",
+            "curves_used",
+        ):
             assert refused["details"][key] is not None, (key, refused["details"])
         after = client.get(path).json()
         assert after["revision"] == head, "整组被拒就不许写任何一段"
         assert not [
-            key for key in after["clips"]["ca"]["keyframes"]
-            if key["property"] == "mask_x"
+            key for key in after["clips"]["ca"]["keyframes"] if key["property"] == "mask_x"
         ], "另一段不许被写一半"
         room = client.post(
             path + "/mask-track",

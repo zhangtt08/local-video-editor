@@ -26,7 +26,6 @@ from agentcut.contracts import (
     EditBatch,
     EditorError,
     FrameRate,
-    MaskTrackRequest,
     MaskTrackTarget,
     Project,
     VerifiedMedia,
@@ -413,9 +412,9 @@ def interface_suite() -> None:
     ]
     # 1.87: the two tracking knobs the Agent can pass have controls in the Inspector, and the
     # ceiling they clamp to is the engine's number rather than one the interface invented.
-    assert inspector.count("reacquire: trackSweep, maxGapFrames: trackGap, scale: trackScale") == 2, (
-        "both single-clip tracking buttons must carry all three knobs"
-    )
+    assert (
+        inspector.count("reacquire: trackSweep, maxGapFrames: trackGap, scale: trackScale") == 2
+    ), "both single-clip tracking buttons must carry all three knobs"
     assert "reacquire: knobs.sweep, maxGapFrames: knobs.gap, scale: knobs.scale" in inspector, (
         "the group entry must carry the same stored knobs, not a fourth default"
     )
@@ -426,8 +425,7 @@ def interface_suite() -> None:
         "面板不许自己读偏好与兜底：那一处读数在 effects.ts 的 trackingKnobs 里"
     )
     assert (
-        "max_gap_frames: target.maxGapFrames" in store
-        and "reacquire: target.reacquire" in store
+        "max_gap_frames: target.maxGapFrames" in store and "reacquire: target.reacquire" in store
     ), "the client never sends the knobs the interface shows"
     assert "estimate_scale: target.scale" in store, (
         "the 遮罩随远近缩放 knob is decoration: the client never sends it"
@@ -815,7 +813,9 @@ def http_suite(folder: Path) -> None:
         dry = client.post(
             path + "/mask-track",
             json={
-                "request_id": "dry", "expected_revision": 1, "dry_run": True,
+                "request_id": "dry",
+                "expected_revision": 1,
+                "dry_run": True,
                 "targets": [{"clip_id": "c", "frames": 40}],
             },
         )
@@ -828,7 +828,8 @@ def http_suite(folder: Path) -> None:
         written = client.post(
             path + "/mask-track",
             json={
-                "request_id": "track", "expected_revision": 1,
+                "request_id": "track",
+                "expected_revision": 1,
                 "targets": [{"clip_id": "c", "frames": 40}],
             },
         )
@@ -853,7 +854,8 @@ def http_suite(folder: Path) -> None:
         replay = client.post(
             path + "/mask-track",
             json={
-                "request_id": "track", "expected_revision": 1,
+                "request_id": "track",
+                "expected_revision": 1,
                 "targets": [{"clip_id": "c", "frames": 40}],
             },
         )
@@ -890,7 +892,8 @@ def http_suite(folder: Path) -> None:
         joined = client.post(
             path + "/mask-track",
             json={
-                "request_id": "join", "expected_revision": anchored.json()["project"]["revision"],
+                "request_id": "join",
+                "expected_revision": anchored.json()["project"]["revision"],
                 "targets": [{"clip_id": "c", "from_ticks": 20 * (T // FPS), "frames": 20}],
             },
         )
@@ -919,8 +922,11 @@ def http_suite(folder: Path) -> None:
         restarted = client.post(
             path + "/mask-track",
             json={
-                "request_id": "restart", "expected_revision": 4,
-                "targets": [{"clip_id": "c", "from_ticks": 20 * (T // FPS), "frames": 20, "merge": False}],
+                "request_id": "restart",
+                "expected_revision": 4,
+                "targets": [
+                    {"clip_id": "c", "from_ticks": 20 * (T // FPS), "frames": 20, "merge": False}
+                ],
             },
         )
         assert restarted.status_code == 200, restarted.text[:300]
@@ -936,19 +942,22 @@ def http_suite(folder: Path) -> None:
         unsized = client.post(
             path + "/mask-track",
             json={
-                "request_id": "noscale", "expected_revision": 5, "dry_run": True,
+                "request_id": "noscale",
+                "expected_revision": 5,
+                "dry_run": True,
                 "targets": [{"clip_id": "c", "frames": 20, "estimate_scale": False}],
             },
         )
         assert unsized.status_code == 200, unsized.text
         assert client.get(path).json()["revision"] == 5, "a dry run must not write"
-        assert not any("width" in point for point in unsized.json()["tracking"]["targets"][0]["points"]), (
-            unsized.json()["tracking"]["targets"][0]["points"][0]
-        )
+        assert not any(
+            "width" in point for point in unsized.json()["tracking"]["targets"][0]["points"]
+        ), unsized.json()["tracking"]["targets"][0]["points"][0]
         conflict = client.post(
             path + "/mask-track",
             json={
-                "request_id": "again", "expected_revision": 1,
+                "request_id": "again",
+                "expected_revision": 1,
                 "targets": [{"clip_id": "c", "frames": 20}],
             },
         )
@@ -961,7 +970,8 @@ def http_suite(folder: Path) -> None:
         too_far = client.post(
             path + "/mask-track",
             json={
-                "request_id": "far", "expected_revision": 5,
+                "request_id": "far",
+                "expected_revision": 5,
                 "targets": [{"clip_id": "c", "frames": 900}],
             },
         )
@@ -969,7 +979,8 @@ def http_suite(folder: Path) -> None:
         out_of_clip = client.post(
             path + "/mask-track",
             json={
-                "request_id": "edge", "expected_revision": 5,
+                "request_id": "edge",
+                "expected_revision": 5,
                 "targets": [{"clip_id": "c", "from_ticks": 3 * T, "frames": 10}],
             },
         )
@@ -1041,7 +1052,8 @@ def http_suite(folder: Path) -> None:
         followed = client.post(
             path + "/mask-track",
             json={
-                "request_id": "pathtrack", "expected_revision": swap.json()["project"]["revision"],
+                "request_id": "pathtrack",
+                "expected_revision": swap.json()["project"]["revision"],
                 "targets": [{"clip_id": "c", "frames": 20}],
             },
         )
@@ -1102,7 +1114,9 @@ def http_suite(folder: Path) -> None:
         off = client.post(
             path + "/mask-track",
             json={
-                "request_id": "no-sweep", "expected_revision": revision, "dry_run": True,
+                "request_id": "no-sweep",
+                "expected_revision": revision,
+                "dry_run": True,
                 "targets": [{"clip_id": "c2", "frames": 90, "reacquire": False}],
             },
         )
@@ -1115,7 +1129,8 @@ def http_suite(folder: Path) -> None:
         swept = client.post(
             path + "/mask-track",
             json={
-                "request_id": "sweep", "expected_revision": revision,
+                "request_id": "sweep",
+                "expected_revision": revision,
                 "targets": [{"clip_id": "c2", "frames": 90}],
             },
         )
@@ -1146,7 +1161,8 @@ def http_suite(folder: Path) -> None:
         beyond = client.post(
             path + "/mask-track",
             json={
-                "request_id": "beyond", "expected_revision": body["project"]["revision"],
+                "request_id": "beyond",
+                "expected_revision": body["project"]["revision"],
                 "targets": [{"clip_id": "c2", "frames": 90, "max_gap_frames": TRACK_GAP_MAX + 1}],
             },
         )
@@ -1224,7 +1240,9 @@ def http_suite(folder: Path) -> None:
             run = client.post(
                 path + "/mask-track",
                 json={
-                    "request_id": request_id, "expected_revision": walking.json()["project"]["revision"], "dry_run": True,
+                    "request_id": request_id,
+                    "expected_revision": walking.json()["project"]["revision"],
+                    "dry_run": True,
                     "targets": [{"clip_id": "c7", "frames": frames}],
                 },
             )
@@ -1294,7 +1312,9 @@ def http_suite(folder: Path) -> None:
         tight = client.post(
             path + "/mask-track",
             json={
-                "request_id": "tight", "expected_revision": revision, "dry_run": True,
+                "request_id": "tight",
+                "expected_revision": revision,
+                "dry_run": True,
                 "targets": [{"clip_id": "c7", "frames": tail_frames}],
             },
         )
@@ -1387,7 +1407,8 @@ def http_suite(folder: Path) -> None:
         offset_run = client.post(
             path + "/mask-track",
             json={
-                "request_id": "offset", "expected_revision": moved.json()["project"]["revision"],
+                "request_id": "offset",
+                "expected_revision": moved.json()["project"]["revision"],
                 "targets": [{"clip_id": "c4", "frames": 45}],
             },
         )

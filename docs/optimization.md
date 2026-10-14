@@ -5802,3 +5802,31 @@ YUV mp4**（1.151 那次界面真点抓到缺陷，用的就是这种素材）�
 - 测试面：新增 `tests/multitrack_check.py` 与 `tests/desktop_trackgroup_check.ts`；
   `tracking_check`、`analysis_sweep_check`、`sequence_plan_check`、`self_check` 跟着组请求与工具改名走
   （`clip_track` → `mask_track`）。
+
+## 1.157 追加：两把「先量再判」的门禁，和一处故意留下的欠账
+
+- 旋转那一档不再靠感觉。`tests/rotationwall_check.py` 先造一块真在转的板子并自证——30 帧里亮区主轴
+  转了 33.28°，作者写进去的是 33.23°（方板的主轴按 90° 折叠，取带符号最大的那一格）——再把两条候选
+  路线放在同一块夹具上量：四锚点 Arun 拟合逐帧角增量中位 **15.52°**（作者每帧 1.15°）、30 帧累计
+  **445.1°**（真相 33.2°）；把第 0 帧模板按候选角转过去、在已定下的中心上搜绝对角，误差中位
+  **3.46°**。判据钉的是这两个测量而不是猜想：`ANCHOR_NOISE_FACTOR = 5.0`（拟合的中位要比作者写进去
+  的那一档大 5 倍才算「那是噪声」）与 `SEARCH_MEDIAN_DEGREES = 6.0`（搜索那条路收不进 6° 就不许照着
+  建）。
+- `tests/stylewidth_check.py` 让排版这一档终于有了门禁，而且量的是项目自己那把尺：读
+  `pyproject.toml` 的 `line-length`（钉死 = 100），按显示宽度算（全角两格），豁免口径当场与
+  `ruff check --select E501` 的 JSON 逐行比对——第一方目录零漏报，只多报了随包 vosk 的三方文件
+  （本来就不在范围内）。三种豁免（整行只有一个不可断的 token、行尾是 URL、行尾是 `# type:` 一类
+  pragma）由档内 `self_proof()` 用四条样本行逐条判死，每条样本还先自证「自己确实超过了格」，
+  否则判它没意义。
+- 这一档当场就把账抓出来一遍：`tests` 里八行可断的超长（其中两行正是本轮新写的 `rotationwall_check`
+  自己），加上 `tests/tracking_check.py` 里那个 1.157 改口之后就不再用到的 `MaskTrackRequest` 导入。
+  手工拆掉自己的两行、按文档里那条完成标准跑过格式化之后，`ruff check src tests examples` 全绿，
+  `CEILINGS` 的 tests 从 6 降到 0，agent 停在当场量的 27，scripts+examples 是 0。
+- 故意留下的一处欠账：`ruff format --check src tests examples` 仍报 `contracts.py`、`http_api.py`
+  两份引擎文件。这一轮真把它们格式化过，也逐份比对 `ast.dump` 证了改动是 AST 等价的纯空白，然后把
+  那两份还原——随包 exe 就是从这两份的当前字节建出来的，源码与发布包要么同一笔一起走，要么别动，
+  为几处空行重跑一次 PyInstaller 与 electron-builder 不值。下一轮动引擎时顺手收掉。
+- 突变：S1–S5 与 R1–R3 共八次，每一次都红在自己那条断言上（harness 在证据目录
+  `agentcut-1157/mutate_style_rotation.py`：每次改完立刻按字节还原，还原失败即整轮作废，末了两份
+  对照复跑为绿）。S4 第一次跑红在了「样本行没超过 120 格」那句上——那是 self_proof 先说话，说明
+  这把尺确实会自己发现自己被换掉；把 `LIMIT == 100` 那句挪到最前面之后，它红在该红的那句上。

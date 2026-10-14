@@ -144,9 +144,7 @@ def main() -> None:
             "根目录那份与 desktop/release/AgentCut-便携版.exe 逐字节相同"
         )
     if "desktop/release/win-unpacked/AgentCut.exe AgentCut.exe" in text:
-        problems.append(
-            "README 又把 win-unpacked 里那支抄到根目录了——那句会让照做的人把门禁弄红"
-        )
+        problems.append("README 又把 win-unpacked 里那支抄到根目录了——那句会让照做的人把门禁弄红")
 
     # 2e. 1.156：显示端那一条的墙别记错对象——`COLOR_SPACES` 是曲线的词表、不含基色，缺的是
     #     「工程级基色」那个概念。哪天契约里真出现了它（下面那种词表名），这条红，该跟着改的是

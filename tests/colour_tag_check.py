@@ -1010,9 +1010,7 @@ def flat_suite(folder: Path) -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     marker = "按标记解回最差 "
     index = readme.find(marker)
-    assert index >= 0, (
-        "README 那一行不再报纯色尺量到的最差阶数——这个数没人对着了，改回去或改这里"
-    )
+    assert index >= 0, "README 那一行不再报纯色尺量到的最差阶数——这个数没人对着了，改回去或改这里"
     measured = max(seen.values())
     assert readme[index + len(marker)].isdigit(), repr(readme[index + len(marker) : index + 24])
     quoted = int(readme[index + len(marker)])
@@ -1025,7 +1023,8 @@ def flat_suite(folder: Path) -> None:
         "要说的是「贴着边界」"
     )
     print(
-        "PASS flat: 基色声明按纯色逐格式量过——" + "；".join(lines)
+        "PASS flat: 基色声明按纯色逐格式量过——"
+        + "；".join(lines)
         + f"（判据 {FLAT_LIMIT} 阶，本轮最差 {measured} 阶，README 那句报的就是 {quoted} 阶）"
     )
 
@@ -1807,8 +1806,14 @@ def capability_suite() -> None:
     assert dict(COLOR_TRANSFER_TAGS)[row["transfer"]] in COLOR_SPACES, row
     # 容器那三句标记必须由随包 FFmpeg 自己念得出名字：写一个它不认的拼法，画面照折，
     # 标签却落不进 VUI——那等于交出一张没人接得住的话。名单是当场读来的，不是抄来的。
-    spelled = {flag: container_tag_names(flag) for flag in ("color_primaries", "color_trc", "colorspace")}
-    for flag, key in (("color_primaries", "primaries"), ("color_trc", "transfer"), ("colorspace", "matrix")):
+    spelled = {
+        flag: container_tag_names(flag) for flag in ("color_primaries", "color_trc", "colorspace")
+    }
+    for flag, key in (
+        ("color_primaries", "primaries"),
+        ("color_trc", "transfer"),
+        ("colorspace", "matrix"),
+    ):
         assert spelled[flag], f"随包 FFmpeg 的帮助里读不出 {flag} 的名单，这条门禁已经空转"
         for item in OUTPUT_COLOUR_TAGS:
             assert str(item[key]) in spelled[flag], (

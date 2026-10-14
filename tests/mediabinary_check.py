@@ -159,9 +159,7 @@ def media_identity(banner: dict) -> list[str]:
     """
     stamp_path = BIN_DIR / STAMP_FILE
     if not stamp_path.is_file():
-        return [
-            f"随包目录没有 {STAMP_FILE}：那两支的身份没人记过，包里是什么全看装机器碰巧有什么"
-        ]
+        return [f"随包目录没有 {STAMP_FILE}：那两支的身份没人记过，包里是什么全看装机器碰巧有什么"]
     stamp = json.loads(stamp_path.read_text(encoding="utf-8"))
     hits: list[str] = []
     for kind in ("ffmpeg", "ffprobe"):
