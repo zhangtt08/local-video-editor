@@ -903,6 +903,54 @@ def _entries_for_track(project: Project, track) -> list[dict]:
     return entries
 
 
+def declared_input_windows(args: list[str]) -> list[float | None]:
+    """One entry per `-i`, holding the `-t` that belongs to *that* input's own option block.
+
+    Walking backwards a fixed number of tokens guesses; splitting on the `-i` markers does not.
+    An input with no `-t` (a still image, a whole file) reports `None` and is left unjudged.
+    """
+    windows: list[float | None] = []
+    block: list[str] = []
+    for token in args:
+        if token != "-i":
+            block.append(token)
+            continue
+        last = max((i for i, value in enumerate(block) if value == "-t"), default=-1)
+        windows.append(float(block[last + 1]) if last >= 0 else None)
+        block = []
+    return windows
+
+
+def validate_plan_inputs(plan: "RenderPlan") -> None:
+    """Refuse a plan with a declared input nobody reads: that is a clip wired to the wrong decoder.
+
+    The shape was measured in 1.166: a loop variable shadowed the pad index, so the layer
+    chains went from reading `0,1,2,3,4` to `0,2,2,3,4`. FFmpeg is content with an orphaned
+    input and hands back a frame of nothing - the job exits 0 and `GET /v1/frame` answers
+    200 with an empty picture. The contradiction is in the plan itself, so it is refused at
+    compile time rather than discovered in the delivered file.
+
+    The companion shape - a chain trimming longer than its input's own `-t` - is deliberately
+    not refused: the four-point and speed paths trim a *stretched* timeline window longer than
+    the source seconds the input declares (the suite falsified that guard on its first run).
+    It is measured in `tests/planinput_check.py` instead of enforced.
+    """
+    windows = declared_input_windows(plan.input_args)
+    graph = "\n".join(plan.filters)
+    referenced = {int(pad) for pad in re.findall(r"\[(\d+):[va]\]", graph)}
+    referenced |= {int(pad) for pad in re.findall(r"(?:^|[ ,;\[])(\d+):[av]\b", graph)}
+    for pad, declared in enumerate(windows):
+        if pad not in referenced:
+            raise EditorError(
+                "PLAN_INPUT_UNREFERENCED",
+                f"compiled graph never reads input {pad} of {len(windows)} - a clip is wired to "
+                "the wrong decoder",
+                500,
+                pad=pad,
+                declared_seconds=declared,
+            )
+
+
 def compile_render_plan(
     project: Project,
     preset_id: str,
@@ -1871,6 +1919,7 @@ def compile_render_plan(
     if len(frame_graph) > GRAPH_SCRIPT_LIMIT:
         plan.frame_graph_in_file = True
         plan.text_files["filtergraph-frame.txt"] = frame_graph
+    validate_plan_inputs(plan)
     return plan
 
 

@@ -210,7 +210,7 @@ def main():
             assert caps["features"]["mask_rotation"] is True, caps["features"]
             assert caps["limits"]["mask_rotation_limit"] == 360.0, caps["limits"]
             assert caps["features"]["mask_rotation_size_curves"] is True, caps["features"]
-            assert caps["app_version"] == contracts.APP_VERSION == "1.166.0", caps["app_version"]
+            assert caps["app_version"] == contracts.APP_VERSION == "1.167.0", caps["app_version"]
 
             head = {"revision": seeded.revision}
 
