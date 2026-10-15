@@ -400,22 +400,25 @@ async function restoreDeepLink() {
   }
   const view = urlParam("view");
   // 认不出的视图名一动不动（可选项只有一个来源：VIEWS）。
-  if ((VIEWS as readonly string[]).includes(view)) {
-    set({ view: view as View });
-  }
+  const linkedView = (VIEWS as readonly string[]).includes(view) ? view as View : "";
   const linkedClip = urlParam("clip");
   const linkedTick = urlParam("tick");
   const linkedPanel = urlParam("panel");
   if (wanted && state.projects.some((item) => item.id === wanted)) {
     // 片段要等工程读进来才选得到：打开完成后按链接点名选中，并切到检查器那一页。
     // 播放头与面板同理——时间线长度只有读进来才知道，越界的那个数得夹到末尾而不是跳走。
+    // 视图也在这一头落：openProject 自己会把界面切回编辑器，先切的那一下会被它盖掉
+    // （1.174 在无头 DOM 上量到的缺陷）。
     void openProject(wanted).then(() => {
+      if (linkedView) set({ view: linkedView });
       if (linkedClip) focusLinkedClip(linkedClip, linkedTick, linkedPanel);
       else {
         landLinkedPanel(linkedPanel);
         landLinkedTick(linkedTick);
       }
     });
+  } else if (linkedView) {
+    set({ view: linkedView });
   }
 }
 

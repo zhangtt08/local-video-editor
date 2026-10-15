@@ -220,8 +220,12 @@ assert.ok(storeSrc.includes("export type View = (typeof VIEWS)[number];"),
   "View 又自带第二份视图名字表");
 assert.ok(!/export type View = "home" \| "editor" \| "history" \| "agent"/.test(storeSrc),
   "视图名单被抄回类型那一行了（两处各自漂移）");
-assert.ok(storeSrc.includes("if ((VIEWS as readonly string[]).includes(view)) {"),
+assert.ok(storeSrc.includes('const linkedView = (VIEWS as readonly string[]).includes(view) ? view as View : "";'),
   "深链 ?view= 不再在同一张表上验，认不出的名字会把界面切走");
+assert.ok(storeSrc.includes("if (linkedView) set({ view: linkedView });"),
+  "视图切换没落在 openProject 之后——它自己会切回编辑器，先切的那一下被盖掉（1.174 量到的缺陷）");
+assert.ok(!/set\(\{ view: view as View \}\)/.test(storeSrc),
+  "又回到在 openProject 之前先切视图那一版（画面上看不出，DOM 上量得到）");
 assert.ok(!/view === "home" \|\| view === "editor"/.test(storeSrc),
   "restoreDeepLink 里还剩一条自己拼的视图名单");
 assert.ok(/landLinkedTick\(tick\);\s*\n\s*return true;/.test(storeSrc),
