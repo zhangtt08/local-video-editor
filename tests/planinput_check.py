@@ -184,6 +184,50 @@ def main() -> None:
         print("   不误伤：这份 plan 里每一路都 declare 了 -t，无静态板可量")
 
     # ⑥ 编译器真的调用它——不是只有一函数摆着没人用
+    two_plan = compile_render_plan(project, "h264-source-quality")
+    heads = [int(pad) for pad in re.findall(r"^\[(\d+):v\]", "\n".join(two_plan.filters), re.M)]
+    assert heads and len(heads) == len(set(heads)), heads
+    print(f"   健康：层链头各读各的 pad {heads}，没有哪一路被读两次")
+
+    # 手搓：把一条**媒体**层链整个再挂一遍——图上一个孤儿都不留，但同一路被两条链读
+    twice = copy.deepcopy(two_plan)
+    pattern = re.compile(r"^\[(\d+):v\]")
+
+    def head_pad(line: str) -> int | None:
+        matched = pattern.match(line)
+        return int(matched.group(1)) if matched else None
+
+    source_chain = next(line for line in twice.filters
+                        if (head_pad(line) or 0) > 0 and line == line.strip())
+    twice.filters.append(source_chain)
+    try:
+        validate_plan_inputs(twice)
+        raise AssertionError("两条链读同一路竟然过了")
+    except EditorError as error:
+        assert error.code == "PLAN_INPUT_DOUBLE_READ", error.code
+        assert error.details["chain_count"] == 2, error.details
+        print(f"   拒绝：输入 {error.details['pad']} 被两条层链读 -> {error.code}")
+
+    # 生成的那一路（黑底画布）允许被合成多次：这条判断只管真实素材的输入。这里不能再猜「0 号就是
+    # 画布」——同一个门禁第一次跑就量到 0 号其实是 red.mp4，那种猜测会让这条误伤检查自己变成假的。
+    sources = [two_plan.input_args[position + 1] for position, token in enumerate(
+        two_plan.input_args) if token == "-i"]
+    generated_pads = [index for index, value in enumerate(sources)
+                      if value.startswith(("color=", "nullsrc", "anullsrc", "sine="))]
+    if generated_pads:
+        canvas = copy.deepcopy(two_plan)
+        pad = generated_pads[0]
+        head = next((line for line in canvas.filters if head_pad(line) == pad), None)
+        if head is None:
+            print(f"   不误伤：输入 {pad} 是生成的那一路，在这份 plan 里不当层链头，"
+                  "没有可重读的形状可量")
+        else:
+            canvas.filters.append(head)
+            validate_plan_inputs(canvas)
+            print(f"   不误伤：生成的那一路（输入 {pad}）再被读一次不算矛盾")
+    else:
+        print("   不误伤：这份 plan 里没有生成的那一路可量（画布不占输入），跳过")
+
     assert "validate_plan_inputs(plan)" in SRC, "编译收尾没调用那份结构检查"
     assert SRC.index("validate_plan_inputs(plan)") > SRC.index("def compile_render_plan("), \
         "调用点在编译函数之外"

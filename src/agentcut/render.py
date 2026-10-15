@@ -949,6 +949,28 @@ def validate_plan_inputs(plan: "RenderPlan") -> None:
                 pad=pad,
                 declared_seconds=declared,
             )
+    # The mirror image of an orphan: the same media input mounted by two layer chains. Two clips of
+    # one asset each get their own pad (measured), so one pad read twice is the other half of the
+    # 1.166 mis-wiring - and it leaves no orphan for the check above to see. Generated
+    # pads (the blank base canvas) are excluded: those are composed with on purpose.
+    sources: list[str] = []
+    for position, token in enumerate(plan.input_args):
+        if token == "-i" and position + 1 < len(plan.input_args):
+            sources.append(plan.input_args[position + 1])
+    generated = {index for index, value in enumerate(sources)
+                 if value.startswith(("color=", "nullsrc", "anullsrc", "sine="))}
+    heads = [int(pad) for pad in re.findall(r"^\[(\d+):v\]", graph, re.M)]
+    for pad in sorted({value for value in heads if heads.count(value) > 1}):
+        if pad in generated or pad >= len(sources):
+            continue
+        raise EditorError(
+            "PLAN_INPUT_DOUBLE_READ",
+            f"input {pad} ({sources[pad]}) is read by {heads.count(pad)} layer chains - two clips "
+            "are wired to the same decoder",
+            500,
+            pad=pad,
+            chain_count=heads.count(pad),
+        )
 
 
 def compile_render_plan(
