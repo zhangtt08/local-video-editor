@@ -6,7 +6,7 @@ import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionCh
 import { Icon, Modal } from "../ui";
 import { GradeFields } from "./GradeFields";
 import { SpeedFields } from "./SpeedFields";
-import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeAdoptHint, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, INTERPOLATIONS, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackGroup, trackingKnobs, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
+import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeAdoptHint, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, INTERPOLATIONS, maskAnimFields, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackGroup, trackingKnobs, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
 import { frameTicks, TIMEBASE, align, humanDuration, offsetWords, seconds, timecode, ticks } from "../time";
 import {
   DISPLAY_PRIMARIES,
@@ -460,8 +460,15 @@ function EffectInput({ id, value, min, max, step, onCommit }: { id: string; valu
 const MASK_ROWS = [['center_x', '中心 X', 0, 100, 'mask_x'], ['center_y', '中心 Y', 0, 100, 'mask_y'], ['width', '宽度', 1, 200, 'mask_width'], ['height', '高度', 1, 200, 'mask_height']] as const;
 
 /** A free-form outline is positioned by its vertices, and its box is always the drawn bounds, so
- * there is no numeric box to edit — the centre curves come from 跟踪主体 or the curve editor. */
-const maskRows = (mask: ShapeMask) => (mask.shape === "path" ? [] : MASK_ROWS);
+ * there is no numeric box to edit — the centre curves come from 跟踪主体 or the curve editor.
+ * 1.164：「这条盒属性今天能不能打关键帧」只在 `maskAnimFields` 那一处判（路径只搬中心，转过角度的
+ * 盒也只搬中心），这里只把那份名单折成检查器要的数字行——所以画面上不会有一颗按下去被引擎点名
+ * 拒绝的 ◇。 */
+const maskRows = (mask: ShapeMask) => {
+  if (mask.shape === "path") return [];
+  const allowed = new Set(maskAnimFields(mask).map((row) => row.property));
+  return MASK_ROWS.filter((row) => allowed.has(row[4]));
+};
 
 /** 一组遮罩跟踪：多选里每段各按自己的长度量，段数上限与窗口都只由 `trackGroup` 那一处判断。
  *  放在「成组剪辑」旁边是有意的——一条片段只有一条遮罩路径，所以「一组」就是叠层上的几段各跟各的
