@@ -3192,7 +3192,11 @@ MCP 另写一份词汇表。这三条接线（路由、渲染、原样递回）�
 免得「函数对、调用点不对」。装机那一份（1.168.0）实测还补了一句形状上的话：错误文本是
 `Error executing tool preview_frame: {"code": "NOT_FOUND", "details": {"project_id": "does-not-exist", …}}`
 ——外面那层前缀是 MCP SDK 加的，不是本仓代码加的，因此客户端要解析的是消息**尾部那段 JSON**，
-不是整条文本；想让工具直接交回结构化错误，得在 tool 层换成 `isError` 的结果，那一档还没做。
+不是整条文本。1.169 对着随包那份实测补齐：同一个请求 `result.isError` 为 `true`，文本尾部那段 JSON 的
+`code` 与 `details` 与 HTTP 的 404 体逐字相同，成功那一路交回真实 PNG 的 `sha256` 与落格后的 `at_ticks`
+——客户端按 `isError` 分支即可，那层前缀只是 SDK 的文本包装，不是引擎要改的东西。两侧结果形状也量清了：
+**成功的**工具结果键是 `content` + `isError` + `structuredContent`，**失败的**只有 `content` + `isError`
+（没有 `structuredContent`），所以领域错误码要从文本尾部那段 JSON 读。
 
 | 情形 | 码 | 句子给的出路 |
 | --- | --- | --- |
