@@ -15,9 +15,11 @@ import re
 from dataclasses import dataclass, field
 
 from .animation import (
+    BOX_STEPS,
+    axis_steps,
     expression,
     fade_active,
-    mask_rotation_schedule,
+    mask_box_schedule,
     mask_shape_schedule,
     outline_mask,
     rotation_step_expression,
@@ -1337,21 +1339,26 @@ def compile_render_plan(
                         zoom = curve_expression(scale_curve, clip.duration_ticks)
                 animated = {k.property for k in clip.keyframes}
                 path_mask = clip.mask if clip.mask and clip.mask.shape == "path" else None
+                box_schedule = mask_box_schedule(clip, project.settings.frame_ticks)
+                box_axes = set(BOX_STEPS) if box_schedule else set()
                 mask_values = (
                     {
-                        name: expression(clip, name, "T", (10 + 2 * slot, 11 + 2 * slot))
+                        # Not the continuous curve: the very windows the preview plates are cut
+                        # from — one boundary for the angle and the two edges it turns with.
+                        name: (
+                            rotation_step_expression(
+                                axis_steps(box_schedule, BOX_STEPS.index(name)),
+                                project.settings.frame_ticks,
+                            )
+                            if name in box_axes
+                            else expression(clip, name, "T", (10 + 2 * slot, 11 + 2 * slot))
+                        )
                         for slot, name in enumerate(MASK_FIELDS)
-                        if clip.mask and name in animated and name != "mask_rotation"
+                        if name in animated
                     }
                     if clip.mask and animated & set(MASK_FIELDS)
                     else None
                 )
-                if mask_values is not None and "mask_rotation" in animated:
-                    # Not the continuous curve: the same windows the preview images are cut from.
-                    mask_values["mask_rotation"] = rotation_step_expression(
-                        mask_rotation_schedule(clip, project.settings.frame_ticks),
-                        project.settings.frame_ticks,
-                    )
                 alpha = []
                 if clip.mask and not path_mask:
                     alpha.append(f"({alpha_expression(clip.mask, mask_values, mask_box)})")

@@ -12,6 +12,7 @@
    屏幕下方歪、−45° 朝上——换符号就红。
 """
 
+import re
 import struct
 import subprocess
 import tempfile
@@ -65,6 +66,19 @@ def principal_axis(data: bytes, width: int, height: int) -> float:
     cyy = syy / n - mean_y * mean_y
     cxy = sxy / n - mean_x * mean_y
     return degrees(atan2(2 * cxy, cxx - cyy) / 2)
+
+
+def balanced_group(text: str, marker: str) -> str:
+    """`marker` 后面那组括号的**内容**，按深度配平取出来——不是切一段看着像。"""
+    start = text.index(marker) + len(marker)
+    assert text[start] == "(", text[start : start + 60]
+    depth = 0
+    for i in range(start, len(text)):
+        depth += text[i] == "("
+        depth -= text[i] == ")"
+        if depth == 0:
+            return text[start + 1 : i]
+    raise AssertionError(text[start : start + 120])
 
 
 def main():
@@ -195,7 +209,8 @@ def main():
             assert caps["project_schema_version"] == 21, caps["project_schema_version"]
             assert caps["features"]["mask_rotation"] is True, caps["features"]
             assert caps["limits"]["mask_rotation_limit"] == 360.0, caps["limits"]
-            assert caps["app_version"] == contracts.APP_VERSION == "1.165.0", caps["app_version"]
+            assert caps["features"]["mask_rotation_size_curves"] is True, caps["features"]
+            assert caps["app_version"] == contracts.APP_VERSION == "1.166.0", caps["app_version"]
 
             head = {"revision": seeded.revision}
 
@@ -226,14 +241,104 @@ def main():
                         "op": "keyframe.set",
                         "clip_id": "c",
                         "keyframe": {"property": "mask_width", "at_ticks": 0, "value": 0.4},
-                    }
+                    },
+                    {
+                        "op": "keyframe.set",
+                        "clip_id": "c",
+                        "keyframe": {"property": "mask_width", "at_ticks": 2 * T, "value": 0.8},
+                    },
                 ],
                 "size-curve",
             )
-            assert size_curve.json()["error"]["code"] == "INVALID_MASK", size_curve.text
-            assert "遮罩角度" in size_curve.json()["error"]["message"], size_curve.text
+            assert size_curve.status_code == 200, size_curve.text
+            stepped = size_curve.json()["project"]["revision"]
+            assert stepped == head["revision"] + 1, (head["revision"], stepped)
+            table = client.get(f"/v1/projects/{seeded.id}/preview-manifest").json()["clips"]["c"]
+            # 没打针的角度不是一条曲线（静态那一格照旧烘在图里），所以这里只有宽高那一条。
+            assert sorted(table["mask_curves"]) == ["mask_width"], table["mask_curves"]
+            points_curve = table["mask_curves"]["mask_width"]
+            assert [p["easing"] for p in points_curve] == ["steps(1, end)"] * len(points_curve), (
+                "清单里那条宽/高曲线不是台阶", points_curve)
+            assert len(points_curve) > 1, points_curve
+            # 那条阶梯里躺着的必须是**每一窗自己的宽**——不是角度、不是连续插值。
+            # 「两端画的是同一个盒」在清单这头只有这一串数能证明，所以逐点钉死。
+            box_rows = table["mask_rotation_windows"]
+            assert {"angle", "width", "height"} <= set(box_rows[0]), (
+                "窗表里没有那三条边", box_rows[0])
+            window_widths = [window["width"] for window in box_rows]
+            assert [p["value"] for p in points_curve] == window_widths, (
+                "宽曲线里躺的不是每窗自己的宽", points_curve, window_widths)
+            span = client.get(f"/v1/projects/{seeded.id}").json()["clips"]["c"]["duration_ticks"]
+            assert [p["offset"] for p in points_curve] == [
+                window["from_ticks"] / span for window in box_rows
+            ], ("宽曲线的落点不是窗表那几扇窗", points_curve, box_rows)
+            # 每窗一张**不同**的图：角度没变，边变了，那一张图就得重烘——这是这一档的全部理由。
+            widths = {window["width"] for window in box_rows}
+            plates = {window["image"] for window in box_rows}
+            assert len(widths) > 1 and len(plates) > 1, ("每窗那张图没跟着边重烘", len(plates))
+            angles_only = {round(window["angle"], 6) for window in box_rows}
+            assert angles_only == {30.0}, ("窗表里的角度不是这一格的角度", angles_only)
+            turned = Project.model_validate(client.get(f"/v1/projects/{seeded.id}").json())
+            plan_with_size = "\n".join(compile_render_plan(turned, "h264-source-quality").filters)
+            # 导出那一条也不给连续宽高了：除的那个数就是这份窗表的台阶。
+            assert "*2/(if(lt(T," in plan_with_size, (
+                "导出的宽因子不是那份窗表的台阶", plan_with_size[:400])
+            # 一串 .9f 的常数、台阶数就是窗数减一、没有连续那一路的写法——
+            # 把这条腿换回 `expression()`，它出的是 `if(lt((T+…`，第一步就红。
+            factor = balanced_group(plan_with_size, "*2/")
+            assert factor.startswith("if(lt(T,"), ("导出的宽因子不是那份窗表的台阶", factor[:160])
+            for register in ("st(", "ld(", "root(", "lerp"):
+                assert register not in factor, (
+                    "导出的宽因子不是那份窗表的台阶而是连续插值", register, factor[:200])
+            for width in window_widths:
+                assert f"{width:.9f}" in factor, (
+                    "导出的宽因子不是那份窗表的台阶里的宽", width, factor[:200])
+            assert factor.count("if(lt(T,") == len(window_widths) - 1, (
+                "导出的宽因子台阶数对不上窗表", factor[:200], len(window_widths))
+            # 没转的那一盒不许被带进台阶：角度归零、同样的两条宽针，导出必须还是连续那一路，
+            # 一个 `if(lt(T,` 都不许多出来（连续写法里的时钟是 `if(lt((T+…`，两者不同形）。
+            flat = turned.clips["c"].model_copy(
+                update={"mask": turned.clips["c"].mask.model_copy(update={"rotation": 0.0})})
+            flat_plan = "\n".join(compile_render_plan(
+                turned.model_copy(update={"clips": {**turned.clips, "c": flat}}),
+                "h264-source-quality").filters)
+            assert "if(lt(T," not in flat_plan, ("没转的盒被带进了台阶", flat_plan[:300])
+            # 结构门禁：每条层链读的 pad 必须就是它自己那一路输入（-t 与 trim=duration 对得上）。
+            # 这一档差点把 2 秒那段的层挂到 1 秒那一路输入上，画面整幅空掉而 /v1/frame 仍回 200。
+            pv_turned = compile_render_plan(turned, "h264-source-quality")
+            toks = pv_turned.input_args
+            pad_windows: list[float | None] = []
+            walk = 0
+            while walk < len(toks):
+                if toks[walk] == "-i":
+                    back = toks[max(0, walk - 6):walk]
+                    pad_windows.append(
+                        float(back[back.index("-t") + 1]) if "-t" in back else None)
+                    walk += 2
+                else:
+                    walk += 1
+            paired = re.findall(
+                r"^\[(\d+):v\][^\n]*?trim=duration=([0-9.]+)",
+                "\n".join(pv_turned.filters), re.M)
+            assert paired, "\n".join(pv_turned.filters)[:200]
+            for pad, trimmed in paired:
+                want = pad_windows[int(pad)]
+                assert want is not None, (pad, trimmed, pad_windows)
+                assert abs(float(trimmed) - want) < 1e-6, (pad, trimmed, pad_windows)
+            head["revision"] = stepped
+            undo = edit(
+                [
+                    {"op": "keyframe.remove", "clip_id": "c",
+                     "property": "mask_width", "at_ticks": 0},
+                    {"op": "keyframe.remove", "clip_id": "c",
+                     "property": "mask_width", "at_ticks": 2 * T},
+                ],
+                "size-curve-undo",
+            )
+            assert undo.status_code == 200, undo.text
+            head["revision"] = undo.json()["project"]["revision"]
             after = client.get(f"/v1/projects/{seeded.id}").json()
-            assert after["revision"] == head["revision"], "被拒的一笔把版本涨了"
+            assert not after["clips"]["c"]["keyframes"], after["clips"]["c"]["keyframes"]
             assert after["clips"]["c"]["mask"]["rotation"] == 30.0, after["clips"]["c"]["mask"]
             centre_curve = edit(
                 [
@@ -247,7 +352,7 @@ def main():
             )
             assert centre_curve.status_code == 200, centre_curve.text
             head["revision"] = centre_curve.json()["project"]["revision"]
-            print("   拒绝：宽/高曲线点名要人把角度转回 0°，中心曲线照写不误，版本没被顶上去")
+            print("   接受：转过的盒的宽高针落库，与角度同表同步，拔针后回到一字不剩")
 
             manifest = client.get(f"/v1/projects/{seeded.id}/preview-manifest").json()
             entry = manifest["clips"]["c"]
@@ -303,8 +408,30 @@ def main():
                 ],
                 "paste-curve",
             )
-            assert second_refusal.json()["error"]["code"] == "INVALID_MASK", second_refusal.text
-            print("   粘贴属性：整枚遮罩连着角度一起落进那一段，落完那条限制照旧拒")
+            assert second_refusal.status_code == 200, second_refusal.text
+            head["revision"] = second_refusal.json()["project"]["revision"]
+            landed2 = client.get(f"/v1/projects/{seeded.id}").json()["clips"]["c2"]
+            assert [k["property"] for k in landed2["keyframes"]] == ["mask_height"], landed2
+            assert landed2["mask"]["rotation"] == 30.0, landed2
+            undo2 = edit(
+                [{"op": "keyframe.remove", "clip_id": "c2",
+                  "property": "mask_height", "at_ticks": 0}],
+                "paste-curve-undo2",
+            )
+            assert undo2.status_code == 200, undo2.text
+            head["revision"] = undo2.json()["project"]["revision"]
+            left = client.get(f"/v1/projects/{seeded.id}").json()["clips"]["c2"]["keyframes"]
+            assert not left, "c2 的针没拔干净"
+            print("   粘贴属性：整枚遮罩连着角度一起落进那一段，落完那条宽/高针也写得进去")
+            # 下一节要把这一段换成轮廓遮罩：尺寸针留着它，路径那条「只能搬中心」就先红了，
+            # 报的会是路径而不是这一档想测的角度针。先把这枚针拔干净。
+            unsize = edit(
+                [{"op": "keyframe.remove", "clip_id": "c2",
+                  "property": "mask_height", "at_ticks": 0}],
+                "paste-curve-undo",
+            )
+            assert unsize.status_code == 200, unsize.text
+            head["revision"] = unsize.json()["project"]["revision"]
 
             def shot(angle, request_id):
                 step = edit([mask_body(angle)], request_id)

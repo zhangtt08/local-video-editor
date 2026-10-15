@@ -68,7 +68,7 @@ export function MaskPicture({ clip, image, children, editable = true, animation,
   const mask = draft ?? (clip.mask && shapeWindow ? { ...clip.mask, vertices: shapeWindow.vertices } : clip.mask);
   const animated = animation && !draft ? animation : null;
   const rotated = Boolean(mask?.rotation) || Boolean(spun);
-  const corners = mask && rotated ? rotatedCorners(mask, (app.project?.settings.height ?? 9) / (app.project?.settings.width ?? 16), spun?.angle) : "";
+  const corners = mask && rotated ? rotatedCorners(spun ? { ...mask, width: spun.width, height: spun.height } : mask, (app.project?.settings.height ?? 9) / (app.project?.settings.width ?? 16), spun?.angle) : "";
   // A morph places its plate by the window's own box, so the layer needs the size/position custom
   // properties even when the mask carries no centre curves at all.
   const placed = Boolean(animated || shapeWindow || spun);
@@ -325,7 +325,7 @@ export function MaskPicture({ clip, image, children, editable = true, animation,
         }} />)}
       </>}
     </svg> : null}
-    {visible && rotated ? <div className="mask-vertex-panel" role="group" aria-label="旋转遮罩的说明"><span className="dim">{spun ? `这一格的角度是 ${spun.angle.toFixed(1)}°（引擎把曲线切成 ${rotation?.length ?? 0} 段窗，导出走同一份阶梯）；` : ""}画面上这框就是转过角度的遮罩盒：拖它只搬中心；改大小用检查器那两格，宽高曲线要先把角度转回 0°</span></div> : null}
+    {visible && rotated ? <div className="mask-vertex-panel" role="group" aria-label="旋转遮罩的说明"><span className="dim">{spun ? `这一格的角度是 ${spun.angle.toFixed(1)}°（引擎把曲线切成 ${rotation?.length ?? 0} 段窗，导出走同一份阶梯）；` : ""}画面上这框就是转过角度的遮罩盒：拖它只搬中心；宽/高也打针时引擎每窗重烘一张图（角度与两条边在同一些帧边界上换），检查器那两格照样能改大小</span></div> : null}
     {visible && mask?.shape === "path" ? <div className="mask-vertex-panel" role="group" aria-label="顶点操作">
       {atCap ? <span className="dim">顶点 {vertices.length}/{vertexLimit}，已到上限，双击不再加点</span> : null}
       {morphArmed(clip) ? <>

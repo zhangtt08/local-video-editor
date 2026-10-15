@@ -3129,7 +3129,7 @@ Agent 侧不需要任何新接口：`GET /v1/projects/{id}/render-plan` 交回�
 | 情形 | 码 | 句子给的出路 |
 | --- | --- | --- |
 | 路径遮罩带角度 | 422（契约） | 只有矩形或椭圆的盒能转；要转形状就重画轮廓 |
-| 转过的盒要打 `mask_width`/`mask_height` 曲线 | `INVALID_MASK` | 只打「遮罩中心 X/Y」，或把 `遮罩角度` 转回 0° |
+| 转过的盒要打 `mask_width`/`mask_height` 曲线 | ~~`INVALID_MASK`~~（1.166 起这条撤了） | 每窗重烘一张等比图，那扇窗的角度与两条边一起换 |
 | 角度超过 ±360° | 422（契约） | 转一圈以上还是同一枚盒子 |
 
 中心曲线照旧能搬转过的盒子：一张等比图被平移，两端是同一个位移。量过的证据（`tests/maskrot_check.py`
@@ -3155,7 +3155,7 @@ Chromium 画出 30.0°／占比 0.0998，与同一档导出的 30.0°／0.0997 �
 （`mask-image` 不吃图层旋转，1.164 量的），一端连续、一端台阶就是这项目 refuse 的那条缝。所以
 **一份窗表两头读**：
 
-- `animation.mask_rotation_schedule(clip, quantum, limit)` 走的是 1.118/1.123 那一次同一件
+- `animation.mask_box_schedule(clip, quantum, limit)` 走的是 1.118/1.123 那一次同一件
   `frame_windows`：每窗一个常数角，短于上限的片段按帧精确，长于上限的按一个两边都能核对的数变粗。
 - 导出侧 `animation.rotation_step_expression(schedule, frame_ticks)` 把这份表串成
   `if(lt(T,秒),角度, if(lt(T,秒),角度, …))`，写进 `alpha_expression` 那两个 `cos/sin` 的位置。
@@ -3169,12 +3169,12 @@ Chromium 画出 30.0°／占比 0.0998，与同一档导出的 30.0°／0.0997 �
 本来就按整数 tick 的落格同一个语义。`tests/maskrot_check.py` 新增的那一节钉的就是这一格：
 边界第一帧已是新窗的角、前一帧还停在旧窗（量到 41.2°／34.0°），突变「把余量撤掉」红在这条断言上。
 
-两条拒绝与它们各自的出路（`Clip.mask_animation_problem`，reducer 之后一次判）：
+两条拒绝与它们各自的出路（`Clip.mask_animation_problem`，reducer 之后一次判）——1.166 起这里只剩轮廓那一条：
 
 | 情形 | 码 | 句子给的出路 |
 | --- | --- | --- |
 | 路径遮罩打角度针 | `INVALID_MASK` | 轮廓自己带形状，没有盒可转；要转就换矩形/椭圆，否则按轮廓帧记形状 |
-| 转过角度的盒打 `mask_width`/`mask_height` 针 | `INVALID_MASK` | 只打「遮罩中心 X/Y」，或把 `遮罩角度` 转回 0° |
+| 转过角度的盒打 `mask_width`/`mask_height` 针 | ~~`INVALID_MASK`~~（1.166 起这条撤了） | 照样打：那三条数走同一份窗表，`features.mask_rotation_size_curves` 报这一档 |
 
 界面那一侧的名单同出一处：`maskAnimFields(mask, caps)` 不给路径遮罩角度那一行，也不在这一版引擎
 没报 `mask_rotation_curves` 时摆那颗 ◇。中心曲线照旧能搬转过的盒子。

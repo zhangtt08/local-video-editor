@@ -22,7 +22,7 @@ SCHEMA_VERSION = (
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.165.0"
+APP_VERSION = "1.166.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -1298,14 +1298,10 @@ class Clip(Contract):
                 "a free-form outline has no box to turn: 遮罩角度 only exists on a rectangle or "
                 "ellipse mask, so keyframe the outline frames instead"
             )
-        # 1.164: the angle is a screen angle, and a box that resizes over time would rescale the one
-        # rotated image non-uniformly — the shear the exporter's own math refuses. Moving it stays
-        # exact, so 遮罩中心 keeps working; the size has to wait for a per-window plate.
-        if self.mask.rotation and any(key.property in MASK_SIZE_FIELDS for key in self.keyframes):
-            return (
-                "a rotated mask can move but cannot resize over time yet: keyframe "
-                "遮罩中心 X/Y only, or set 遮罩角度 back to 0"
-            )
+        # 1.164 through 1.165 refused this pair, because one rotated plate stretched non-uniformly
+        # would shear the angle. The per-window plate answers it: `mask_box_schedule` steps the
+        # angle and the two edges on the same frame boundary, so both ends execute the same box in
+        # the same frame — 遮罩宽度/遮罩高度 on a turning box are now ordinary stepped curves.
         return None
 
     @model_validator(mode="after")
@@ -3323,16 +3319,20 @@ def capabilities(
             "shape_masks": True,
             "path_masks": True,
             "mask_animation": True,
-            # 1.164: a rectangle/ellipse box carries its own angle. The angle itself is not a curve:
-            # the browser can only paint a rotated mask from an image the engine baked (measured on
-            # the Chromium this app ships with - a CSS transform on the masked layer leaves the mask
-            # axis-aligned), so an animated angle would need one image per frame, and that cost is
-            # not measured here. Centre curves still move a rotated mask exactly.
+            # 1.164: a rectangle/ellipse box carries its own angle. The browser can only paint a
+            # rotated mask from an image the engine baked (measured on the Chromium this app ships
+            # with - a CSS transform on the masked layer leaves the mask axis-aligned), so the angle
+            # is executed as frames, one plate per window, never as one stretched unit image.
             "mask_rotation": True,
             # 1.165: that angle accepts keyframes. Both ends execute one frame-aligned staircase
-            # (`animation.mask_rotation_schedule`), which is why this is a switch of its own: an
-            # engine without it refuses the curve by name rather than pretending to smooth it.
+            # (`animation.mask_box_schedule`), which is why this is a switch of its own: an engine
+            # without it refuses the curve by name rather than pretending to smooth it.
             "mask_rotation_curves": True,
+            # 1.166: a turning box also accepts 遮罩宽度/遮罩高度 curves. They are not continuous
+            # either - the same table steps the angle and the two edges on the same boundary,
+            # because one rotated plate stretched non-uniformly would shear the angle. An engine
+            # without this switch refuses that combination by name.
+            "mask_rotation_size_curves": True,
             # 1.118: a free-form outline can morph. The exporter executes it as frame-aligned
             # constant windows (`animation.mask_shape_schedule`) and the preview ships that same
             # window list, so this says "the shape steps on both ends", not "the shape is smooth".

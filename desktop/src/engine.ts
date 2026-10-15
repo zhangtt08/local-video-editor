@@ -225,7 +225,7 @@ export type MaskShapeWindow = { from_ticks: number; to_ticks: number; image: str
 /** 1.165: one frame-aligned window of a turning mask box. The engine cuts the staircase; the
  *  preview paints exactly this image for this span, so no angle exists on screen that the
  *  exporter did not also use. */
-export type MaskRotationWindow = { from_ticks: number; to_ticks: number; angle: number; image: string };
+export type MaskRotationWindow = { from_ticks: number; to_ticks: number; angle: number; width: number; height: number; image: string };
 export type Curve = { offset: number; value: number; easing: string }[];
 export type AnimationGraph = { property: Property; duration_ticks: number; limits: [number, number]; path: string; curve: Curve; keys: Keyframe[] };
 /** 转场种类由引擎的 capabilities.transition_kinds 下发；这里是同一份清单的类型。 */

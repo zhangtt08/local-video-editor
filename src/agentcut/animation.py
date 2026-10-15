@@ -510,26 +510,53 @@ def _mix_vertex(a: MaskVertex, b: MaskVertex, progress: float) -> MaskVertex:
     )
 
 
-def mask_rotation_schedule(clip: Clip, quantum: int, limit: int | None = None) -> list[dict]:
+BOX_STEPS = ("mask_rotation", "mask_width", "mask_height")
+
+
+def rotated_box(clip: Clip) -> bool:
+    """Whether this box is the kind that can only step: a rotated rectangle or ellipse.
+
+    The browser paints a rotated mask from one image the engine baked (a CSS `transform` on the
+    masked layer leaves the mask axis-aligned - measured in 1.164), so the angle is a staircase.
+    A box that also changes size over time cannot be that one image stretched non-uniformly,
+    because the stretch would shear the angle; the honest answer is one image per window, carrying
+    that window's own angle *and* edges. An unrotated box keeps the continuous curves it always
+    had, byte for byte.
+    """
+    mask = clip.mask
+    return bool(mask and mask.shape != "path" and (mask.rotation or points(clip, "mask_rotation")))
+
+
+def mask_box_schedule(clip: Clip, quantum: int, limit: int | None = None) -> list[dict]:
     """The windows one turning box actually executes — the same list at both ends.
 
-    `geq` could evaluate an angle every frame, but the browser paints a rotated mask only from an
-    image the engine baked (measured last round: a CSS transform on the masked layer leaves the mask
-    axis-aligned), so a continuous angle on one side and a staircase on the other is exactly the
-    split this project refuses. One `frame_windows` pass decides the steps; the exporter folds that
-    list into its angle and the preview ships one isotropic image per window. A clip shorter than
-    `limit` frames is therefore exact at the frame level, and a longer one coarsens by a number both
-    ends can be checked against.
+    A step's `value` is the triple `(angle, width, height)`, so the angle and the two edges swap on
+    the *same* frame boundary at both ends: one table, three numbers. `geq` could evaluate an angle
+    every frame, but the preview cannot, and a continuous angle on one side and a staircase on the
+    other is exactly the split this project refuses. One `frame_windows` pass decides the steps;
+    the exporter folds that list into its expressions and the preview ships one isotropic image
+    per window. A clip shorter than `limit` frames is therefore exact at the frame level, and a
+    longer one coarsens by a number both ends can be checked against.
     """
-    if clip.mask is None or clip.mask.shape == "path" or not points(clip, "mask_rotation"):
+    if not rotated_box(clip) or not any(
+        points(clip, prop) for prop in ("mask_rotation", "mask_width", "mask_height")
+    ):
         return []
 
-    def value_at(source: Clip, at: int) -> float:
-        return round(sample(source, "mask_rotation", at), 9)
+    def value_at(source: Clip, at: int):
+        return tuple(
+            round(sample(source, prop, at), 9)
+            for prop in ("mask_rotation", "mask_width", "mask_height")
+        )
 
     return frame_windows(
         clip, quantum, MASK_ROTATION_SCHEDULE_MAX if limit is None else limit, value_at
     )
+
+
+def axis_steps(schedule: list[dict], index: int) -> list[dict]:
+    """One number of the shared table as its own scalar schedule - same windows, one edge each."""
+    return [{**window, "value": window["value"][index]} for window in schedule]
 
 
 def rotation_step_expression(schedule: list[dict], frame_ticks: int, clock: str = "T") -> str:
@@ -687,21 +714,28 @@ def preview_manifest(
             for prop in FADE_PROPS
             if (carrier := _fade_carrier(clip, prop)) is not None
         }
-        # The angle's curve is the window table, not the piecewise walk; it is built below, where
-        # this clip's frame quantum is known (`spatial_curve` one stepped point per window).
-        mask_curves = {
-            prop: property_curve(clip, prop)
-            for prop in MASK_FIELDS
-            if points(clip, prop) and prop != "mask_rotation"
-        }
-        # Whether this mask is animated is decided below, once the stepped angle curve is in the
-        # table: a clip that only turns its box is animated just the same.
+        # Whether this mask is animated is decided below, once the stepped table is in: a clip that
+        # only turns its box is animated just the same.
         sharpen = sharpen_preview(clip, project.settings.width, project.settings.height)
         quantum = (
             project.settings.frame_ticks
             if track.kind == "video"
             else project.settings.timebase // project.settings.sample_rate
         )
+        # A turning box's angle and two edges are one window table, not three piecewise walks:
+        # `frame_windows` steps all three on the same boundary, `spatial_curve` gives the browser
+        # one stepped point per window per number, and `cover_svg_image` bakes one plate per window.
+        box_schedule = mask_box_schedule(clip, quantum, MASK_ROTATION_SCHEDULE_MAX)
+        mask_curves = {
+            prop: (
+                # `BOX_STEPS.index`, not a loop named `index`: that one means the input pad.
+                spatial_curve(clip, axis_steps(box_schedule, BOX_STEPS.index(prop)))
+                if box_schedule and prop in BOX_STEPS
+                else property_curve(clip, prop)
+            )
+            for prop in MASK_FIELDS
+            if points(clip, prop)
+        }
         # 1.98: the staircase is the authority, so the browser animates the very same windows the
         # exporter chains — see `spatial_schedule`.
         spatial = {
@@ -738,26 +772,31 @@ def preview_manifest(
                     "offset_y": round(fitted.center_y - clip.mask.center_y, 9),
                 }
             )
-        rotation_schedule = mask_rotation_schedule(clip, quantum, MASK_ROTATION_SCHEDULE_MAX)
-        if rotation_schedule:
-            # One stepped point per window, `steps(1, end)`: the browser holds each window's angle
-            # exactly as the exporter's `if(lt(T,..))` chain holds it.
-            mask_curves["mask_rotation"] = spatial_curve(clip, rotation_schedule)
         rotation_windows = (
             [
                 {
                     "from_ticks": window["from_ticks"],
                     "to_ticks": window["to_ticks"],
-                    "angle": window["value"],
+                    "angle": window["value"][0],
+                    "width": window["value"][1],
+                    "height": window["value"][2],
+                    # One plate per window: the isotropic canvas already carries that window's own
+                    # angle and edges, so the browser's only job stays translating it.
                     "image": cover_svg_image(
                         clip.mask.model_copy(
-                            update={"rotation": window["value"], "center_x": 0.5, "center_y": 0.5}
+                            update={
+                                "rotation": window["value"][0],
+                                "width": window["value"][1],
+                                "height": window["value"][2],
+                                "center_x": 0.5,
+                                "center_y": 0.5,
+                            }
                         ),
                         project.settings.width,
                         project.settings.height,
                     ),
                 }
-                for window in rotation_schedule
+                for window in box_schedule
             ]
             if clip.mask is not None
             else []

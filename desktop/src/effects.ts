@@ -64,13 +64,15 @@ export const canAnimateMask = (mask?: ShapeMask | null): mask is ShapeMask =>
 /** The curves a mask of this shape actually has: a path has no size, only a centre. */
 export const maskAnimFields = (mask?: ShapeMask | null, caps?: Capabilities | null) => {
   if (!mask) return [];
-  // 1.164：转过角度的盒子只能整体搬动（宽/高曲线会把那张等比图拧出另一个角度），路径遮罩同一条限制；
-  // 判断只在引擎那一处（`Clip.mask_animation_problem`）。
-  // 1.165：角度自己能打关键帧，但只在这一版引擎报了 `mask_rotation_curves` 时才出现——
-  // 不然是给人在曲线上写一条必被拒的针。路径遮罩整个没有这一行：轮廓自己带形状，没有盒可转
-  // （`ShapeMask` 早就拒了路径上的静态角度，曲线那一条同理由引擎的 validator 拒）。
+  // 判断只在引擎那一处（`Clip.mask_animation_problem`），这里只翻成「这一行摆不摆出来」。
+  // 1.165：角度那一行只在这一版引擎报了 `mask_rotation_curves` 时出现——不然是给人在曲线上
+  // 写一条必被拒的针。路径遮罩整个没有它：轮廓自己带形状，没有盒可转。
+  // 1.166：转过角度的盒也能给宽/高打针了——那张等比图改成每窗一张、各自带自己的角度与边，
+  // 所以拧不出别的样子；这一版引擎没报 `mask_rotation_size_curves` 时仍然只给中心两行，
+  // 摆上去就是一条老引擎会点名拒绝的曲线。
   const curves = Boolean(caps?.features.mask_rotation_curves);
-  const moveOnly = mask.shape === "path" || Boolean(mask.rotation);
+  const sizeCurves = Boolean(caps?.features.mask_rotation_size_curves);
+  const moveOnly = mask.shape === "path" || (Boolean(mask.rotation) && !sizeCurves);
   return MASK_ANIM_FIELDS.filter((row) => row.property === "mask_rotation"
     ? curves && mask.shape !== "path"
     : !moveOnly || row.property === "mask_x" || row.property === "mask_y");

@@ -44,6 +44,13 @@ assert.deepEqual(rows(box({}), angleCaps),
 assert.deepEqual(rows(box({ rotation: 30 })), ["mask_x", "mask_y"], "转过角度的盒子还给了宽/高曲线");
 assert.deepEqual(rows(box({ rotation: 30 }), angleCaps), ["mask_x", "mask_y", "mask_rotation"],
   "转过角度的盒子把自己那条角度曲线也丢了");
+// 1.166：这一版引擎每窗重烘一张图，转过的盒也该拿到宽/高那两行（两头都钉：没报这个开关时不许给）
+const sizeCaps = caps({ mask_rotation: true, mask_rotation_curves: true, mask_rotation_size_curves: true });
+assert.deepEqual(rows(box({ rotation: 30 }), sizeCaps),
+  ["mask_x", "mask_y", "mask_width", "mask_height", "mask_rotation"],
+  "引擎每窗重烘一张图了，转过的盒还在被摘掉宽/高那两行");
+assert.deepEqual(rows(box({ rotation: 30, width: 0.8, height: 0.3 }), sizeCaps).length, 5,
+  "窗表的宽高与画面上那框该是同一个盒");
 assert.deepEqual(rows(box({ rotation: -1 })), ["mask_x", "mask_y"], "转过角度的盒子还给了宽/高曲线（负角那一档）");
 assert.deepEqual(rows(box({ shape: "path", vertices: [] })), ["mask_x", "mask_y"], "路径遮罩的曲线名单不对");
 assert.deepEqual(rows(box({ shape: "path", vertices: [] }), angleCaps), ["mask_x", "mask_y"],
@@ -106,6 +113,7 @@ assert.ok(picture.includes('import { rotatedCorners, rotationWindowAt } from "..
 assert.ok(picture.includes('const spun = draft ? null : rotation ? rotationWindowAt(rotation, local) : null'),
   "向导没按播放头去引擎那份窗表里取此刻那一窗");
 assert.ok(picture.includes("Boolean(mask?.rotation) || Boolean(spun)"), "有没有转过角度只看了一头");
+assert.ok(picture.includes("spun ? { ...mask, width: spun.width, height: spun.height } : mask"), "参考线还在按静态那一格画盒，窗表给的宽高没进来");
 assert.ok(!picture.includes("Math.cos"), "向导里出现了第二份三角换算");
 assert.ok(picture.includes('rotated ? " rotated-mask" : " animated-mask"'), "旋转的格子没换类名");
 assert.ok(picture.includes("{rotated ? null : CORNERS.map"), "转过的盒子还留着四角把手");
@@ -137,7 +145,8 @@ assert.ok(inspector.includes("max={rotationLimit}") && inspector.includes("min={
 assert.ok(inspector.includes("features.mask_rotation") && inspector.includes("mask_rotation_limit"),
   "没读 capabilities 就摆了颗旋钮");
 assert.ok(inspector.includes("这一版引擎没有遮罩角度这一格"), "老引擎那一档没说");
-assert.ok(inspector.includes("但宽/高那两条要先把角度转回 0°"), "不能打宽高曲线这件事没写在界面上");
+assert.ok(inspector.includes("宽/高那两条也一样能打"), "能动尺寸这件事没写在界面上");
+assert.ok(!inspector.includes("要先把角度转回 0°"), "界面还在说一条引擎已经不拒的拒绝");
 assert.ok(!/id="mask-rotation"[^>]*min=\{-360\}/.test(inspector), "界面把 360 抄成了自己的上限");
 // 那颗 ◇ 的两个方向：这一版引擎不收曲线时不许出现，路径遮罩整个没有角度这一格。
 assert.ok(inspector.includes("{rotationCurves && animatable ? <button"), "角度那颗 ◇ 没受 capabilities 管");
@@ -168,7 +177,8 @@ assert.ok(curves.includes("maskAnimFields(clip.mask, app.caps)"), "曲线编辑�
 const contracts = read("src/agentcut/contracts.py");
 assert.ok(contracts.includes('"mask_rotation": True'), "引擎没把这一档报出去");
 assert.ok(contracts.includes('"mask_rotation_curves": True'), "引擎没报角度能不能打曲线");
-assert.ok(contracts.includes("or set 遮罩角度 back to 0"), "那句拒绝没说要转回 0°");
+assert.ok(!contracts.includes("set 遮罩角度 back to 0"), "那句拒绝还在：转过的盒今天能动尺寸");
+assert.ok(contracts.includes('"mask_rotation_size_curves": True'), "引擎没报「转过的盒能动尺寸」这一档");
 assert.ok(contracts.includes('key.property == "mask_rotation" for key in self.keyframes'),
   "路径遮罩的角度曲线没被拒——摆出来就是一条导出不执行的针");
 
