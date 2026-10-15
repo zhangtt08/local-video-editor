@@ -63,7 +63,7 @@ def main():
     turned = alpha_expression(ShapeMask(**HARD, rotation=90.0))
     assert "+((Y/H)-(0.5))*(H/W)*1.000000000)" in turned, turned
     assert "-((X/W)-(0.5))*1.000000000)" in turned, turned
-    assert "PI" not in turned and "sin(" not in turned, "角度该在引擎里就化成常数，不该让 FFmpeg 现算"
+    assert "PI" not in turned and "sin(" not in turned, "角度该在引擎里就化成常数"
     framed = alpha_expression(ShapeMask(**HARD, rotation=30.0), None, (0.0, 30.0, 160.0, 90.0))
     assert "H/W" not in framed and "0.562500000" in framed, framed
     assert "0.866025404" in framed and "0.500000000" in framed, framed
@@ -93,24 +93,68 @@ def main():
         p = store.create(CreateProject(request_id="new", name="maskrot")).project
         path = media_dir / "red.mp4"
         subprocess.run(
-            [str(FFMPEG), "-v", "error", "-y", "-f", "lavfi",
-             "-i", "color=red:s=320x180:r=30:d=2", "-f", "lavfi",
-             "-i", "sine=frequency=440:duration=2", "-c:v", "libx264", "-c:a", "aac", str(path)],
-            check=True, creationflags=0x08000000,
+            [
+                str(FFMPEG),
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=red:s=320x180:r=30:d=2",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=2",
+                "-c:v",
+                "libx264",
+                "-c:a",
+                "aac",
+                str(path),
+            ],
+            check=True,
+            creationflags=0x08000000,
         )
         probe = media.import_file(str(path))
         seeded = store.mutate(
             p.id,
-            EditBatch.model_validate({
-                "request_id": "seed", "expected_revision": 0,
-                "commands": [
-                    {"op": "track.add", "track": {"id": "v", "kind": "video", "name": "v"}},
-                    {"op": "asset.import", "asset_id": "a", "label": "a", "probe_id": probe.id,
-                     "verified": probe.verified.model_dump()},
-                    {"op": "clip.add", "clip": {"id": "c", "asset_id": "a", "track_id": "v",
-                                                "position_ticks": 0, "duration_ticks": 2 * T}},
-                ],
-            }),
+            EditBatch.model_validate(
+                {
+                    "request_id": "seed",
+                    "expected_revision": 0,
+                    "commands": [
+                        {"op": "track.add", "track": {"id": "v", "kind": "video", "name": "v"}},
+                        {
+                            "op": "asset.import",
+                            "asset_id": "a",
+                            "label": "a",
+                            "probe_id": probe.id,
+                            "verified": probe.verified.model_dump(),
+                        },
+                        {
+                            "op": "clip.add",
+                            "clip": {
+                                "id": "c",
+                                "asset_id": "a",
+                                "track_id": "v",
+                                "position_ticks": 0,
+                                "duration_ticks": 2 * T,
+                            },
+                        },
+                        # 第二段是 1.163 那一路「粘贴属性」的落点：整枚遮罩要连着角度一起过去。
+                        {
+                            "op": "clip.add",
+                            "clip": {
+                                "id": "c2",
+                                "asset_id": "a",
+                                "track_id": "v",
+                                "position_ticks": 2 * T,
+                                "duration_ticks": T,
+                            },
+                        },
+                    ],
+                }
+            ),
         ).project
 
         with TestClient(
@@ -149,8 +193,13 @@ def main():
             assert client.get(f"/v1/projects/{seeded.id}").json()["revision"] == head["revision"]
 
             size_curve = edit(
-                [{"op": "keyframe.set", "clip_id": "c",
-                  "keyframe": {"property": "mask_width", "at_ticks": 0, "value": 0.4}}],
+                [
+                    {
+                        "op": "keyframe.set",
+                        "clip_id": "c",
+                        "keyframe": {"property": "mask_width", "at_ticks": 0, "value": 0.4},
+                    }
+                ],
                 "size-curve",
             )
             assert size_curve.json()["error"]["code"] == "INVALID_MASK", size_curve.text
@@ -159,8 +208,13 @@ def main():
             assert after["revision"] == head["revision"], "被拒的一笔把版本涨了"
             assert after["clips"]["c"]["mask"]["rotation"] == 30.0, after["clips"]["c"]["mask"]
             centre_curve = edit(
-                [{"op": "keyframe.set", "clip_id": "c",
-                  "keyframe": {"property": "mask_x", "at_ticks": 0, "value": 0.45}}],
+                [
+                    {
+                        "op": "keyframe.set",
+                        "clip_id": "c",
+                        "keyframe": {"property": "mask_x", "at_ticks": 0, "value": 0.45},
+                    }
+                ],
                 "centre-curve",
             )
             assert centre_curve.status_code == 200, centre_curve.text
@@ -190,6 +244,40 @@ def main():
             assert not unkey.json()["project"]["clips"]["c"]["keyframes"], unkey.text
             head["revision"] = unkey.json()["project"]["revision"]
 
+            # 1.163 那一路「粘贴属性」：整枚遮罩要连着角度一起落到那一段上，
+            # 落完之后同一条限制照旧——转过的盒还是不能打宽/高曲线。
+            planned = client.post(
+                f"/v1/projects/{seeded.id}/clips/c/attribute-plan",
+                json={
+                    "request_id": "paste-ask",
+                    "expected_revision": head["revision"],
+                    "source_clip_id": "c",
+                    "target_clip_ids": ["c2"],
+                    "categories": ["mask"],
+                },
+            )
+            assert planned.status_code == 200, planned.text
+            commands = planned.json()["attribute_plan"]["commands"]
+            turned = [c for c in commands if c.get("op") == "clip.mask"]
+            assert [c["mask"]["rotation"] for c in turned] == [30.0], commands
+            pasted = edit(commands, "paste-land")
+            assert pasted.status_code == 200, pasted.text
+            head["revision"] = pasted.json()["project"]["revision"]
+            landed = pasted.json()["project"]["clips"]["c2"]["mask"]
+            assert landed["rotation"] == 30.0 and landed["shape"] == "rectangle", landed
+            second_refusal = edit(
+                [
+                    {
+                        "op": "keyframe.set",
+                        "clip_id": "c2",
+                        "keyframe": {"property": "mask_height", "at_ticks": 0, "value": 0.3},
+                    }
+                ],
+                "paste-curve",
+            )
+            assert second_refusal.json()["error"]["code"] == "INVALID_MASK", second_refusal.text
+            print("   粘贴属性：整枚遮罩连着角度一起落进那一段，落完那条限制照旧拒")
+
             def shot(angle, request_id):
                 step = edit([mask_body(angle)], request_id)
                 assert step.status_code == 200, step.text
@@ -200,9 +288,21 @@ def main():
                 assert response.status_code == 200, response.text
                 w, h = struct.unpack(">II", response.content[16:24])
                 raw = subprocess.run(
-                    [str(FFMPEG), "-v", "error", "-i", "pipe:0", "-f", "rawvideo",
-                     "-pix_fmt", "rgb24", "pipe:1"],
-                    input=response.content, capture_output=True, check=True,
+                    [
+                        str(FFMPEG),
+                        "-v",
+                        "error",
+                        "-i",
+                        "pipe:0",
+                        "-f",
+                        "rawvideo",
+                        "-pix_fmt",
+                        "rgb24",
+                        "pipe:1",
+                    ],
+                    input=response.content,
+                    capture_output=True,
+                    check=True,
                     creationflags=0x08000000,
                 ).stdout
                 return {"w": w, "h": h, "raw": raw}
@@ -243,11 +343,11 @@ def main():
                     for fy in (0.28, 0.4, 0.5, 0.6, 0.72):
                         if not (clear(fx, fy, angle, w, h) and clear(fx, fy, 0.0, w, h)):
                             continue
-                        want = inside(fx, fy, angle, w, h)
-                        if red(frame, fx, fy) != want:
+                        seen = "亮" if red(frame, fx, fy) else "黑"
+                        want = "亮" if inside(fx, fy, angle, w, h) else "黑"
+                        if seen != want:
                             raise AssertionError(
-                                f"角度 {angle} 在 ({fx},{fy})：画面上{'亮' if want is False else '黑'}，"
-                                f"按定义该{'亮' if want else '黑'}"
+                                f"角度 {angle} 在 ({fx},{fy})：画面上{seen}，按定义该{want}"
                             )
                         checked += 1
                 # 符号钉在「沿自己的长轴那一点亮、它的镜像不亮」上：+30° 朝屏幕下方斜，−45° 朝上；
