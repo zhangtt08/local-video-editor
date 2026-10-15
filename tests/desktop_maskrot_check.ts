@@ -136,7 +136,7 @@ const inspector = read("desktop/src/views/Inspector.tsx");
 assert.ok(inspector.includes("遮罩角度"), "检查器没有角度那一格");
 // 检查器那几行数字不许自己判「哪条属性能打关键帧」：名单只从 maskAnimFields 出去，
 // 否则转过角度的盒会留下一颗按下去必被引擎拒绝的 ◇。
-assert.ok(inspector.includes("maskAnimFields(mask)"), "检查器自己另判了一份能打的盒属性");
+assert.ok(inspector.includes("maskAnimFields(mask, caps)"), "检查器自己另判了一份能打的盒属性");
 assert.ok(inspector.includes('if (mask.shape === "path") return [];'), "路径遮罩该整个没有数字盒这一行");
 assert.ok(inspector.includes("import { blurMaxPercent, canAnimateMask") && inspector.includes("maskAnimFields,"),
   "检查器没从 effects.ts 读那份名单");
@@ -147,6 +147,11 @@ assert.ok(inspector.includes("features.mask_rotation") && inspector.includes("ma
 assert.ok(inspector.includes("这一版引擎没有遮罩角度这一格"), "老引擎那一档没说");
 assert.ok(inspector.includes("宽/高那两条也一样能打"), "能动尺寸这件事没写在界面上");
 assert.ok(!inspector.includes("要先把角度转回 0°"), "界面还在说一条引擎已经不拒的拒绝");
+// 1.166 装机量到的那一幕：判断在 `maskAnimFields` 那一处是对的，可检查器算行名单时没把 caps 递过去，
+// 于是角度一非零，「宽度 / 高度」那两行就凭空消失。这里钉的是**调用点**，不是函数返回值。
+assert.ok(/maskAnimFields\(mask, caps\)/.test(inspector), "maskRows 折名单时没把 capabilities 递给 maskAnimFields");
+assert.ok(inspector.includes("maskRows(mask, app.caps)"), "检查器那一处调用没带 caps，转过的盒那两行会被摘掉");
+assert.ok(!/maskAnimFields\(mask\)/.test(inspector), "还有一处 maskAnimFields 调用没带 caps");
 assert.ok(!/id="mask-rotation"[^>]*min=\{-360\}/.test(inspector), "界面把 360 抄成了自己的上限");
 // 那颗 ◇ 的两个方向：这一版引擎不收曲线时不许出现，路径遮罩整个没有角度这一格。
 assert.ok(inspector.includes("{rotationCurves && animatable ? <button"), "角度那颗 ◇ 没受 capabilities 管");

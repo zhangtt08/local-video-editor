@@ -1,7 +1,7 @@
 import type { Keyframe, MaskShapeKeyframe, SpatialProperty } from "../engine";
 import { useEffect, useId, useRef, useState } from "react";
 
-import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionChoices, type AnimatedEffect, type Clip, type LinkStatus, type SampledValues, type ShapeMask, type TransitionKind, BLEND_MODES} from "../engine";
+import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionChoices, type AnimatedEffect, type Capabilities, type Clip, type LinkStatus, type SampledValues, type ShapeMask, type TransitionKind, BLEND_MODES} from "../engine";
 
 import { Icon, Modal } from "../ui";
 import { GradeFields } from "./GradeFields";
@@ -461,12 +461,13 @@ const MASK_ROWS = [['center_x', '中心 X', 0, 100, 'mask_x'], ['center_y', '中
 
 /** A free-form outline is positioned by its vertices, and its box is always the drawn bounds, so
  * there is no numeric box to edit — the centre curves come from 跟踪主体 or the curve editor.
- * 1.164：「这条盒属性今天能不能打关键帧」只在 `maskAnimFields` 那一处判（路径只搬中心，转过角度的
- * 盒也只搬中心），这里只把那份名单折成检查器要的数字行——所以画面上不会有一颗按下去被引擎点名
- * 拒绝的 ◇。 */
-const maskRows = (mask: ShapeMask) => {
+ * 1.164/1.166：「这条盒属性今天能不能打关键帧」只在 `maskAnimFields` 那一处判（路径只搬中心，
+ * 转过角度的盒今天连宽/高也一起给），这里只把那份名单折成检查器要的数字行——所以画面上不会有一颗
+ * 按下去被引擎点名拒绝的 ◇。caps 必须一起递过去：1.166 装机量到的那一幕就是没递，角度一非零，
+ * 宽/高那两行就凭空消失，而函数自己测是好的。 */
+const maskRows = (mask: ShapeMask, caps?: Capabilities | null) => {
   if (mask.shape === "path") return [];
-  const allowed = new Set(maskAnimFields(mask).map((row) => row.property));
+  const allowed = new Set(maskAnimFields(mask, caps).map((row) => row.property));
   return MASK_ROWS.filter((row) => allowed.has(row[4]));
 };
 
@@ -529,7 +530,7 @@ function MaskFields({ clip }: { clip: Clip }) {
       {mask ? <>
         {mask.shape === "path" ? <p className="hint">路径顶点 {mask.vertices?.length ?? 0} 个：画面中拖顶点改形状（拖动即整体搬动轮廓），拖小方块改曲线控制柄，双击在最近的那条边上加一个点，选中后方向键微调、Delete 删除，或点画面下方出现的小面板用「删除顶点 / 抹成角点 / 自动平滑」。向内羽化按画面短边折算成高斯半径。轮廓按画好的形状与大小裁切（路径遮罩不带角度）：要让它随时间移动就点「跟踪主体」，或在曲线编辑器里给「遮罩中心 X/Y」双击加关键帧。{app.caps?.features.path_shape_keys ? "轮廓本身也能随时间变形：先记一帧，之后在画面里拖顶点就是给那一刻改形状。" : "形状与大小本身还不能随时间变化。"}</p> : null}
         {mask.shape === "path" && app.caps?.features.path_shape_keys ? <MaskShapeKeys clip={clip} mask={mask} disabled={disabled} at={at} /> : null}
-        {(canAnimateMask(mask) ? maskRows(mask) : []).map(([field, label, min, max, property]) => {
+        {(canAnimateMask(mask) ? maskRows(mask, app.caps) : []).map(([field, label, min, max, property]) => {
           const frame = frames.find((k) => k.property === property && k.at_ticks === at + (clip.animation_offset_ticks ?? 0));
           const animated = (clip.keyframes ?? []).some((k) => k.property === property);
           return <div className="effect-row" key={field}><label htmlFor={`mask-${field}`}>{label}</label><EffectInput id={`mask-${field}`} value={(frame?.value ?? mask[field]) * 100} min={min} max={max} step={1} onCommit={(value) => animated ? setKeyframe(clip.id, { property, at_ticks: at, value: value / 100, interpolation: frame?.interpolation ?? "linear" }) : setClipMask(clip.id, { ...mask, [field]: value / 100 })} /><span className="dim">%</span>
