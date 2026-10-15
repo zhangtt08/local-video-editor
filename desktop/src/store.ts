@@ -135,7 +135,7 @@ export type AppState = {
   showHelp: boolean;
   assetFilter: "all" | "video" | "image" | "audio";
   remoteAhead: number | null;
-  editorPanel: "inspect" | "export" | "scope";
+  editorPanel: (typeof EDITOR_PANELS)[number];
   graphOpen: boolean;
   maskEditing: boolean;
   monitorMode: "timeline" | "source";
@@ -260,6 +260,12 @@ export function editableProject(app = state, displayOnly = false): Project | nul
   return (displayOnly || !app.dryRunBusy) && !app.dryRunError && app.candidate?.id === project?.id
     && app.candidate?.revision === (project?.revision ?? 0) + 1 ? app.candidate : null;
 }
+/**
+ * 右侧那一列有哪几个面板，只在这张表里说一次：`AppState["editorPanel"]` 由它推出来，
+ * 深链 `?panel=` 也在同一张表上验一遍——界面不许有第二份名字表。
+ */
+export const EDITOR_PANELS = ["inspect", "export", "scope"] as const;
+
 export function setEditorPanel(editorPanel: AppState["editorPanel"]) {
   set({ editorPanel, view: "editor" });
 }
@@ -395,12 +401,16 @@ async function restoreDeepLink() {
   }
   const linkedClip = urlParam("clip");
   const linkedTick = urlParam("tick");
+  const linkedPanel = urlParam("panel");
   if (wanted && state.projects.some((item) => item.id === wanted)) {
     // 片段要等工程读进来才选得到：打开完成后按链接点名选中，并切到检查器那一页。
-    // 播放头同理——时间线长度只有读进来才知道，越界的那个数得夹到末尾而不是跳走。
+    // 播放头与面板同理——时间线长度只有读进来才知道，越界的那个数得夹到末尾而不是跳走。
     void openProject(wanted).then(() => {
-      if (linkedClip) focusLinkedClip(linkedClip, linkedTick);
-      else landLinkedTick(linkedTick);
+      if (linkedClip) focusLinkedClip(linkedClip, linkedTick, linkedPanel);
+      else {
+        landLinkedPanel(linkedPanel);
+        landLinkedTick(linkedTick);
+      }
     });
   }
 }
@@ -1351,14 +1361,25 @@ export function landLinkedTick(tick: string): boolean {
 }
 
 /**
- * 深链 `?clip=<id>`：选中那一条片段，并把右侧面板切到「检查器」；带上 `?tick=` 时顺手把播放头停过去。
+ * 深链 `?panel=<inspect|export|scope>`：把右侧那一列切到点名的面板。
+ * 认不出的名字一动不动（可选项只有一个来源：`EDITOR_PANELS`）——一条坏链接不该把界面弄成半开状态。
+ */
+export function landLinkedPanel(panel: string): boolean {
+  if (!(EDITOR_PANELS as readonly string[]).includes(panel)) return false;
+  setEditorPanel(panel as AppState["editorPanel"]);
+  return true;
+}
+
+/**
+ * 深链 `?clip=<id>`：选中那一条片段，并把右侧面板切到「检查器」（链接另点名 `?panel=` 时听链接的）；
+ * 带上 `?tick=` 时顺手把播放头停过去。
  * 发一个链接过去就得真能看到那一条——只在链接里点名时切页签，人自己点片段不改他的页签。
  * 认不出的 id 什么都不做（返回 false）：一条坏链接不该把界面弄成半开状态。
  */
-export function focusLinkedClip(clipId: string, tick = ""): boolean {
+export function focusLinkedClip(clipId: string, tick = "", panel = ""): boolean {
   if (!state.project?.clips[clipId]) return false;
   selectClip(clipId);
-  setEditorPanel("inspect");
+  if (!landLinkedPanel(panel)) setEditorPanel("inspect");
   landLinkedTick(tick);
   return true;
 }

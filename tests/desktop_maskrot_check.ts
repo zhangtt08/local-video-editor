@@ -189,16 +189,30 @@ assert.ok(contracts.includes('"mask_rotation_size_curves": True'), "引擎没报
 const storeSrc = read("desktop/src/store.ts");
 assert.ok(storeSrc.includes('urlParam("clip")'), "深链不再点名片段");
 assert.ok(storeSrc.includes('urlParam("tick")'), "深链不再读 ?tick=");
-assert.ok(/export function focusLinkedClip\(clipId: string, tick = ""\): boolean \{/.test(storeSrc),
-  "focusLinkedClip 的形状变了（深链选中那条，并接住 ?tick=）");
+assert.ok(/export function focusLinkedClip\(clipId: string, tick = "", panel = ""\): boolean \{/.test(storeSrc),
+  "focusLinkedClip 的形状变了（深链选中那条，并接住 ?tick= 与 ?panel=）");
 assert.ok(/export function landLinkedTick\(tick: string\): boolean \{/.test(storeSrc),
   "landLinkedTick 不在了（?tick= 没有落点）");
 assert.ok(storeSrc.includes("if (!project || !/^\\d+$/.test(tick)) return false;"),
   "认不出的 ?tick= 会往下走——播放头该一动不动");
 assert.ok(storeSrc.includes("playhead.set(Math.min(Number(tick), timelineEnd(project)));"),
   "?tick= 不再夹到时间线末尾，越界的链接会把播放头丢到看不见的地方");
-assert.ok(storeSrc.includes("focusLinkedClip(linkedClip, linkedTick);"),
-  "深链选中片段时没把 ?tick= 一起递过去");
+assert.ok(storeSrc.includes("focusLinkedClip(linkedClip, linkedTick, linkedPanel);"),
+  "深链选中片段时没把 ?tick= 与 ?panel= 一起递过去");
+assert.ok(storeSrc.includes("if (!landLinkedPanel(panel)) setEditorPanel(\"inspect\");"),
+  "focusLinkedClip 收了 panel 却没落到面板（链接点了面板还是检查器）");
+assert.ok(/export function landLinkedPanel\(panel: string\): boolean \{/.test(storeSrc),
+  "landLinkedPanel 不在了（?panel= 没有落点）");
+assert.ok(storeSrc.includes("if (!(EDITOR_PANELS as readonly string[]).includes(panel)) return false;"),
+  "认不出的 ?panel= 会往下走——面板该一动不动");
+assert.ok(storeSrc.includes("export const EDITOR_PANELS = [\"inspect\", \"export\", \"scope\"] as const;"),
+  "面板名单不再是唯一那一张表");
+assert.ok(storeSrc.includes("editorPanel: (typeof EDITOR_PANELS)[number];"),
+  "AppState 又自带第二份面板名字表");
+assert.ok(!/editorPanel: \"inspect\" \| \"export\" \| \"scope\"/.test(storeSrc),
+  "面板名单被抄回类型那一行了（两处各自漂移）");
+assert.ok(storeSrc.includes("landLinkedPanel(linkedPanel);"),
+  "只给 ?panel= 的那条链接不再落地");
 assert.ok(/landLinkedTick\(tick\);\s*\n\s*return true;/.test(storeSrc),
   "focusLinkedClip 收了 tick 却没把它递到落点（选中了、帧没停）");
 assert.ok(/playhead\.pause\(\);\s*\n\s*playhead\.set\(Math\.min\(Number\(tick\), timelineEnd\(project\)\)\);/.test(storeSrc),
@@ -209,7 +223,7 @@ assert.ok(storeSrc.includes('setEditorPanel("inspect")'), "深链选中片段后
 assert.ok(storeSrc.includes("if (!state.project?.clips[clipId]) return false;"),
   "认不出的片段 id 会往下走，界面会停在半开状态");
 assert.ok(/void openProject\(wanted\)\.then\(\(\) => \{/.test(storeSrc)
-  && storeSrc.includes("else landLinkedTick(linkedTick);"),
+  && storeSrc.includes("landLinkedTick(linkedTick);"),
   "深链没等工程读进来就下单，选不到那条片段也停不到那一帧");
 assert.ok(contracts.includes('key.property == "mask_rotation" for key in self.keyframes'),
   "路径遮罩的角度曲线没被拒——摆出来就是一条导出不执行的针");
