@@ -402,7 +402,7 @@ def main():
 
             assert caps["features"]["mask_rotation_size_curves"] is True, caps["features"]
 
-            assert caps["app_version"] == contracts.APP_VERSION == "1.173.0", caps["app_version"]
+            assert caps["app_version"] == contracts.APP_VERSION == "1.174.0", caps["app_version"]
 
 
 
