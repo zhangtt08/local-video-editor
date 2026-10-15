@@ -184,6 +184,17 @@ assert.ok(contracts.includes('"mask_rotation": True'), "引擎没把这一档报
 assert.ok(contracts.includes('"mask_rotation_curves": True'), "引擎没报角度能不能打曲线");
 assert.ok(!contracts.includes("set 遮罩角度 back to 0"), "那句拒绝还在：转过的盒今天能动尺寸");
 assert.ok(contracts.includes('"mask_rotation_size_curves": True'), "引擎没报「转过的盒能动尺寸」这一档");
+// 1.170：深链 `?clip=` 点名一条片段——这既是「发个链接就能看到那一条」，也是让**渲染出来的**
+// 行名单可以被机器量到（浏览器里不用先点一下）的前提。三件事各自钉：读参数、选中并切页签、坏 id 不动。
+const storeSrc = read("desktop/src/store.ts");
+assert.ok(storeSrc.includes('urlParam("clip")'), "深链不再点名片段");
+assert.ok(/export function focusLinkedClip\(clipId: string\): boolean \{/.test(storeSrc),
+  "focusLinkedClip 的形状变了（深链选中那条）");
+assert.ok(storeSrc.includes('setEditorPanel("inspect")'), "深链选中片段后没把右侧面板切到检查器");
+assert.ok(storeSrc.includes("if (!state.project?.clips[clipId]) return false;"),
+  "认不出的片段 id 会往下走，界面会停在半开状态");
+assert.ok(storeSrc.includes("void openProject(wanted).then(() => { if (linkedClip) focusLinkedClip(linkedClip); });"),
+  "深链选中没等工程读进来就下单，选不到那条片段");
 assert.ok(contracts.includes('key.property == "mask_rotation" for key in self.keyframes'),
   "路径遮罩的角度曲线没被拒——摆出来就是一条导出不执行的针");
 

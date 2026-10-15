@@ -393,7 +393,11 @@ async function restoreDeepLink() {
   if (view === "home" || view === "editor" || view === "history" || view === "agent") {
     set({ view });
   }
-  if (wanted && state.projects.some((item) => item.id === wanted)) void openProject(wanted);
+  const linkedClip = urlParam("clip");
+  if (wanted && state.projects.some((item) => item.id === wanted)) {
+    // 片段要等工程读进来才选得到：打开完成后按链接点名选中，并切到检查器那一页。
+    void openProject(wanted).then(() => { if (linkedClip) focusLinkedClip(linkedClip); });
+  }
 }
 
 /** 引擎被外壳重新拉起后，接口地址会变；重建客户端并刷新界面。 */
@@ -1326,6 +1330,18 @@ export function reconcileLink(linkId: string) {
 }
 
 export function selectAllClips() { selectClips(Object.keys(state.project?.clips ?? {})); }
+
+/**
+ * 深链 `?clip=<id>`：选中那一条片段，并把右侧面板切到「检查器」。
+ * 发一个链接过去就得真能看到那一条——只在链接里点名时切页签，人自己点片段不改他的页签。
+ * 认不出的 id 什么都不做（返回 false）：一条坏链接不该把界面弄成半开状态。
+ */
+export function focusLinkedClip(clipId: string): boolean {
+  if (!state.project?.clips[clipId]) return false;
+  selectClip(clipId);
+  setEditorPanel("inspect");
+  return true;
+}
 
 export function selectAsset(assetId: string | null) {
   const sequenceId = assetId ? state.project?.assets[assetId]?.sequence_id : null;
