@@ -699,6 +699,11 @@ class RenderPlan:
     graph_in_file: bool = False
     frame_graph_in_file: bool = False
     binary_files: dict[str, bytes] = field(default_factory=dict)
+    # Which clip each input pad was allocated for, and how many allocations happened. The chain
+    # builders read the pad off the entry (not off a loop variable), so a pad allocated here and
+    # never read means a clip's layer chain was wired somewhere else - measured 1.166's shape.
+    owners: dict[int, str] = field(default_factory=dict)
+    allocations: int = 0
 
     def tag(self, prefix: str) -> str:
         self.counter += 1
@@ -939,6 +944,27 @@ def validate_plan_inputs(plan: "RenderPlan") -> None:
     graph = "\n".join(plan.filters)
     referenced = {int(pad) for pad in re.findall(r"\[(\d+):[va]\]", graph)}
     referenced |= {int(pad) for pad in re.findall(r"(?:^|[ ,;\[])(\d+):[av]\b", graph)}
+    # 先问结构性的一条：分配时把 pad 记在谁头上、一共分配了几路。两件事都不靠读文本猜。
+    if len(plan.owners) != plan.allocations:
+        raise EditorError(
+            "PLAN_INPUT_DOUBLE_READ",
+            f"{plan.allocations} layer inputs were allocated but only {len(plan.owners)} clips "
+            "own them - two clips share one decoder",
+            500,
+            allocations=plan.allocations,
+            owners=len(plan.owners),
+        )
+    for pad, owner in sorted(plan.owners.items()):
+        if pad not in referenced:
+            raise EditorError(
+                "PLAN_INPUT_UNREFERENCED",
+                f"clip {owner} was allocated input {pad} of {len(windows)} but no layer chain "
+                "reads it - the clip is wired to the wrong decoder",
+                500,
+                pad=pad,
+                clip_id=owner,
+                declared_seconds=windows[pad] if pad < len(windows) else None,
+            )
     for pad, declared in enumerate(windows):
         if pad not in referenced:
             raise EditorError(
@@ -1216,6 +1242,7 @@ def compile_render_plan(
                 f"color=c=black@0:s={size}:r={fps},format=rgba", clip.duration_ticks
             )
             entry["input"] = index
+            plan.owners[index], plan.allocations = clip.id, plan.allocations + 1
             return index
         index = plan.next_input()
         quantum = (
@@ -1244,16 +1271,17 @@ def compile_render_plan(
                 verified.path,
             ]
         entry["input"] = index
+        plan.owners[index], plan.allocations = clip.id, plan.allocations + 1
         return index
 
     def blank_label(duration_ticks: int) -> str:
-        index = plan.add_lavfi(
+        pad = plan.add_lavfi(
             f"color=c={'black@0' if alpha_out else 'black'}:s={size}:r={fps},format=rgba",
             duration_ticks,
         )
         label = plan.tag("blank")
         plan.filters.append(
-            f"[{index}:v]fps={fps},format={'rgba' if alpha_out else pixel_format},"
+            f"[{pad}:v]fps={fps},format={'rgba' if alpha_out else pixel_format},"
             f"setsar=1,settb=AVTB{label}"
         )
         return label
@@ -1267,9 +1295,9 @@ def compile_render_plan(
             clip = entry["clip"]
             if clip.position_ticks > cursor:
                 labels.append(blank_label(clip.position_ticks - cursor))
-            index = clip_input(entry)
+            index = clip_input(entry)  # noqa: F841 - 分配就是这一刻发生，往下不必再拿它拼标签
             label = plan.tag("v")
-            source = f"[{index}:v]"
+            source = f"[{clip_input(entry)}:v]"
             color = color_filter(clip, plan)
             # The `cut` chain is a second builder for the picture, and it is where a per-clip
             # filter gets forgotten: the preview filters every layer, so this path runs the same
@@ -1515,7 +1543,9 @@ def compile_render_plan(
                         f"x={x}:y={y},"
                     )
                 ramp = clip_ramp(clip, settings)
-                video_source = entry.get("video", f"[{index}:v]")
+                # 这一路从 entry 自己身上拿，不拿循环变量：1.166 那次是一个内层循环把
+                # `index` 换了含义，层链就挂到别的 clip 那一路输入上，画面整幅空掉而任务退 0。
+                video_source = entry.get("video") or f"[{clip_input(entry)}:v]"
                 if ramp:
                     video_source = ramp_video(
                         plan, video_source, ramp, fps, settings.frame_ticks / TIMEBASE
@@ -1781,7 +1811,7 @@ def compile_render_plan(
             gain = f"({gain})*({weight})"
         delay = ms(clip.position_ticks)
         ramp = clip_ramp(clip, settings, settings.timebase // settings.sample_rate)
-        audio_source = entry.get("audio", f"[{index}:a]")
+        audio_source = entry.get("audio") or f"[{clip_input(entry)}:a]"
         if ramp:
             paced_audio = ramp_audio(plan, audio_source, ramp, settings.sample_rate)
         else:

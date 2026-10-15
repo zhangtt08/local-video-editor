@@ -244,6 +244,20 @@ def main() -> None:
     assert inner >= 1, "嵌套合成的子图不再走同一份编译，这道门就漏了一层"
     print("   接线：任务 / 取帧 / 响度探针 / 子图四个入口都过这道门，MCP 原样递回同一个码")
 
+    # 结构的那一层：分配时就记下「这一路是谁的」，所以配对不靠读 filter 文本猜。
+    assert two_plan.owners and two_plan.allocations == len(two_plan.owners), (
+        two_plan.owners, two_plan.allocations)
+    read_pads = {int(pad) for pad in re.findall(
+        r"\[(\d+):[va]\]", "\n".join(two_plan.filters))}
+    read_pads |= {int(pad) for pad in re.findall(
+        r"(?:^|[ ,;\[])(\d+):[av]\b", "\n".join(two_plan.filters))}
+    assert all(pad in read_pads for pad in two_plan.owners), two_plan.owners
+    print(f"   配对：{sorted(two_plan.owners.items())}——几路分配就几路有主，每路都被自己那条链读到")
+    # 层链的 pad 必须从 entry 自己身上拿；拿循环变量的写法一回来，1.166 那一幕就能重演
+    assert 'entry.get("video") or f"[{clip_input(entry)}:v]"' in SRC, "层链不再从 entry 拿那一路"
+    assert 'f"[{index}:v]"' not in SRC and 'f"[{index}:a]"' not in SRC, \
+        "又有层链拿循环变量 index 拼 pad"
+
     assert "validate_plan_inputs(plan)" in SRC, "编译收尾没调用那份结构检查"
     assert SRC.index("validate_plan_inputs(plan)") > SRC.index("def compile_render_plan("), \
         "调用点在编译函数之外"
