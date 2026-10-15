@@ -6,6 +6,7 @@ from math import sqrt
 from .contracts import (
     FADE_SHAPE_CURVES,
     MASK_FIELDS,
+    MASK_ROTATION_SCHEDULE_MAX,
     MASK_SHAPE_SCHEDULE_MAX,
     PROPERTY_LIMITS,
     SHARPEN_SCHEDULE_MAX,
@@ -22,7 +23,7 @@ from .contracts import (
     Track,
 )
 from .grade import preview_grade
-from .masks import animated_mask_image, fit_box, mask_image
+from .masks import animated_mask_image, cover_svg_image, fit_box, mask_image
 from .speed import describe, segments
 from .timeline import link_status
 from .transitions import envelopes
@@ -509,6 +510,48 @@ def _mix_vertex(a: MaskVertex, b: MaskVertex, progress: float) -> MaskVertex:
     )
 
 
+def mask_rotation_schedule(clip: Clip, quantum: int, limit: int | None = None) -> list[dict]:
+    """The windows one turning box actually executes — the same list at both ends.
+
+    `geq` could evaluate an angle every frame, but the browser paints a rotated mask only from an
+    image the engine baked (measured last round: a CSS transform on the masked layer leaves the mask
+    axis-aligned), so a continuous angle on one side and a staircase on the other is exactly the
+    split this project refuses. One `frame_windows` pass decides the steps; the exporter folds that
+    list into its angle and the preview ships one isotropic image per window. A clip shorter than
+    `limit` frames is therefore exact at the frame level, and a longer one coarsens by a number both
+    ends can be checked against.
+    """
+    if clip.mask is None or clip.mask.shape == "path" or not points(clip, "mask_rotation"):
+        return []
+
+    def value_at(source: Clip, at: int) -> float:
+        return round(sample(source, "mask_rotation", at), 9)
+
+    return frame_windows(
+        clip, quantum, MASK_ROTATION_SCHEDULE_MAX if limit is None else limit, value_at
+    )
+
+
+def rotation_step_expression(schedule: list[dict], frame_ticks: int, clock: str = "T") -> str:
+    """The same windows as one FFmpeg expression: `T` is the clip's own seconds, as elsewhere.
+
+    Nested `if(lt(...))` on each window's own end tick, so the boundary a frame reads is the
+    boundary the preview swaps its image on — one table, read two ways. The switch sits at the
+    **half-frame** inside that boundary: a frame's `T` is that frame's own start, so comparing it
+    with the printed boundary decides on the last digits of a float (measured: frame 14 read
+    window 13's angle, 6.5° off). Half a frame of margin is what the integer-tick lookup on the
+    preview side already implies. The last window needs no test, and a window's value is written
+    with enough digits to round-trip the sample.
+    """
+    if not schedule:
+        return "0"
+    tail = f"{schedule[-1]['value']:.9f}"
+    for window in reversed(schedule[:-1]):
+        bound = (window["to_ticks"] - frame_ticks // 2) / TIMEBASE
+        tail = f"if(lt({clock},{bound:.12f}),{window['value']:.9f},{tail})"
+    return tail
+
+
 def mask_shape_schedule(clip: Clip, quantum: int, limit: int | None = None) -> list[dict]:
     """The windows one morphing outline actually executes — the same list at both ends.
 
@@ -644,10 +687,15 @@ def preview_manifest(
             for prop in FADE_PROPS
             if (carrier := _fade_carrier(clip, prop)) is not None
         }
+        # The angle's curve is the window table, not the piecewise walk; it is built below, where
+        # this clip's frame quantum is known (`spatial_curve` one stepped point per window).
         mask_curves = {
-            prop: property_curve(clip, prop) for prop in MASK_FIELDS if points(clip, prop)
+            prop: property_curve(clip, prop)
+            for prop in MASK_FIELDS
+            if points(clip, prop) and prop != "mask_rotation"
         }
-        animated = bool(mask_curves) and clip.mask is not None
+        # Whether this mask is animated is decided below, once the stepped angle curve is in the
+        # table: a clip that only turns its box is animated just the same.
         sharpen = sharpen_preview(clip, project.settings.width, project.settings.height)
         quantum = (
             project.settings.frame_ticks
@@ -690,20 +738,51 @@ def preview_manifest(
                     "offset_y": round(fitted.center_y - clip.mask.center_y, 9),
                 }
             )
+        rotation_schedule = mask_rotation_schedule(clip, quantum, MASK_ROTATION_SCHEDULE_MAX)
+        if rotation_schedule:
+            # One stepped point per window, `steps(1, end)`: the browser holds each window's angle
+            # exactly as the exporter's `if(lt(T,..))` chain holds it.
+            mask_curves["mask_rotation"] = spatial_curve(clip, rotation_schedule)
+        rotation_windows = (
+            [
+                {
+                    "from_ticks": window["from_ticks"],
+                    "to_ticks": window["to_ticks"],
+                    "angle": window["value"],
+                    "image": cover_svg_image(
+                        clip.mask.model_copy(
+                            update={"rotation": window["value"], "center_x": 0.5, "center_y": 0.5}
+                        ),
+                        project.settings.width,
+                        project.settings.height,
+                    ),
+                }
+                for window in rotation_schedule
+            ]
+            if clip.mask is not None
+            else []
+        )
+        mask_unit = None
+        animated = bool(mask_curves) and clip.mask is not None
+        if animated and not mask_shape:
+            # With a turning box the first window's plate is the only honest unit image: the angle
+            # inside it is the one the exporter will read at that time, not the static field.
+            mask_unit = (
+                rotation_windows[0]["image"]
+                if rotation_windows
+                else animated_mask_image(clip.mask, project.settings.width, project.settings.height)
+            )
         clips[clip.id] = {
             "spatial": spatial or None,
             "mask_image": mask_image(clip.mask, project.settings.width, project.settings.height)
             if clip.mask
             else None,
             "mask_curves": mask_curves or None,
+            "mask_rotation_windows": rotation_windows or None,
             "mask_shape": mask_shape or None,
             # The unit image is the box-only answer; a clip that animates its outline gets one image
             # per window instead, and the two would be the same bytes for the first of them.
-            "mask_unit": animated_mask_image(
-                clip.mask, project.settings.width, project.settings.height
-            )
-            if animated and not mask_shape
-            else None,
+            "mask_unit": mask_unit,
             "sound_enabled": sound_enabled(clip, track),
             "speed": describe(segments(clip, quantum, project.settings.frame_ticks), TIMEBASE)
             if clip.speed_curve

@@ -48,11 +48,13 @@ export const EFFECT_FIELDS: { property: AnimatedEffect; label: string; unit: str
 
 
 /** Rectangle and ellipse masks keyframe their own box; values stay in the mask's normalized units. */
-export const MASK_ANIM_FIELDS: { property: MaskProperty; label: string; unit: string; min: number; max: number; step: number; factor: number; field: "center_x" | "center_y" | "width" | "height" }[] = [
+export const MASK_ANIM_FIELDS: { property: MaskProperty; label: string; unit: string; min: number; max: number; step: number; factor: number; field: "center_x" | "center_y" | "width" | "height" | "rotation" }[] = [
   { property: "mask_x", label: "遮罩中心 X", unit: "%", min: 0, max: 100, step: 1, factor: 100, field: "center_x" },
   { property: "mask_y", label: "遮罩中心 Y", unit: "%", min: 0, max: 100, step: 1, factor: 100, field: "center_y" },
   { property: "mask_width", label: "遮罩宽度", unit: "%", min: 1, max: 200, step: 1, factor: 100, field: "width" },
   { property: "mask_height", label: "遮罩高度", unit: "%", min: 1, max: 200, step: 1, factor: 100, field: "height" },
+  // 1.165: 单位是度、factor 1 —— 这条曲线在人眼前就是那个屏幕角，不是一套比例。
+  { property: "mask_rotation", label: "遮罩角度", unit: "°", min: -360, max: 360, step: 1, factor: 1, field: "rotation" },
 ];
 
 /** Any non-inverted mask can be keyframed; a free-form outline only moves (see `maskAnimFields`). */
@@ -60,15 +62,18 @@ export const canAnimateMask = (mask?: ShapeMask | null): mask is ShapeMask =>
   Boolean(mask && !mask.inverted);
 
 /** The curves a mask of this shape actually has: a path has no size, only a centre. */
-export const maskAnimFields = (mask?: ShapeMask | null) => {
+export const maskAnimFields = (mask?: ShapeMask | null, caps?: Capabilities | null) => {
   if (!mask) return [];
-  // 1.164：转过角度的盒子也只能整体搬动。判断只在引擎那一处（`Clip.mask_animation_problem`），
-  // 这里只是不把一条画得出、导出会拒的曲线摆到人面前：一张等比的旋转图被非均匀缩放之后，
-  // 屏幕上那个角度就不是人设定的那一个了。
-  const centreOnly = mask.shape === "path" || Boolean(mask.rotation);
-  return centreOnly
-    ? MASK_ANIM_FIELDS.filter((field) => field.property === "mask_x" || field.property === "mask_y")
-    : MASK_ANIM_FIELDS;
+  // 1.164：转过角度的盒子只能整体搬动（宽/高曲线会把那张等比图拧出另一个角度），路径遮罩同一条限制；
+  // 判断只在引擎那一处（`Clip.mask_animation_problem`）。
+  // 1.165：角度自己能打关键帧，但只在这一版引擎报了 `mask_rotation_curves` 时才出现——
+  // 不然是给人在曲线上写一条必被拒的针。路径遮罩整个没有这一行：轮廓自己带形状，没有盒可转
+  // （`ShapeMask` 早就拒了路径上的静态角度，曲线那一条同理由引擎的 validator 拒）。
+  const curves = Boolean(caps?.features.mask_rotation_curves);
+  const moveOnly = mask.shape === "path" || Boolean(mask.rotation);
+  return MASK_ANIM_FIELDS.filter((row) => row.property === "mask_rotation"
+    ? curves && mask.shape !== "path"
+    : !moveOnly || row.property === "mask_x" || row.property === "mask_y");
 };
 
 /** Label lookup for the keyframe list, which mixes effect and mask properties. */

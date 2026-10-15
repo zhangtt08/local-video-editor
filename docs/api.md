@@ -3116,8 +3116,8 @@ Agent 侧不需要任何新接口：`GET /v1/projects/{id}/render-plan` 交回�
 
 - 导出：`masks.alpha_expression` 把**取样点**绕盒心转回 `rotation` 再判在不在里面。盒子的两条比例
   是各自对着画面宽与画面高的，所以先要折成同一个单位——式子里那个比值，有画面框时是
-  `框高/框宽`（1.102 那次计算），没有框时是 `H/W`。角度不是曲线，所以 `cos/sin` 在引擎里就化成
-  常数，不叫 FFmpeg 每帧现算。
+  `框高/框宽`（1.102 那次计算），没有框时是 `H/W`。角度写成静态那一格时 `cos/sin` 在引擎里就化成
+  常数，不叫 FFmpeg 每帧现算；打上关键帧之后（1.165）那两个位置换成同一份阶梯的表达式，见下一节。
 - 预览：`masks.cover_svg_image` 烘一张 `viewBox` 比例就等于画面比例的整画面图，形状带着
   `transform="rotate(角度 盒心x 盒心y)"`。界面那条 `.masked-picture.rotated-mask` 只做两件事：
   `mask-size:100% 100%`（等比，不拧角度）与按 `--mask-x/--mask-y` 平移。
@@ -3140,6 +3140,44 @@ Chromium 画出 30.0°／占比 0.0998，与同一档导出的 30.0°／0.0997 �
 **为什么预览不走「转图层」那条路**：这一轮在同一族 Chromium 上量过被遮罩元素带
 `transform: rotate()` 的画法——外层转、内层反着转回来，computed style 两个矩阵都在，
 画出来的遮罩主轴仍是 0.0°。所以 `mask-image` 不吃图层旋转，那条看着最省的连续旋转路子在这一档
-走不通；要连续转角度，就得每帧换一张图（1.118 那种按窗阶梯是退一步的确定做法），那笔代价本轮没量。
+走不通；要连续转角度，就得每帧换一张图（1.118 那种按窗阶梯是退一步的确定做法），那笔代价 1.164 没量——
+1.165 量的正是退一步那一条，见下一节。
 
 工程 schema 19→20：带角度的工程若被旧引擎读到，会按版本挡下来，而不是把角度悄悄抹平。
+
+## 1.165 那枚角度能打关键帧：两端执行同一份按帧对齐的窗表
+
+`MaskProperty` 多第五条：`mask_rotation`。写它仍是普通的 `keyframe.set`／`keyframe.remove`，
+人是检查器那一格旁边的 ◇，Agent 是同一条命令；开关是 `capabilities.features.mask_rotation_curves`，
+段数上限是 `capabilities.limits.mask_rotation_schedule_segments`（本轮 12）。
+
+它不是一条连续曲线，因为两端画不出同一件连续的事：导出能给 `geq` 每帧现算一个角，浏览器不能
+（`mask-image` 不吃图层旋转，1.164 量的），一端连续、一端台阶就是这项目 refuse 的那条缝。所以
+**一份窗表两头读**：
+
+- `animation.mask_rotation_schedule(clip, quantum, limit)` 走的是 1.118/1.123 那一次同一件
+  `frame_windows`：每窗一个常数角，短于上限的片段按帧精确，长于上限的按一个两边都能核对的数变粗。
+- 导出侧 `animation.rotation_step_expression(schedule, frame_ticks)` 把这份表串成
+  `if(lt(T,秒),角度, if(lt(T,秒),角度, …))`，写进 `alpha_expression` 那两个 `cos/sin` 的位置。
+- 预览侧清单多一个 key：`mask_rotation_windows`（`from_ticks`／`to_ticks`／`angle`／`image`，
+  `image` 就是那一窗烘好的那张等比图），界面按**整数 tick** 落格换图；同一条曲线也下发，
+  每点是 `steps(1, end)`，与那 12 段一格不差。
+
+**换窗那一步落在帧的中间，不落在帧的起点。** 装机复核抓到过一次两端差一格：边界原先打成
+`to_ticks / TIMEBASE` 的秒数（`.12f`），而那一帧自己的 `T` 就是同一个秒数——两个浮点数比大小，
+判的只剩最后一位，第 14 帧量到 83.5° 而窗表说 90°。现在打在 `to_ticks - frame/2`，与界面那头
+本来就按整数 tick 的落格同一个语义。`tests/maskrot_check.py` 新增的那一节钉的就是这一格：
+边界第一帧已是新窗的角、前一帧还停在旧窗（量到 41.2°／34.0°），突变「把余量撤掉」红在这条断言上。
+
+两条拒绝与它们各自的出路（`Clip.mask_animation_problem`，reducer 之后一次判）：
+
+| 情形 | 码 | 句子给的出路 |
+| --- | --- | --- |
+| 路径遮罩打角度针 | `INVALID_MASK` | 轮廓自己带形状，没有盒可转；要转就换矩形/椭圆，否则按轮廓帧记形状 |
+| 转过角度的盒打 `mask_width`/`mask_height` 针 | `INVALID_MASK` | 只打「遮罩中心 X/Y」，或把 `遮罩角度` 转回 0° |
+
+界面那一侧的名单同出一处：`maskAnimFields(mask, caps)` 不给路径遮罩角度那一行，也不在这一版引擎
+没报 `mask_rotation_curves` 时摆那颗 ◇。中心曲线照旧能搬转过的盒子。
+
+工程 schema 20→21：多的是那条可打关键帧的属性名与那格默认 0° 的角度，旧工程读进来一字不改；
+带角度针的新工程被旧引擎按版本挡下，不会被读成「一直不转」。

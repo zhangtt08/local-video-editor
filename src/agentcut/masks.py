@@ -17,6 +17,16 @@ from zlib import crc32
 
 from .contracts import MASK_FIELDS, ShapeMask
 
+
+def _is_number(text: str) -> bool:
+    """一个数在 Python 里就化成常数；一条式子只能留给 FFmpeg 每帧算。"""
+    try:
+        float(text)
+    except ValueError:
+        return False
+    return True
+
+
 RASTER_WIDTH = 512
 SUB_ROWS = 4
 FLATNESS = 0.2
@@ -47,15 +57,23 @@ def alpha_expression(
     taken.update(values or {})
     nx = f"((X-{box[0]:.4f})/{box[2]:.4f})" if box else "X/W"
     ny = f"((Y-{box[1]:.4f})/{box[3]:.4f})" if box else "Y/H"
-    if mask.rotation:
+    spun = mask.rotation or (values or {}).get("mask_rotation")
+    if spun:
         # The box's two fractions are measured against different edge lengths, so an angle is only
         # honest after the offset is in one unit: `k` is picture height over picture width, the very
         # factor the browser stretches its image by. Turning the *sample point* back by the mask's
         # angle is how a shape drawn rotated answers for the pixel standing where it stands.
+        # A still angle folds to two Python constants — the exact bytes every release up to 1.164
+        # shipped. A keyed one cannot: `values["mask_rotation"]` is the window table's own piecewise
+        # expression, and the staircase has to be what FFmpeg reads, frame by frame.
         dx = f"(({nx})-({taken['mask_x']}))"
         dy = f"(({ny})-({taken['mask_y']}))"
-        theta = radians(mask.rotation)
-        cos_t, sin_t = f"{cos(theta):.9f}", f"{sin(theta):.9f}"
+        angle = (values or {}).get("mask_rotation") or str(mask.rotation)
+        if _is_number(angle):
+            theta = radians(float(angle))
+            cos_t, sin_t = f"{cos(theta):.9f}", f"{sin(theta):.9f}"
+        else:
+            cos_t, sin_t = f"cos(PI/180*({angle}))", f"sin(PI/180*({angle}))"
         k = f"{box[3] / box[2]:.9f}" if box else "(H/W)"
         rx = f"({dx}*{cos_t}+{dy}*{k}*{sin_t})"
         ry = f"({dy}*{k}*{cos_t}-{dx}*{sin_t})"

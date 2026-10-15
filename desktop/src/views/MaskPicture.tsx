@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from "react";
-import type { Clip, Curve, MaskProperty, MaskShapeWindow, MaskVertex, ShapeMask } from "../engine";
+import type { Clip, Curve, MaskProperty, MaskRotationWindow, MaskShapeWindow, MaskVertex, ShapeMask } from "../engine";
 import { TIMEBASE } from "../time";
 import { appInfo, commitMaskEdit, moveMaskCentre, playhead, recordMaskShape, setClipMask, setMaskEditing, useApp, usePlay } from "../store";
 import { asCorner, asSmooth, nearestEdge, withoutVertex, withVertex } from "../maskOutline";
-import { rotatedCorners } from "../maskGeometry";
+import { rotatedCorners, rotationWindowAt } from "../maskGeometry";
 import { morphArmed, outlineAt, shapeVariables, shapeWindowAt, shapeWindowIndex } from "../maskShape";
 
 const CORNERS = [[-1,-1,"左上"],[1,-1,"右上"],[-1,1,"左下"],[1,1,"右下"]] as const;
-const MASK_VARIABLE: Record<MaskProperty, string> = { mask_x: "x", mask_y: "y", mask_width: "w", mask_height: "h" };
+// 只有盒子的四个数靠 CSS 变量动。角度不动变量——它动的是引擎下发的整张图（每段窗一张），
+// 因为 `mask-image` 不吃图层的 `transform`（1.164 量的），阶梯两端同表才是真的同一件事。
+type MaskBoxProperty = Exclude<MaskProperty, "mask_rotation">;
+const MASK_VARIABLE: Record<MaskBoxProperty, string> = { mask_x: "x", mask_y: "y", mask_width: "w", mask_height: "h" };
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 // The engine publishes the real cap through capabilities; this only covers the first paint
 // before that payload arrives, and must never be raised on its own.
@@ -44,7 +47,7 @@ function outline(vertices: MaskVertex[]) {
 }
 
 /** Geometry-only handles; the server compiles the actual alpha image during a gesture. */
-export function MaskPicture({ clip, image, children, editable = true, animation, shape }: { clip: Clip; image?: string | null; children: ReactNode; editable?: boolean; animation?: { unit: string | null; curves: Record<MaskProperty, Curve> } | null; shape?: MaskShapeWindow[] | null }) {
+export function MaskPicture({ clip, image, children, editable = true, animation, shape, rotation }: { clip: Clip; image?: string | null; children: ReactNode; editable?: boolean; animation?: { unit: string | null; curves: Record<MaskProperty, Curve> } | null; shape?: MaskShapeWindow[] | null; rotation?: MaskRotationWindow[] | null }) {
   const app = useApp(); const play = usePlay();
   const [draft, setDraft] = useState<ShapeMask | null>(null);
   const [compiled, setCompiled] = useState<{ mask: ShapeMask; image: string } | null>(null);
@@ -60,13 +63,15 @@ export function MaskPicture({ clip, image, children, editable = true, animation,
   // 图来自同一份表；界面自己不插值，所以绝不会出现导出里没有的那个形状。
   const local = Math.max(0, Math.min(clip.duration_ticks, play.ticks - clip.position_ticks));
   const shapeWindow = draft ? null : shape ? shapeWindowAt(shape, local) : null;
+  // 1.165: 会转的盒。引擎把角度曲线切成整帧对齐的窗，这里按播放头挑那一张图——一格一步，两端同步。
+  const spun = draft ? null : rotation ? rotationWindowAt(rotation, local) : null;
   const mask = draft ?? (clip.mask && shapeWindow ? { ...clip.mask, vertices: shapeWindow.vertices } : clip.mask);
   const animated = animation && !draft ? animation : null;
-  const rotated = Boolean(mask?.rotation);
-  const corners = mask && rotated ? rotatedCorners(mask, (app.project?.settings.height ?? 9) / (app.project?.settings.width ?? 16)) : "";
+  const rotated = Boolean(mask?.rotation) || Boolean(spun);
+  const corners = mask && rotated ? rotatedCorners(mask, (app.project?.settings.height ?? 9) / (app.project?.settings.width ?? 16), spun?.angle) : "";
   // A morph places its plate by the window's own box, so the layer needs the size/position custom
   // properties even when the mask carries no centre curves at all.
-  const placed = Boolean(animated || shapeWindow);
+  const placed = Boolean(animated || shapeWindow || spun);
   const vertices = outlineAt(shapeWindow, mask);
   const pendingBatch = app.mode === "batch" && app.batch.length > 0;
   const candidateReady = !app.dryRunError && app.candidate?.id === app.project?.id && app.candidate?.revision === (app.project?.revision ?? 0) + 1;
@@ -91,9 +96,9 @@ export function MaskPicture({ clip, image, children, editable = true, animation,
     observer.observe(element);
     if (!animated) return () => { observer.disconnect(); };
     const duration = clip.duration_ticks / TIMEBASE * 1000;
-    maskAnimations.current = (Object.keys(animated.curves) as MaskProperty[]).map((property) => {
+    maskAnimations.current = (Object.keys(animated.curves) as MaskProperty[]).filter((property) => property !== "mask_rotation").map((property) => {
       const effect = element.animate(animated.curves[property].map((point) => ({
-        [`--mask-${MASK_VARIABLE[property]}`]: String(point.value), offset: point.offset, easing: point.easing,
+        [`--mask-${MASK_VARIABLE[property as MaskBoxProperty]}`]: String(point.value), offset: point.offset, easing: point.easing,
       })), { duration, fill: "both" });
       effect.pause();
       return effect;
@@ -245,7 +250,10 @@ export function MaskPicture({ clip, image, children, editable = true, animation,
   const pictureImage = draft && compiled ? compiled.image : image;
   // 形变中的那一窗用自己的板框落位：中心曲线照样把它推来推去，因为导出的 overlay x 里加的是同一个
   // offset。没有轮廓帧时，一切与 1.117 之前逐字相同。
-  const pictureStyle: CSSProperties = shapeWindow
+  const pictureStyle: CSSProperties = spun
+    // 那一张图就是这一窗的角度烘出来的等比图；位置仍由中心两条曲线平移（等比图平移不拧角度）。
+    ? { maskImage: spun.image, "--mask-x": mask?.center_x ?? .5, "--mask-y": mask?.center_y ?? .5 } as CSSProperties
+    : shapeWindow
     ? { maskImage: shapeWindow.image, ...shapeVariables(shapeWindow), "--mask-x": mask?.center_x ?? .5, "--mask-y": mask?.center_y ?? .5 } as CSSProperties
     : animated
       ? rotated
@@ -254,7 +262,7 @@ export function MaskPicture({ clip, image, children, editable = true, animation,
         : { maskImage: animated.unit, "--mask-x": mask?.center_x ?? .5, "--mask-y": mask?.center_y ?? .5, "--mask-w": mask?.width ?? 1, "--mask-h": mask?.height ?? 1 } as CSSProperties
       : { maskImage: pictureImage ?? undefined, maskSize: "100% 100%", maskRepeat: "no-repeat" };
   return <>
-    <div ref={picture} className={`layer-transform masked-picture${shapeWindow ? " morph-mask" : animated ? (rotated ? " rotated-mask" : " animated-mask") : ""}`} style={pictureStyle}>{children}</div>
+    <div ref={picture} className={`layer-transform masked-picture${shapeWindow ? " morph-mask" : animated || spun ? (rotated ? " rotated-mask" : " animated-mask") : ""}`} style={pictureStyle}>{children}</div>
     {visible && mask ? <svg ref={svg} className={`mask-guide${disabled ? " locked" : ""}`} viewBox="0 0 100 100" preserveAspectRatio="none" role="group" aria-label="画面遮罩编辑器" tabIndex={0}
       style={shift.tx || shift.ty || shift.sx !== 1 || shift.sy !== 1 ? { transform: `translate(${(shift.tx * 100).toFixed(4)}%, ${(shift.ty * 100).toFixed(4)}%) scale(${shift.sx.toFixed(6)}, ${shift.sy.toFixed(6)})` } : undefined}
       onDoubleClick={(event) => {
@@ -317,7 +325,7 @@ export function MaskPicture({ clip, image, children, editable = true, animation,
         }} />)}
       </>}
     </svg> : null}
-    {visible && rotated ? <div className="mask-vertex-panel" role="group" aria-label="旋转遮罩的说明"><span className="dim">画面上这框就是转过角度的遮罩盒：拖它只搬中心；改大小用检查器那两格，宽高曲线要先把角度转回 0°</span></div> : null}
+    {visible && rotated ? <div className="mask-vertex-panel" role="group" aria-label="旋转遮罩的说明"><span className="dim">{spun ? `这一格的角度是 ${spun.angle.toFixed(1)}°（引擎把曲线切成 ${rotation?.length ?? 0} 段窗，导出走同一份阶梯）；` : ""}画面上这框就是转过角度的遮罩盒：拖它只搬中心；改大小用检查器那两格，宽高曲线要先把角度转回 0°</span></div> : null}
     {visible && mask?.shape === "path" ? <div className="mask-vertex-panel" role="group" aria-label="顶点操作">
       {atCap ? <span className="dim">顶点 {vertices.length}/{vertexLimit}，已到上限，双击不再加点</span> : null}
       {morphArmed(clip) ? <>

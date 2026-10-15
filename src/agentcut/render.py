@@ -17,8 +17,10 @@ from dataclasses import dataclass, field
 from .animation import (
     expression,
     fade_active,
+    mask_rotation_schedule,
     mask_shape_schedule,
     outline_mask,
+    rotation_step_expression,
     sharpen_schedule,
     sound_enabled,
     spatial_schedule,
@@ -1339,11 +1341,17 @@ def compile_render_plan(
                     {
                         name: expression(clip, name, "T", (10 + 2 * slot, 11 + 2 * slot))
                         for slot, name in enumerate(MASK_FIELDS)
-                        if clip.mask and name in animated
+                        if clip.mask and name in animated and name != "mask_rotation"
                     }
                     if clip.mask and animated & set(MASK_FIELDS)
                     else None
                 )
+                if mask_values is not None and "mask_rotation" in animated:
+                    # Not the continuous curve: the same windows the preview images are cut from.
+                    mask_values["mask_rotation"] = rotation_step_expression(
+                        mask_rotation_schedule(clip, project.settings.frame_ticks),
+                        project.settings.frame_ticks,
+                    )
                 alpha = []
                 if clip.mask and not path_mask:
                     alpha.append(f"({alpha_expression(clip.mask, mask_values, mask_box)})")

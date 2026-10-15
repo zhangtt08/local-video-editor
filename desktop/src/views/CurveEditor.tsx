@@ -46,7 +46,7 @@ export function CurveEditor() {
 
 function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; disabled: boolean }) {
   const app = useApp(); const play = usePlay(); const project = app.project!;
-  const options = [...EFFECT_FIELDS.filter((f) => !audio || f.property === "gain"), ...maskAnimFields(clip.mask), ...(audio ? [] : spatialAnimFields(app.caps, project.settings.height))];
+  const options = [...EFFECT_FIELDS.filter((f) => !audio || f.property === "gain"), ...maskAnimFields(clip.mask, app.caps), ...(audio ? [] : spatialAnimFields(app.caps, project.settings.height))];
   const [property, setProperty] = useState<Property>(() => audio ? "gain" : clip.keyframes?.[0]?.property ?? "opacity");
   const field = options.find((f) => f.property === property) ?? options[0];
   const [selectedAt, setSelectedAt] = useState<number | null>(null);

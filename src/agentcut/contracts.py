@@ -16,12 +16,13 @@ from .gamut import (
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = (
-    20  # v20 gives a shape mask's own box an angle; v19 rows leave it unset and 0° is the very
-    #     geometry every one of those deliveries was measured against, so they read unchanged
+    21  # v21 lets that angle carry keyframes; v20 rows leave the curve absent and a flat angle
+    #     is the very picture every one of those deliveries was measured against, so they read
+    #     unchanged
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.164.0"
+APP_VERSION = "1.165.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -199,12 +200,16 @@ EffectField = EffectProperty | SpatialProperty | Literal["denoise"]
 # browser interpolate the same numbers. A free-form (path) mask rasterizes its outline once and can
 # be moved with mask_x/mask_y; its drawn shape now animates too, but through its own table — one
 # outline per moment (`Clip.mask_shape_keys`), not a scalar curve per vertex. `MaskShapeKeyframe`.
-MaskProperty = Literal["mask_x", "mask_y", "mask_width", "mask_height"]
+MaskProperty = Literal["mask_x", "mask_y", "mask_width", "mask_height", "mask_rotation"]
+# 1.165: 角度也在这一族里，但它不是斜坡。预览那张图只能按窗换（上一轮量过：`mask-image` 不吃图层
+# 的 `transform`），所以 `animation.mask_rotation_schedule` 把曲线采成整帧对齐的常值窗，导出按同一份
+# 窗表拼角度的分段式子——阶梯是唯一权威，两端不许各算一条。
 MASK_FIELDS = {
     "mask_x": "center_x",
     "mask_y": "center_y",
     "mask_width": "width",
     "mask_height": "height",
+    "mask_rotation": "rotation",
 }
 MASK_SIZE_FIELDS = {"mask_width", "mask_height"}
 Property = EffectProperty | MaskProperty | SpatialProperty
@@ -271,6 +276,9 @@ MASK_SHAPE_SCHEDULE_MAX = 12
 # How many outlines one mask may carry. Each one is a whole vertex table in project state, so this
 # is the budget that keeps a morph affordable to save, undo, and rasterise; the interface counts it
 # out of `capabilities.limits` rather than carrying its own number.
+# 1.165: 一枚会转的遮罩最多切成几段窗。每窗一张等比图随预览清单下发，导出那边每窗折进角度式子里
+# 的一次 `if`；上限只有这一个数，两端都读它。
+MASK_ROTATION_SCHEDULE_MAX = 12
 MASK_SHAPE_KEY_LIMIT = 32
 # A keyframed radius is bounded by the very same ceiling the static knob uses, so a curve
 # cannot reach past what one click can. It lives down here because `BLUR_LIMIT` is defined
@@ -288,6 +296,10 @@ SHARPEN_RADIUS_DEFAULT = 0.004
 # shares soft focus's measured band because it is the same fraction of the same frame.
 PROPERTY_LIMITS["sharpen"] = (0.0, SHARPEN_LIMIT)
 PROPERTY_LIMITS["sharpen_radius"] = (0.0, BLUR_LIMIT)
+# 一条角度曲线的针能到的范围，就是那颗旋钮能到的范围：静态拧得到的，曲线不许超过它。
+# 常数定义在这儿——`PROPERTY_LIMITS` 与 `ShapeMask` 都要读它，谁也不能自带另一个数。
+MASK_ROTATION_LIMIT = 360.0
+PROPERTY_LIMITS["mask_rotation"] = (-MASK_ROTATION_LIMIT, MASK_ROTATION_LIMIT)
 # 音频降噪：一个旋钮，dB of broadband reduction handed straight to FFmpeg's `afftdn=nr=`.
 # 24 dB is where the filter starts eating speech on the measured fixture, so that is the ceiling.
 DENOISE_LIMIT = 24.0
@@ -940,10 +952,6 @@ class MaskVertex(Contract):
 
 MASK_VERTEX_LIMIT = 64
 PathVertices = Annotated[list[MaskVertex], Field(min_length=3, max_length=MASK_VERTEX_LIMIT)]
-# 1.164: how far a rectangle/ellipse box may be turned. The number is a screen angle in degrees, so
-# it is capped at one full turn rather than at a fraction of something; ±360 is what the 画面旋转
-# knob already lets a person reach, and a mask that needs more than a turn is the same mask.
-MASK_ROTATION_LIMIT = 360.0
 
 
 class SpeedPoint(Contract):
@@ -1279,6 +1287,16 @@ class Clip(Contract):
             return (
                 "a free-form mask can move but cannot resize yet: keyframe 遮罩中心 only, "
                 "or redraw the outline per shot"
+            )
+        # 1.165: ShapeMask refuses a *static* angle on a path for the same reason — an outline
+        # carries its own shape, so an angle curve would be a number the exporter has nothing to
+        # turn. Same judgment, so the keyframed one has to be refused here too.
+        if self.mask.shape == "path" and any(
+            key.property == "mask_rotation" for key in self.keyframes
+        ):
+            return (
+                "a free-form outline has no box to turn: 遮罩角度 only exists on a rectangle or "
+                "ellipse mask, so keyframe the outline frames instead"
             )
         # 1.164: the angle is a screen angle, and a box that resizes over time would rescale the one
         # rotated image non-uniformly — the shear the exporter's own math refuses. Moving it stays
@@ -3311,6 +3329,10 @@ def capabilities(
             # axis-aligned), so an animated angle would need one image per frame, and that cost is
             # not measured here. Centre curves still move a rotated mask exactly.
             "mask_rotation": True,
+            # 1.165: that angle accepts keyframes. Both ends execute one frame-aligned staircase
+            # (`animation.mask_rotation_schedule`), which is why this is a switch of its own: an
+            # engine without it refuses the curve by name rather than pretending to smooth it.
+            "mask_rotation_curves": True,
             # 1.118: a free-form outline can morph. The exporter executes it as frame-aligned
             # constant windows (`animation.mask_shape_schedule`) and the preview ships that same
             # window list, so this says "the shape steps on both ends", not "the shape is smooth".
@@ -3433,6 +3455,7 @@ def capabilities(
             "mask_rotation_limit": MASK_ROTATION_LIMIT,
             "mask_shape_keys": MASK_SHAPE_KEY_LIMIT,
             "mask_shape_schedule_segments": MASK_SHAPE_SCHEDULE_MAX,
+            "mask_rotation_schedule_segments": MASK_ROTATION_SCHEDULE_MAX,
             "denoise_db": DENOISE_LIMIT,
             "auto_grade_samples_max": AUTO_GRADE_SAMPLES_MAX,
             "auto_grade_percentile_max": AUTO_PERCENTILE_MAX,

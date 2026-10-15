@@ -44,11 +44,11 @@ export type Track = {
  * same set as the animatable set. */
 export type AnimatedEffect = "x" | "y" | "scale" | "rotation" | "opacity" | "gain";
 export type Effects = { x: number; y: number; scale: number; rotation: number; opacity: number; gain: number; blur: number; sharpen: number; sharpen_radius: number; denoise: number };
-export type MaskProperty = "mask_x" | "mask_y" | "mask_width" | "mask_height";
+export type MaskProperty = "mask_x" | "mask_y" | "mask_width" | "mask_height" | "mask_rotation";
 /** 1.98: 柔焦可以打关键帧，但走的是引擎编译出的阶梯（`spatial_schedule`），不是这六个标量属性那条式子。 */
 export type SpatialProperty = "blur" | "sharpen" | "sharpen_radius";
 export type Property = AnimatedEffect | MaskProperty | SpatialProperty;
-export type SampledValues = Record<AnimatedEffect, number> & { blur: number; sharpen: number; sharpen_radius: number; denoise: number; mask_x: number; mask_y: number; mask_width: number; mask_height: number };
+export type SampledValues = Record<AnimatedEffect, number> & { blur: number; sharpen: number; sharpen_radius: number; denoise: number; mask_x: number; mask_y: number; mask_width: number; mask_height: number; mask_rotation: number };
 export const DEFAULT_EFFECTS: Effects = { x: 0, y: 0, scale: 1, rotation: 0, opacity: 1, gain: 1, blur: 0, sharpen: 0, sharpen_radius: 0.004, denoise: 0 };
 export type GradeChannel = "rgb" | "red" | "green" | "blue";
 export type GradeCurvePoint = { x: number; y: number };
@@ -221,6 +221,11 @@ export type MaskShapeKeyframe = { at_ticks: number; vertices: MaskVertex[]; inte
 /** One window the engine issued for a morph: the outline it holds, the plate image the browser
  *  masks with, and the numbers that put that plate where the exporter's overlay lands it. */
 export type MaskShapeWindow = { from_ticks: number; to_ticks: number; image: string; vertices: MaskVertex[]; width: number; height: number; offset_x: number; offset_y: number };
+
+/** 1.165: one frame-aligned window of a turning mask box. The engine cuts the staircase; the
+ *  preview paints exactly this image for this span, so no angle exists on screen that the
+ *  exporter did not also use. */
+export type MaskRotationWindow = { from_ticks: number; to_ticks: number; angle: number; image: string };
 export type Curve = { offset: number; value: number; easing: string }[];
 export type AnimationGraph = { property: Property; duration_ticks: number; limits: [number, number]; path: string; curve: Curve; keys: Keyframe[] };
 /** 转场种类由引擎的 capabilities.transition_kinds 下发；这里是同一份清单的类型。 */
@@ -255,7 +260,7 @@ export type SharpenSteps = {
   curve: { offset: number; id: string | null; easing: string }[];
 };
 export type SharpenSpec = SharpenStatic | SharpenSteps;
-export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; grade?: GradeTables | null; sharpen?: SharpenSpec | null; speed?: RampPiece[] | null; mask_image?: string | null; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; mask_shape?: MaskShapeWindow[] | null; spatial?: Partial<Record<SpatialProperty, Curve>> | null; edge_filter?: string | null; curves: Record<AnimatedEffect, Curve>; transition: TransitionEnvelope; fade?: Record<"opacity" | "gain", Curve> | null }> };
+export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; grade?: GradeTables | null; sharpen?: SharpenSpec | null; speed?: RampPiece[] | null; mask_image?: string | null; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; mask_shape?: MaskShapeWindow[] | null; mask_rotation_windows?: MaskRotationWindow[] | null; spatial?: Partial<Record<SpatialProperty, Curve>> | null; edge_filter?: string | null; curves: Record<AnimatedEffect, Curve>; transition: TransitionEnvelope; fade?: Record<"opacity" | "gain", Curve> | null }> };
 
 /** 引擎给这条片段记下的那一次稳定：有了它，再按一次是换一档强度而不是叠第二遍。 */
 export type Stabilization = {

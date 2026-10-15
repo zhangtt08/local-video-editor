@@ -505,6 +505,9 @@ function MaskFields({ clip }: { clip: Clip }) {
   const animatable = canAnimateMask(mask);
   // 1.164：角度那一格的上下限是引擎的数；老引擎没有这一格就明说，不摆一颗点了没反应的旋钮。
   const rotationLimit = app.caps?.features.mask_rotation ? app.caps?.limits?.mask_rotation_limit : undefined;
+  // 1.165：角度能打折梯关键帧，同样只在这一版引擎报了那条能力时才给 ◇。
+  const rotationCurves = Boolean(app.caps?.features.mask_rotation_curves);
+  const angleKey = frames.find((key) => key.property === "mask_rotation" && key.at_ticks === at + (clip.animation_offset_ticks ?? 0));
   // 遮挡期间最多猜几帧、要不要在整幅画面上重找：这两个旋钮 Agent 有，人也该有。
   const storedKnobs = trackingKnobs(app.caps?.limits);
   const gapCeiling = storedKnobs.gapCeiling;
@@ -534,7 +537,7 @@ function MaskFields({ clip }: { clip: Clip }) {
           </div>;
         })}
         <div className="effect-row"><label htmlFor="mask-feather">向内羽化</label><EffectInput id="mask-feather" value={mask.feather * 100} min={0} max={100} step={1} onCommit={(value) => setClipMask(clip.id, { ...mask, feather: value / 100 })} /><span className="dim">%</span></div>
-        {mask.shape === "path" ? null : rotationLimit === undefined ? <p className="hint">这一版引擎没有遮罩角度这一格。</p> : <div className="effect-row"><label htmlFor="mask-rotation">遮罩角度</label><EffectInput id="mask-rotation" value={mask.rotation ?? 0} min={-rotationLimit} max={rotationLimit} step={1} onCommit={(value) => setClipMask(clip.id, { ...mask, rotation: value })} /><span className="dim">°</span></div>}
+        {mask.shape === "path" ? null : rotationLimit === undefined ? <p className="hint">这一版引擎没有遮罩角度这一格。</p> : <div className="effect-row"><label htmlFor="mask-rotation">遮罩角度</label><EffectInput id="mask-rotation" value={angleKey?.value ?? mask.rotation ?? 0} min={-rotationLimit} max={rotationLimit} step={1} onCommit={(value) => angleKey ? setKeyframe(clip.id, { property: "mask_rotation", at_ticks: at, value, interpolation: angleKey.interpolation ?? "linear" }) : setClipMask(clip.id, { ...mask, rotation: value })} /><span className="dim">°</span>{rotationCurves && animatable ? <button type="button" className={`keyframe-btn${angleKey ? " active" : ""}`} aria-label={angleKey ? "删除遮罩角度关键帧" : "添加遮罩角度关键帧"} title={angleKey ? "删掉这一刻的遮罩角度关键帧" : "在播放头记一格遮罩角度。导出与预览走同一份按帧对齐的阶梯：引擎把曲线切成几段窗，每窗一张图、一格一步"} disabled={disabled} onClick={() => angleKey ? removeKeyframe(clip.id, "mask_rotation", at + (clip.animation_offset_ticks ?? 0)) : setKeyframe(clip.id, { property: "mask_rotation", at_ticks: at, value: mask.rotation ?? 0, interpolation: "linear" })}>◇</button> : null}</div>}
         <label><input type="checkbox" checked={mask.inverted} onChange={(e) => setClipMask(clip.id, { ...mask, inverted: e.target.checked })} />反转遮罩</label>
         <div className="insp-actions"><button className={`btn tiny${app.maskEditing ? " active" : ""}`} aria-pressed={app.maskEditing} onClick={() => setMaskEditing(!app.maskEditing)}>画面中编辑</button>
           {animatable && project ? <button className="btn tiny" disabled={disabled || Boolean(runOn.blocked)} title={runOn.blocked ?? (mask.shape === "path" ? "从播放头开始逐帧分析画面，把轮廓的中心写成关键帧，一直量到片段结尾（单次上限由引擎的 capabilities 下发，量不完会在提示里说清）；路径遮罩只整体搬动，不改形状与大小。主体被挡住时按匀速补一段，同时每一帧都在整幅画面里重新找它，找回后把补的那段按真实位置校正；跟丢时会停下来说明" : "从播放头开始逐帧分析画面，把遮罩中心与大小写成关键帧，一直量到片段结尾（单次上限由引擎的 capabilities 下发，量不完会在提示里说清）；主体被挡住时按匀速补一段，同时每一帧都在整幅画面里重新找它，找回后把补的那段按真实位置校正；跟丢时会停下来说明")} onClick={() => trackMasks([{ clipId: clip.id, fromTicks: at, frames: runOn.frames, merge: true, reacquire: trackSweep, maxGapFrames: trackGap, scale: trackScale }])}>{(clip.keyframes ?? []).some((key) => key.property === "mask_x") ? "接着跟" : "跟踪主体"}</button> : null}
@@ -549,7 +552,7 @@ function MaskFields({ clip }: { clip: Clip }) {
             <input type="checkbox" checked={trackScale} disabled={mask.shape === "path"} aria-label="跟踪时让遮罩盒随远近缩放" onChange={(e) => setTrackScale(e.target.checked)} /></label> : null}
           {animatable && project ? <button className="btn tiny" disabled={disabled || Boolean(clip.stabilization)} title={clip.stabilization ? "这段画面带着一次稳定：重构图写的就是稳定占用的位移/缩放三条曲线，跑一遍会把稳定悄悄抹掉。先「取消稳定」，再重构图。" : "读取刚跟踪出来的遮罩路径，写入把主体保持在画面正中的平移与缩放曲线；竖屏裁切出货时主体不会跑出画面。放大上限 4 倍，跟不到时会说明"} onClick={() => void reframeClip(clip.id)}>主体跟随重构图</button> : null}
           <button className="btn tiny" onClick={() => setClipMask(clip.id, { ...DEFAULT_MASK, shape: mask.shape, vertices: mask.shape === "path" ? DEFAULT_PATH.map((vertex) => ({ ...vertex, handle_out: [...vertex.handle_out] as [number, number], handle_in: [...vertex.handle_in] as [number, number] })) : null })}>重置遮罩</button></div>
-        <p className="hint">遮罩随片段变换；矩形/椭圆拖中间移动、拖四角缩放，羽化占半径比例。中心与大小可按◇打关键帧，「跟踪主体」会一次写入整条路径。路径遮罩按画好的轮廓裁切，可以打「中心 X / 中心 Y」关键帧、也可以跟踪{app.caps?.features.path_shape_keys ? "，轮廓的形状还能按上面那几帧随时间变形（导出按整格阶梯执行，预览读同一份窗表）" : ""}；反相遮罩不支持盒关键帧。遮罩角度是屏幕上的角度（正数顺时针，与画面旋转同一个读法），转过的盒子还能打「中心 X/Y」曲线，但宽/高那两条要先把角度转回 0°。路径遮罩按画好的轮廓，没有角度这一格。声音保持原样。</p>
+        <p className="hint">遮罩随片段变换；矩形/椭圆拖中间移动、拖四角缩放，羽化占半径比例。中心与大小可按◇打关键帧，「跟踪主体」会一次写入整条路径。路径遮罩按画好的轮廓裁切，可以打「中心 X / 中心 Y」关键帧、也可以跟踪{app.caps?.features.path_shape_keys ? "，轮廓的形状还能按上面那几帧随时间变形（导出按整格阶梯执行，预览读同一份窗表）" : ""}；反相遮罩不支持盒关键帧。遮罩角度是屏幕上的角度（正数顺时针，与画面旋转同一个读法），按◇可以打成关键帧——导出与预览都走引擎那份按帧对齐的阶梯（最多 `mask_rotation_schedule_segments` 段），不是一端连续一端台阶；转过的盒子还能打「中心 X/Y」曲线，但宽/高那两条要先把角度转回 0°。路径遮罩按画好的轮廓，没有角度这一格。声音保持原样。</p>
       </> : null}
     </fieldset>
   </details>;

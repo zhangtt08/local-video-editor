@@ -10,9 +10,10 @@
 
 import type { ShapeMask } from "./engine";
 
-/** 遮罩盒转过 `rotation` 之后，四个角在 0..100 画框里的位置（左上、右上、右下、左下）。 */
-export const rotatedCorners = (mask: ShapeMask, k: number) => {
-  const rad = (mask.rotation ?? 0) * Math.PI / 180;
+/** 转过角度的遮罩盒，四个角在 0..100 画框里的位置（左上、右上、右下、左下）。
+ *  `angle` 不给就用遮罩自己那一格；有窗表时调用方给的是此刻那一窗的角度。 */
+export const rotatedCorners = (mask: ShapeMask, k: number, angle?: number) => {
+  const rad = (angle ?? mask.rotation ?? 0) * Math.PI / 180;
   const cos = Math.cos(rad), sin = Math.sin(rad);
   return [[-1, -1], [1, -1], [1, 1], [-1, 1]]
     .map(([sx, sy]) => {
@@ -20,4 +21,18 @@ export const rotatedCorners = (mask: ShapeMask, k: number) => {
       return `${((mask.center_x + fx * cos - fy * k * sin) * 100).toFixed(3)} ${((mask.center_y + fx * sin / k + fy * cos) * 100).toFixed(3)}`;
     })
     .join(", ");
+};
+
+/**
+ * 播放头落在哪一窗，就画哪一窗的那张图。
+ *
+ * 阶梯是引擎算的（`animation.mask_rotation_schedule`），这里只按 `to_ticks` 找格子——
+ * 不插值、不自创中间态：界面在两窗之间画出的角度，就是导出在那一刻用的角度。
+ * 落不进任何一窗时停在最后一窗（表尾之后如此；表头之前 `find` 本来就命中第一窗）。
+ */
+export const rotationWindowAt = <T extends { from_ticks: number; to_ticks: number }>(
+  windows: T[], localTicks: number,
+): T | null => {
+  if (!windows.length) return null;
+  return windows.find((window) => localTicks < window.to_ticks) ?? windows[windows.length - 1];
 };
