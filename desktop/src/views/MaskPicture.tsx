@@ -3,6 +3,7 @@ import type { Clip, Curve, MaskProperty, MaskShapeWindow, MaskVertex, ShapeMask 
 import { TIMEBASE } from "../time";
 import { appInfo, commitMaskEdit, moveMaskCentre, playhead, recordMaskShape, setClipMask, setMaskEditing, useApp, usePlay } from "../store";
 import { asCorner, asSmooth, nearestEdge, withoutVertex, withVertex } from "../maskOutline";
+import { rotatedCorners } from "../maskGeometry";
 import { morphArmed, outlineAt, shapeVariables, shapeWindowAt, shapeWindowIndex } from "../maskShape";
 
 const CORNERS = [[-1,-1,"左上"],[1,-1,"右上"],[-1,1,"左下"],[1,1,"右下"]] as const;
@@ -61,6 +62,8 @@ export function MaskPicture({ clip, image, children, editable = true, animation,
   const shapeWindow = draft ? null : shape ? shapeWindowAt(shape, local) : null;
   const mask = draft ?? (clip.mask && shapeWindow ? { ...clip.mask, vertices: shapeWindow.vertices } : clip.mask);
   const animated = animation && !draft ? animation : null;
+  const rotated = Boolean(mask?.rotation);
+  const corners = mask && rotated ? rotatedCorners(mask, (app.project?.settings.height ?? 9) / (app.project?.settings.width ?? 16)) : "";
   // A morph places its plate by the window's own box, so the layer needs the size/position custom
   // properties even when the mask carries no centre curves at all.
   const placed = Boolean(animated || shapeWindow);
@@ -245,10 +248,13 @@ export function MaskPicture({ clip, image, children, editable = true, animation,
   const pictureStyle: CSSProperties = shapeWindow
     ? { maskImage: shapeWindow.image, ...shapeVariables(shapeWindow), "--mask-x": mask?.center_x ?? .5, "--mask-y": mask?.center_y ?? .5 } as CSSProperties
     : animated
-      ? { maskImage: animated.unit, "--mask-x": mask?.center_x ?? .5, "--mask-y": mask?.center_y ?? .5, "--mask-w": mask?.width ?? 1, "--mask-h": mask?.height ?? 1 } as CSSProperties
+      ? rotated
+        // 引擎交的是那张等比的整画面图，这里只把中心两条曲线换成平移；宽/高曲线引擎已经不收。
+        ? { maskImage: animated.unit, "--mask-x": mask?.center_x ?? .5, "--mask-y": mask?.center_y ?? .5 } as CSSProperties
+        : { maskImage: animated.unit, "--mask-x": mask?.center_x ?? .5, "--mask-y": mask?.center_y ?? .5, "--mask-w": mask?.width ?? 1, "--mask-h": mask?.height ?? 1 } as CSSProperties
       : { maskImage: pictureImage ?? undefined, maskSize: "100% 100%", maskRepeat: "no-repeat" };
   return <>
-    <div ref={picture} className={`layer-transform masked-picture${shapeWindow ? " morph-mask" : animated ? " animated-mask" : ""}`} style={pictureStyle}>{children}</div>
+    <div ref={picture} className={`layer-transform masked-picture${shapeWindow ? " morph-mask" : animated ? (rotated ? " rotated-mask" : " animated-mask") : ""}`} style={pictureStyle}>{children}</div>
     {visible && mask ? <svg ref={svg} className={`mask-guide${disabled ? " locked" : ""}`} viewBox="0 0 100 100" preserveAspectRatio="none" role="group" aria-label="画面遮罩编辑器" tabIndex={0}
       style={shift.tx || shift.ty || shift.sx !== 1 || shift.sy !== 1 ? { transform: `translate(${(shift.tx * 100).toFixed(4)}%, ${(shift.ty * 100).toFixed(4)}%) scale(${shift.sx.toFixed(6)}, ${shift.sy.toFixed(6)})` } : undefined}
       onDoubleClick={(event) => {
@@ -295,10 +301,15 @@ export function MaskPicture({ clip, image, children, editable = true, animation,
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setActive(index); } nudgeVertex(e, index); }} />
         </>)}
       </> : <>
+        {rotated ? <>
+          <polygon className="mask-hit" points={corners} onPointerDown={(e) => begin(e, { corner: null })} role="button" tabIndex={0} aria-label="移动遮罩" aria-disabled={disabled} />
+          <polygon className="mask-outline" points={corners} />
+        </> : <>
         <rect className="mask-hit" x={(mask.center_x - mask.width / 2)*100} y={(mask.center_y - mask.height / 2)*100} width={mask.width*100} height={mask.height*100} onPointerDown={(e) => begin(e, { corner: null })} role="button" tabIndex={0} aria-label="移动遮罩" aria-disabled={disabled} />
         {mask.shape === "ellipse" ? <ellipse className="mask-outline" cx={mask.center_x*100} cy={mask.center_y*100} rx={mask.width*50} ry={mask.height*50} /> : <rect className="mask-outline" x={(mask.center_x-mask.width/2)*100} y={(mask.center_y-mask.height/2)*100} width={mask.width*100} height={mask.height*100} />}
+        </>}
         <path className="mask-cross" d={`M ${mask.center_x*100-2} ${mask.center_y*100} h 4 M ${mask.center_x*100} ${mask.center_y*100-2} v 4`} />
-        {CORNERS.map(([x,y,label]) => <rect key={label} className="mask-handle" x={(mask.center_x+x*mask.width/2)*100-handleSize.x/2} y={(mask.center_y+y*mask.height/2)*100-handleSize.y/2} width={handleSize.x} height={handleSize.y} role="button" tabIndex={0} aria-label={`缩放遮罩${label}角`} aria-disabled={disabled} onPointerDown={(e) => begin(e,{ corner: [x,y] })} onKeyDown={(e) => {
+        {rotated ? null : CORNERS.map(([x,y,label]) => <rect key={label} className="mask-handle" x={(mask.center_x+x*mask.width/2)*100-handleSize.x/2} y={(mask.center_y+y*mask.height/2)*100-handleSize.y/2} width={handleSize.x} height={handleSize.y} role="button" tabIndex={0} aria-label={`缩放遮罩${label}角`} aria-disabled={disabled} onPointerDown={(e) => begin(e,{ corner: [x,y] })} onKeyDown={(e) => {
           if (!["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(e.key)) return;
           e.preventDefault(); e.stopPropagation(); if (disabled) return;
           const step = e.shiftKey ? .1 : .01; svg.current?.focus();
@@ -306,6 +317,7 @@ export function MaskPicture({ clip, image, children, editable = true, animation,
         }} />)}
       </>}
     </svg> : null}
+    {visible && rotated ? <div className="mask-vertex-panel" role="group" aria-label="旋转遮罩的说明"><span className="dim">画面上这框就是转过角度的遮罩盒：拖它只搬中心；改大小用检查器那两格，宽高曲线要先把角度转回 0°</span></div> : null}
     {visible && mask?.shape === "path" ? <div className="mask-vertex-panel" role="group" aria-label="顶点操作">
       {atCap ? <span className="dim">顶点 {vertices.length}/{vertexLimit}，已到上限，双击不再加点</span> : null}
       {morphArmed(clip) ? <>

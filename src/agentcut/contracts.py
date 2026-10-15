@@ -16,13 +16,12 @@ from .gamut import (
 TIMEBASE = 70_560_000
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 SCHEMA_VERSION = (
-    19  # v19 names the tone curve the primaries fold unfolds through; v18 rows leave it unset and
-    #     the default (`bt709`) is the very curve every one of those deliveries was measured
-    #     against, so they read unchanged
+    20  # v20 gives a shape mask's own box an angle; v19 rows leave it unset and 0° is the very
+    #     geometry every one of those deliveries was measured against, so they read unchanged
 )
 PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `projects._fitted`
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
-APP_VERSION = "1.163.0"
+APP_VERSION = "1.164.0"
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 Duration = Annotated[int, Field(gt=0, le=MAX_TICKS)]
@@ -941,6 +940,10 @@ class MaskVertex(Contract):
 
 MASK_VERTEX_LIMIT = 64
 PathVertices = Annotated[list[MaskVertex], Field(min_length=3, max_length=MASK_VERTEX_LIMIT)]
+# 1.164: how far a rectangle/ellipse box may be turned. The number is a screen angle in degrees, so
+# it is capped at one full turn rather than at a fraction of something; ±360 is what the 画面旋转
+# knob already lets a person reach, and a mask that needs more than a turn is the same mask.
+MASK_ROTATION_LIMIT = 360.0
 
 
 class SpeedPoint(Contract):
@@ -960,6 +963,10 @@ class ShapeMask(Contract):
     center_y: Annotated[float, Field(ge=0, le=1)] = 0.5
     width: Annotated[float, Field(ge=0.01, le=2)] = 0.6
     height: Annotated[float, Field(ge=0.01, le=2)] = 0.6
+    # 1.164: the box's own angle in degrees, positive clockwise — the same reading as 画面旋转, and
+    # measured in picture pixels, not in the box's own fractions: a 0.6x0.3 box turned 45° has to
+    # *look* like 45° on screen. A free-form outline carries its shape as drawn, so it has no angle.
+    rotation: Annotated[float, Field(ge=-MASK_ROTATION_LIMIT, le=MASK_ROTATION_LIMIT)] = 0.0
     feather: Annotated[float, Field(ge=0, le=1)] = 0.0
     inverted: bool = False
     vertices: PathVertices | None = None
@@ -970,6 +977,8 @@ class ShapeMask(Contract):
             raise ValueError("a path mask needs at least three vertices")
         if self.shape != "path" and self.vertices:
             raise ValueError("only a path mask can carry vertices")
+        if self.shape == "path" and self.rotation:
+            raise ValueError("only a rectangle or ellipse mask can be rotated")
         if self.vertices is not None:
             seen = {(round(vertex.x, 9), round(vertex.y, 9)) for vertex in self.vertices}
             if len(seen) != len(self.vertices):
@@ -1270,6 +1279,14 @@ class Clip(Contract):
             return (
                 "a free-form mask can move but cannot resize yet: keyframe 遮罩中心 only, "
                 "or redraw the outline per shot"
+            )
+        # 1.164: the angle is a screen angle, and a box that resizes over time would rescale the one
+        # rotated image non-uniformly — the shear the exporter's own math refuses. Moving it stays
+        # exact, so 遮罩中心 keeps working; the size has to wait for a per-window plate.
+        if self.mask.rotation and any(key.property in MASK_SIZE_FIELDS for key in self.keyframes):
+            return (
+                "a rotated mask can move but cannot resize over time yet: keyframe "
+                "遮罩中心 X/Y only, or set 遮罩角度 back to 0"
             )
         return None
 
@@ -3288,6 +3305,12 @@ def capabilities(
             "shape_masks": True,
             "path_masks": True,
             "mask_animation": True,
+            # 1.164: a rectangle/ellipse box carries its own angle. The angle itself is not a curve:
+            # the browser can only paint a rotated mask from an image the engine baked (measured on
+            # the Chromium this app ships with - a CSS transform on the masked layer leaves the mask
+            # axis-aligned), so an animated angle would need one image per frame, and that cost is
+            # not measured here. Centre curves still move a rotated mask exactly.
+            "mask_rotation": True,
             # 1.118: a free-form outline can morph. The exporter executes it as frame-aligned
             # constant windows (`animation.mask_shape_schedule`) and the preview ships that same
             # window list, so this says "the shape steps on both ends", not "the shape is smooth".
@@ -3407,6 +3430,7 @@ def capabilities(
             "sharpen_schedule_segments": SHARPEN_SCHEDULE_MAX,
             # A morphing outline is bounded by the same kind of number: how many outlines one mask
             # carries, and how many plates the export and the preview each execute.
+            "mask_rotation_limit": MASK_ROTATION_LIMIT,
             "mask_shape_keys": MASK_SHAPE_KEY_LIMIT,
             "mask_shape_schedule_segments": MASK_SHAPE_SCHEDULE_MAX,
             "denoise_db": DENOISE_LIMIT,

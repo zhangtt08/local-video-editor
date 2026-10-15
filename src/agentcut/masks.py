@@ -9,7 +9,7 @@ browser receives the identical geometry as an SVG path with the same Gaussian ra
 units.
 """
 
-from math import ceil, sqrt
+from math import ceil, cos, radians, sin, sqrt
 from struct import pack
 from urllib.parse import quote
 from zlib import compress as zlib_compress
@@ -47,8 +47,23 @@ def alpha_expression(
     taken.update(values or {})
     nx = f"((X-{box[0]:.4f})/{box[2]:.4f})" if box else "X/W"
     ny = f"((Y-{box[1]:.4f})/{box[3]:.4f})" if box else "Y/H"
-    x = f"abs(({nx}-({taken['mask_x']}))*2/({taken['mask_width']}))"
-    y = f"abs(({ny}-({taken['mask_y']}))*2/({taken['mask_height']}))"
+    if mask.rotation:
+        # The box's two fractions are measured against different edge lengths, so an angle is only
+        # honest after the offset is in one unit: `k` is picture height over picture width, the very
+        # factor the browser stretches its image by. Turning the *sample point* back by the mask's
+        # angle is how a shape drawn rotated answers for the pixel standing where it stands.
+        dx = f"(({nx})-({taken['mask_x']}))"
+        dy = f"(({ny})-({taken['mask_y']}))"
+        theta = radians(mask.rotation)
+        cos_t, sin_t = f"{cos(theta):.9f}", f"{sin(theta):.9f}"
+        k = f"{box[3] / box[2]:.9f}" if box else "(H/W)"
+        rx = f"({dx}*{cos_t}+{dy}*{k}*{sin_t})"
+        ry = f"({dy}*{k}*{cos_t}-{dx}*{sin_t})"
+        x = f"abs({rx}*2/({taken['mask_width']}))"
+        y = f"abs({ry}/{k}*2/({taken['mask_height']}))"
+    else:
+        x = f"abs(({nx}-({taken['mask_x']}))*2/({taken['mask_width']}))"
+        y = f"abs(({ny}-({taken['mask_y']}))*2/({taken['mask_height']}))"
     if mask.shape == "ellipse":
         radius = f"sqrt(pow({x},2)+pow({y},2))"
         value = f"clip((1-{radius})/{mask.feather},0,1)" if mask.feather else f"lte({radius},1)"
@@ -111,6 +126,70 @@ def svg_image(mask: ShapeMask) -> str:
     return 'url("data:image/svg+xml,' + quote(document, safe="") + '")'
 
 
+def cover_svg_image(mask, frame_width: int, frame_height: int) -> str:
+    """One rotated box on a canvas with the picture's own aspect, spanning the whole picture.
+
+    `svg_image` builds a unit box the browser stretches into whatever rectangle the mask occupies,
+    which is exactly right for geometry measured in box fractions and exactly wrong for an angle:
+    a non-uniform stretch turns 45° into whatever it lands on (measured). Here the canvas is
+    isotropic with the picture, so `mask-size: 100% 100%` scales it uniformly, the angle stays the
+    angle a person set, and the browser has only one job left - translate this one image by the same
+    centre curves the alpha expression reads. The feather ramps stay in box units, as everywhere.
+    """
+    unit = 1000.0
+    tall = unit * frame_height / frame_width
+    cx, cy = mask.center_x * unit, mask.center_y * tall
+    full = f'x="0" y="0" width="{unit:.4f}" height="{tall:.4f}"'
+    turn = f' transform="rotate({mask.rotation:.6f} {cx:.4f} {cy:.4f})"'
+    box = (
+        f'x="{cx - mask.width * unit / 2:.4f}" y="{cy - mask.height * tall / 2:.4f}" '
+        f'width="{mask.width * unit:.4f}" height="{mask.height * tall:.4f}"'
+    )
+    outer, inner = ("white", "black") if mask.inverted else ("black", "white")
+    defs, paint = "", ""
+    if mask.shape == "ellipse":
+        if mask.feather:
+            defs = (
+                '<radialGradient id="fade"><stop offset="0" stop-color="white"/>'
+                f'<stop offset="{1 - mask.feather}" stop-color="white"/>'
+                '<stop offset="1" stop-color="black"/></radialGradient>'
+                f'<mask id="shape" maskUnits="userSpaceOnUse" {full} mask-type="luminance">'
+                f'<g{turn}><rect {box} fill="url(#fade)"/></g></mask>'
+            )
+            paint = f'<rect {full} fill="{inner}" mask="url(#shape)"/>'
+        else:
+            paint = (
+                f'<ellipse cx="{cx:.4f}" cy="{cy:.4f}" rx="{mask.width * unit / 2:.4f}" '
+                f'ry="{mask.height * tall / 2:.4f}" fill="{inner}"{turn}/>'
+            )
+    elif mask.feather:
+        stops = (
+            '<stop offset="0" stop-color="black"/>'
+            f'<stop offset="{mask.feather / 2}" stop-color="white"/>'
+            f'<stop offset="{1 - mask.feather / 2}" stop-color="white"/>'
+            '<stop offset="1" stop-color="black"/>'
+        )
+        defs = (
+            f'<linearGradient id="fx" x1="0" x2="1">{stops}</linearGradient>'
+            f'<linearGradient id="fy" x1="0" y1="0" x2="0" y2="1">{stops}</linearGradient>'
+            f'<mask id="axis" maskUnits="userSpaceOnUse" {full} mask-type="luminance">'
+            f'<g{turn}><rect {box} fill="url(#fx)"/></g></mask>'
+            f'<mask id="shape" maskUnits="userSpaceOnUse" {full} mask-type="luminance">'
+            f'<g{turn}><rect {box} fill="url(#fy)" mask="url(#axis)"/></g></mask>'
+        )
+        paint = f'<rect {full} fill="{inner}" mask="url(#shape)"/>'
+    else:
+        paint = f'<rect {box} fill="{inner}"{turn}/>'
+    document = (
+        '<svg xmlns="http://www.w3.org/2000/svg" '
+        f'viewBox="0 0 {unit:.4f} {tall:.4f}" preserveAspectRatio="none"><defs>' + defs + "</defs>"
+        f'<mask id="result" maskUnits="userSpaceOnUse" {full} mask-type="luminance">'
+        f'<rect {full} fill="{outer}"/>{paint}</mask>'
+        f'<rect {full} fill="white" mask="url(#result)"/></svg>'
+    )
+    return 'url("data:image/svg+xml,' + quote(document, safe="") + '")'
+
+
 def animated_mask_image(mask, width: int, height: int) -> str:
     """The same geometry with its box filling the frame, for the browser to scale and move.
 
@@ -121,6 +200,12 @@ def animated_mask_image(mask, width: int, height: int) -> str:
     """
     if mask.shape == "path":
         return path_svg_image(unit_path(mask), *raster_size(width, height))
+    if mask.rotation:
+        # Drawn at the canvas centre with its real proportions: the browser's own translation by
+        # `mask_x/mask_y` is then the same move the exporter makes inside the alpha expression.
+        return cover_svg_image(
+            mask.model_copy(update={"center_x": 0.5, "center_y": 0.5}), width, height
+        )
     unit = mask.model_copy(update={"center_x": 0.5, "center_y": 0.5, "width": 1.0, "height": 1.0})
     return svg_image(unit)
 
@@ -134,6 +219,8 @@ def mask_image(mask, frame_width: int, frame_height: int) -> str:
     """
     if mask.shape == "path":
         return path_svg_image(mask, *raster_size(frame_width, frame_height))
+    if mask.rotation:
+        return cover_svg_image(mask, frame_width, frame_height)
     return svg_image(mask)
 
 

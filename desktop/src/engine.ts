@@ -199,14 +199,14 @@ export const DEFAULT_CURVE_POINTS: GradeCurvePoint[] = [
   { x: 1, y: 1 },
 ];
 export type MaskVertex = { x: number; y: number; handle_out: [number, number]; handle_in: [number, number] };
-export type ShapeMask = { shape: "rectangle" | "ellipse" | "path"; center_x: number; center_y: number; width: number; height: number; feather: number; inverted: boolean; vertices?: MaskVertex[] | null };
+export type ShapeMask = { shape: "rectangle" | "ellipse" | "path"; center_x: number; center_y: number; width: number; height: number; rotation?: number; feather: number; inverted: boolean; vertices?: MaskVertex[] | null };
 
 /** The clip's own fade windows, in ticks measured from each edge. 0 means that edge is untouched.
  *  `*_shape` (1.95) is how the property approaches its resting value along that window; the engine
  *  issues the list of names, and every edge defaults to the smoothstep pre-1.95 fades used. */
 export type FadeShape = "linear" | "ease_in" | "ease_out" | "ease_in_out";
 export type FadeEnvelope = { opacity_in_ticks: number; opacity_out_ticks: number; gain_in_ticks: number; gain_out_ticks: number; opacity_shape?: FadeShape; gain_shape?: FadeShape };
-export const DEFAULT_MASK: ShapeMask = { shape: "ellipse", center_x: .5, center_y: .5, width: .6, height: .6, feather: 0, inverted: false, vertices: null };
+export const DEFAULT_MASK: ShapeMask = { shape: "ellipse", center_x: .5, center_y: .5, width: .6, height: .6, rotation: 0, feather: 0, inverted: false, vertices: null };
 export const DEFAULT_PATH: MaskVertex[] = [
   { x: .3, y: .25, handle_out: [0, 0], handle_in: [0, 0] },
   { x: .7, y: .35, handle_out: [0, 0], handle_in: [0, 0] },
@@ -632,7 +632,7 @@ export type Capabilities = {
   max_commands_per_batch: number;
   commands: string[];
   features: Record<string, boolean>;
-  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; denoise_db?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number; track_max_gap_frames?: number; track_gap_default?: number; track_min_frames?: number; track_max_frames?: number; mask_shape_keys?: number; mask_shape_schedule_segments?: number; blur_schedule_segments?: number; sharpen_schedule_segments?: number; attribute_paste_targets?: number };
+  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; denoise_db?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number; track_max_gap_frames?: number; track_gap_default?: number; track_min_frames?: number; track_max_frames?: number; mask_rotation_limit?: number; mask_shape_keys?: number; mask_shape_schedule_segments?: number; blur_schedule_segments?: number; sharpen_schedule_segments?: number; attribute_paste_targets?: number };
   render_presets: Preset[];
   /** 1.137：时间码的写法与「哪两个率才有丢帧码」由引擎说，界面不许自己写一份正则。 */
   timecode_shape?: string;

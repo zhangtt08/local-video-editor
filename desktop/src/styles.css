@@ -934,6 +934,16 @@ table.table tr.current td { background: var(--accent-soft); }
   mask-size: calc(var(--mask-w) * var(--mask-lw) * 1px) calc(var(--mask-h) * var(--mask-lh) * 1px);
   mask-position: calc((var(--mask-x) - var(--mask-w) / 2) * var(--mask-lw) * 1px) calc((var(--mask-y) - var(--mask-h) / 2) * var(--mask-lh) * 1px);
 }
+/* 1.164: a rotated box is one engine-baked image that already spans the picture, so the browser
+   scales it uniformly — the angle stays the angle a person set — and translates it by the same
+   centre curves the alpha expression reads. No mask-size from the box: that would stretch it
+   non-uniformly, and the measured fact here is that a CSS transform on the masked layer does not
+   turn the mask at all. */
+.masked-picture.rotated-mask {
+  mask-repeat: no-repeat;
+  mask-size: 100% 100%;
+  mask-position: calc((var(--mask-x) - 0.5) * var(--mask-lw) * 1px) calc((var(--mask-y) - 0.5) * var(--mask-lh) * 1px);
+}
 .masked-picture.morph-mask {
   mask-repeat: no-repeat;
   mask-size: calc(var(--shape-w) * var(--mask-lw) * 1px) calc(var(--shape-h) * var(--mask-lh) * 1px);

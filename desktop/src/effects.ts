@@ -60,12 +60,16 @@ export const canAnimateMask = (mask?: ShapeMask | null): mask is ShapeMask =>
   Boolean(mask && !mask.inverted);
 
 /** The curves a mask of this shape actually has: a path has no size, only a centre. */
-export const maskAnimFields = (mask?: ShapeMask | null) =>
-  !mask
-    ? []
-    : mask.shape === "path"
-      ? MASK_ANIM_FIELDS.filter((field) => field.property === "mask_x" || field.property === "mask_y")
-      : MASK_ANIM_FIELDS;
+export const maskAnimFields = (mask?: ShapeMask | null) => {
+  if (!mask) return [];
+  // 1.164：转过角度的盒子也只能整体搬动。判断只在引擎那一处（`Clip.mask_animation_problem`），
+  // 这里只是不把一条画得出、导出会拒的曲线摆到人面前：一张等比的旋转图被非均匀缩放之后，
+  // 屏幕上那个角度就不是人设定的那一个了。
+  const centreOnly = mask.shape === "path" || Boolean(mask.rotation);
+  return centreOnly
+    ? MASK_ANIM_FIELDS.filter((field) => field.property === "mask_x" || field.property === "mask_y")
+    : MASK_ANIM_FIELDS;
+};
 
 /** Label lookup for the keyframe list, which mixes effect and mask properties. */
 /** 插值的名字也只从一张表出去：曲线编辑器的两个下拉、轮廓帧那一行、任何将来要说「这一帧怎么过渡」的地方。 */

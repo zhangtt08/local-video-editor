@@ -3099,3 +3099,47 @@ Agent 侧不需要任何新接口：`GET /v1/projects/{id}/render-plan` 交回�
 请求体是 `AttributePlanRequest{request_id, expected_revision, source_clip_id, target_clip_ids, categories, sequence_id?}`。路由是只读的（MCP 工具 `readOnlyHint=true`，也不写库）：回执 `attribute_plan` 里 `commands` 就是将要提交的那一批普通命令（`clip.color`、`clip.effects`、`keyframes.replace`／`keyframes.remove`、`clip.mask`、`mask.shape.set`／`mask.shape.remove`、`clip.fade`、`clip.speed`／`clip.speed_curve`、`clip.text`），由调用方交给 `POST /edits`——所以写入仍只有那一处。`written` 逐段列出真被排进命令的类别，`unchanged` 是「已经一样」的那些段，`refusals` 每条带 `clip_id`、`category` 与 reducer 那句 `code`／`message`／`details`；`beyond_tail_keyframes` 是落在目标段尾之外的针数（仍在工程里，那一帧之后不渲染）。
 
 类别名单只有一个主人：`contracts.ATTRIBUTE_CATEGORIES`，随 `capabilities.attribute_categories`（id／label／note）下发，额度走 `capabilities.limits.attribute_paste_targets`，开关是 `features.attribute_paste`。规划不重写规则：`attributes.attribute_plan` 逐目标把候选命令交给 `apply_commands` 重放，整段试不过就一类一类试，因此「计划」与「提交」不可能分家，而一类之内要么整类写进去要么整类不写。「变速」那一条发的是 `ripple=False`：这一段自己的长度按速率换算，后面的片段不被推开。「文字样式」只搬样式，`body` 仍是目标自己打的那行字。画面稳定与转场不在名单里（前者是那一段素材量出来的相机运动，后者属于这一段与邻居之间的那对关系）。
+
+
+## 1.164 遮罩可旋转：一枚屏幕角度，导出转取样点、预览转引擎自己烘的那张图
+
+`ShapeMask` 多一个字段：
+
+| 字段 | 范围 | 意思 |
+| --- | --- | --- |
+| `rotation` | ±360°（`capabilities.limits.mask_rotation_limit` 下发同一个数） | 矩形/椭圆遮罩盒的角度，**屏幕角**：正数顺时针，与 `effects.rotation`（画面旋转）同一个读法。默认 0°，老工程不带这一格也读得进来 |
+
+写它仍然是 `clip.mask` 那一条命令（整枚遮罩一次写），Agent 与人是同一个入口；MCP 没有新工具，
+`clip_patch`/`clip.mask` 直接带得动。开关是 `capabilities.features.mask_rotation`。
+
+角度落在三处，一次算清：
+
+- 导出：`masks.alpha_expression` 把**取样点**绕盒心转回 `rotation` 再判在不在里面。盒子的两条比例
+  是各自对着画面宽与画面高的，所以先要折成同一个单位——式子里那个比值，有画面框时是
+  `框高/框宽`（1.102 那次计算），没有框时是 `H/W`。角度不是曲线，所以 `cos/sin` 在引擎里就化成
+  常数，不叫 FFmpeg 每帧现算。
+- 预览：`masks.cover_svg_image` 烘一张 `viewBox` 比例就等于画面比例的整画面图，形状带着
+  `transform="rotate(角度 盒心x 盒心y)"`。界面那条 `.masked-picture.rotated-mask` 只做两件事：
+  `mask-size:100% 100%`（等比，不拧角度）与按 `--mask-x/--mask-y` 平移。
+- 参考线：`desktop/src/maskGeometry.ts` 的 `rotatedCorners` 把四个角折回画框坐标，画向导用；
+  它不算任何「能不能」的判断。
+
+三条拒绝与它们各自的出路：
+
+| 情形 | 码 | 句子给的出路 |
+| --- | --- | --- |
+| 路径遮罩带角度 | 422（契约） | 只有矩形或椭圆的盒能转；要转形状就重画轮廓 |
+| 转过的盒要打 `mask_width`/`mask_height` 曲线 | `INVALID_MASK` | 只打「遮罩中心 X/Y」，或把 `遮罩角度` 转回 0° |
+| 角度超过 ±360° | 422（契约） | 转一圈以上还是同一枚盒子 |
+
+中心曲线照旧能搬转过的盒子：一张等比图被平移，两端是同一个位移。量过的证据（`tests/maskrot_check.py`
++ `package_check_1164.py`）：三段真导出的主轴 −0.0°／30.0°／−45.0°；装机引擎那张图喂进装机那条 CSS，
+Chromium 画出 30.0°／占比 0.0998，与同一档导出的 30.0°／0.0997 对得上；零角度那一路交出的字节
+与 1.163 一字未改（门禁把那句原文钉住，而不是再算一遍）。
+
+**为什么预览不走「转图层」那条路**：这一轮在同一族 Chromium 上量过被遮罩元素带
+`transform: rotate()` 的画法——外层转、内层反着转回来，computed style 两个矩阵都在，
+画出来的遮罩主轴仍是 0.0°。所以 `mask-image` 不吃图层旋转，那条看着最省的连续旋转路子在这一档
+走不通；要连续转角度，就得每帧换一张图（1.118 那种按窗阶梯是退一步的确定做法），那笔代价本轮没量。
+
+工程 schema 19→20：带角度的工程若被旧引擎读到，会按版本挡下来，而不是把角度悄悄抹平。
