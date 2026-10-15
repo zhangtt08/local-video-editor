@@ -32,6 +32,7 @@
   而按定义写出的判定认的是画好的那个中心——报了一条「角度 30° 在 (0.58,0.5) 该亮」的假缺陷。
   拔掉那枚针才量得出真的；记下这条，因为红的是夹具、不是产品。
 - **装机界面真敲了一次角度**：打包渲染层里选中片段、展开「遮罩」、在「遮罩角度」敲 30 再 Tab 落笔——引擎那头 revision 1→2、`mask.rotation` 落库 30.0，画面那一层同时换成引擎新下发的那张（`viewBox="0 0 1000.0000 562.5000"` + `rotate(30.000000 500.0000 281.2500)`、`mask-size:100% 100%`），那颗旋钮的 −360..360 就是 `limits.mask_rotation_limit`。顺手量到宿主一条坑：页面 `visibilityState` 是 hidden 时，合成出来的按键事件不进 React 的 onChange，得用真输入事件（`fill`）才算点到了。
+- **验收账（交付树里空机单跑）**：`tests/suite_check.py` **115/115**（新增 `maskrot_check.py` 一项）；`tests/desktop_ts_check.py` 59 份壳检全过；`npm run typecheck` 干净；`released_package_check` 与 `packed_engine_surface_check` 绿。
 - **发布包**：便携版 189,955,568 B（sha256 00b455e0d1fb6f6f…，根 `AgentCut.exe` 与它逐字节相同：True）、
   安装版 190,116,278 B（82fdd9e1028e2cd2…）；随包两支仍是与 npm 同版本同哈希那一对，
   `build_engine.py --verify` 与 `npm run dist` 各一次过。
