@@ -60,7 +60,10 @@ import {
   type KeyEvent,
 } from "./keymap";
 
-export type View = "home" | "editor" | "history" | "agent";
+/** 应用有哪几个视图，只在这张表里说一次：View 由它推出来，深链 ?view= 也在它上面验一遍。 */
+export const VIEWS = ["home", "editor", "history", "agent"] as const;
+
+export type View = (typeof VIEWS)[number];
 
 export type Toast = {
   id: number;
@@ -396,8 +399,9 @@ async function restoreDeepLink() {
     wanted = urlParam("project");
   }
   const view = urlParam("view");
-  if (view === "home" || view === "editor" || view === "history" || view === "agent") {
-    set({ view });
+  // 认不出的视图名一动不动（可选项只有一个来源：VIEWS）。
+  if ((VIEWS as readonly string[]).includes(view)) {
+    set({ view: view as View });
   }
   const linkedClip = urlParam("clip");
   const linkedTick = urlParam("tick");

@@ -213,6 +213,17 @@ assert.ok(!/editorPanel: \"inspect\" \| \"export\" \| \"scope\"/.test(storeSrc),
   "面板名单被抄回类型那一行了（两处各自漂移）");
 assert.ok(storeSrc.includes("landLinkedPanel(linkedPanel);"),
   "只给 ?panel= 的那条链接不再落地");
+// ?view= 与面板同一张表的纪律：名单只许有一处，深链在那一处上验。
+assert.ok(storeSrc.includes('export const VIEWS = ["home", "editor", "history", "agent"] as const;'),
+  "视图名单不再是唯一那一张表");
+assert.ok(storeSrc.includes("export type View = (typeof VIEWS)[number];"),
+  "View 又自带第二份视图名字表");
+assert.ok(!/export type View = "home" \| "editor" \| "history" \| "agent"/.test(storeSrc),
+  "视图名单被抄回类型那一行了（两处各自漂移）");
+assert.ok(storeSrc.includes("if ((VIEWS as readonly string[]).includes(view)) {"),
+  "深链 ?view= 不再在同一张表上验，认不出的名字会把界面切走");
+assert.ok(!/view === "home" \|\| view === "editor"/.test(storeSrc),
+  "restoreDeepLink 里还剩一条自己拼的视图名单");
 assert.ok(/landLinkedTick\(tick\);\s*\n\s*return true;/.test(storeSrc),
   "focusLinkedClip 收了 tick 却没把它递到落点（选中了、帧没停）");
 assert.ok(/playhead\.pause\(\);\s*\n\s*playhead\.set\(Math\.min\(Number\(tick\), timelineEnd\(project\)\)\);/.test(storeSrc),
