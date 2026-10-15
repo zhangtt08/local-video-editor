@@ -258,6 +258,12 @@ def main() -> None:
     assert 'f"[{index}:v]"' not in SRC and 'f"[{index}:a]"' not in SRC, \
         "又有层链拿循环变量 index 拼 pad"
 
+    # 嵌套合成那几路输入也要在主人表里（跟着 offset 一起平移，和标签同一个算法）
+    assert "for child_pad, child_owner in child.owners.items():" in SRC, "嵌套子图的输入不进主人表"
+    assert "plan.owners.setdefault(child_pad + offset, child_owner)" in SRC, \
+        "子图的主人表没有跟着 offset 平移"
+    assert "plan.allocations += child.allocations" in SRC, "子图的分配数没并进来"
+
     assert "validate_plan_inputs(plan)" in SRC, "编译收尾没调用那份结构检查"
     assert SRC.index("validate_plan_inputs(plan)") > SRC.index("def compile_render_plan("), \
         "调用点在编译函数之外"

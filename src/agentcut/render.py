@@ -1212,6 +1212,12 @@ def compile_render_plan(
 
             plan.input_args.extend(child.input_args)
             plan.filters.extend(renamed(f) for f in child.filters)
+            # The nested plan's inputs shift by `offset`, exactly like its labels do - so its
+            # ownership table shifts with them. Without this the orphan rule was blind inside
+            # a nested composition, which is where a mis-wired pad is easiest to introduce.
+            for child_pad, child_owner in child.owners.items():
+                plan.owners.setdefault(child_pad + offset, child_owner)
+            plan.allocations += child.allocations
             plan.text_files.update(
                 # The child's own filtergraph is inlined into the parent's, so its script file (if
                 # it had one) is both unreferenced and name-colliding here.
