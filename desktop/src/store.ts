@@ -394,9 +394,14 @@ async function restoreDeepLink() {
     set({ view });
   }
   const linkedClip = urlParam("clip");
+  const linkedTick = urlParam("tick");
   if (wanted && state.projects.some((item) => item.id === wanted)) {
     // 片段要等工程读进来才选得到：打开完成后按链接点名选中，并切到检查器那一页。
-    void openProject(wanted).then(() => { if (linkedClip) focusLinkedClip(linkedClip); });
+    // 播放头同理——时间线长度只有读进来才知道，越界的那个数得夹到末尾而不是跳走。
+    void openProject(wanted).then(() => {
+      if (linkedClip) focusLinkedClip(linkedClip, linkedTick);
+      else landLinkedTick(linkedTick);
+    });
   }
 }
 
@@ -1332,14 +1337,29 @@ export function reconcileLink(linkId: string) {
 export function selectAllClips() { selectClips(Object.keys(state.project?.clips ?? {})); }
 
 /**
- * 深链 `?clip=<id>`：选中那一条片段，并把右侧面板切到「检查器」。
+ * 深链 `?tick=<刻度>`：把播放头停在链接点名的那一帧。
+ * 认不出的写法（非整数刻度）什么都不做——界面停在开头比停在半开的状态好解释；
+ * 越界的数夹到时间线末尾，因为「跳到一个看不见的地方」等于没跳。刻度是工程自己的时钟，
+ * 所以这条链接只对那个工程有意义，Agent 把它交回给人时该连着 `?project=` 一起给。
+ */
+export function landLinkedTick(tick: string): boolean {
+  const project = state.project;
+  if (!project || !/^\d+$/.test(tick)) return false;
+  playhead.pause();
+  playhead.set(Math.min(Number(tick), timelineEnd(project)));
+  return true;
+}
+
+/**
+ * 深链 `?clip=<id>`：选中那一条片段，并把右侧面板切到「检查器」；带上 `?tick=` 时顺手把播放头停过去。
  * 发一个链接过去就得真能看到那一条——只在链接里点名时切页签，人自己点片段不改他的页签。
  * 认不出的 id 什么都不做（返回 false）：一条坏链接不该把界面弄成半开状态。
  */
-export function focusLinkedClip(clipId: string): boolean {
+export function focusLinkedClip(clipId: string, tick = ""): boolean {
   if (!state.project?.clips[clipId]) return false;
   selectClip(clipId);
   setEditorPanel("inspect");
+  landLinkedTick(tick);
   return true;
 }
 

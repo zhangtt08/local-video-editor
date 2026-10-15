@@ -188,13 +188,29 @@ assert.ok(contracts.includes('"mask_rotation_size_curves": True'), "引擎没报
 // 行名单可以被机器量到（浏览器里不用先点一下）的前提。三件事各自钉：读参数、选中并切页签、坏 id 不动。
 const storeSrc = read("desktop/src/store.ts");
 assert.ok(storeSrc.includes('urlParam("clip")'), "深链不再点名片段");
-assert.ok(/export function focusLinkedClip\(clipId: string\): boolean \{/.test(storeSrc),
-  "focusLinkedClip 的形状变了（深链选中那条）");
+assert.ok(storeSrc.includes('urlParam("tick")'), "深链不再读 ?tick=");
+assert.ok(/export function focusLinkedClip\(clipId: string, tick = ""\): boolean \{/.test(storeSrc),
+  "focusLinkedClip 的形状变了（深链选中那条，并接住 ?tick=）");
+assert.ok(/export function landLinkedTick\(tick: string\): boolean \{/.test(storeSrc),
+  "landLinkedTick 不在了（?tick= 没有落点）");
+assert.ok(storeSrc.includes("if (!project || !/^\\d+$/.test(tick)) return false;"),
+  "认不出的 ?tick= 会往下走——播放头该一动不动");
+assert.ok(storeSrc.includes("playhead.set(Math.min(Number(tick), timelineEnd(project)));"),
+  "?tick= 不再夹到时间线末尾，越界的链接会把播放头丢到看不见的地方");
+assert.ok(storeSrc.includes("focusLinkedClip(linkedClip, linkedTick);"),
+  "深链选中片段时没把 ?tick= 一起递过去");
+assert.ok(/landLinkedTick\(tick\);\s*\n\s*return true;/.test(storeSrc),
+  "focusLinkedClip 收了 tick 却没把它递到落点（选中了、帧没停）");
+assert.ok(/playhead\.pause\(\);\s*\n\s*playhead\.set\(Math\.min\(Number\(tick\), timelineEnd\(project\)\)\);/.test(storeSrc),
+  "停帧之前没按下播放：一条只想看某一帧的链接会把时间线跑起来");
+assert.ok(!storeSrc.includes("focusLinkedClip(linkedClip)"),
+  "调用点又回到只递片段 id 那一版（?tick= 被丢了）");
 assert.ok(storeSrc.includes('setEditorPanel("inspect")'), "深链选中片段后没把右侧面板切到检查器");
 assert.ok(storeSrc.includes("if (!state.project?.clips[clipId]) return false;"),
   "认不出的片段 id 会往下走，界面会停在半开状态");
-assert.ok(storeSrc.includes("void openProject(wanted).then(() => { if (linkedClip) focusLinkedClip(linkedClip); });"),
-  "深链选中没等工程读进来就下单，选不到那条片段");
+assert.ok(/void openProject\(wanted\)\.then\(\(\) => \{/.test(storeSrc)
+  && storeSrc.includes("else landLinkedTick(linkedTick);"),
+  "深链没等工程读进来就下单，选不到那条片段也停不到那一帧");
 assert.ok(contracts.includes('key.property == "mask_rotation" for key in self.keyframes'),
   "路径遮罩的角度曲线没被拒——摆出来就是一条导出不执行的针");
 
