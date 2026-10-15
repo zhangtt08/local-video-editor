@@ -22,6 +22,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from agentcut.animation import MASK_ROTATION_SCHEDULE_MAX, mask_box_schedule
 from agentcut.contracts import TIMEBASE as T
 from agentcut.contracts import EditorError, Project
 from agentcut.http_api import create_app
@@ -121,6 +122,24 @@ def main() -> None:
                 "shape": "path", "center_x": 0.5, "center_y": 0.5, "width": 0.6, "height": 0.6,
                 "vertices": [{"x": 0.3, "y": 0.3}, {"x": 0.7, "y": 0.35}, {"x": 0.5, "y": 0.8}]}},
         ])
+        # 12 枚角度针 + 12 枚宽针，每 4 帧一枚（60 帧的片段）。这一份是给「针数 != 窗数」那条
+        # 断言用的种子：两端读的窗表是合并出来的，不是按针数点出来的。必须先于 nest——
+        # nest 之后片段 c 已经进了子合成，父工程这一头改不到它了。
+        spun = edit("pi-spin", [
+            {"op": "clip.mask", "clip_id": "c", "mask": {
+                "shape": "rectangle", "center_x": 0.5, "center_y": 0.5, "width": 0.3,
+                "height": 0.3, "feather": 0.0, "inverted": False}},
+        ] + [
+            command
+            for index in range(12)
+            for command in (
+                {"op": "keyframe.set", "clip_id": "c", "keyframe": {
+                    "property": "mask_rotation", "at_ticks": index * 4 * F,
+                    "value": float(index * 7)}},
+                {"op": "keyframe.set", "clip_id": "c", "keyframe": {
+                    "property": "mask_width", "at_ticks": index * 4 * F,
+                    "value": 0.25 + index * 0.05}},
+            )])
         boxed = edit("pi-nest", [{
             "op": "sequence.nest", "clip_ids": ["c", "c2"], "name": "s1",
             "sequence_id": "s1", "asset_id": "a-nest", "clip_id": "c-nest"}])
@@ -285,6 +304,18 @@ def main() -> None:
     assert not blind, f"嵌套的主人表指着没人读的 pad：{blind}"
     print(f"   嵌套：素材那几路 {sorted(pairs)} 各归自己，分配 {nest_plan.allocations} == "
           f"有主 {len(nest_plan.owners)}，主人表每路都被读到（共 {len(nest_sources)} 路输入）")
+
+    # 针数 != 窗数：24 枚针（12 角度 + 12 宽，每 4 帧一枚）按帧对齐再等值合并，实测 10 窗。
+    # 今天我在无头 DOM 那一头先量到 10，而宿主的第一版把期望写成「等于上限 12」——那是编的。
+    # 这一段把这条关系钉成能失败的门禁：上限是「最多能切几段」，不是「几枚针几段」。
+    rows = mask_box_schedule(spun.clips["c"], F)
+    assert rows, "转过角度的盒没有窗表"
+    angles = [row["value"][0] if isinstance(row["value"], tuple) else row["angle"] for row in rows]
+    assert len(angles) == len(set(angles)), f"窗之间有同值的角度：{angles}"
+    assert len(rows) != 24, "窗数被当成针数了"
+    assert len(rows) == 10, f"实测窗数从 10 变成 {len(rows)}（上限 {MASK_ROTATION_SCHEDULE_MAX}）"
+    print(f"   窗数：24 枚针 → {len(rows)} 窗（角度 {angles[0]}°…{angles[-1]}°），"
+          f"上限 {MASK_ROTATION_SCHEDULE_MAX}——窗是合并出来的，不是针数")
 
     assert "for child_pad, child_owner in child.owners.items():" in SRC, "嵌套子图的输入不进主人表"
     assert "plan.owners.setdefault(child_pad + offset, child_owner)" in SRC, \
