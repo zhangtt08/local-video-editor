@@ -65,6 +65,7 @@ RENDERER_SENTENCES = (
     "这一版引擎没有遮罩角度这一格",
     "但宽/高那两条要先把角度转回 0°",
     "转过角度的遮罩盒",
+    "检查器·遮罩角度",
     "rotated-mask",
     "mask_rotation_limit",
     "跟时间线",
