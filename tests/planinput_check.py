@@ -5,9 +5,10 @@
 介意——它交回一张**什么都没有**的画面，任务退 0，`GET /v1/frame` 回 200。所以拒绝必须发生在编译时，
 而不是等人去盯成片。
 
-这里量三件事：健康的真实工程编译得出来、每个声明过的输入都被图上读到（并钉住那一路输入自己报的
-秒数）、把 1.166 那一幕**手搓进同一份 plan**（某一路输入没人读）时拒绝点名它的 pad；最后一条是
-故意量「不判」的那一面——链子 trim 得比声明的 `-t` 长，在四点点位与变速那一路是合法的，所以它只在
+这里量四件事：健康的真实工程编译得出来、每个声明过的输入都被图上读到（并钉住那一路输入自己报的
+秒数）、把 1.166 那一幕**手搓进同一份 plan**（某一路输入没人读）时拒绝点名它的 pad、以及嵌套合成
+并表之后**素材那几路的主人仍是它自己**（按窗烘的遮罩板是派生输入，故意不占主人表）。另有一面故意
+量「不判」——链子 trim 得比声明的 `-t` 长，在四点点位与变速那一路是合法的，所以它只在
 这里被量下来，不当成拒绝（这一条第一次进套件就误伤了它们，是套件把它挡回去的）。
 """
 
@@ -120,6 +121,9 @@ def main() -> None:
                 "shape": "path", "center_x": 0.5, "center_y": 0.5, "width": 0.6, "height": 0.6,
                 "vertices": [{"x": 0.3, "y": 0.3}, {"x": 0.7, "y": 0.35}, {"x": 0.5, "y": 0.8}]}},
         ])
+        boxed = edit("pi-nest", [{
+            "op": "sequence.nest", "clip_ids": ["c", "c2"], "name": "s1",
+            "sequence_id": "s1", "asset_id": "a-nest", "clip_id": "c-nest"}])
 
     shapes = (("两段并排", project), ("转过的盒带宽高针", turned), ("轮廓遮罩", morphed))
     for label, sample in shapes:
@@ -258,7 +262,30 @@ def main() -> None:
     assert 'f"[{index}:v]"' not in SRC and 'f"[{index}:a]"' not in SRC, \
         "又有层链拿循环变量 index 拼 pad"
 
-    # 嵌套合成那几路输入也要在主人表里（跟着 offset 一起平移，和标签同一个算法）
+    # 嵌套合成那几路输入也要在主人表里（跟着 offset 一起平移，和标签同一个算法）。
+    # 先**量**：编译一条真实的嵌套工程。这里只认「那条片段自己的素材文件」那几路——按窗烘出来的
+    # 遮罩板（mask-<sha>.png）也是输入，但它是派生的画面，不归某个 clip 所有，所以不许把它算成
+    # 「没主人的素材」（这一条第一次跑就误伤了它，是探针量出来 pad 5 其实是一张遮罩板）。
+    nest_plan = compile_render_plan(boxed, "h264-source-quality")
+    nest_graph = "\n".join(nest_plan.filters)
+    nest_sources = [nest_plan.input_args[position + 1] for position, token in enumerate(
+        nest_plan.input_args) if token == "-i"]
+    mine = {paths[0].name: "c", paths[1].name: "c2"}
+    pairs = [(index, want) for index, value in enumerate(nest_sources)
+             for name, want in mine.items() if value.endswith(name)]
+    assert len(pairs) == 2, f"两份素材在嵌套 plan 里各只该占一路：{pairs}"
+    wrong = [(pad, want, nest_plan.owners.get(pad)) for pad, want in pairs
+             if nest_plan.owners.get(pad) != want]
+    assert not wrong, f"子图并进来之后素材那几路的主人不是它自己：{wrong}"
+    assert nest_plan.allocations == len(nest_plan.owners), \
+        f"子图的分配数没并进来：{nest_plan.allocations} vs {sorted(nest_plan.owners)}"
+    nest_read = {int(pad) for pad in re.findall(r"\[(\d+):[va]\]", nest_graph)}
+    nest_read |= {int(pad) for pad in re.findall(r"(?:^|[ ,;\[])(\d+):[av]\b", nest_graph)}
+    blind = sorted(set(nest_plan.owners) - nest_read)
+    assert not blind, f"嵌套的主人表指着没人读的 pad：{blind}"
+    print(f"   嵌套：素材那几路 {sorted(pairs)} 各归自己，分配 {nest_plan.allocations} == "
+          f"有主 {len(nest_plan.owners)}，主人表每路都被读到（共 {len(nest_sources)} 路输入）")
+
     assert "for child_pad, child_owner in child.owners.items():" in SRC, "嵌套子图的输入不进主人表"
     assert "plan.owners.setdefault(child_pad + offset, child_owner)" in SRC, \
         "子图的主人表没有跟着 offset 平移"

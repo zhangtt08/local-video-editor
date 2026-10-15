@@ -12,11 +12,14 @@
   并把 `child.allocations` 并进来，父 clip 自己不占一路（它交回的是子图的 label），所以
   `allocations == len(owners)` 这条不变量在嵌套里也成立。
 - **证伪面**：`nest_check.py`、`nestfx_check.py`、`sequence_check.py`、`sequence_plan_check.py`、
-  `composite_check.py`、`compositerange_check.py` 与三份对应壳检逐条绿（这是新规则的第一道反证——
-  平移算错就会在这些门禁里炸出「没人读」的假拒绝）；`tests/planinput_check.py` 另加三条字面量钉住
-  「子图主人表进得来、跟着 offset 平移、分配数并进来」。5 条突变逐条红在自己那条断言上，其中
-  E16（把 `+ offset` 写成 `- offset`）红的是**行为**不是字面量：嵌套那条真实编译当场被自己的孤儿
-  检查误伤，那句实测回执是 `clip top was allocated input -1 of 7 but no layer chain reads it`。
+  `composite_check.py`、`compositerange_check.py` 与三份对应壳检逐条绿（新规则的第一道反证：
+  平移算错就会在这些门禁里炸出「没人读」的假拒绝）。`tests/planinput_check.py` 这一档**不靠字面量**——
+  它编译一条真实的嵌套工程，量「素材那几路的主人就是它自己那条片段」与 `allocations == len(owners)`，
+  再要求每个有主的 pad 都被图上读到；按窗烘的 `mask-<sha>.png` 是派生输入，故意不进主人表
+  （这条第一次跑就误伤了它，是探针量出来 pad 5 其实是一张遮罩板）。5 条突变逐条红在自己的锚上：
+  E13／E15／E17 被**引擎自己**那句配对拒绝拦下（`2 layer inputs were allocated but only 0 clips
+  own them`），E14 红在门禁量出来的那句归属断言，E16（`+ offset` 写成 `- offset`）红在 `nest_check`
+  那条真实编译的孤儿拒绝（`clip top was allocated input -1 of 7 but no layer chain reads it`）。
 - **下一轮入口**：把渲染 DOM 那层从一次性度量变成能失败的常驻门禁（要先定口径：套件不许依赖本机
   浏览器可执行文件，所以要么随包一个 headless shell，要么明确它属于发布包检查那一层并写清）；
   以及逐帧换图代价、跟踪估旋转、DCI-P3、`lut3d` 浏览器预览、一条片段多遮罩、粘贴属性两万段规模、
