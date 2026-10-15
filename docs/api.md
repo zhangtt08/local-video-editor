@@ -3187,8 +3187,12 @@ Chromium 画出 30.0°／占比 0.0998，与同一档导出的 30.0°／0.0997 �
 HTTP 的每一帧与每个任务都从它出来）。调用它的是四个入口：渲染任务（`jobs.py`）、取帧
 （`media.render_frame`）、响度探针（`loudness.py`）与嵌套合成的子图（`render.py` 自己）。
 MCP 的 `preview_frame` 打到的是同一条 HTTP 路由，而它的 `raw()` 把路由交回的 `error` **原样**
-递成工具错误——所以 Agent 看到的码与人看到的是同一个，不需要为 MCP 另写一份词汇表。这三条接线
-（路由、渲染、原样递回）现在都由 `tests/planinput_check.py` 钉着，免得「函数对、调用点不对」。
+递成工具错误——码、句子与 `details` 都不换名字，所以 Agent 看到的码与人看到的是同一个，不需要为
+MCP 另写一份词汇表。这三条接线（路由、渲染、原样递回）现在都由 `tests/planinput_check.py` 钉着，
+免得「函数对、调用点不对」。装机那一份（1.168.0）实测还补了一句形状上的话：错误文本是
+`Error executing tool preview_frame: {"code": "NOT_FOUND", "details": {"project_id": "does-not-exist", …}}`
+——外面那层前缀是 MCP SDK 加的，不是本仓代码加的，因此客户端要解析的是消息**尾部那段 JSON**，
+不是整条文本；想让工具直接交回结构化错误，得在 tool 层换成 `isError` 的结果，那一档还没做。
 
 | 情形 | 码 | 句子给的出路 |
 | --- | --- | --- |

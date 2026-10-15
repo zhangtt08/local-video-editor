@@ -24,6 +24,10 @@
   HTTP 路由，`raw()` 在错误响应上把路由交回的 `error` 原样递成 `ToolError`——所以人不换码、Agent 也不换码，
   不需要第二份词汇表；四个编译入口（任务 `jobs.py`、取帧 `media.py`、响度探针 `loudness.py`、嵌套子图）
   也都由 `tests/planinput_check.py` 钉着。这一族正是 1.166 撞过的「函数对、调用点不对」。
+  **装机实测补一句**（`mcp_parity_1168.py` 打随包那份 1.168.0）：错误确实原样到了 Agent，但文本是
+  `Error executing tool preview_frame: {"code": "NOT_FOUND", …, "details": {"project_id": "does-not-exist"}}`
+  ——外面那层前缀是 MCP SDK 加的，不是本仓代码加的，所以 Agent 要解析的是消息**尾部那段 JSON**。
+  要让工具直接交回结构化错误，得在 tool 层换成 `isError` 的 `CallToolResult`；这一条记在下一轮入口。
 - **还欠的**：`clip_input()` 的分配顺序与层链发射顺序仍是两件事——现在两道拒绝（孤儿 + 重读）从图上
   把它夹住了，但真正的结构配对应当由 builder 自己记「这条链属于哪个 clip、挂的是哪一路 pad」，
   而不是事后扫文本；这一条继续挂在下一轮入口第 1 位。
