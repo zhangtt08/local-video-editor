@@ -28,13 +28,18 @@
   那一格（`KeyError`），而宿主没把回执正文打出来，所以连被拒的那句都还没看到。那是宿主的缺陷不是产品的
   缺陷（同一份接口在 `ui1166_host.py` 那一条路是通的），所以我没有让它继续往下跑再拿一个可疑的毫秒数回来；
   脚本留在证据店，下一轮第一件事是打印那份回执正文。
-- **清理那一刀落在中间产物，不落在门禁的输入上。** 删掉的：`build/`（PyInstaller 的 work 与 dist 拷贝，
-  153 MB）、`desktop/release/win-unpacked/`（600 MB）与两份 `.blockmap`、仓库里那份空的 `data/`
-  （量过：`projects`/`history`/`receipts` 三张表都是 0 行，不是人的工程）、`.ruff_cache/`。
-  留下的：两份 exe（软件本身）、`desktop/resources/bin`（验收量过的那三支）、`node_modules` 与 `.venv`
-  （59 份壳检要 esbuild，门禁要解释器）。**第一刀切错了一次**：`released_package_check.py` 读
-  `win-unpacked` 来比对装机文件，删掉它那条门禁立刻红——按事实重出 `npm run dist` 补回来，
-  并重新量了字节与哈希（这一族不是字节可复现的：便携版差 1 B、安装版差 4 B，所以引用的就是眼下盘上那份）。
+- **清理那一刀：哪些是杂物、哪些其实是门禁的输入。** 删掉的中间产物：`build/engine`（150 MB，PyInstaller 的
+  work 与 dist 拷贝）、`desktop/release/win-unpacked/`（600 MB）、两份 `.blockmap`、仓库里那份空的 `data/`
+  （量过：`projects`/`history`/`receipts` 三张表都是 0 行，不是人的工程）、`.ruff_cache/`，共 753 MB；
+  证据店那边另清 `edge-dump-profile`（14 MB）与 11 份 DOM dump HTML。
+  **第一刀切错了一处，而且是门禁自己报出来的**：`released_package_check.py` 要读 `win-unpacked` 比对装机
+  文件，删掉它之后那条 `exit=1` 点名那个目录。于是按事实重出 `npm run dist`（exit=0）把它的输入补回来，
+  装机那 15 + 5 项与 `released_package_check` 在重出的那份上再绿一遍，并重新量字节与哈希——这一族不是字节
+  可复现的（同源码重出，便携版差 1 B、安装版差 4 B），所以引用的永远是盘上现在那份。
+  重出之后仓库 **2271 MB**：`win-unpacked`（600 MB）与 `desktop/resources/bin`（391 MB，验收量过的三支 +
+  语音模型）、`node_modules`（577 MB，esbuild 与随包那两支 FFmpeg 的来源）、`.venv`（124 MB）都**不是**能删的
+  杂物——删了就是把能失败的门禁弄瞎。真正长驻少掉的仍是 `build/engine`、空 `data/`、`.ruff_cache` 与多余的
+  blockmap。
 - **门禁**：`tests/desktop_maskrot_check.ts` 把接线钉成八条（读参数、两个函数签名、坏写法早退、
   夹边那一句、调用点带两个实参、**不许**退回只递 id 那一版、`setEditorPanel`、坏 id 不动），
   另加「下单时机」一条按整块正则钉。引擎源码未动（只有 `APP_VERSION` 那一格抬档）。
