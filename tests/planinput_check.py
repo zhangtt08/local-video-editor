@@ -228,6 +228,22 @@ def main() -> None:
     else:
         print("   不误伤：这份 plan 里没有生成的那一路可量（画布不占输入），跳过")
 
+    # 这道门对 Agent 也是同一张码——三条接线都要钉住（1.166/1.168 撞过「函数对、调用点不对」）：
+    # MCP 的取帧工具打到那条被守着的路由、HTTP 那条路由真的走带校验的渲染、而 MCP 把路由交回的
+    # error **原样**递出去（不换了名字），Agent 看到的 code 与人在界面上看到的是同一个。
+    mcp_src = (ROOT / "src/agentcut/mcp_server.py").read_text(encoding="utf-8")
+    http_src = (ROOT / "src/agentcut/http_api.py").read_text(encoding="utf-8")
+    assert "/v1/projects/{project_id}/frame" in mcp_src, "MCP 的取帧没打到那条被守着的路由"
+    assert "require_media().render_frame" in http_src, "HTTP 的取帧路由不走那份渲染"
+    assert 'error = response.json()["error"]' in mcp_src, "MCP 把路由交回的错误码换了名字"
+
+    # 四个编译入口都在这道门后面：任务、取帧、响度探针、嵌套合成的子图
+    for rel in ("src/agentcut/jobs.py", "src/agentcut/media.py", "src/agentcut/loudness.py"):
+        assert "compile_render_plan(" in (ROOT / rel).read_text(encoding="utf-8"), rel
+    inner = SRC.count("compile_render_plan(") - SRC.count("def compile_render_plan(")
+    assert inner >= 1, "嵌套合成的子图不再走同一份编译，这道门就漏了一层"
+    print("   接线：任务 / 取帧 / 响度探针 / 子图四个入口都过这道门，MCP 原样递回同一个码")
+
     assert "validate_plan_inputs(plan)" in SRC, "编译收尾没调用那份结构检查"
     assert SRC.index("validate_plan_inputs(plan)") > SRC.index("def compile_render_plan("), \
         "调用点在编译函数之外"
