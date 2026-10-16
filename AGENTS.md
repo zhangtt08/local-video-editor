@@ -32,6 +32,11 @@
   `wip_1187_reverted_due_to_monitor_break.patch`，定位账在 `AgentCut-1.187-退回与定位账.md`。
   重做时的第一步不是改代码，是**先在一个能画出画面的页面里复现**那条失败，别再只看式子级断言——
   这一课已经付过一次：ruff、61 档壳层、`tsc`、`released_package_check`、121/121 套件全绿仍漏了。
+  **根因已定位（15:10）**：`Engine.request` 自己拼 `fetch(`${this.base}${path}`)`，而 1.187 那版把
+  `manifestUrl(this.baseUrl, …)`（绝对 URL）传了进去，于是前缀拼两次、请求必失败——监视器因此黑掉。
+  修法是拆两个函数：给 `Engine` 的是**相对**路径 `manifestPath(…)`，给 `Inspector` 那种裸 `fetch` 的
+  才是 `manifestUrl(base, …) = base + manifestPath(…)`；壳层检查要同时钉住「engine.ts 用 path 不用 url」，
+  否则这一类错还会再来一次。
   不是一行改动；遮罩族仍欠多遮罩堆叠、跟踪写进旋转后的盒；调色族仍欠 DCI-P3 与浏览器侧 `lut3d`。
 
 
