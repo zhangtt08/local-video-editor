@@ -1324,7 +1324,6 @@ export class Engine {
   attributePlan(projectId: string, clipId: string, body: Record<string, unknown>) {
     return this.request<{
       committed: boolean;
-      project: Record<string, unknown>;
       attribute_plan: AttributePlan;
     }>("POST", `/v1/projects/${projectId}/clips/${clipId}/attribute-plan`, body, 600000);
   }

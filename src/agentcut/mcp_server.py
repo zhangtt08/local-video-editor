@@ -425,6 +425,7 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         asks target by target and category by category — so a clip that cannot take one category
         comes back with its own code and sentence while the categories that do land are still
         returned. Submit `commands` with
+        The reply is the plan alone (1.180) — no whole-project echo. Submit `commands` with
         `timeline_edit` — one batch, one revision; undo returns the whole paste at once.
         """
         return await call(

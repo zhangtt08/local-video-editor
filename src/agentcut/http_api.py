@@ -1371,7 +1371,8 @@ def create_app(
         by target and category by category, so a clip that cannot take one category comes back with
         the reducer's own code and sentence while the categories that do land are still returned.
         Read-only: submit `commands` through
-        `/edits` to write them as one batch at one revision.
+        `/edits` to write them as one batch at one revision. The reply is the plan alone:
+        a read-only call must not hand back the whole project (12 MB at 20,000 clips).
         """
         root = projects.get(project_id)
         project = sequence_view(root, request.sequence_id)
@@ -1391,7 +1392,7 @@ def create_app(
             request.categories,
             request.sequence_id,
         )
-        return {"committed": False, "project": root.model_dump(), "attribute_plan": body}
+        return {"committed": False, "attribute_plan": body}
 
     @app.post("/v1/projects/{project_id}/tracks/{track_id}/fade-adopt", dependencies=auth)
     def fade_adopt_track(

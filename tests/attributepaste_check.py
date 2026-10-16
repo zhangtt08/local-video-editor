@@ -560,6 +560,9 @@ def http_suite() -> dict:
             assert asked.status_code == 200, asked.text
             body = asked.json()
             assert body["committed"] is False, "只读规划把 committed 说成写过了"
+            assert "project" not in body, (
+                "只读规划把整份工程代回来了：这一条不改状态，回执只该有那份计划"
+            )
             assert body["attribute_plan"]["commands"], "规划空手回来：链子那一段没排进命令"
             after = client.get(path).json()
             assert after["revision"] == revision, "只读路由涨了 revision"
