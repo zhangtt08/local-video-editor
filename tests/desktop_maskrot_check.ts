@@ -201,8 +201,13 @@ assert.ok(/export function landLinkedTick\(tick: string\): boolean \{/.test(stor
   "landLinkedTick 不在了（?tick= 没有落点）");
 assert.ok(storeSrc.includes("if (!project || !/^\\d+$/.test(tick)) return false;"),
   "认不出的 ?tick= 会往下走——播放头该一动不动");
-assert.ok(storeSrc.includes("playhead.set(Math.min(Number(tick), timelineEnd(project)));"),
-  "?tick= 不再夹到时间线末尾，越界的链接会把播放头丢到看不见的地方");
+// 1.172 那枚钉的是「夹到时间线末尾」，1.178 在同一条语句上加了整帧吸附——旧锚钉的是旧形状，
+// 一起改到新形状上（两件事一起钉：吸附 + 夹边），下面那枚反向锚继续管「不许直接落回播放头」。
+assert.ok(storeSrc.includes('playhead.set(Math.min(snapTo(project, "video", Number(tick)), timelineEnd(project)));'),
+  "?tick= 不再吸附整帧、或不再夹到时间线末尾（半帧的播放头让此刻的窗与画面差一帧，越界的会丢进看不见处）");
+// 1.178：吸附到整帧。1.177 在真页面上量到 ?tick=17640000 停在第 7.5 帧——引擎的逐片段不变量本来就按帧走。
+assert.ok(!storeSrc.includes("playhead.set(Math.min(Number(tick)"),
+  "深链的刻度又直接落回播放头（不再过那条唯一的吸附）");
 assert.ok(storeSrc.includes("focusLinkedClip(linkedClip, linkedTick, linkedPanel);"),
   "深链选中片段时没把 ?tick= 与 ?panel= 一起递过去");
 assert.ok(storeSrc.includes("if (!landLinkedPanel(panel)) setEditorPanel(\"inspect\");"),
@@ -275,8 +280,8 @@ assert.ok(!/view === "home" \|\| view === "editor"/.test(storeSrc),
   "restoreDeepLink 里还剩一条自己拼的视图名单");
 assert.ok(/landLinkedTick\(tick\);\s*\n\s*return true;/.test(storeSrc),
   "focusLinkedClip 收了 tick 却没把它递到落点（选中了、帧没停）");
-assert.ok(/playhead\.pause\(\);\s*\n\s*playhead\.set\(Math\.min\(Number\(tick\), timelineEnd\(project\)\)\);/.test(storeSrc),
-  "停帧之前没按下播放：一条只想看某一帧的链接会把时间线跑起来");
+assert.ok(/playhead\.pause\(\);[\s\S]{0,260}?playhead\.set\(Math\.min\(snapTo\(project, "video", Number\(tick\)\), timelineEnd\(project\)\)\);/.test(storeSrc),
+  "停帧之前没按下播放，或停的那一格没先吸附整帧再夹边（注释隔在两条写之间，所以这里按段找）");
 assert.ok(!storeSrc.includes("focusLinkedClip(linkedClip)"),
   "调用点又回到只递片段 id 那一版（?tick= 被丢了）");
 assert.ok(storeSrc.includes('setEditorPanel("inspect")'), "深链选中片段后没把右侧面板切到检查器");

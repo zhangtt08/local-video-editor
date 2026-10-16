@@ -1373,7 +1373,9 @@ export function landLinkedTick(tick: string): boolean {
   const project = state.project;
   if (!project || !/^\d+$/.test(tick)) return false;
   playhead.pause();
-  playhead.set(Math.min(Number(tick), timelineEnd(project)));
+  // 链接给的刻度先吸附到整帧再落：引擎的逐片段不变量按帧走，播放头停在半帧上时
+  // 「此刻这一窗/这一针」跟画面就差了一帧（1.177 在真页面上量到 ?tick=17640000 停在第 7.5 帧）。
+  playhead.set(Math.min(snapTo(project, "video", Number(tick)), timelineEnd(project)));
   return true;
 }
 
