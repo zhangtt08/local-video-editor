@@ -371,9 +371,39 @@ def create_app(
     ):
         return {"history": projects.history(project_id, limit, offset)}
 
-    @app.post("/v1/projects/{project_id}/edits", dependencies=auth, response_model=MutationResult)
-    def edit_project(project_id: Identifier, request: EditBatch, projects: Store):
-        return projects.mutate(project_id, request)
+    @app.post("/v1/projects/{project_id}/edits", dependencies=auth, response_model=None)
+    def edit_project(
+        project_id: Identifier,
+        request: EditBatch,
+        projects: Store,
+        receipt: str = Query(default="full"),
+    ):
+        """Apply one batch. `receipt=slim` answers with numbers instead of the whole project.
+
+        `full` is the default and is exactly what the desktop sends: a person's compositor state IS
+        the engine's answer, so the UI must not have to fetch it a second time. `slim` is for a
+        caller that already knows what it wrote and only needs the revision to keep its own
+        `expected_revision` chain going — on a project with tens of thousands of clips the echoed
+        project is the whole cost of the call.
+        """
+        if receipt not in {"full", "slim"}:
+            raise EditorError(
+                "INVALID_REQUEST",
+                "receipt is either 'full' (the project itself) or 'slim' (just the numbers)",
+                422,
+                receipt=receipt,
+            )
+        result = projects.mutate(project_id, request)
+        if receipt == "full":
+            return result
+        return {
+            "receipt": "slim",
+            "project_id": result.project.id,
+            "revision": result.project.revision,
+            "base_revision": result.base_revision,
+            "committed": result.committed,
+            "replayed": result.replayed,
+        }
 
     @app.post("/v1/projects/{project_id}/restore", dependencies=auth, response_model=MutationResult)
     def restore_project(project_id: Identifier, request: RestoreProject, projects: Store):

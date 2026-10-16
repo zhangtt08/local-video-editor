@@ -281,15 +281,25 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         return await call("GET", f"/v1/projects/{project_id}/clips/{clip_id}/sample{query}")
 
     @server.tool(annotations=write)
-    async def timeline_edit(project_id: Identifier, request: EditBatch) -> MutationResult:
+    async def timeline_edit(
+        project_id: Identifier, request: EditBatch, receipt: str = "full"
+    ) -> dict[str, Any]:
         """Atomically edit a timeline; dry_run returns a prospective snapshot without saving.
 
         `sequence_id` makes the clip and track ids of this batch mean the clips inside one nested
         composition, which is how a plan from `clip_silence`/`clip_reframe` is applied back.
+
+        `receipt="slim"` answers with `project_id`/`revision`/`committed`/`replayed` instead of the
+        whole project, which is all a caller needs to chain its next `expected_revision` on a large
+        project. The default stays the full project, which is what the desktop reads.
         """
-        return MutationResult.model_validate(
-            await call("POST", f"/v1/projects/{project_id}/edits", request.model_dump(mode="json"))
+        query = f"?receipt={quote(receipt, safe='')}" if receipt != "full" else ""
+        payload = await call(
+            "POST", f"/v1/projects/{project_id}/edits{query}", request.model_dump(mode="json")
         )
+        if receipt == "slim":
+            return payload
+        return MutationResult.model_validate(payload).model_dump(mode="json")
 
     @server.tool(annotations=read)
     async def clip_silence(

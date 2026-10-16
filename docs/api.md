@@ -203,6 +203,9 @@ preview-manifest 给出 mixed_track_ids 与每片段 transition.picture/sound/bl
 
 preview-manifest 有一条只读子集：`?clips=<id>`（可重复，一次最多 `capabilities.features.preview_manifest_clips_max`＝256 段）与 MCP `preview_manifest(clips=[…])` 只编译被点名的那些片段；`clips` 之外的键仍按整份工程给（`track_blend_modes`、`links`、`mixed_track_ids`、`revision`），不带 `clips` 的请求与 1.183 之前逐字节相同，桌面合成器发的就是这一条。未知段名回 404 `NOT_FOUND` 并在 `details.clip_ids` 点名，空白段名被 `Identifier` 的模式先拒（422），超过上限回 422 `INVALID_REQUEST` 带 `requested` 与 `limit`。筛发生在 `preview_manifest` 与 `transitions.envelopes` 内部，而 `outgoing` 那本索引读的是全部片段——被留下那段的淡尾住在邻段的 `transition_in` 里，不会因邻段没被点名而消失；`tests/previewsubset_check.py` 钉的就是这三条加上「子集条目逐字节等于整份里的同一条」。两万段工程上整份实测 1,274 ms / 36.54 MB，点名 8 段 17 ms / 0.01 MB。
 
+`POST /v1/projects/{id}/edits` 多一种回执形状：`?receipt=slim`（MCP `timeline_edit` 的同名参数）只交回 `receipt`、`project_id`、`revision`、`base_revision`、`committed`、`replayed` 这六个数，不再代带整份工程；默认仍是 `full`，也就是桌面客户端要的那份权威状态。`revision` 就是写完之后的那一版，可以直接当下一笔的 `expected_revision`；`dry_run` 与幂等重放在两种形状下语义一致（`committed` 假／`replayed` 真，工程不涨）。`receipt` 取别的值回 422 `INVALID_REQUEST`，句子里写着 `full` 与 `slim` 两种合法取值，被拒那一笔不留版本。开关由 `capabilities.features.edit_receipt_slim` 下发。200 段工程上实测整份 171307 字节 → slim 142 字节；`tests/editreceipt_check.py` 钉这些，随包引擎自己复测过同样的数。
+
+
 
 ## 媒体与导出接口
 
