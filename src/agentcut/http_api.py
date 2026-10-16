@@ -36,8 +36,8 @@ from .bundles import MAX_BUNDLE_BYTES, export_bundle, import_bundle
 from .colortags import detect_space
 from .contracts import (
     APP_VERSION,
+    CLIP_SUBSET_LIMIT,
     COLOR_SPACES,
-    PREVIEW_MANIFEST_CLIP_LIMIT,
     TIMEBASE,
     TRACK_FRAMES_MIN,
     AttributePlanRequest,
@@ -2004,6 +2004,60 @@ def create_app(
                 "STORAGE_UNAVAILABLE", "bundle upload failed; retry with the same request_id", 503
             ) from None
 
+    @app.get("/v1/projects/{project_id}/clips", dependencies=auth)
+    def read_clips(
+        project_id: Identifier,
+        projects: Store,
+        clips: list[Identifier] | None = Query(default=None),
+        revision: Revision | None = None,
+        sequence_id: Identifier | None = None,
+    ):
+        """Read just the named clips' records, instead of the whole project document.
+
+        `GET /v1/projects/{id}` ships the document (tens of megabytes on a large timeline), which is
+        what the compositor needs and nothing else does. Every record here is the same object that
+        document holds — this route adds no judgment, only a narrower read. `clips` is required:
+        a caller that wants everything should use the project route, and saying so beats returning
+        a 12 MB answer nobody asked for.
+        """
+        from .timeline import sequence_view
+
+        project = sequence_view(projects.get(project_id, revision), sequence_id)
+        if not clips:
+            raise EditorError(
+                "INVALID_REQUEST",
+                f"clips is required: name the ids to read, or GET /v1/projects/{project_id}"
+                " for the whole document",
+                422,
+                requested=len(clips or []),
+            )
+        if len(clips) > CLIP_SUBSET_LIMIT:
+            raise EditorError(
+                "INVALID_REQUEST",
+                f"clips takes at most {CLIP_SUBSET_LIMIT} ids per request; got {len(clips)}."
+                " Split the list, or read the whole project document",
+                422,
+                requested=len(clips),
+                limit=CLIP_SUBSET_LIMIT,
+            )
+        wanted = list(dict.fromkeys(clips))
+        missing = [clip_id for clip_id in wanted if clip_id not in project.clips]
+        if missing:
+            raise EditorError(
+                "NOT_FOUND",
+                "clip is not in this project",
+                404,
+                clip_ids=",".join(missing),
+            )
+        return {
+            "project_id": project.id,
+            "revision": project.revision,
+            "sequence_id": sequence_id,
+            "clips": {
+                clip_id: project.clips[clip_id].model_dump(mode="json") for clip_id in wanted
+            },
+        }
+
     @app.get("/v1/projects/{project_id}/preview-manifest", dependencies=auth)
     def preview_plan(
         project_id: Identifier,
@@ -2021,14 +2075,14 @@ def create_app(
         project = projects.get(project_id, revision)
         if clips is None:
             return preview_manifest(project, sequence_id)
-        if len(clips) > PREVIEW_MANIFEST_CLIP_LIMIT:
+        if len(clips) > CLIP_SUBSET_LIMIT:
             raise EditorError(
                 "INVALID_REQUEST",
-                f"clips takes at most {PREVIEW_MANIFEST_CLIP_LIMIT} ids per request;"
+                f"clips takes at most {CLIP_SUBSET_LIMIT} ids per request;"
                 f" got {len(clips)}. Split the list, or omit it for the whole project",
                 422,
                 requested=len(clips),
-                limit=PREVIEW_MANIFEST_CLIP_LIMIT,
+                limit=CLIP_SUBSET_LIMIT,
             )
         wanted = list(dict.fromkeys(clips))
         missing = [clip_id for clip_id in wanted if clip_id not in project.clips]

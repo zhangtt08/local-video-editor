@@ -33,7 +33,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.185.0"
+APP_VERSION = "1.186.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 
@@ -1892,9 +1892,10 @@ class MaskVertex(Contract):
 MASK_VERTEX_LIMIT = 64
 
 
-# 1.183: how many clip ids one preview-manifest request may name. The cap is the query string's
-# own budget (these ids ride a GET), not a judgment about how many clips matter at once.
-PREVIEW_MANIFEST_CLIP_LIMIT = 256
+# How many clip ids one id-named read may carry (`preview-manifest` since 1.183, `clips` since
+# 1.186). The cap is the query string's own budget — these ids ride a GET — not a judgment about
+# how many clips matter at once. One number because one physics: the same URL, the same limit.
+CLIP_SUBSET_LIMIT = 256
 
 PathVertices = Annotated[list[MaskVertex], Field(min_length=3, max_length=MASK_VERTEX_LIMIT)]
 
@@ -6603,7 +6604,8 @@ def capabilities(
             "composite_frames": media_ready,
 
             "project_bundles": media_ready,
-            "preview_manifest_clips_max": PREVIEW_MANIFEST_CLIP_LIMIT,
+            "preview_manifest_clips_max": CLIP_SUBSET_LIMIT,
+            "project_clips_max": CLIP_SUBSET_LIMIT,
             "edit_receipt_slim": True,
 
             "render": media_ready,

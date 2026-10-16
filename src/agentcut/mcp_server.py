@@ -166,6 +166,27 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         return await call("GET", f"/v1/projects/{project_id}/history?limit={limit}&offset={offset}")
 
     @server.tool(annotations=read)
+    async def project_clips(
+        project_id: Identifier,
+        clips: list[str],
+        revision: Revision | None = None,
+        sequence_id: Identifier | None = None,
+    ) -> dict:
+        """Read the records of just the named clips, without carrying the whole project document.
+
+        `GET /v1/projects/{id}` ships tens of megabytes on a large timeline; this answers with the
+        same clip objects that document holds, and nothing else. `clips` is required (up to
+        `capabilities.features.project_clips_max` per call) — use `project_get` when the whole
+        document is really wanted. Unknown ids are refused by name.
+        """
+        params = [f"clips={quote(clip_id, safe='')}" for clip_id in clips]
+        if sequence_id:
+            params.append(f"sequence_id={quote(sequence_id, safe='')}")
+        if revision is not None:
+            params.append(f"revision={revision}")
+        return await call("GET", f"/v1/projects/{project_id}/clips?" + "&".join(params))
+
+    @server.tool(annotations=read)
     async def preview_manifest(
         project_id: Identifier,
         revision: Revision | None = None,

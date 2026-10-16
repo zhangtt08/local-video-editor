@@ -27,7 +27,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from agentcut.animation import preview_manifest  # noqa: E402
 from agentcut.contracts import (  # noqa: E402
-    PREVIEW_MANIFEST_CLIP_LIMIT,
+    CLIP_SUBSET_LIMIT,
     Clip,
     CreateProject,
     EditBatch,
@@ -149,11 +149,11 @@ def over_http(project_id: str, client: TestClient) -> None:
     assert blank.json()["error"]["code"] == "INVALID_REQUEST", blank.json()
     assert "clips" in json.dumps(blank.json()), blank.json()
 
-    too_many = client.get(path, params=[("clips", "a")] * (PREVIEW_MANIFEST_CLIP_LIMIT + 1))
+    too_many = client.get(path, params=[("clips", "a")] * (CLIP_SUBSET_LIMIT + 1))
     assert too_many.status_code == 422, too_many.json()
     body = too_many.json()["error"]
     assert body["code"] == "INVALID_REQUEST" and body["details"]["limit"] == 256, body
-    assert body["details"]["requested"] == PREVIEW_MANIFEST_CLIP_LIMIT + 1, body
+    assert body["details"]["requested"] == CLIP_SUBSET_LIMIT + 1, body
     # 拒了不能顺手把正常那条路也堵住。
     assert client.get(path, params=[("clips", "a")]).json()["clips"] == {
         "a": full["clips"]["a"]
