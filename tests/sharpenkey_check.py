@@ -8,7 +8,7 @@
 量什么：
 
 * 窗本身：两段曲线共用一组断点（任一个变了才换窗）、首尾相接、覆盖整段、不越过上限、每段读的是那段
-  中点的权威 `sample`；只动强度时半径原样跟着静态旋钮走；一段曲线都没有时一段窗都不排。
+  起点的权威 `sample`；只动强度时半径原样跟着静态旋钮走；一段曲线都没有时一段窗都不排。
 * 两端同源：`preview_manifest` 交出的 windows 逐条等于阶梯，id 由那一份内容地址算出；强度为 0
   的那一段在浏览器里是 `none`，因为导出压根不为它串阶段。
 * 编译串：N 段非零窗就是 N 对带 `enable` 的 `gblur` 与 `blend`，`split` 只有一处且扇出 N+1；
@@ -103,11 +103,11 @@ def schedule_suite() -> None:
     # 只动强度时，半径就是那颗静态旋钮，每一窗都读同一个数。
     assert {value[1] for value in pairs(plan)} == {THIN}, "[sk-radius-static] pairs(plan)"
     for window in plan:
-        middle = (window["from_ticks"] + window["to_ticks"]) // 2
+        start = window["from_ticks"]
         assert window["value"] == (
-            round(sample(clip, "sharpen", middle), 9),
-            round(sample(clip, "sharpen_radius", middle), 9),
-        ), f"[sk-midpoint] 这段没取中点的数：{window}"
+            round(sample(clip, "sharpen", start), 9),
+            round(sample(clip, "sharpen_radius", start), 9),
+        ), f"[sk-start] 这段没取它起点那一格的数：{window}"
     step = plan[1]["from_ticks"] - plan[0]["from_ticks"]
     assert step % FRAME == 0 and step >= FRAME, f"段边界必须落在整帧上：{step}"
     # 八段的上限是真的在收：12 帧的片段这里两帧一窗，而柔焦（24 段）一帧一窗。
