@@ -78,6 +78,80 @@ assert.deepEqual(monitorClipIds(seen, 9 * F), [], "空隙里交回空集合，�
 assert.ok(!monitorClipIds(seen, 2 * F).includes("secret"), "隐藏轨上的段不画，也不该点名");
 assert.ok(!monitorClipIds(seen, 2 * F).includes("quiet"), "静音轨上的段不出声，也不该点名");
 
+// 1.188：索引版与一份独立的暴力扫必须在**每一格**上答同一个数组。
+// 为什么要在检查里再写一份扫法：这一档的判断是「哪几段这一格会被画出来」，而产品那份现在走了
+// 二分＋前缀最大值；没有对照的话，「快」与「算错了」长得一模一样。转场允许同轨两段占住同一格
+// （`CLIP_OVERLAP` 那句要的是显式转场，不是不许重叠），所以候选不止一条——只取「起点最大的那条」
+// 那种写法会悄悄少画一层，而少画一层在画面上就是「这段没动画」。
+const bruteForce = (project: ProjectArg, ticks: number): string[] => {
+  const rows: { clip: { id: string; position_ticks: number; duration_ticks: number }; track: string }[] = [];
+  const byId = new Map<string, { kind: string; hidden: boolean; muted: boolean }>();
+  for (const track of Object.values(project.tracks)) byId.set(track.id, track);
+  for (const clip of Object.values(project.clips)) {
+    const track = byId.get(clip.track_id);
+    if (!track || (track.kind !== "video" && track.kind !== "audio")) continue;
+    if (track.kind === "video" ? track.hidden : track.muted) continue;
+    if (ticks >= clip.position_ticks && ticks < clip.position_ticks + clip.duration_ticks) {
+      rows.push({ clip, track: clip.track_id });
+    }
+  }
+  const order = Object.values(project.tracks).map((track) => track.id);
+  rows.sort((a, b) => order.indexOf(a.track) - order.indexOf(b.track) || a.clip.position_ticks - b.clip.position_ticks);
+  return rows.map((row) => row.clip.id);
+};
+
+const build = (seed: number, tracks: number, clips: number, overlap: boolean): ProjectArg => {
+  let state = seed;
+  const next = (limit: number) => {
+    state = (state * 1103515245 + 12345) & 0x7fffffff;
+    return state % limit;
+  };
+  const rows: ProjectArg = {
+    tracks: Array.from({ length: tracks }, (_, index) => ({
+      id: `t${index}`,
+      kind: index % 2 ? "audio" : "video",
+      hidden: index === 2,
+      muted: index === 3,
+    })),
+    clips: {},
+  };
+  for (let index = 0; index < clips; index += 1) {
+    const track = `t${index % tracks}`;
+    const id = `k${index}`;
+    (rows.clips as Record<string, unknown>)[id] = {
+      id,
+      track_id: track,
+      position_ticks: next(400) * F,
+      duration_ticks: (1 + next(6)) * F,
+    };
+  }
+  if (overlap) {
+    // 同一条轨道上两段同时占住第 10 格：转场那一段的重叠。
+    (rows.clips as Record<string, unknown>).wide = { id: "wide", track_id: "t0", position_ticks: 4 * F, duration_ticks: 10 * F };
+    (rows.clips as Record<string, unknown>).narrow = { id: "narrow", track_id: "t0", position_ticks: 9 * F, duration_ticks: 2 * F };
+  }
+  return rows;
+};
+
+for (const [seed, tracks, clips, overlap] of [[7, 1, 200, false], [11, 4, 120, true], [23, 6, 400, true]] as const) {
+  const model = build(seed, tracks, clips, overlap);
+  for (let tick = -2; tick < 420; tick += 1) {
+    const asked = tick * F;
+    assert.deepEqual(
+      monitorClipIds(model, asked),
+      bruteForce(model, asked),
+      `种子 ${seed} 的第 ${tick} 格：索引与暴力扫分家了`
+    );
+  }
+}
+
+const overlapped = build(3, 2, 6, true);
+assert.deepEqual(
+  monitorClipIds(overlapped, 10 * F).filter((id) => id === "wide" || id === "narrow").sort(),
+  ["narrow", "wide"],
+  "转场那一格里两段都得点名（只留一条就是少画一层）"
+);
+
 const nullSet = manifestUrl(BASE, "p1", 3, null, null);
 assert.ok(!nullSet.includes("clips="), "null 才是「没点名＝整份」");
 assert.equal(

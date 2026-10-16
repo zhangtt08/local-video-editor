@@ -56,16 +56,98 @@ export const manifestUrl = (
 /**
  * 播放头那一格里真的会被画出来的那些段：画面轨要没隐藏、声音轨要没静音——与 `Preview.tsx` 里那两个
  * 循环同一判据，判断只写这一处。空隙里什么都没有时交回空集合（式子会把它说成 `no_clips=1`）。
+ *
+ * 顺序：轨道按工程里那份 `tracks` 的顺序，同一条轨道内按起点。这个顺序只影响 query 里段名的先后，
+ * 引擎按集合处理（`manifestPath` 去重），所以它不是语义，只是可复现。
+ *
+ * 每一段在每一格里都会被画一遍，所以这里不能是「每条轨道 × 每个片段」的扫描：两万段一条轨道实测
+ * 一次 4.2 ms（一帧预算的 25%），八条轨道一次 33.9 ms（两帧多）。改成按轨道分桶 + 起点排序 +
+ * 「最远伸到哪」的前缀最大值，一次问话只二分到那一小段候选上（`tests/desktop_linksubset_check.ts`
+ * 拿一份逐段暴力扫出来的表与它对每一格，含转场重叠那一格）。索引挂在 `project` 对象身份上，
+ * 与 `mergePlans` 用的是同一条假设：换一版工程就是新对象，整个重来。
  */
+const indexCache = new WeakMap<MonitorProject, Map<string, Bucket>>();
+
+type Bucket = {
+  /** 起点，升序。 */
+  start: number[];
+  /** 与 `start` 等长的前缀最大值：到这里为止，哪一段最远伸到哪个刻度。 */
+  reach: number[];
+  /** 与上面两条一一对应的段。 */
+  clip: MonitorClip[];
+};
+
+const firstAbove = (values: number[], limit: number) => {
+  // 第一条 > limit 的下标；全都不大于就交回长度。
+  let low = 0;
+  let high = values.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (values[mid] > limit) high = mid;
+    else low = mid + 1;
+  }
+  return low;
+};
+
+const lastAtMost = (values: number[], limit: number) => {
+  // 最后一条 <= limit 的下标；一条都不满足就交回 -1。
+  let low = 0;
+  let high = values.length - 1;
+  let found = -1;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    if (values[mid] <= limit) {
+      found = mid;
+      low = mid + 1;
+    } else high = mid - 1;
+  }
+  return found;
+};
+
+const bucketsOf = (project: MonitorProject): Map<string, Bucket> => {
+  const cached = indexCache.get(project);
+  if (cached) return cached;
+  const rows = new Map<string, { clip: MonitorClip; end: number }[]>();
+  for (const clip of Object.values(project.clips)) {
+    const list = rows.get(clip.track_id);
+    const row = { clip, end: clip.position_ticks + clip.duration_ticks };
+    if (list) list.push(row);
+    else rows.set(clip.track_id, [row]);
+  }
+  const built = new Map<string, Bucket>();
+  for (const [trackId, list] of rows) {
+    list.sort((a, b) => a.clip.position_ticks - b.clip.position_ticks);
+    const start: number[] = [];
+    const reach: number[] = [];
+    const clip: MonitorClip[] = [];
+    let far = -1;
+    for (const row of list) {
+      start.push(row.clip.position_ticks);
+      clip.push(row.clip);
+      far = row.end > far ? row.end : far;
+      reach.push(far);
+    }
+    built.set(trackId, { start, reach, clip });
+  }
+  indexCache.set(project, built);
+  return built;
+};
+
 export const monitorClipIds = (project: MonitorProject, ticks: number): string[] => {
+  const buckets = bucketsOf(project);
   const wanted: string[] = [];
   for (const track of Object.values(project.tracks)) {
     if (track.kind !== "video" && track.kind !== "audio") continue;
     if (track.kind === "video" ? track.hidden : track.muted) continue;
-    for (const clip of Object.values(project.clips)) {
-      if (clip.track_id !== track.id) continue;
-      if (ticks < clip.position_ticks || ticks >= clip.position_ticks + clip.duration_ticks) continue;
-      wanted.push(clip.id);
+    const bucket = buckets.get(track.id);
+    if (!bucket) continue;
+    // 落在这那一格的段一定满足「起点 <= 这一格」且「结束 > 这一格」；前者给上界，后者靠前缀最大值
+    // 给下界——两头一夹就是候选，转场那一小段重叠（同轨两段同时占住这一格）也不会被少算。
+    const from = firstAbove(bucket.reach, ticks);
+    const to = lastAtMost(bucket.start, ticks);
+    for (let index = from; index <= to; index += 1) {
+      const clip = bucket.clip[index];
+      if (ticks < clip.position_ticks + clip.duration_ticks) wanted.push(clip.id);
     }
   }
   return wanted;
