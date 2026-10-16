@@ -912,6 +912,10 @@ table.table tr.current td { background: var(--accent-soft); }
 .mask-vertex { fill: #101418; stroke: var(--accent-deep); stroke-width: 1.4; vector-effect: non-scaling-stroke; cursor: grab; }
 .mask-vertex.active { fill: var(--accent-deep); }
 .mask-handle-point { fill: rgba(103,222,211,.85); stroke: #0d1114; stroke-width: .8; vector-effect: non-scaling-stroke; cursor: grab; }
+/* 旋转手柄：一根连到上边中点的细杆 + 一颗与缩放角同大但不同色的把， pointer-events 只给把本身。 */
+.mask-rotate-stem { stroke: rgba(245,213,138,.55); stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
+.mask-handle.rotate-handle { fill: #8fd3a8; cursor: grab; }
+.mask-handle.rotate-handle:active { cursor: grabbing; }
 .mask-tangent { stroke: rgba(103,222,211,.55); stroke-width: 1; stroke-dasharray: 2 2; vector-effect: non-scaling-stroke; pointer-events: none; }
 
 /* Keyframed mask geometry: the engine issues these four numbers, WAAPI interpolates them with the

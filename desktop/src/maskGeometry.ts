@@ -23,8 +23,7 @@ export const rotatedCorners = (mask: ShapeMask, k: number, angle?: number) => {
     .join(", ");
 };
 
-/**
- * 播放头落在哪一窗，就画哪一窗的那张图。
+/** 播放头落在哪一窗，就画哪一窗的那张图。
  *
  * 阶梯是引擎算的（`animation.mask_rotation_schedule`），这里只按 `to_ticks` 找格子——
  * 不插值、不自创中间态：界面在两窗之间画出的角度，就是导出在那一刻用的角度。
@@ -35,4 +34,23 @@ export const rotationWindowAt = <T extends { from_ticks: number; to_ticks: numbe
 ): T | null => {
   if (!windows.length) return null;
   return windows.find((window) => localTicks < window.to_ticks) ?? windows[windows.length - 1];
+};
+
+/**
+ * 转过角度的盒，四条边的中点（上、右、下、左）在 0..100 画框里的位置，外加「上」那条向外法线。
+ *
+ * 换算与 `rotatedCorners` 同一套——参考线画的那一圈和手柄要落的那一点必须来自同一个盒，否则手柄
+ * 抓在看见的边外面。这里只做落位，不做判断：能不能转、转到哪一格，仍然只在引擎与 store 那一头。
+ */
+export const rotatedEdgeMids = (mask: ShapeMask, k: number, angle?: number) => {
+  const rad = (angle ?? mask.rotation ?? 0) * Math.PI / 180;
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  const place = (fx: number, fy: number) => ({
+    x: mask.center_x + fx * cos - fy * k * sin,
+    y: mask.center_y + fx * sin / k + fy * cos,
+  });
+  const hw = mask.width / 2, hh = mask.height / 2;
+  const top = place(0, -hh), right = place(hw, 0), bottom = place(0, hh), left = place(-hw, 0);
+  const dx = top.x - mask.center_x, dy = top.y - mask.center_y, len = Math.hypot(dx, dy) || 1;
+  return { top, right, bottom, left, out: { x: dx / len, y: dy / len } };
 };

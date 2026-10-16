@@ -109,7 +109,8 @@ assert.equal(rotationWindowAt([], 5), null, "没有窗表时不许猜一个角�
 
 // ③ 接线：走的是引擎那张等比图，界面自己不再算角度
 const picture = read("desktop/src/views/MaskPicture.tsx");
-assert.ok(picture.includes('import { rotatedCorners, rotationWindowAt } from "../maskGeometry"'), "向导没读那份几何");
+assert.ok(picture.includes('import { rotatedCorners, rotatedEdgeMids, rotationWindowAt } from "../maskGeometry"'),
+  "向导没读那份几何（角度落位只许有一处实现：参考线、窗表、那颗旋转手柄同出一源）");
 assert.ok(picture.includes('const spun = draft ? null : rotation ? rotationWindowAt(rotation, local) : null'),
   "向导没按播放头去引擎那份窗表里取此刻那一窗");
 assert.ok(picture.includes("Boolean(mask?.rotation) || Boolean(spun)"), "有没有转过角度只看了一头");
@@ -172,7 +173,12 @@ assert.ok(engine.includes("mask_rotation_windows?: MaskRotationWindow[] | null")
 assert.ok(engine.includes("mask_rotation: number"), "采样值里没有这一格，曲线编辑器就成了瞎子");
 assert.ok(!/MASK_VARIABLE[^=]*=\s*\{[^}]*rotation/.test(picture), "角度被做成了一个 CSS 变量");
 const store = read("desktop/src/store.ts");
-assert.ok(!store.includes("mask_rotation"), "角度进了逐帧补间那一路——它该换图，不该动变量");
+// 这条以前写得粗（store.ts 里连 `mask_rotation` 这个名字都不许出现），它真正守的是两件事：
+// 角度不能被做成逐帧补间的 CSS 变量，界面这边也不能自己算角度。1.177 让「拖手柄」和别的盒属性
+// 一样走同一条拖动规则（已打针就写播放头那一帧），于是那个名字必须出现在表里——所以按本意收窄，
+// 而不是把规则废掉：逐帧补间与自算角度各自钉一条（上面那条 MASK_VARIABLE 的钉法原样留着）。
+assert.ok(!store.includes("--mask-rotation"), "角度进了逐帧补间那一路——它该换图，不该动变量");
+assert.ok(!/Math\.(atan2?|cos|sin)\(/.test(store), "store 自己开始算角度了（角度的数只从引擎那张表来）");
 assert.ok(engine.includes("rotation?: number"), "ShapeMask 没带上角度");
 const preview = read("desktop/src/views/Preview.tsx");
 assert.ok(preview.includes('rotation={plan?.mask_rotation_windows}'), "预览没把那份阶梯交给向导");
@@ -235,6 +241,31 @@ assert.ok(/export function openEditorPanel\(editorPanel: AppState\["editorPanel"
   "openEditorPanel 不在了——人点「导出」那一个意图没有唯一的实现");
 assert.ok(/else if \(linkedView\) \{\s*set\(\{ view: linkedView \}\);/.test(storeSrc),
   "链接只点名视图（不带工程）时不再切视图");
+// 1.177：画面上那颗旋转手柄。角度这一格以前只有检查器里的数字框能改，AE 与剪映的落笔都在画面上。
+const pictureSrc = read("desktop/src/views/MaskPicture.tsx");
+const geometrySrc = read("desktop/src/maskGeometry.ts");
+const stylesSrc = read("desktop/src/styles.css");
+assert.ok(pictureSrc.includes("onPointerDown={(e) => begin(e, { rotate: true })}"),
+  "画面上那颗旋转手柄不在了（角度只能在数字框里改）");
+assert.ok(pictureSrc.includes("旋转遮罩（此刻") && pictureSrc.includes(".toFixed(1)}°）"),
+  "旋转手柄没有说清此刻角度的无障碍名");
+assert.ok(pictureSrc.includes("if (gesture.rotate) {"), "proposed 里不认 rotate 这一笔（按下拖动都不转）");
+assert.ok(pictureSrc.includes("angle0: target.rotate ? angleOf(event) ?? undefined : undefined"),
+  "按下时没记住起始那个屏幕角（一转就跳到指针上）");
+assert.ok(pictureSrc.includes("Math.atan2(px, -py)"), "屏幕角被算成了画框角（那张框是拉伸的）");
+assert.ok(pictureSrc.includes('if (disabled || !["ArrowLeft", "ArrowRight"].includes(e.key)) return;'),
+  "那颗手柄只有鼠标这一只手（键盘该有 ±1° / Shift ±15° 的孪生）");
+assert.ok(pictureSrc.includes("const rotationLimit = app.caps?.limits?.mask_rotation_limit ?? FALLBACK_ROTATION_LIMIT;"),
+  "手柄自己带上角度上限（上限只由 capabilities 下发）");
+assert.ok(pictureSrc.includes('canRotate = Boolean(mask && mask.shape !== "path" && app.caps?.features?.mask_rotation)'),
+  "轮廓遮罩或未报开关的引擎那头还在摆这颗必被拒的手柄");
+assert.ok(geometrySrc.includes("export const rotatedEdgeMids"),
+  "边中点的落位没有唯一一处实现（手柄与参考线会各算各的盒）");
+assert.ok(pictureSrc.includes("const body = spun ? { ...mask, width: spun.width, height: spun.height } : mask;"),
+  "有窗表时手柄落在了基准盒上，而不是此刻看见的那一窗的盒");
+assert.ok(storeSrc.includes('["mask_rotation", "rotation"],'),
+  "拖旋转这一笔不再走「已打针就写播放头那一帧」那一条规则（为角度另写一套剪辑规则）");
+assert.ok(stylesSrc.includes(".mask-handle.rotate-handle"), "那颗手柄没有自己的样式（看不见也抓不着）");
 const titlebarSrc = read("desktop/src/TitleBar.tsx");
 assert.ok(titlebarSrc.includes('onClick={() => openEditorPanel("export")}'),
   "标题栏那颗「导出」不再走那一个组合意图（切面板与跳视图分开写就漏一半）");

@@ -3,7 +3,7 @@ import type { Clip, Curve, MaskProperty, MaskRotationWindow, MaskShapeWindow, Ma
 import { TIMEBASE } from "../time";
 import { appInfo, commitMaskEdit, moveMaskCentre, playhead, recordMaskShape, setClipMask, setMaskEditing, useApp, usePlay } from "../store";
 import { asCorner, asSmooth, nearestEdge, withoutVertex, withVertex } from "../maskOutline";
-import { rotatedCorners, rotationWindowAt } from "../maskGeometry";
+import { rotatedCorners, rotatedEdgeMids, rotationWindowAt } from "../maskGeometry";
 import { morphArmed, outlineAt, shapeVariables, shapeWindowAt, shapeWindowIndex } from "../maskShape";
 
 const CORNERS = [[-1,-1,"左上"],[1,-1,"右上"],[-1,1,"左下"],[1,1,"右下"]] as const;
@@ -15,11 +15,15 @@ const clamp = (value: number, min: number, max: number) => Math.max(min, Math.mi
 // The engine publishes the real cap through capabilities; this only covers the first paint
 // before that payload arrives, and must never be raised on its own.
 const FALLBACK_VERTEX_LIMIT = 64;
+const FALLBACK_ROTATION_LIMIT = 360;
 
 type Gesture = {
   mask: ShapeMask; x: number; y: number;
   corner: readonly [number, number] | null;
   vertex?: number; handle?: "in" | "out"; outline?: boolean;
+  // 旋转手柄：起始那一刻指针相对盒心的屏幕角，写下来才做得出「转了多少度」的差值。
+  // 屏幕角不是画框角——画框按画面非均匀拉伸，直接拿 0..1 的坐标算 atan2 出来的不是人转的那一下。
+  rotate?: boolean; angle0?: number;
   projectId: string; revision: number; pointerId: number; element: SVGElement; moved: boolean;
   captured: boolean;
 };
@@ -170,6 +174,17 @@ export function MaskPicture({ clip, image, children, editable = true, animation,
     const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
     return { x: point.x / 100, y: point.y / 100 };
   };
+  // 指针相对盒心的**屏幕角**：0 度指向屏幕上，顺时针为正——与引擎那一格的读数同一个方向。
+  // 必须先把画框坐标乘回各自那一路的像素比例：0..100 的框是拉伸到画面的，直接 atan2 会量出
+  // 另一个角（1.165 烘那张等比图时量的就是这件事）。
+  const angleOf = (event: {clientX: number; clientY: number}) => {
+    const matrix = svg.current?.getScreenCTM(); const box = mask;
+    if (!matrix || !box) return null;
+    // 屏幕像素差：先按各自的 a/d 落到像素，再算角度。除回去 user 单位就又回到那张拉伸的框里了。
+    const px = event.clientX - (matrix.a * box.center_x * 100 + matrix.e);
+    const py = event.clientY - (matrix.d * box.center_y * 100 + matrix.f);
+    return Math.atan2(px, -py) * 180 / Math.PI;
+  };
   const proposed = (event: PointerEvent<SVGElement>) => {
     const gesture = drag.current!; const point = locate(event); if (!point) return gesture.mask;
     const dx = point.x - gesture.x, dy = point.y - gesture.y;
@@ -199,6 +214,16 @@ export function MaskPicture({ clip, image, children, editable = true, animation,
         : { ...current, x: clamp(point.x, 0, 1), y: clamp(point.y, 0, 1) };
       return { ...gesture.mask, vertices: list.map((entry, index) => index === gesture.vertex ? next : entry) };
     }
+    if (gesture.rotate) {
+      const angle = angleOf(event);
+      if (angle === null || gesture.angle0 === undefined) return gesture.mask;
+      let delta = angle - gesture.angle0;
+      if (delta > 180) delta -= 360; else if (delta < -180) delta += 360;
+      if (Math.abs(delta) > 0.5) gesture.moved = true;
+      // 落笔只动角度：中心与两条边各归自己的曲线，转过的盒能不能同时动尺寸由引擎那把开关说了算，
+      // 这里不替它决定。夹边用的是下发的那个数，界面不自带上限（拔过界只会让引擎拒一整笔）。
+      return { ...gesture.mask, rotation: Math.round(clamp((gesture.mask.rotation ?? 0) + delta, -rotationLimit, rotationLimit) * 10) / 10 };
+    }
     if (!gesture.corner) return { ...gesture.mask, center_x: clamp(gesture.mask.center_x + dx,0,1), center_y: clamp(gesture.mask.center_y + dy,0,1) };
     const [sideX,sideY] = gesture.corner;
     const anchorX = gesture.mask.center_x - sideX * gesture.mask.width / 2, anchorY = gesture.mask.center_y - sideY * gesture.mask.height / 2;
@@ -211,7 +236,9 @@ export function MaskPicture({ clip, image, children, editable = true, animation,
     const element = event.currentTarget;
     let captured = true;
     try { element.setPointerCapture(event.pointerId); } catch { captured = false; }
-    drag.current = { mask, ...point, corner: null, ...target, projectId: app.project.id, revision: app.project.revision, pointerId: event.pointerId, element, moved: false, captured } as Gesture;
+    drag.current = { mask, ...point, corner: null, ...target,
+      angle0: target.rotate ? angleOf(event) ?? undefined : undefined,
+      projectId: app.project.id, revision: app.project.revision, pointerId: event.pointerId, element, moved: false, captured } as Gesture;
     if (target.vertex !== undefined) setActive(target.vertex);
   };
   const owns = (event: PointerEvent<SVGElement>) => {
@@ -231,6 +258,10 @@ export function MaskPicture({ clip, image, children, editable = true, animation,
   // The cap comes from the engine and the three vertex ops say why they are dead, so a click is never
   // swallowed: before this, deleting a point needed the keyboard and hitting the cap did nothing silent.
   const vertexLimit = app.caps?.mask_vertex_limit ?? FALLBACK_VERTEX_LIMIT;
+  // 旋转的角度上限由引擎下发；这一格只是它没回该字段时的兜底（与顶点数上限同一个写法）。
+  const rotationLimit = app.caps?.limits?.mask_rotation_limit ?? FALLBACK_ROTATION_LIMIT;
+  // 轮廓遮罩没有盒可转（引擎那句拒收在先），没报 mask_rotation 开关的引擎也不摆这颗手柄。
+  const canRotate = Boolean(mask && mask.shape !== "path" && app.caps?.features?.mask_rotation);
   const atCap = mask?.shape === "path" && vertices.length >= vertexLimit;
   const applyVertex = (next: ShapeMask | null) => {
     if (!next || disabled) return;
@@ -316,6 +347,34 @@ export function MaskPicture({ clip, image, children, editable = true, animation,
         <rect className="mask-hit" x={(mask.center_x - mask.width / 2)*100} y={(mask.center_y - mask.height / 2)*100} width={mask.width*100} height={mask.height*100} onPointerDown={(e) => begin(e, { corner: null })} role="button" tabIndex={0} aria-label="移动遮罩" aria-disabled={disabled} />
         {mask.shape === "ellipse" ? <ellipse className="mask-outline" cx={mask.center_x*100} cy={mask.center_y*100} rx={mask.width*50} ry={mask.height*50} /> : <rect className="mask-outline" x={(mask.center_x-mask.width/2)*100} y={(mask.center_y-mask.height/2)*100} width={mask.width*100} height={mask.height*100} />}
         </>}
+        {canRotate ? (() => {
+          // 手柄落在「看见的那一个盒」的上边中点外面：有窗表时边是那一窗的边，与参考线同一个盒。
+          const ratio = (app.project?.settings.height ?? 9) / (app.project?.settings.width ?? 16);
+          const body = spun ? { ...mask, width: spun.width, height: spun.height } : mask;
+          const mid = rotatedEdgeMids(body, ratio, spun?.angle ?? mask.rotation);
+          const gap = Math.min(0.14, Math.max(0.03, body.height * 0.3));
+          const hx = (mid.top.x + mid.out.x * gap) * 100, hy = (mid.top.y + mid.out.y * gap) * 100;
+          const at = spun?.angle ?? mask.rotation ?? 0;
+          const keyed = (clip.keyframes ?? []).some((key) => key.property === "mask_rotation");
+          return <g>
+            <line className="mask-rotate-stem" x1={mid.top.x * 100} y1={mid.top.y * 100} x2={hx} y2={hy} />
+            <rect className="mask-handle rotate-handle" x={hx - handleSize.x / 2} y={hy - handleSize.y / 2}
+              width={handleSize.x} height={handleSize.y} role="button" tabIndex={0}
+              aria-label={`旋转遮罩（此刻 ${at.toFixed(1)}°）`}
+              aria-disabled={disabled}
+              onPointerDown={(e) => begin(e, { rotate: true })}
+              onKeyDown={(e) => {
+                if (disabled || !["ArrowLeft", "ArrowRight"].includes(e.key)) return;
+                e.preventDefault(); e.stopPropagation();
+                const step = (e.key === "ArrowRight" ? 1 : -1) * (e.shiftKey ? 15 : 1);
+                write({ ...mask, rotation: Math.round(clamp(at + step, -rotationLimit, rotationLimit) * 10) / 10 });
+              }}>
+              {/* SVG 的 rect 没有 title 这个属性，说明只能作为子节点挂上去（浏览器原生悬停提示读它）。 */}
+              <title>{keyed ? "拖动转这个盒：已经打了角度针，所以写的是播放头这一帧的针；方向键 ±1°，按住 Shift ±15°"
+                : "拖动转这个盒：没打角度针，所以改的是遮罩本身那一个角度；方向键 ±1°，按住 Shift ±15°"}</title>
+            </rect>
+          </g>;
+        })() : null}
         <path className="mask-cross" d={`M ${mask.center_x*100-2} ${mask.center_y*100} h 4 M ${mask.center_x*100} ${mask.center_y*100-2} v 4`} />
         {rotated ? null : CORNERS.map(([x,y,label]) => <rect key={label} className="mask-handle" x={(mask.center_x+x*mask.width/2)*100-handleSize.x/2} y={(mask.center_y+y*mask.height/2)*100-handleSize.y/2} width={handleSize.x} height={handleSize.y} role="button" tabIndex={0} aria-label={`缩放遮罩${label}角`} aria-disabled={disabled} onPointerDown={(e) => begin(e,{ corner: [x,y] })} onKeyDown={(e) => {
           if (!["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(e.key)) return;

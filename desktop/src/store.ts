@@ -2136,8 +2136,11 @@ export function moveMaskCentre(clipId: string, atTicks: number, centre: { x: num
   editAtRevision(commands, projectId, revision, "搬动遮罩到此刻");
 }
 
-const MASK_BOX_FIELDS: [Property, "center_x" | "center_y" | "width" | "height"][] = [
+// 角度也走同一条规则：打了 `mask_rotation` 曲线的盒，画面上拖旋转手柄写的就是播放头那一帧的针，
+// 没打曲线的仍写遮罩本身那一格。这张表是「拖哪一格落到哪」的唯一一处，不为角度另写一套剪辑规则。
+const MASK_BOX_FIELDS: [Property, "center_x" | "center_y" | "width" | "height" | "rotation"][] = [
   ["mask_x", "center_x"], ["mask_y", "center_y"], ["mask_width", "width"], ["mask_height", "height"],
+  ["mask_rotation", "rotation"],
 ];
 
 /**
@@ -2157,10 +2160,10 @@ export function commitMaskEdit(clipId: string, mask: ShapeMask, atTicks: number,
   const box = Boolean(before && before.shape !== "path");
   if (before && box) {
     for (const [property, field] of MASK_BOX_FIELDS) {
-      if (!keyed.has(property) || Math.abs(mask[field] - before[field]) < 1e-9) continue;
+      if (!keyed.has(property) || Math.abs((mask[field] ?? 0) - (before[field] ?? 0)) < 1e-9) continue;
       const existing = (clip.keyframes ?? []).find((key) => key.property === property && key.at_ticks === atTicks);
       commands.push({ op: "keyframe.set", clip_id: clipId, keyframe: {
-        property, at_ticks: atTicks, value: mask[field], interpolation: existing?.interpolation ?? "linear",
+        property, at_ticks: atTicks, value: mask[field] ?? 0, interpolation: existing?.interpolation ?? "linear",
       } });
     }
   }
