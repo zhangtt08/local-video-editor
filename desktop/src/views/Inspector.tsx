@@ -1,3 +1,4 @@
+import { linkStatusUrl } from "../linkStatusUrl";
 import type { Keyframe, MaskShapeKeyframe, SpatialProperty } from "../engine";
 import { useEffect, useId, useRef, useState } from "react";
 
@@ -241,7 +242,7 @@ function AssociationFields() {
   useEffect(() => {
     if (!linkIds.length) return;
     const controller = new AbortController();
-    void fetch(`${appInfo.baseUrl()}/v1/projects/${project.id}/preview-manifest?revision=${project.revision}${app.sequenceId ? `&sequence_id=${app.sequenceId}` : ""}`, { headers: { Authorization: `Bearer ${appInfo.token()}` }, signal: controller.signal })
+    void fetch(linkStatusUrl(appInfo.baseUrl(), project.id, project.revision, app.sequenceId, app.selectedClips), { headers: { Authorization: `Bearer ${appInfo.token()}` }, signal: controller.signal })
       .then((r) => { if (!r.ok) throw new Error("读取链接状态失败"); return r.json(); })
       .then((value) => setStatus({ revision: value.revision, project: project.id, sequenceId: app.sequenceId, links: value.links }))
       .catch(() => { if (!controller.signal.aborted) setStatus({ revision: project.revision, project: project.id, sequenceId: app.sequenceId, links: {} }); });
