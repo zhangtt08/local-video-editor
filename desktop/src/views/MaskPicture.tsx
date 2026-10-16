@@ -3,7 +3,7 @@ import type { Clip, Curve, MaskProperty, MaskRotationWindow, MaskShapeWindow, Ma
 import { TIMEBASE } from "../time";
 import { appInfo, commitMaskEdit, moveMaskCentre, playhead, recordMaskShape, setClipMask, setMaskEditing, useApp, usePlay } from "../store";
 import { asCorner, asSmooth, nearestEdge, withoutVertex, withVertex } from "../maskOutline";
-import { rotatedCorners, rotatedEdgeMids, rotationWindowAt } from "../maskGeometry";
+import { rotateAngleFromPointer, rotatedCorners, rotatedEdgeMids, rotationWindowAt } from "../maskGeometry";
 import { morphArmed, outlineAt, shapeVariables, shapeWindowAt, shapeWindowIndex } from "../maskShape";
 
 const CORNERS = [[-1,-1,"左上"],[1,-1,"右上"],[-1,1,"左下"],[1,1,"右下"]] as const;
@@ -180,10 +180,12 @@ export function MaskPicture({ clip, image, children, editable = true, animation,
   const angleOf = (event: {clientX: number; clientY: number}) => {
     const matrix = svg.current?.getScreenCTM(); const box = mask;
     if (!matrix || !box) return null;
-    // 屏幕像素差：先按各自的 a/d 落到像素，再算角度。除回去 user 单位就又回到那张拉伸的框里了。
-    const px = event.clientX - (matrix.a * box.center_x * 100 + matrix.e);
-    const py = event.clientY - (matrix.d * box.center_y * 100 + matrix.f);
-    return Math.atan2(px, -py) * 180 / Math.PI;
+    // 茎画在哪由 `rotatedEdgeMids` 定，所以指针的角度要用同一套除法读回来（1.181）：先除回这一路的
+    // 像素比例 a、d，再除掉画幅比那一步变形。旧式子读的是纯屏幕角，在拉伸过的框上比茎的角度小，
+    // 于是「拖多少」与「看见多少」成了两件事——实测屏幕 30° 只让茎走 3.6°。
+    const k = (app.project?.settings.height ?? 9) / (app.project?.settings.width ?? 16);
+    return rotateAngleFromPointer(event.clientX - (matrix.a * box.center_x * 100 + matrix.e),
+      event.clientY - (matrix.d * box.center_y * 100 + matrix.f), matrix.a, matrix.d, k);
   };
   const proposed = (event: PointerEvent<SVGElement>) => {
     const gesture = drag.current!; const point = locate(event); if (!point) return gesture.mask;

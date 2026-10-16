@@ -42,6 +42,15 @@ export const rotationWindowAt = <T extends { from_ticks: number; to_ticks: numbe
  * 换算与 `rotatedCorners` 同一套——参考线画的那一圈和手柄要落的那一点必须来自同一个盒，否则手柄
  * 抓在看见的边外面。这里只做落位，不做判断：能不能转、转到哪一格，仍然只在引擎与 store 那一头。
  */
+/** 指针相对盒心的屏幕偏移 -> 该写成多少度：与 `rotatedEdgeMids` 用同一套除法。
+ *
+ * 茎画在哪是 `rotatedEdgeMids` 定的——它先按画幅比 k 把横向挪量变形，再乘上画框那一路的像素比例
+ * a、d。所以读回来必须反着除：先除 a（或 d）落回 0..100 的框，再把那一步 k 的变形除掉。
+ * 方形画幅（a=d、k=1）上这就等于 `atan2(dx, -dy)`，也就是旧行为一字不变。
+ */
+export const rotateAngleFromPointer = (dx: number, dy: number, a: number, d: number, k: number) =>
+  Math.atan2(dx / (a * k), -(dy / d)) * 180 / Math.PI;
+
 export const rotatedEdgeMids = (mask: ShapeMask, k: number, angle?: number) => {
   const rad = (angle ?? mask.rotation ?? 0) * Math.PI / 180;
   const cos = Math.cos(rad), sin = Math.sin(rad);

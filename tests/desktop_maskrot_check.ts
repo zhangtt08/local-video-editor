@@ -109,7 +109,7 @@ assert.equal(rotationWindowAt([], 5), null, "没有窗表时不许猜一个角�
 
 // ③ 接线：走的是引擎那张等比图，界面自己不再算角度
 const picture = read("desktop/src/views/MaskPicture.tsx");
-assert.ok(picture.includes('import { rotatedCorners, rotatedEdgeMids, rotationWindowAt } from "../maskGeometry"'),
+assert.ok(picture.includes('import { rotateAngleFromPointer, rotatedCorners, rotatedEdgeMids, rotationWindowAt } from "../maskGeometry"'),
   "向导没读那份几何（角度落位只许有一处实现：参考线、窗表、那颗旋转手柄同出一源）");
 assert.ok(picture.includes('const spun = draft ? null : rotation ? rotationWindowAt(rotation, local) : null'),
   "向导没按播放头去引擎那份窗表里取此刻那一窗");
@@ -257,7 +257,10 @@ assert.ok(pictureSrc.includes("旋转遮罩（此刻") && pictureSrc.includes(".
 assert.ok(pictureSrc.includes("if (gesture.rotate) {"), "proposed 里不认 rotate 这一笔（按下拖动都不转）");
 assert.ok(pictureSrc.includes("angle0: target.rotate ? angleOf(event) ?? undefined : undefined"),
   "按下时没记住起始那个屏幕角（一转就跳到指针上）");
-assert.ok(pictureSrc.includes("Math.atan2(px, -py)"), "屏幕角被算成了画框角（那张框是拉伸的）");
+assert.ok(pictureSrc.includes("rotateAngleFromPointer(event.clientX"),
+  "读回的角与茎的落位不再互逆（1.181：直接对屏幕像素取 atan2，拖多少与看见多少就分家）");
+assert.ok(!pictureSrc.includes("Math.atan2(px, -py)"),
+  "旧的屏幕角式子还在：那颗框是拉伸的，屏幕角不等于画框里的角度");
 assert.ok(pictureSrc.includes('if (disabled || !["ArrowLeft", "ArrowRight"].includes(e.key)) return;'),
   "那颗手柄只有鼠标这一只手（键盘该有 ±1° / Shift ±15° 的孪生）");
 assert.ok(pictureSrc.includes("const rotationLimit = app.caps?.limits?.mask_rotation_limit ?? FALLBACK_ROTATION_LIMIT;"),
