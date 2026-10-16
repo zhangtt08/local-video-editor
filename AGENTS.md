@@ -28,6 +28,25 @@
   没进去——索引少算一段，这里就少一段）、B 最后一条 `?revision=1&no_clips=1` 200、C 那份嵌套工程
   两条都是整份 200；每条前缀恰好一次，收台后 agentcut 进程计数 0。`released_package_check`
   绿（asar 带 1.188.0）；空机单跑套件 122/122 全绿（`suite1188final.log`）。
+- **装机复验（1.188 的交付物本身）**：`desktop/release/win-unpacked/AgentCut.exe` 起真窗口，
+  `capture133.ps1 -TargetPid N -Out …` 用 PrintWindow 量到 **1480×900、757,611 字节**画出来的帧
+  （归档 `AgentCut-1.188-原生窗口.png`）——标题栏那一格裁出来读的是「引擎在线 v1.188.0」，
+  监视器里是使用者自己那份工程的一帧真画面（带遮罩导引那排点），不是 1.187 退回时那块黑。
+  1.187 那一轮欠的「归档 PNG」到这里补上了。收窗后 agentcut 进程计数 0。
+  为什么这一张要另起一条：`capture_16x/18x.ps1` 那一份是「自己起应用再截」的，而这个应用是单实例——
+  它等的是自己新起的那个进程，于是挂住；只有**按 pid 截**那一份能用。
+- **1.189 入口 ② 的第一步已经量完（两片 2×2 实色，`layer_modes_1188c.log`）**：导出侧按产品那条边的
+  同形编译（`split` 两路原图 → `blend=all_mode=<方式>` → 再 `blend=all_mode=normal:all_opacity=<mix>`），
+  浏览器侧是 DOM 图层上的 `mix-blend-mode` + `opacity`，headless Edge 截图后用同一支 FFmpeg 解码取中心像素。
+  **`multiply`／`screen`／`overlay`／`darken`／`lighten`／`difference`／`exclusion` 七种在
+  mix＝1／0.75／0.5／0.25 每一档都 ≤2 级**——所以「第二路输入」的模式清单与那一层权重两端共一份是量过的，
+  不是推的。唯一不齐的是 `normal`：那是**我这把尺的摆位**——FFmpeg 的 `blend=all_mode=normal` 交回的是
+  **第一个输入**，而我那一路把原图放在了第一位；产品那条边把调完的那一路放在第一位，而 `blend_values`
+  的 `normal` 交回的是 picture（也就是链的输出），加上其余七种都可交换，所以这一格在交付物上不是缺陷。
+  下一轮做外部第二路时，这一条要按交付物的摆位再量一次并钉进门禁，而不是沿用我这把尺的结论。
+  另外量到 FFmpeg 的 `blend` 不认 CSS 的连字写法（`color-dodge`/`color-burn`/`hard-light`/`soft-light`
+  全部 `Undefined constant or missing '('`——它要的是 `colordodge` 那一族名字），所以模式清单只能由引擎持有、
+  两端各留一份拼法，界面不许自己把 CSS 词塞进 `all_mode=`。
 - **下一轮入口（记下，不在这一轮动手）**：① 子合成那一半——嵌套工程里也按可视点名，得先把
   `sequence_view` 的刻度换算定死；② 色彩节点图的**外部**第二路输入：链上已有的那条边是
   `GradeComposite`（与**进来的那幅画**相合，达芬奇 Key→Mix／AE「与原图叠加」），缺的是另一段／另一素材
