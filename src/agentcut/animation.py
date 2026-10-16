@@ -373,7 +373,12 @@ SPATIAL_PROPS = ("blur",)
 
 
 def frame_windows(clip: Clip, quantum: int, limit: int | None, value_at) -> list[dict]:
-    """The one frame-aligned staircase compiler: sample at each midpoint, merge the equal ones.
+    """The one frame-aligned staircase compiler: sample at each window's own start frame,
+    merge the equal ones.
+
+    取样点定在段起点（1.182）：一枚针在它自己那一帧就必须被执行，否则人敲进去的角度与尺寸
+    在预览与导出里谁都不出现，画面上那颗手柄也会在松手后跳回指针之外。两端共用这一份表这件事
+    没变——变的只是每窗带哪一个数。
 
     Two knobs in this app cannot be evaluated continuously by the exporter — `gblur` reads no
     expression for its sigma, and a morphing free-form mask cannot be rasterised per frame — so both
@@ -395,7 +400,7 @@ def frame_windows(clip: Clip, quantum: int, limit: int | None, value_at) -> list
     start = 0
     while start < span:
         end = min(start + step, span)
-        value = value_at(clip, (start + end) // 2)
+        value = value_at(clip, start)
         if windows and windows[-1]["value"] == value:
             windows[-1]["to_ticks"] = end
         else:

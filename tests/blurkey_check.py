@@ -8,7 +8,7 @@
 
 量什么：
 
-* 阶梯本身：段与段首尾相接、覆盖整段、不超过上限、每段取的就是那段中点的权威 `sample`，值单调；
+* 阶梯本身：段与段首尾相接、覆盖整段、不超过上限、每段取的就是那段**起点**的权威 `sample`，值单调；
   短于上限的片段一格一帧（帧级精确），长的自动把步长加宽而不是拒绝。
 * 两端同源：`preview_manifest` 交出的点表逐条等于阶梯的偏移与值；编译出的滤镜串里 gblur 段数
   等于非零段数，且每一串的 `between(t,…)` 就是那一段的秒数。
@@ -90,10 +90,9 @@ def schedule_suite() -> None:
     assert len(plan) <= SPATIAL_SCHEDULE_MAX, len(plan)
     values = [window["value"] for window in plan]
     assert values == sorted(values), f"从 0 拉到顶的曲线不该回头：{values}"
-    # 每段取的是那段中点的权威 sample，不是端点也不是界面自己算的。
+    # 每段取的是那段起点的权威 sample（1.182：针在自己那一帧必须被执行），不是界面自己算的。
     for window in plan:
-        middle = (window["from_ticks"] + window["to_ticks"]) // 2
-        assert window["value"] == round(sample(clip, "blur", middle), 9), window
+        assert window["value"] == round(sample(clip, "blur", window["from_ticks"]), 9), window
     # 4 秒 25 fps 有 100 帧，比上限多，于是步长被加宽而不是拒绝；但仍是整帧的倍数。
     step = plan[1]["from_ticks"] - plan[0]["from_ticks"]
     assert step % FRAME == 0, f"段边界必须落在整帧上：{step}"

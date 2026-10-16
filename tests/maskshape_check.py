@@ -190,11 +190,11 @@ def geometry_suite() -> None:
     for first, second in zip(schedule, schedule[1:]):
         assert first["to_ticks"] == second["from_ticks"]
         assert second["to_ticks"] % FRAME == 0 or second["to_ticks"] == clip.duration_ticks
-    # Each window's outline is the table at its own midpoint — the exporter and the preview both
-    # read this, so a step is a decision made once.
+    # Each window's outline is the table at its own start frame (1.182); both ends share it.
+    # The exporter and the preview both read this, so a step is a decision made once.
     for window in schedule:
-        middle = (window["from_ticks"] + window["to_ticks"]) // 2
-        assert [v.x for v in vertices_at(clip, middle)] == [v.x for v in window["value"]]
+        sampled = [v.x for v in vertices_at(clip, window["from_ticks"])]
+        assert sampled == [v.x for v in window["value"]]
 
     # A held outline morphs in one jump, and one outline alone is a constant shape: both compile to
     # as few windows as the equality in `frame_windows` allows, never a plate per frame.
