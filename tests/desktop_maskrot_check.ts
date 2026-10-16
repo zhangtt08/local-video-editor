@@ -226,6 +226,20 @@ assert.ok(storeSrc.includes("if (linkedView) set({ view: linkedView });"),
   "视图切换没落在 openProject 之后——它自己会切回编辑器，先切的那一下被盖掉（1.174 量到的缺陷）");
 assert.ok(!/set\(\{ view: view as View \}\)/.test(storeSrc),
   "又回到在 openProject 之前先切视图那一版（画面上看不出，DOM 上量得到）");
+// 「切面板」不许再顺手抢视图：这一处才是 1.174/1.175 两轮 DOM 量到的那次无声覆盖的真位置。
+assert.ok(/export function setEditorPanel\(editorPanel: AppState\["editorPanel"\]\) \{\s*set\(\{ editorPanel \}\);/.test(storeSrc),
+  "setEditorPanel 又开始顺手写 view 了（深链 ?view= 会被它盖掉）");
+assert.ok(/export function setGraphOpen\(graphOpen: boolean\) \{ set\(\{ graphOpen \}\); \}/.test(storeSrc),
+  "setGraphOpen 又开始顺手写 view 了");
+assert.ok(/export function openEditorPanel\(editorPanel: AppState\["editorPanel"\]\) \{\s*set\(\{ editorPanel, view: "editor" \}\);/.test(storeSrc),
+  "openEditorPanel 不在了——人点「导出」那一个意图没有唯一的实现");
+assert.ok(/else if \(linkedView\) \{\s*set\(\{ view: linkedView \}\);/.test(storeSrc),
+  "链接只点名视图（不带工程）时不再切视图");
+const titlebarSrc = read("desktop/src/TitleBar.tsx");
+assert.ok(titlebarSrc.includes('onClick={() => openEditorPanel("export")}'),
+  "标题栏那颗「导出」不再走那一个组合意图（切面板与跳视图分开写就漏一半）");
+assert.ok(!/onClick=\{\(\) => setEditorPanel\("export"\)\}/.test(titlebarSrc),
+  "标题栏还直接调 setEditorPanel：现在它不再负责跳视图，按钮会点着没反应");
 assert.ok(!/view === "home" \|\| view === "editor"/.test(storeSrc),
   "restoreDeepLink 里还剩一条自己拼的视图名单");
 assert.ok(/landLinkedTick\(tick\);\s*\n\s*return true;/.test(storeSrc),

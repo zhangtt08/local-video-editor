@@ -269,11 +269,21 @@ export function editableProject(app = state, displayOnly = false): Project | nul
  */
 export const EDITOR_PANELS = ["inspect", "export", "scope"] as const;
 
+/**
+ * 「切面板」与「跳到编辑器」是两件事：面板自己写自己那一格，跳视图由点了导出按钮/快捷键那一路
+ * 明确表达（`openEditorPanel`）。以前这里顺手把 `view` 按回编辑器，于是深链 `?panel=` 与 `?view=`
+ * 同时点名时，视图被无声盖掉（1.174/1.175 在无头 DOM 上量到的同一处覆盖）。
+ */
 export function setEditorPanel(editorPanel: AppState["editorPanel"]) {
+  set({ editorPanel });
+}
+
+/** 人点了「导出」或按了那条快捷键：这一个意图才同时写两格——去编辑器、开导出面板。 */
+export function openEditorPanel(editorPanel: AppState["editorPanel"]) {
   set({ editorPanel, view: "editor" });
 }
 
-export function setGraphOpen(graphOpen: boolean) { set({ graphOpen, view: "editor" }); }
+export function setGraphOpen(graphOpen: boolean) { set({ graphOpen }); }
 export function setMaskEditing(maskEditing: boolean) { playhead.pause(); setMonitorMode("timeline"); set({ maskEditing }); }
 export function useApp(): AppState {
   return useSyncExternalStore(
