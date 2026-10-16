@@ -17,7 +17,7 @@
   199 段那次仍按 `ATTRIBUTE_PASTE_LIMIT` 点名拒，句子与 details 一字未变。
 - **链条**：`land_1180.sh` 步骤 0-4 全部 exit=0——含 59 份壳检与 `tsc --noEmit`，冻结引擎自报
   1.180.0；便携版 **189,966,478 B** sha256 `fcd951e7377758ac…`（根 `AgentCut.exe` 与它逐字节相同）、
-  安装版 sha256 见 `land_1180.log`；`released_package_check`、装机 15 项、体积窗口 5 项都绿。
+  安装版 sha256 见 `land_1180.log`；`released_package_check`、装机 15 项、体积窗口 5 项都绿；改完文档之后空机单跑套件 **117/117 checks passed**，这一遍是可引用的那一次。
 - **下一轮入口**：写入回执（`/edits`、`/projects`）在两万段上是 12 MB，Agent 每改一次就得重读一遍
   整份工程；`Project` 已经按 revision 存着，交回「改了哪几段 + 新 revision」要另立一种紧凑回执，
   并且不许渲染层为此多算一遍。
