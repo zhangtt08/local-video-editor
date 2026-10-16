@@ -1366,9 +1366,11 @@ def create_app(
         剪映 calls it 粘贴属性，达芬奇 Paste Attributes，AE copies an effect stack: one promise that
         these aspects travel while nothing about where the clips sit moves. The categories are the
         ones `capabilities.attribute_categories` publishes, and what each one writes is decided by
-        the reducer itself — `attributes.attribute_plan` replays the candidate commands per target,
-        so a clip that cannot take one category comes back with the reducer's own code and sentence,
-        while the categories that do land are still returned. Read-only: submit `commands` through
+        the reducer itself — `attributes.attribute_plan` (1.179) puts the whole candidate list
+        through `apply_commands` in one pass, and only a refused pass falls back to asking target
+        by target and category by category, so a clip that cannot take one category comes back with
+        the reducer's own code and sentence while the categories that do land are still returned.
+        Read-only: submit `commands` through
         `/edits` to write them as one batch at one revision.
         """
         root = projects.get(project_id)

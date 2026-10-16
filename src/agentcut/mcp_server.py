@@ -421,8 +421,10 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         Read-only: `categories` are the ids `capabilities.attribute_categories` publishes, and each
         one becomes the ordinary commands that write it (`clip.color`、`clip.effects`、
         `keyframes.replace`、`clip.mask`、`clip.fade`、`clip.speed`、`clip.text`). The reducer
-        decides per target, so a clip that cannot take one category comes back with its own code
-        and sentence while the categories that do land are still returned. Submit `commands` with
+        decides it — the whole list goes through the reducer in one pass, and only a refused pass
+        asks target by target and category by category — so a clip that cannot take one category
+        comes back with its own code and sentence while the categories that do land are still
+        returned. Submit `commands` with
         `timeline_edit` — one batch, one revision; undo returns the whole paste at once.
         """
         return await call(
