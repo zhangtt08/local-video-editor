@@ -13,6 +13,9 @@
   `scale_attributes_1179.log`）：64 个目标、六类属性的规划从 **118.9 s 降到 3.6 s**，交回的还是
   那 256 条命令；同一批命令提交 3,168 ms，所以规划已经和写入一个量级。建工程 13.7 s / 9 revision、
   GET 842 ms / 13.4 MB，`ATTRIBUTE_PASTE_LIMIT` 那两条（264 段、19997 段）句子与 details 一字未变。
+  同一笔搬到 **Windows 发布包里那份冻结引擎** 上、走真实 HTTP 再量一遍（`scale_packaged_1179.log`）：
+  建两万段 17.2 s、GET 747 ms / 12.0 MB、64 个目标的规划 **3.72 s**（448 条命令、64 段全落、0 条拒），
+  把这 448 条提交 2,859 ms，199 段仍按上限点名拒——规划与写入在交付物上也是同一个量级。
 - **新门禁 `tests/attribspeed_check.py` 把两条路钉成同一份报告**：它用产品自己的原件
   （`_category_commands`、`_over_limit`、`apply_commands`）在测试里把 1.178 那一路再跑一遍，逐项比
   命令表 / `written` / `unchanged` / `refusals` / 越界针数，六份夹具各比一次；并且数 reducer 被叫了几
