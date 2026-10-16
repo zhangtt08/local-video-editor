@@ -689,12 +689,21 @@ def sharpen_windows(
 
 
 def preview_manifest(
-    project: Project, sequence_id: str | None = None, *, _include_sequences=True
+    project: Project,
+    sequence_id: str | None = None,
+    *,
+    clip_ids: list[str] | None = None,
+    _include_sequences=True,
 ) -> dict:
     """Browser uses native linear/steps interpolation of these server-issued scalar curves.
 
     Each property is independent, so a held opacity curve cannot affect a moving position.
     Translation is relative to the composition, not the fitted source rectangle.
+
+    `clip_ids` narrows the reply to the clips a caller is actually looking at. It is a view, not a
+    second compiler: every entry it does return is the same value the full manifest gives, and the
+    project-level keys stay whole. An absent list means the whole project, which is what the
+    desktop compositor still asks for.
     """
     from .timeline import sequence_view
 
@@ -702,8 +711,14 @@ def preview_manifest(
     project = sequence_view(project, sequence_id)
     clips = {}
     tracks = {track.id: track for track in project.tracks}
-    transition_curves = envelopes(project)
+    # A narrowed envelope set has to stay the same answer per kept clip, so the skip happens
+    # inside `envelopes` (which still indexes every clip's outgoing tail) rather than by editing
+    # the project the curves are compiled from.
+    wanted = None if clip_ids is None else set(clip_ids)
+    transition_curves = envelopes(project, wanted)
     for clip in project.clips.values():
+        if wanted is not None and clip.id not in wanted:
+            continue
         curves = {}
         for prop in ("x", "y", "scale", "rotation", "opacity", "gain"):
             curves[prop] = property_curve(clip, prop)
@@ -871,7 +886,8 @@ def preview_manifest(
         "revision": project.revision,
         "sequence_id": sequence_id,
         "sequences": {
-            key: preview_manifest(root, key, _include_sequences=False) for key in root.sequences
+            key: preview_manifest(root, key, clip_ids=clip_ids, _include_sequences=False)
+            for key in root.sequences
         }
         if _include_sequences
         else {},

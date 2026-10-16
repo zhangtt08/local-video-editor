@@ -37,6 +37,7 @@ from .colortags import detect_space
 from .contracts import (
     APP_VERSION,
     COLOR_SPACES,
+    PREVIEW_MANIFEST_CLIP_LIMIT,
     TIMEBASE,
     TRACK_FRAMES_MIN,
     AttributePlanRequest,
@@ -1979,8 +1980,36 @@ def create_app(
         projects: Store,
         revision: Revision | None = None,
         sequence_id: Identifier | None = None,
+        clips: list[Identifier] | None = Query(default=None),
     ):
-        return preview_manifest(projects.get(project_id, revision), sequence_id)
+        """Animation curves for the whole project, or only for the clips `clips` names.
+
+        Omitting `clips` is the pre-1.183 request and stays byte-identical. A subset narrows only
+        the `clips` key; an unknown id is refused by name instead of quietly dropping that clip,
+        because a manifest missing one clip looks exactly like a clip with nothing animated.
+        """
+        project = projects.get(project_id, revision)
+        if clips is None:
+            return preview_manifest(project, sequence_id)
+        if len(clips) > PREVIEW_MANIFEST_CLIP_LIMIT:
+            raise EditorError(
+                "INVALID_REQUEST",
+                f"clips takes at most {PREVIEW_MANIFEST_CLIP_LIMIT} ids per request;"
+                f" got {len(clips)}. Split the list, or omit it for the whole project",
+                422,
+                requested=len(clips),
+                limit=PREVIEW_MANIFEST_CLIP_LIMIT,
+            )
+        wanted = list(dict.fromkeys(clips))
+        missing = [clip_id for clip_id in wanted if clip_id not in project.clips]
+        if missing:
+            raise EditorError(
+                "NOT_FOUND",
+                "clip is not in this project",
+                404,
+                clip_ids=",".join(missing),
+            )
+        return preview_manifest(project, sequence_id, clip_ids=wanted)
 
     @app.post("/v1/preview-manifest", dependencies=auth)
     def preview_candidate(project: Project, sequence_id: Identifier | None = None):

@@ -170,11 +170,19 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         project_id: Identifier,
         revision: Revision | None = None,
         sequence_id: Identifier | None = None,
+        clips: list[str] | None = None,
     ) -> dict:
-        """Read authoritative animation curves used by the native desktop compositor."""
+        """Read authoritative animation curves, optionally only for the clips `clips` names.
+
+        A large project's full manifest is tens of megabytes, so an Agent checking a handful of
+        clips passes their ids and gets exactly those entries; `capabilities.features.
+        preview_manifest_clips_max` is how many ids one call may name. Omit `clips` for everything.
+        """
         query = f"?sequence_id={sequence_id}" if sequence_id else "?"
         if revision is not None:
             query += f"&revision={revision}"
+        for clip_id in clips or []:
+            query += f"&clips={quote(clip_id, safe='')}"
         return await call("GET", f"/v1/projects/{project_id}/preview-manifest{query}")
 
     @server.tool(annotations=read)

@@ -47,7 +47,12 @@ MOTION_KINDS = {
 WHOLE_WEIGHT_KINDS = {**WIPE_KINDS, **MOTION_KINDS}
 
 
-def envelopes(project: Project) -> dict:
+def envelopes(project: Project, only: set[str] | None = None) -> dict:
+    """Per-clip transition envelopes, optionally narrowed to the clips being described.
+
+    `outgoing` is still built from every clip: a kept clip's tail lives in the *next* clip's
+    `transition_in`, so narrowing the answer must never narrow that index.
+    """
     outgoing = {
         c.transition_in.from_clip_id: c.transition_in
         for c in project.clips.values()
@@ -55,6 +60,8 @@ def envelopes(project: Project) -> dict:
     }
     result = {}
     for clip in project.clips.values():
+        if only is not None and clip.id not in only:
+            continue
         incoming, tail = clip.transition_in, outgoing.get(clip.id)
         times = {0, clip.duration_ticks}
         if incoming:
