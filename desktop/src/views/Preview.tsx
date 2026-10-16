@@ -1,4 +1,5 @@
 import { textLayerStyle } from "../textStyle";
+import { mergePlans, monitorClipIds } from "../manifestFetch";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Icon, IconBtn } from "../ui";
 import { MaskPicture } from "./MaskPicture";
@@ -98,15 +99,20 @@ export function Preview() {
     return () => element.removeEventListener("loadedmetadata", seek);
   }, [sourceUrl, sourceMode, app.sourceCursorTicks, app.sourcePlaying, monitorMuted]);
   useEffect(() => { const element = sourceRef.current; return () => element?.pause(); }, [sourceUrl, sourceMode]);
+  // 只在「主时间线、非候选、工程里没有嵌套合成」时收窄：子合成的刻度换算不在这档里，判不准就不收窄。
+  const narrow = !candidate && !app.sequenceId && !Object.keys(project?.sequences ?? {}).length;
+  const wantedIds = narrow && project ? monitorClipIds(project, play.ticks) : null;
+  const wantedKey = wantedIds ? wantedIds.join(",") : "";
   useEffect(() => {
     if (!project) return;
     let disposed = false; setPreviewError("");
-    const request = candidate ? appInfo.engine()?.previewCandidate(app.rootCandidate ?? project, app.sequenceId) : appInfo.engine()?.previewManifest(project.id, project.revision, app.sequenceId);
+    const request = candidate ? appInfo.engine()?.previewCandidate(app.rootCandidate ?? project, app.sequenceId) : appInfo.engine()?.previewManifest(project.id, project.revision, app.sequenceId, wantedIds);
     void request?.then((plan) => {
-      if (!disposed) setManifest({ project, plan });
+      // 同一版工程里一段的编译结果不变，所以合并上一批：跨过一格补新段时旧段不消失。
+      if (!disposed) setManifest((previous) => previous && previous.project === project ? { project, plan: mergePlans(previous.plan, plan) } : { project, plan });
     }).catch(() => { if (!disposed) setPreviewError("预览计划读取失败，请切换工程后重试"); });
     return () => { disposed = true; };
-  }, [project]);
+  }, [project, wantedKey, candidate]);
   useEffect(() => {
     if (!play.playing) return;
     if (!end || sourceMode) { playhead.pause(); return; }

@@ -2065,6 +2065,7 @@ def create_app(
         revision: Revision | None = None,
         sequence_id: Identifier | None = None,
         clips: list[Identifier] | None = Query(default=None),
+        no_clips: bool = Query(default=False),
     ):
         """Animation curves for the whole project, or only for the clips `clips` names.
 
@@ -2073,6 +2074,16 @@ def create_app(
         because a manifest missing one clip looks exactly like a clip with nothing animated.
         """
         project = projects.get(project_id, revision)
+        if no_clips and clips:
+            raise EditorError(
+                "INVALID_REQUEST",
+                "no_clips and clips are two different asks; name the ids, or send"
+                " no_clips=1 for none, or send neither for the whole project",
+                422,
+                named=len(clips),
+            )
+        if no_clips:
+            return preview_manifest(project, sequence_id, clip_ids=[])
         if clips is None:
             return preview_manifest(project, sequence_id)
         if len(clips) > CLIP_SUBSET_LIMIT:

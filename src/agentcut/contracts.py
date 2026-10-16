@@ -33,7 +33,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.186.0"
+APP_VERSION = "1.187.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 
@@ -6606,6 +6606,10 @@ def capabilities(
             "project_bundles": media_ready,
             "preview_manifest_clips_max": CLIP_SUBSET_LIMIT,
             "project_clips_max": CLIP_SUBSET_LIMIT,
+            # 1.187: a list query parameter cannot be empty, so "describe no clip at all"
+            # needs its own word. Without it a caller whose playhead sits in a gap cannot
+            # ask for less than the whole project.
+            "preview_manifest_no_clips": True,
             "edit_receipt_slim": True,
 
             "render": media_ready,

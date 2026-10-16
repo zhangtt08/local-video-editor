@@ -776,6 +776,19 @@ async def check_linked_mcp(session):
     payload = preview.structuredContent or json.loads(preview.content[0].text)
     assert payload["track_blend_modes"]["v"] == "screen"
 
+    # 1.187：监视器会用的那三种说法，Agent 在 MCP 这一头也必须问得出来——界面有的话，Agent 不许缺。
+    subset = await call_ok(session, "preview_manifest", {"project_id": pid, "clips": ["picture"]})
+    body = subset.structuredContent or json.loads(subset.content[0].text)
+    assert list(body["clips"]) == ["picture"], sorted(body["clips"])
+    assert body["links"]["av"]["synchronized"], "点名子集里工程级那几个键仍按整份给"
+    gap = await call_ok(session, "preview_manifest", {"project_id": pid, "no_clips": True})
+    body = gap.structuredContent or json.loads(gap.content[0].text)
+    assert body["clips"] == {} and body["links"], sorted(body["clips"])
+    both = await session.call_tool(
+        "preview_manifest", {"project_id": pid, "clips": ["picture"], "no_clips": True}
+    )
+    assert both.isError and "INVALID_REQUEST" in both.content[0].text, both.content[0].text[:200]
+
 
 async def check_curve_mcp(session):
     created = await call_ok(

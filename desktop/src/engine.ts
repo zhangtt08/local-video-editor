@@ -1,3 +1,4 @@
+import { manifestPath } from "./manifestFetch";
 import type { Fraction, RampPiece } from "./time";
 
 export type VerifiedMedia = {
@@ -1368,8 +1369,13 @@ export class Engine {
     );
   }
 
-  previewManifest(projectId: string, revision: number, sequenceId: string | null = null) {
-    return this.request<PreviewManifest>("GET", `/v1/projects/${projectId}/preview-manifest?revision=${revision}${sequenceId ? `&sequence_id=${sequenceId}` : ""}`);
+  previewManifest(
+    projectId: string,
+    revision: number,
+    sequenceId: string | null = null,
+    clipIds: string[] | null = null
+  ) {
+    return this.request<PreviewManifest>("GET", manifestPath(projectId, revision, sequenceId, clipIds));
   }
 
   clipSample(projectId: string, revision: number, clipId: string, at: number) {

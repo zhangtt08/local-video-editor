@@ -143,6 +143,17 @@ def over_http(project_id: str, client: TestClient) -> None:
     assert refusal["code"] == "NOT_FOUND"
     assert refusal["details"]["clip_ids"] == "nope", gone.json()
 
+    # 1.187：「这一段都别编译」得有自己的一句话（列表参数不能为空）：清空片段表，
+    # 但工程级那几个键一个不许少；两种说法同时出现要被拒。
+    none = client.get(path, params=[("no_clips", "1")]).json()
+    assert none["clips"] == {}, sorted(none["clips"])
+    assert whole_project_keys(none) == whole_project_keys(full)
+    assert capabilities()["features"]["preview_manifest_no_clips"] is True
+    both = client.get(path, params=[("no_clips", "1"), ("clips", "a")])
+    assert both.status_code == 422, both.json()
+    refusal = both.json()["error"]
+    assert refusal["code"] == "INVALID_REQUEST" and refusal["details"]["named"] == 1, refusal
+
     blank = client.get(path + "?clips=")
     assert blank.status_code == 422, blank.json()
     # 空白段名不是「什么都别描述」：它连合法 id 都不是，拒的时候要能看出拒的是哪一个参数。

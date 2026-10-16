@@ -192,16 +192,23 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         revision: Revision | None = None,
         sequence_id: Identifier | None = None,
         clips: list[str] | None = None,
+        no_clips: bool = False,
     ) -> dict:
         """Read authoritative animation curves, optionally only for the clips `clips` names.
 
         A large project's full manifest is tens of megabytes, so an Agent checking a handful of
         clips passes their ids and gets exactly those entries; `capabilities.features.
         preview_manifest_clips_max` is how many ids one call may name. Omit `clips` for everything.
+        `no_clips=True` is the third ask — compile *none* of them, for a caller looking at a gap;
+        a list parameter cannot be empty, which is why that one needs its own word. `clips` and
+        `no_clips` together are refused, and `capabilities.features.preview_manifest_no_clips`
+        says whether the engine understands the word at all.
         """
         query = f"?sequence_id={sequence_id}" if sequence_id else "?"
         if revision is not None:
             query += f"&revision={revision}"
+        if no_clips:
+            query += "&no_clips=1"
         for clip_id in clips or []:
             query += f"&clips={quote(clip_id, safe='')}"
         return await call("GET", f"/v1/projects/{project_id}/preview-manifest{query}")
