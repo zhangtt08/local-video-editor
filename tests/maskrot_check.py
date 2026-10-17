@@ -394,7 +394,7 @@ def main():
 
             # ④ capabilities：钉字面量，不从 contracts 再算一遍
 
-            assert caps["project_schema_version"] == 21, caps["project_schema_version"]
+            assert caps["project_schema_version"] == 22, caps["project_schema_version"]
 
             assert caps["features"]["mask_rotation"] is True, caps["features"]
 

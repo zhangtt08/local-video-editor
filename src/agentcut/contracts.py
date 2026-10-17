@@ -21,11 +21,13 @@ MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 
 SCHEMA_VERSION = (
 
-    21  # v21 lets that angle carry keyframes; v20 rows leave the curve absent and a flat angle
+    22  # v22 lets a chain read a second picture; v21 rows carry no layer node at all, and an
 
-    #     is the very picture every one of those deliveries was measured against, so they read
+    #     older engine must fail the union rather than guess at one. v21 lets that angle carry
 
-    #     unchanged
+    #     keyframes; v20 rows leave the curve absent and a flat angle is the very picture every
+
+    #     one of those deliveries was measured against, so they read unchanged
 
 )
 
@@ -33,7 +35,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.188.0"
+APP_VERSION = "1.189.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 
@@ -1592,6 +1594,13 @@ GRADE_BRANCH_LIMIT = 4
 GRADE_MIXER_DEPTH = 3
 
 
+# 一条链最多叠几层外部画面。每多一层就是多解一路画面、多两段 blend，而监视器多一个 DOM 图层——
+
+# `capabilities.grade_limits.max_layers` 下发的就是这个数，界面不许自己数。
+
+GRADE_LAYER_LIMIT = 3
+
+
 
 
 
@@ -1764,6 +1773,43 @@ class GradeComposite(Contract):
     enabled: bool = True
 
 
+class GradeLayer(Contract):
+
+    """第二路画面：把**另一张图像素材**叠在这条链的输出上（AE 的图层·达芬奇往上叠一层媒体）。
+
+
+
+    与 `GradeComposite` 的区别只有一件事：那一条读的是这条链自己进来的那幅画，这一条读的是
+
+    工程里另一张图，所以它带 `asset_id` 而那条边不带。相合的方式与权重是同一份词表（`BlendMode`
+
+    与 `GradeMix`），两端逐模式逐权重量过才敢下发（见 `capabilities.features.grade_layer`）。
+
+
+
+    位置是写进去之前就要定死的一条：这一层必须在链尾，它后面不能再有会改画面的节点。导出把各层
+
+    按链里的顺序一段接一段相合，浏览器把每张图按同一顺序画成 DOM 图层——同序才同图；一旦有节点
+
+    排在层后面，浏览器只能把层画在整条滤镜链之上，两端就不是同一幅画了。那种排法按 `LAYER_POSITION`
+
+    点名拒绝，出路写清楚（把这一层拖到链尾）。
+
+    """
+
+
+
+    kind: Literal["layer"] = "layer"
+
+    asset_id: Identifier
+
+    mode: BlendMode = "screen"
+
+    mix: GradeMix = 0.5
+
+    enabled: bool = True
+
+
 
 
 
@@ -1788,6 +1834,8 @@ GradeNode = (
     | GradeParallel
 
     | GradeComposite
+
+    | GradeLayer
 
 )
 
@@ -1843,6 +1891,39 @@ class ClipColor(Contract):
 
             )
 
+        return self
+
+    @model_validator(mode="after")
+    def layers_are_counted_and_last(self):
+        # 两条判断各一条：条数（每层多一路解码、多两段 blend、多一个 DOM 图层）与位置（链尾，
+        # 见 `GradeLayer` 那一句）。位置不是洁癖：浏览器把层画在整条滤镜链之上，导出按链里的顺序
+        # 一段一段相合，中间隔着会改画面的节点时，两端就不是同一幅画。
+        layers = [node for node in self.grade if node.kind == "layer" and node.enabled]
+        if len(layers) > GRADE_LAYER_LIMIT:
+            raise EditorError(
+                "LAYER_LIMIT",
+                f"一条调色链最多叠 {GRADE_LAYER_LIMIT} 层外部画面（这里有 {len(layers)} 个）："
+                "每多一层就要多解一路画面。要更多层就把其中几层先合成一张图，"
+                "或者把一层放到另一条画面轨上用那条轨的混合方式",
+                422,
+                count=len(layers),
+                limit=GRADE_LAYER_LIMIT,
+            )
+        if layers:
+            last = max(index for index, node in enumerate(self.grade) if node.kind == "layer")
+            following = [
+                node for node in self.grade[last + 1 :] if node.enabled and node.kind != "layer"
+            ]
+            if following:
+                raise EditorError(
+                    "LAYER_POSITION",
+                    "外部画面层必须在链尾：这一层后面还有 "
+                    f"{len(following)} 个会改画面的节点（{following[0].kind}）。导出按顺序相合、"
+                    "浏览器按同一顺序画层，中间隔着节点两端就不是同一幅画；"
+                    "把这一层移到链尾即可（界面上那颗「移到最后」）",
+                    422,
+                    following=[node.kind for node in following],
+                )
         return self
 
 
@@ -6331,6 +6412,10 @@ def capabilities(
 
             "max_tree_operations": GRADE_NODE_LIMIT,
 
+            # 1.189：第二路画面是另一张素材。条数与「能不能叠」都由这里下发。
+
+            "max_layers": GRADE_LAYER_LIMIT,
+
             "max_curve_points": CURVE_POINT_LIMIT,
 
             "max_lut_samples": LUT_SAMPLE_LIMIT,
@@ -6823,6 +6908,12 @@ def capabilities(
             # 层数与操作数在上面对下发。
 
             "grade_mixer_trees": True,
+
+            # 1.189：第二路画面可以是另一张图像素材（链尾、按顺序叠）。开关说的只是
+
+            # 「引擎收不收这种载荷」，条数在 grade_limits.max_layers，模式就是 BlendMode 那张表。
+
+            "grade_layer": True,
 
             "timeline_marks": True,
 

@@ -54,7 +54,7 @@ from .gamut import (
     primaries_mix_expression,
     transfer_pair,
 )
-from .grade import composite_stages, grade_filter
+from .grade import composite_stages, grade_filter, layer_stages
 from .masks import (
     alpha_expression,
     feather_sigma,
@@ -1292,6 +1292,92 @@ def compile_render_plan(
         )
         return label
 
+    def apply_layers(clip, pad: str) -> str:
+        """1.189 的第二路画面：把链尾那几层外部图按顺序相合进来（`layer_stages` 是唯一说法）。
+
+        收口只有一处：这一段画面走完自己的滤镜与适配之后、进轨道合成之前。界面画的是同一个位置
+        （clip 根节点里最后那几张图，外面包一层 `isolation`），所以「层不被这一段的遮罩切、不被
+        这一段的柔焦糊、但被转场压住」两端是同一句话。输入与输出都是一个标签，接法不会有两种形状。
+
+        与 composite 那条边同形：先按方式相合，再与「到目前为止的结果」用 normal 插值——一个旋钮
+        同时当方式和权重会谎报两端（那条边当年就是这么量的）。差别只在第二幅画来自工程里另一张图。
+
+        `normal` 那一档要换操作数：FFmpeg 的 `blend=all_mode=normal` 交回**第一个**输入，而浏览器
+        的 `mix-blend-mode: normal` 交回**上面那一层**。把层放到第一位，两端就又是同一幅画——
+        `tests/layer_check.py` 逐模式量的就是换过之后的数。
+
+        补边交付（`contain`）时画面只占交付帧中间那块，层不能盖到黑边上：把那一片裁出来相合，
+        再叠回去。`blend` 两路必须同尺寸，所以裁出来的那一块自己也要 split 一份当插值的底。
+        等比交付时帧就是画面，串里不多那两级——两条形状各有断言。
+        """
+        stages = layer_stages(clip.color)
+        if not stages:
+            return pad
+        offset_x, offset_y = int(round(bar_x)), int(round(bar_y))
+        current = pad
+        for stage in stages:
+            asset = project.assets.get(stage["asset_id"])
+            if asset is None or asset.kind != "image" or asset.verified is None:
+                # 写的时候 reducer 已经问过一遍；素材后来被删/换掉留下的孤儿由这里兜住：
+                # 同一个 code、同一句出路，编译期不 KeyError，也不悄悄少叠一层。
+                raise EditorError(
+                    "LAYER_ASSET_UNAVAILABLE",
+                    f"这一层要叠的素材「{stage['asset_id']}」现在拿不到可读的画面："
+                    "重新导入那个文件，或把这一层从链上摘掉",
+                    422,
+                    asset_id=stage["asset_id"],
+                )
+            index = plan.next_input()
+            plan.input_args += [
+                "-loop",
+                "1",
+                "-framerate",
+                fps,
+                "-t",
+                sec(clip.duration_ticks),
+                "-i",
+                asset.verified.path,
+            ]
+            plan.owners[index], plan.allocations = clip.id, plan.allocations + 1
+            sized = plan.tag("lyr")
+            plan.filters.append(
+                f"[{index}:v]scale={picture_w}:{picture_h}:force_original_aspect_ratio=disable,"
+                f"format=gbrp,fps={fps},settb=AVTB{sized}"
+            )
+            canvas = plan.tag("lcv")
+            plan.filters.append(f"{current}format=gbrp{canvas}")
+            halves = [plan.tag("lhalf") for _ in range(2)]
+            plan.filters.append(f"{canvas}split=2{''.join(halves)}")
+            if letterbox:
+                # 画面只占交付帧中间那块：裁出来相合，插值的底也用裁出来的那一份（同尺寸）。
+                box = plan.tag("lbox")
+                plan.filters.append(
+                    f"{halves[0]}crop={picture_w}:{picture_h}:{offset_x}:{offset_y}{box}"
+                )
+                pair = [plan.tag("lpart") for _ in range(2)]
+                plan.filters.append(f"{box}split=2{pair[0]}{pair[1]}")
+            else:
+                pair = halves
+            blended = plan.tag("lmode")
+            first, second = (
+                (sized, pair[0]) if stage["mode"] == "normal" else (pair[0], sized)
+            )
+            plan.filters.append(f"{first}{second}blend=all_mode={stage['mode']}{blended}")
+            lerped = plan.tag("llerp")
+            plan.filters.append(
+                f"{blended}{pair[1]}blend=all_mode=normal"
+                f":all_opacity={stage['mix']:.6g}{lerped}"
+            )
+            if letterbox:
+                current = plan.tag("lout")
+                plan.filters.append(
+                    f"{halves[1]}{lerped}overlay=x={offset_x}:y={offset_y}:format=gbrp{current}"
+                )
+            else:
+                current = lerped
+        return current
+
+
     def track_chain(entries: list[dict]) -> tuple[str, list[tuple[int, int]], int]:
         """Concat one track's clips, filling gaps with black, over the whole timeline."""
         labels: list[str] = []
@@ -1377,7 +1463,7 @@ def compile_render_plan(
                     plan.filters.append(
                         f"{head},trim=duration={sec(clip.duration_ticks)},setpts=PTS-STARTPTS{label}"
                     )
-            labels.append(label)
+            labels.append(apply_layers(clip, label))
             windows.append((clip.position_ticks, clip.position_ticks + clip.duration_ticks))
             cursor = clip.position_ticks + clip.duration_ticks
         if cursor < total:

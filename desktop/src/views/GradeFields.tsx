@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 
-import { branchBlend, DEFAULT_COMPOSITE, branchTree, branchWeight, blendsAfterAdd, blendsAfterPick, blendsAfterRemove, chainFieldsFor, mapMixer, mixerAt, NODE_NAMES, cardsFor, moveWithin, resolveMixerPath, weightsAfterAdd, weightsAfterRemove, weightsAfterWeight, type GraphLane } from "../gradeGraph";
+import { branchBlend, DEFAULT_COMPOSITE, DEFAULT_LAYER, branchTree, branchWeight, blendsAfterAdd, blendsAfterPick, blendsAfterRemove, chainFieldsFor, mapMixer, mixerAt, NODE_NAMES, cardsFor, moveWithin, resolveMixerPath, weightsAfterAdd, weightsAfterRemove, weightsAfterWeight, type GraphLane } from "../gradeGraph";
 import {blendLabel, DEFAULT_TRANSFER, COLOR_SPACES, DEFAULT_CURVE_POINTS, DEFAULT_WHEELS, type GradeBranch, type GradeCapacity, type GradeChannel, type GradeCurvePoint, type GradeNode, type GradeOperation, type GradeParallel, type ColorSpace, type ClipColorSpaceReport, BLEND_MODES, type BlendMode} from "../engine";
 import { applyGradeToTrack, editableProject, setClipColor, useApp, applyLut, autoGradeClip, colorManageClip, fetchGradeCapacity, readClipColorSpace } from "../store";
 import { autoSourceBlocker, autoSourceOffered, colorSpaceWords, handPickLive, handPickWords, managedPair, managedWords, manageFits, manageSourceValue, manageSpaces, shouldReadColorSpace, taggedCount, transferTagWords, type ColorSpacePhase } from "../colorManage";
@@ -35,6 +35,8 @@ export type GradeLimits = {
   weightMax: number;
   /** 1.124：一棵树最多几层、一个节点底下最多几个操作，也是引擎下发。 */
   mixerDepth?: number;
+  /** 1.189：一条链最多叠几层外部画面，也是引擎下发。 */
+  layers?: number;
   treeOperations?: number;
   blackMax?: number;
   whiteMin?: number;
@@ -214,6 +216,9 @@ function CurvePad({ points, maxPoints, onCommit }: { points: GradeCurvePoint[]; 
 
 /** 一个操作的编辑控件：曲线、白平衡、色彩空间、RGB 增益、LUT。串行节点与并联分支共用这一套。 */
 function OpFields({ node, idPrefix, limits, onReplace, onCommit }: { node: GradeNode; idPrefix: string; limits: GradeLimits; onReplace?: () => void; onCommit: (next: GradeNode) => void }) {
+  // 第二路画面指的是哪一张，只能从工程里那份素材表选：界面不自己列名字，也不自己拼 URL。
+  const app = useApp();
+  const images = Object.values(app.project?.assets ?? {}).filter((row) => row.kind === "image" && row.verified);
   if (node.kind === "curve") {
     return <div className="grade-body">
       <label className="mask-shape">通道 <select className="input" aria-label="曲线通道" value={node.channel} onChange={(e) => onCommit({ ...node, channel: e.target.value as GradeChannel })}>{CHANNELS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
@@ -279,6 +284,26 @@ function OpFields({ node, idPrefix, limits, onReplace, onCommit }: { node: Grade
       {onReplace ? <button className="btn tiny" onClick={onReplace}>换一张 LUT</button> : null}
     </div>;
   }
+  if (node.kind === "layer") {
+    return <div className="grade-body">
+      <label className="mask-shape">叠哪一张画面
+        <select className="input" aria-label="外部画面层的素材" value={node.asset_id} onChange={(e) => onCommit({ ...node, asset_id: e.target.value })}>
+          <option value="">（选一张已导入的图像）</option>
+          {images.map((row) => <option key={row.id} value={row.id}>{row.label}</option>)}
+        </select>
+      </label>
+      <label className="mask-shape">相合的方式
+        <select className="input" aria-label="外部画面层的混合方式" value={node.mode} onChange={(e) => onCommit({ ...node, mode: e.target.value as BlendMode })}>
+          {BLEND_MODES.map(([value, name]) => <option key={value} value={value}>{name}</option>)}
+        </select>
+      </label>
+      <Num id={`${idPrefix}-layer-mix`} label="这一层的权重" value={node.mix * 100} min={0} max={100} step={5} unit="%"
+        onCommit={(value) => onCommit({ ...node, mix: round(value / 100) })} />
+      <p className="hint">这一层读的是<b>工程里另一张图</b>：它叠在这段画面走完自己那条链之后——不被这一段的遮罩切、不被这一段的柔焦糊，但转场会把它一起压过去。0% 就是这一层什么都不做。</p>
+      <p className="hint">监视器与导出读的是<b>同一份</b>方式与权重（引擎下发那八种，逐档量过）。它必须排在链尾：中间隔着会改画面的节点，两端就不是同一幅画，引擎按 LAYER_POSITION 点名拒。</p>
+      {node.asset_id && !images.some((row) => row.id === node.asset_id) ? <p className="hint">这一层指的素材现在不在工程里（或没有验过的媒体），导出会按 LAYER_ASSET_UNAVAILABLE 拒：重新选一张。</p> : null}
+    </div>;
+  }
   if (node.kind === "composite") {
     // 第二路画面：这一级的两个控件都在它自己身上，没有通用的「强度」可借——`mix` 是相合的权重，
     // `mode` 是相合的方式，而它必须排在 OpFields 这一层（`MixFields` 只挂在并联节点上，
@@ -315,7 +340,7 @@ function OpFields({ node, idPrefix, limits, onReplace, onCommit }: { node: Grade
 
 /** 强度与混合方式：节点有自己的一对，并联分支也有，语义相同——都只与该支/该节点的输入比较。 */
 function MixFields({ node, idPrefix, label, onCommit }: { node: GradeNode; idPrefix: string; label: string; onCommit: (next: GradeNode) => void }) {
-  if (node.kind === "lut3d" || node.kind === "composite") {
+  if (node.kind === "lut3d" || node.kind === "composite" || node.kind === "layer") {
     // lut3d：契约里没有 mix 也没有 blend，这里不放控件，比放一个只有一端听的控制诚实。
     // composite：它那两个控件在 `OpFields` 里（串行节点走那条分发），而且契约不许它当一支，
     // 所以到不了这里——写在这里只会让 TS 以为这条通用支路认得它。
@@ -386,6 +411,8 @@ export function GradeFields({ clipId }: { clipId: string }) {
   const capacityLine = gradeCapacityLine(capacity, capacityRevision);
   const clip = project?.clips[clipId];
   const nodes = clip?.color?.grade ?? [];
+  // 层数与「还能不能加」都由引擎下发的那个数管，界面不自己定一个。
+  const enabledLayers = nodes.filter((node) => node.kind === "layer" && node.enabled).length;
   // 上限由引擎下发（1.55 的同一课）：界面不自己数一遍，就不会出现界面允许、引擎拒绝的节点。
   const limits: GradeLimits = {
     nodes: app.caps?.grade_limits?.max_nodes ?? FALLBACK_NODES,
@@ -393,6 +420,7 @@ export function GradeFields({ clipId }: { clipId: string }) {
     branches: app.caps?.grade_limits?.max_branches ?? FALLBACK_BRANCHES,
     weightMax: app.caps?.grade_limits?.branch_weight_max ?? FALLBACK_WEIGHT,
     mixerDepth: app.caps?.grade_limits?.max_mixer_depth ?? FALLBACK_MIXER_DEPTH,
+    layers: app.caps?.grade_limits?.max_layers ?? 0,
     treeOperations: app.caps?.grade_limits?.max_tree_operations ?? FALLBACK_TREE_OPERATIONS,
     blackMax: app.caps?.grade_limits?.levels_black_max ?? FALLBACK_LEVELS.blackMax,
     whiteMin: app.caps?.grade_limits?.levels_white_min ?? FALLBACK_LEVELS.whiteMin,
@@ -503,13 +531,15 @@ export function GradeFields({ clipId }: { clipId: string }) {
     setActive(Math.min(Math.max(0, target), next.length - 1));
   };
   const add = (
-    kind: "curve" | "white_balance" | "wheels" | "levels" | "matrix" | "transfer" | "parallel" | "composite",
+    kind: "curve" | "white_balance" | "wheels" | "levels" | "matrix" | "transfer" | "parallel" | "composite" | "layer",
   ) => {
     if (nodes.length >= limits.nodes) return;
     const node: GradeNode = kind === "parallel"
       ? { kind: "parallel", branches: [newOperation("white_balance"), newOperation("white_balance")] as GradeBranch[], enabled: true }
       : kind === "composite"
         ? { ...DEFAULT_COMPOSITE }
+      : kind === "layer"
+        ? { ...DEFAULT_LAYER, asset_id: (Object.values(project?.assets ?? {}).find((row) => row.kind === "image" && row.verified))?.id ?? "" }
         : newOperation(kind);
     write([...nodes, node]);
     pending.current = nodes.length;
@@ -594,7 +624,7 @@ export function GradeFields({ clipId }: { clipId: string }) {
     <summary className="panel-label">调色节点{nodes.length ? ` · ${nodes.length} 个` : ""}</summary>
     <fieldset className="effects-fields" disabled={locked}>
       <div className="batch-actions">
-        {(["curve", "white_balance", "wheels", "levels", "matrix", "transfer", "parallel", "composite"] as const).map((kind) => <button key={kind} className="btn tiny" disabled={nodes.length >= limits.nodes} onClick={() => add(kind)}>+{NODE_NAMES[kind]}</button>)}
+        {(["curve", "white_balance", "wheels", "levels", "matrix", "transfer", "parallel", "composite", "layer"] as const).map((kind) => <button key={kind} className="btn tiny" disabled={nodes.length >= limits.nodes || (kind === "layer" && enabledLayers >= (limits.layers ?? 0))} title={kind === "layer" && enabledLayers >= (limits.layers ?? 0) ? `这条链的层数到了引擎下发的上限 ${limits.layers ?? 0}` : undefined} onClick={() => add(kind)}>+{NODE_NAMES[kind]}</button>)}
         {app.caps?.features.lut_import ? <button className="btn tiny" disabled={nodes.length >= limits.nodes} title="选择 .cube 文件（1D 逐通道或 3D 立方查找表），由引擎解析成调色链节点" onClick={() => pickLut(null)}>+LUT</button> : null}
         {app.caps?.features?.grade_apply_track && nodes.length ? <>
           <button className="btn tiny" disabled={Boolean(app.busy)} title="把这条片段现在的整条调色链套到它所在的这条轨上每一段（替换它们原有的链）。装不下的段落不会被悄悄丢掉：引擎一份份报出原因，toast 照实念。" onClick={() => applyGradeToTrack(clipId, "replace")}>套到整轨（替换）</button>

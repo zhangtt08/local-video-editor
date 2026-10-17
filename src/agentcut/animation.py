@@ -22,7 +22,7 @@ from .contracts import (
     Project,
     Track,
 )
-from .grade import preview_grade
+from .grade import layer_stages, preview_grade
 from .masks import animated_mask_image, cover_svg_image, fit_box, mask_image
 from .speed import describe, segments
 from .timeline import link_status
@@ -878,6 +878,9 @@ def preview_manifest(
             "edge_filter": (
                 f" url(#{sharpen['id']})" if sharpen and spatial and not stepped else None
             ),
+            # 1.189：第二路画面按链里的顺序交出去，界面只负责把每张图叠在它那一层。
+            # 方式与权重不在这里换算——`grade.layer_stages` 就是导出读的那一份。
+            "layer": layer_stages(clip.color),
             "grade": grade,
             "transition": transition_curves[clip.id],
             "fade": fade or None,

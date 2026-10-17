@@ -81,6 +81,7 @@ export type GradeOperation =
   /** 1.144：第二路画面输入。这条边读两幅画（链的输出与链的输入），所以它不是每通道函数：
    *  导出走 FFmpeg 的 `split` + `blend`，浏览器没有对应的原语，预览明说不生效。 */
   | { kind: "composite"; mode: BlendMode; mix: number; enabled: boolean }
+  | { kind: "layer"; asset_id: string; mode: BlendMode; mix: number; enabled: boolean }
   /** 色彩空间转换。`purpose` 只有引擎的 `clip.color_manage` 会写：它把这一对节点标记成「一键套上的
    *  色彩管理」，取下时只删自己被标过的两个，中间谁手工加的都原样留着。界面不许自己造第三个值。 */
   | { kind: "transfer"; input_space: ColorSpace; output_space: ColorSpace; enabled: boolean; mix?: number; blend?: BlendMode; purpose?: "color_manage" | null }
@@ -261,7 +262,8 @@ export type SharpenSteps = {
   curve: { offset: number; id: string | null; easing: string }[];
 };
 export type SharpenSpec = SharpenStatic | SharpenSteps;
-export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; grade?: GradeTables | null; sharpen?: SharpenSpec | null; speed?: RampPiece[] | null; mask_image?: string | null; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; mask_shape?: MaskShapeWindow[] | null; mask_rotation_windows?: MaskRotationWindow[] | null; spatial?: Partial<Record<SpatialProperty, Curve>> | null; edge_filter?: string | null; curves: Record<AnimatedEffect, Curve>; transition: TransitionEnvelope; fade?: Record<"opacity" | "gain", Curve> | null }> };
+export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; grade?: GradeTables | null; sharpen?: SharpenSpec | null; speed?: RampPiece[] | null; mask_image?: string | null; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; mask_shape?: MaskShapeWindow[] | null; mask_rotation_windows?: MaskRotationWindow[] | null; spatial?: Partial<Record<SpatialProperty, Curve>> | null; edge_filter?: string | null; curves: Record<AnimatedEffect, Curve>; transition: TransitionEnvelope; fade?: Record<"opacity" | "gain", Curve> | null;
+      layer?: { asset_id: string; mode: BlendMode; mix: number }[] }> };
 
 /** 引擎给这条片段记下的那一次稳定：有了它，再按一次是换一档强度而不是叠第二遍。 */
 export type Stabilization = {
@@ -616,6 +618,8 @@ export type Capabilities = {
     branch_weight_max?: number;
     /** 1.124：一棵树最多几层混频台、一个链节点底下最多多少个操作，都由引擎下发。 */
     max_mixer_depth?: number;
+    /** 1.189：一条链最多叠几层外部画面（`GRADE_LAYER_LIMIT`）。 */
+    max_layers?: number;
     max_tree_operations?: number;
     max_curve_points: number;
     max_lut_samples: number;
@@ -888,6 +892,9 @@ export function errorHints(): Record<string, string> {
       TIMECODE_NEEDS_PICTURE: "这一条交付根本没有画面，时间码是给画面数帧的，写上去只会骗人。要时间码请换成带画面的预设，或者把这一栏清空。",
       UNKNOWN_OUTPUT_RATE: "这一档交付帧率不在这张表上，所以这一次导出没有排队。可交的是 24／23.976／25／29.97／30／50／59.94／60（清单以引擎能力表为准）；想跟时间线一样就选「跟时间线」，那一栏留空也是同一个意思。",
       OUTPUT_RATE_NEEDS_PICTURE: "这一条交付根本没有画面，帧率是「一秒几帧」，写上去只会骗人。要换交付帧率请换成带画面的预设，或者把那一栏改回「跟时间线」。",
+      LAYER_LIMIT: "一条调色链叠外部画面到了上限：每多一层就要多解一路画面，引擎按上限拒。要更多层就把其中几层先合成一张图，或者把一层放到另一条画面轨上用那条轨的混合方式相合。",
+      LAYER_POSITION: "外部画面层必须在链尾：导出按链里的顺序一段一段相合，浏览器按同一顺序画层，中间隔着会改画面的节点时两端就不是同一幅画。把这一层移到链尾即可。",
+      LAYER_ASSET_UNAVAILABLE: "这一层要叠的画面现在拿不到：素材不在工程里、不是图像，或者还没有引擎验过的媒体记录。重新导入那个文件，或把这一层从链上摘掉。",
       COMPOSITE_LIMIT: "一条调色链最多一条「叠一层原图」：两条边叠在一起时，「链的输出」指的是哪一段说不清，所以引擎两条就拒。要两层效果，把没调色的那份放到另一条画面轨上用轨道的混合方式相合，或者拆成两段嵌套合成。",
       SEQUENCE_NEEDS_CONTAINER: "图像序列交出的是一串文件（每帧一张），没有容器可以挂起始时间码，帧号就是位置。要时间码请换成 mov／mp4／mxf／webm 那几条；这一串的声音也不在里面，需要带声的成片请同时交一份 mp4／mov。",
       UNKNOWN_PRESET: "没有这个导出预设。能力表里列出的 id 才是可用的；界面下拉里选一个即可。",

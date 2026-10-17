@@ -288,7 +288,10 @@ textarea.input { resize: vertical; line-height: 1.5; }
 .transition-white { position: absolute; inset: 0; background: white; pointer-events: none; }
 .transition-badge { position: absolute; top: 33px; height: 18px; z-index: 6; background: #3b3351; color: #eee0ff; border: 1px solid #9276ba; border-radius: 3px; font-size: 10px; overflow: hidden; white-space: nowrap; cursor: pointer; }
 .transition-badge:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.preview-layer { pointer-events: none; }
+/* isolation：第二路画面只与这一段自己的画面相合，不能穿到别的轨道底下去。
+   .layer-grade 是引擎下发的那一层：位置、方式与权重都照清单，界面不做第二次换算。 */
+.preview-layer { pointer-events: none; isolation: isolate; }
+.layer-grade { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
 .audio-layer { visibility: hidden; }
 .gain-sample { position: absolute; width: 1px; height: 1px; visibility: hidden; }
 .layer-error { position: absolute; inset: 0; display: grid; place-items: center; color: #ef9ea4; background: #22282a; font-size: 12px; }

@@ -452,6 +452,20 @@ def grade_stages(color) -> list[dict] | None:
             if node.enabled:
                 stages.append({"type": "composite", "mode": node.mode, "mix": node.mix})
             continue
+        if node.kind == "layer":
+            # 1.189 的第二路画面：与 composite 同一类——一条链里第一次出现「两幅画」，只是这一幅
+            # 来自工程里的另一张图。契约把层定死在链尾，所以这里 append 之后不会再有别的阶段。
+            flush()
+            if node.enabled:
+                stages.append(
+                    {
+                        "type": "layer",
+                        "asset_id": node.asset_id,
+                        "mode": node.mode,
+                        "mix": node.mix,
+                    }
+                )
+            continue
         group.append(node)
     flush()
     return stages or None
@@ -467,6 +481,19 @@ def composite_stages(color) -> list[dict]:
         {"mode": stage["mode"], "mix": stage["mix"]}
         for stage in (grade_stages(color) or [])
         if stage["type"] == "composite"
+    ]
+
+
+def layer_stages(color) -> list[dict]:
+    """这条链要叠的那几层外部画面，按链里的顺序交回来；没有就交回空表。
+
+    只有一个地方问「有没有、第几层、叠什么」：`render.py` 据此决定要不要多开一路输入，
+    `preview_manifest` 据此给界面同样的顺序，两边走的是同一份判断。
+    """
+    return [
+        {"asset_id": stage["asset_id"], "mode": stage["mode"], "mix": stage["mix"]}
+        for stage in (grade_stages(color) or [])
+        if stage["type"] == "layer"
     ]
 
 
@@ -516,6 +543,20 @@ def grade_tables(color) -> dict | None:
                 {
                     "type": "composite",
                     "id": f"c{_stage_id([stage['mode'], stage['mix']])}",
+                    "mode": stage["mode"],
+                    "mix": stage["mix"],
+                    "preview": False,
+                }
+            )
+            continue
+        if stage["type"] == "layer":
+            # 1.189：外部画面层也不是滤镜原语——它是一层 DOM，画面由 `preview_manifest` 另开一个
+            # 键交给界面（顺序、方式、权重都从这里出）。留在阶段表里只为让 id 覆盖整条链。
+            built.append(
+                {
+                    "type": "layer",
+                    "id": f"y{_stage_id([stage['asset_id'], stage['mode'], stage['mix']])}",
+                    "asset_id": stage["asset_id"],
                     "mode": stage["mode"],
                     "mix": stage["mix"],
                     "preview": False,
@@ -625,8 +666,8 @@ def grade_filter(color, plan=None) -> str:
             plan.text_files[name] = body
             parts.append(f"lut3d=file={name}:interp=tetrahedral")
             continue
-        if stage["type"] == "composite":
-            # 这条边由调用方编成 `split` + 两段 `blend`（见 `render.py` 的 cut 路径），
+        if stage["type"] in ("composite", "layer"):
+            # 这两条边由调用方编成 `split` + 两段 `blend`（见 `render.py` 的 cut 路径），
             # 在这里必须整条跳过：掉进下面那个「按矩阵拼 colorchannelmixer」的分支会 KeyError。
             continue
         if stage["type"] == "lut":

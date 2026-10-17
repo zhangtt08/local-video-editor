@@ -493,6 +493,47 @@ def _grade_inline_budget(project, before: int) -> None:
     )
 
 
+def _check_layer_sources(project, grade) -> None:
+    """第二路画面指的是谁，只在写之前问一次：工程里有、是图像、而且引擎验过它。
+
+    `render.py` 编译时要拿 `asset.verified.path` 去多开一路输入，所以「名字存在但没验过 media」
+    这种半截状态必须在这里就挡下——到了导出才发现，用户看到的是一次失败的任务而不是一句拒绝。
+    素材被删掉之后留下的那种孤儿引用，由编译那一条同样的拒绝兜住（同一个 code）。
+    """
+    for node in grade:
+        if node.kind != "layer" or not node.enabled:
+            continue
+        asset = project.assets.get(node.asset_id)
+        if asset is None:
+            raise EditorError(
+                "LAYER_ASSET_UNAVAILABLE",
+                f"这一层要叠的素材「{node.asset_id}」不在这个工程里：先从素材库选一张已经导入的画面，"
+                "或先把那个文件导入进来",
+                422,
+                asset_id=node.asset_id,
+                reason="missing",
+            )
+        if asset.kind != "image":
+            raise EditorError(
+                "LAYER_ASSET_UNAVAILABLE",
+                f"第二路画面现在只收图像素材（「{asset.label}」是 {asset.kind}）："
+                "要叠动的画面就把它先摊平成一张图，或用嵌套合成把那段先渲成一帧",
+                422,
+                asset_id=node.asset_id,
+                reason="kind",
+                asset_kind=asset.kind,
+            )
+        if asset.verified is None:
+            raise EditorError(
+                "LAYER_ASSET_UNAVAILABLE",
+                f"素材「{asset.label}」还没有引擎验过的媒体记录（reference 是不可信的元数据）："
+                "重新导入一次这个文件，让探测记录落到素材上",
+                422,
+                asset_id=node.asset_id,
+                reason="unverified",
+            )
+
+
 def apply_commands(
     project: Project, commands: list[Command], sequence_id: str | None = None
 ) -> Project:
@@ -823,6 +864,9 @@ def apply_commands(
                 elif command.op == "clip.color":
                     if candidate.assets[clip.asset_id].kind == "audio":
                         raise EditorError("INVALID_COLOR", "audio has no color properties")
+                    # 这一条也写得进整条链（界面上那排节点走的就是它），所以同一句
+                    # 「第二路画面指的是谁」在这里也要问一次——两处只有一个主人。
+                    _check_layer_sources(candidate, command.color.grade)
                     clip.color = command.color.model_copy(deep=True)
                 elif command.op == "clip.color_manage":
                     if candidate.assets[clip.asset_id].kind == "audio":
@@ -835,6 +879,7 @@ def apply_commands(
                 elif command.op == "clip.grade":
                     if candidate.assets[clip.asset_id].kind == "audio":
                         raise EditorError("INVALID_COLOR", "audio has no color properties")
+                    _check_layer_sources(candidate, command.grade)
                     clip.color = ClipColor.model_validate(
                         {**clip.color.model_dump(), "grade": command.grade}
                     )
