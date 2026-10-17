@@ -73,24 +73,29 @@ def main() -> None:
         held = build("image", [GradeComposite(mode=mode, mix=mix)])
         given = preview_manifest(held)["clips"]["c"]["composite"]
         stages = composite_stages(held.clips["c"].color)
-        assert given == {"mode": mode, "mix": mix, "paintable": True}, (mode, given)
+        assert given == {
+            "mode": mode, "mix": mix, "paintable": True, "motion": "always",
+        }, (mode, given)
         assert len(stages) == 1, stages
         assert (given["mode"], given["mix"]) == (stages[0]["mode"], stages[0]["mix"]), stages
 
-    # 3) paintable 只由素材是什么决定：同一条边换到视频素材上就是 False
+    # 3) 什么时候画得成也由引擎说一次：图像 `"always"`、视频 `"paused"`（暂停与逐帧画得成，
+    #    播放中再开一路解码会把动画帧率打掉一半，本轮量过），没有那次探测就是 null。
     moving = build("video", [GradeComposite(mode="multiply", mix=0.5)])
     assert preview_manifest(moving)["clips"]["c"]["composite"] == {
-        "mode": "multiply", "mix": 0.5, "paintable": False,
+        "mode": "multiply", "mix": 0.5, "paintable": True, "motion": "paused",
     }, moving
     # 素材引用悬着（老工程里被删掉）也不许猜成真——宁可少画一层，不画一张没根据的画
     broken = build("image", [GradeComposite(mode="screen", mix=0.5)])
     broken.assets = {}
-    assert composite_row(broken.clips["c"], broken)["paintable"] is False, broken
-    # 图像素材但记录里没有那一次真的探测：界面拿到的是空地址，画出来是两个空 `<img>`
-    # 叠在「素材离线或未导入」那句上——那不是第二幅画，所以这一档也是假。
+    orphan = composite_row(broken.clips["c"], broken)
+    assert orphan["paintable"] is False and orphan["motion"] is None, orphan
+    # 图像素材但记录里没有那一次真的探测：界面拿到的是空地址，画出来是空的图层
+    # 叠在「素材离线或未导入」那句上——那不是第二幅画，所以这一档也是假、`motion` 也是 null。
     unprobed = build("image", [GradeComposite(mode="screen", mix=0.5)], probed=False)
     assert unprobed.assets["as"].kind == "image" and unprobed.assets["as"].verified is None
-    assert composite_row(unprobed.clips["c"], unprobed)["paintable"] is False, unprobed
+    silent = composite_row(unprobed.clips["c"], unprobed)
+    assert silent["paintable"] is False and silent["motion"] is None, unprobed
 
     # 4) 这一级不进 CSS 滤镜串：挂着它与不挂时 `color_filter` 逐字节相同；
     #    阶段表里它在（滤镜定义的 id 要盖住这一级），但界面能画的那份阶段表里没有它
@@ -118,7 +123,7 @@ def main() -> None:
 
     print(
         "PASS: 这一条边只在清单里说一次——八种方式与 `composite_stages` 逐字相同、"
-        "paintable 只由素材记录决定（视频、悬空引用、没有那次探测都是假）、"
+        "什么时候画得成也由引擎说（图像 always、视频 paused、没那次探测就是 null）、"
         "不进 CSS 滤镜串、两条边仍按 COMPOSITE_LIMIT 拒"
     )
 

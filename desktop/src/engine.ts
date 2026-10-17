@@ -257,7 +257,7 @@ export type TransitionEnvelope = {
  *  每一窗一个 def，`curve` 里 `id: null` 的那一窗浏览器显示 `none`（导出根本不为它串阶段）。 */
 /** 1.193：「叠一层原图」这条边在浏览器里画不画得了，由引擎在这一行说一次（`paintable`）。
  *  界面不许自己再问「这段素材是什么」——那是第二个判断，迟早与引擎不一致。 */
-export type CompositeEdge = { mode: BlendMode; mix: number; paintable: boolean };
+export type CompositeEdge = { mode: BlendMode; mix: number; paintable: boolean; motion?: "always" | "paused" | null };
 /** 1.192：第二路画面自己那枚针（与契约 `LayerKeyframe` 同一形状，刻度含 `animation_offset_ticks`）。 */
 export type LayerKeyframe = {
   property: "offset_x" | "offset_y" | "scale";

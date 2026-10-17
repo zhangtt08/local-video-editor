@@ -300,6 +300,9 @@ textarea.input { resize: vertical; line-height: 1.5; }
 .composite-stack, .composite-top { position: absolute; inset: 0; }
 .composite-top { isolation: isolate; pointer-events: none; }
 .composite-raw { pointer-events: none; }
+/* 视频那一段的原图不是 `<img>` 而是一张拓出来的 canvas（1.196）：它要占满那一格，
+   与同位置的 `<img>` 走同一套装法，不然两层在画面上对不齐。 */
+canvas.composite-raw { width: 100%; height: 100%; object-fit: contain; display: block; }
 .audio-layer { visibility: hidden; }
 .gain-sample { position: absolute; width: 1px; height: 1px; visibility: hidden; }
 .layer-error { position: absolute; inset: 0; display: grid; place-items: center; color: #ef9ea4; background: #22282a; font-size: 12px; }

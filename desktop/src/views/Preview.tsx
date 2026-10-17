@@ -6,7 +6,7 @@ import { MaskPicture } from "./MaskPicture";
 import { TIMEBASE, frameTicks, humanDuration, pacing, rateLabel, timecode } from "../time";
 import type { AnimatedEffect, BlendMode, Clip, GradeTables, PreviewManifest, Project, Track } from "../engine";
 import { feColorMatrixValues } from "../engine";
-import { blurFrames, compositeSwap, layerFrames, layerStyle, sharpenFilters, sharpenFrames, sharpenSteps, wipeClipPath } from "../effects";
+import { blurFrames, compositeLive, compositeSwap, layerFrames, layerStyle, sharpenFilters, sharpenFrames, sharpenSteps, wipeClipPath } from "../effects";
 import { appInfo, clearProxyCache, clearDerivedCache, cycleSafeArea, editSource, fourPoint, jumpEditPoint, markSource, playhead, PROXY_WIDTHS, selectClip, selectedSource, setMonitorMode, setProxyWidth, setSourceCursor, setSourcePlaying, setSourceRipple, setSourceTarget, timelineEnd, useApp, usePlay } from "../store";
 
 let audioContext: AudioContext | undefined;
@@ -340,14 +340,43 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
   // `mix-blend-mode` 相合。`normal` 那一档要交换容器里那两层的顺序（`compositeSwap` 一处判断）：
   // FFmpeg 的 normal 交回第一个输入、CSS 的交回上面那一层。
   const graded = <div ref={(node) => { blurs.current.edge = node; }} className="layer-edge" style={{ filter: plan?.edge_filter ?? undefined }}><div ref={(node) => { blurs.current.blur = node; }} className="layer-blur"><div className="layer-transform" style={{ filter: plan?.color_filter }}>{media}</div></div></div>;
-  const rawAt = (blend?: BlendMode) => <div className="layer-transform"><img className="composite-raw" alt="" aria-hidden="true" src={url} style={blend ? { mixBlendMode: blend } : undefined} /></div>;
+  // 1.196：视频那一段的「原图」不是第二路解码，而是把已经解码好的那一帧拓进一张 canvas。
+  // 本轮量过（AGENTS 1.195 那一节）：暂停与逐帧时两路逐格 0 差，而播放中再开一路解码会把主线程
+  // 的动画帧率打掉一半（rAF 181→94）——所以引擎对视频交回 `motion:"paused"`，播放中这一级不画。
+  // 这一摞里那幅原图会出现**两次**（底下一次、容器里一次），所以拓帧要按盒子扫一遍所有画布：
+  // 第一版只拿了一个 ref，两个 `<canvas>` 共用它就只有一张被画过，另一张是空的——预览与导出
+  // 差 87 级量的就是这件事（比不画的 78 级还差），这一版按 `querySelectorAll` 逐张拓。
+  const layerBox = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const source = elementRef.current as HTMLVideoElement | null;
+    if (!source || isImage) return;
+    const paint = () => {
+      if (!source.videoWidth) return;
+      for (const canvas of layerBox.current?.querySelectorAll<HTMLCanvasElement>("canvas.composite-raw") ?? []) {
+        canvas.width = source.videoWidth;
+        canvas.height = source.videoHeight;
+        const context = canvas.getContext("2d");
+        if (context) {
+          context.clearRect(0, 0, canvas.width, canvas.height);
+          context.drawImage(source, 0, 0);
+        }
+      }
+    };
+    paint();
+    source.addEventListener("seeked", paint);
+    source.addEventListener("loadeddata", paint);
+    return () => {
+      source.removeEventListener("seeked", paint);
+      source.removeEventListener("loadeddata", paint);
+    };
+  }, [relative, playing, url, isImage]);
+  const rawAt = (blend?: BlendMode) => <div className="layer-transform">{isImage ? <img className="composite-raw" alt="" aria-hidden="true" src={url} style={blend ? { mixBlendMode: blend } : undefined} /> : <canvas className="composite-raw" aria-hidden="true" style={blend ? { mixBlendMode: blend } : undefined} />}</div>;
   const edge = plan?.composite;
-  // 画不画得了只听清单里那一行的 `paintable`——界面不再问「这段素材是什么」，那就是第二个判断。
-  // 条件里多那一个 `&& url` 不是第二个判断，是引擎不可能知道的事：文件这一会儿在不在原地。
-  // 没有地址时 `media` 已经是「素材离线或未导入」那句，再叠两个空 `<img>` 只会把那句话调淡，
-  // 而不是画出第二幅画。
-  const picture = edge?.paintable && url ? <div className="composite-stack">{rawAt()}<div className="composite-top" style={{ opacity: edge.mix }}>{compositeSwap(edge.mode) ? <>{rawAt()}{graded}</> : <>{graded}{rawAt(edge.mode)}</>}</div></div> : graded;
-  return <><div className={`preview-layer${isAudio ? " audio-layer" : ""}`} style={{ mixBlendMode: mixed ? "plus-lighter" : "normal" }} onClick={interactive ? () => selectClip(clip.id) : undefined}>
+  // 画不画得了只听清单里那一行：`paintable` 是「这一段有没有第二幅画」，`motion` 是「什么时候
+  // 画得成」（判断只在 `compositeLive` 一处），`&& url` 问的是引擎问不到的那件事——文件这一会儿
+  // 还在不在原地。除此之外多问一句「这段素材是什么」就是第二个判断。
+  const picture = edge?.paintable && url && compositeLive(edge.motion, playing) ? <div className="composite-stack">{rawAt()}<div className="composite-top" style={{ opacity: edge.mix }}>{compositeSwap(edge.mode) ? <>{rawAt()}{graded}</> : <>{graded}{rawAt(edge.mode)}</>}</div></div> : graded;
+  return <><div ref={(node) => { layerBox.current = node; }} className={`preview-layer${isAudio ? " audio-layer" : ""}`} style={{ mixBlendMode: mixed ? "plus-lighter" : "normal" }} onClick={interactive ? () => selectClip(clip.id) : undefined}>
     <div ref={(node) => { wrappers.current.gain = node; }} className="gain-sample" aria-hidden="true" />
     <div ref={(node) => { fades.current.gain = node; }} className="gain-sample" aria-hidden="true" />
     <div ref={(node) => { blends.current.sound = node; }} className="gain-sample" aria-hidden="true" />

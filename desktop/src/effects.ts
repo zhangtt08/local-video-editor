@@ -471,6 +471,13 @@ export const LAYER_KEY_LABEL: Record<string, string> = {
  *  1.189 为图层量过同一条（那次是编译时换操作数）。判断只写在这里，视图只问一次。 */
 export const compositeSwap = (mode: BlendMode) => mode === "normal";
 
+/** 这一级在这一刻画不画：只有引擎那一行的 `motion` 说得出口，视图不许自己问「这段素材是什么」。
+ *  `"always"` 是图像（两幅都是解码好的位图）；`"paused"` 是视频——本轮量过：暂停与逐帧时把主画面
+ *  那一路拓进 canvas 与导出逐格 0 差，而播放中再开一路解码会把动画帧率打掉一半（rAF 181→94），
+ *  所以那一档不画。老引擎不回 `motion` 时这里就是假，宁可少画一层。 */
+export const compositeLive = (motion: "always" | "paused" | null | undefined, playing: boolean) =>
+  motion === "always" || (motion === "paused" && !playing);
+
 /** 播放头那一格换成引擎那把尺上的数：层的针存的是含 `animation_offset_ticks` 的时钟，
  *  与 `Clip.keyframes` 同一条规矩。折那一次只在这里折——视图里再抄一遍就会抄成两套刻度。 */
 export const layerKeyTick = (clip: Clip, ticks: number) =>

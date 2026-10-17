@@ -56,7 +56,8 @@ assert.match(opBody, /这一层的权重/, "chain-editor-carries-the-weight");
 // 3D LUT 那一档（上面第 26 行那条旧断言就是因此换掉的，不是放宽：新断言问的是两件具体的事）。
 const compositeCard = opBody.slice(opBody.indexOf('if (node.kind === "composite")'));
 assert.match(compositeCard, /监视器现在会画/, "card-says-the-monitor-paints-it");
-assert.match(compositeCard, /视频素材那一段还不画/, "card-names-the-video-gap");
+assert.match(compositeCard, /视频素材那一段暂停与逐帧时会画/, "card-names-when-video-paints");
+assert.match(compositeCard, /播放中这一级不画/, "card-names-the-video-cost-it-refuses");
 assert.doesNotMatch(compositeCard, /预览不生效、导出生效/, "card-still-carries-the-old-blanket-claim");
 assert.doesNotMatch(
   fields.slice(fields.indexOf("function MixFields")),

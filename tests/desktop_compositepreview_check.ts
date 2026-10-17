@@ -57,11 +57,15 @@ const pictureLine = preview.match(/^ {2}const picture = .*$/m);
 assert.ok(pictureLine, "找不到监视器那一路的判据（picture 那一句）");
 // 条件里只许有两个问句：引擎那一行的 `paintable`，以及这一段有没有地址（引擎问不到文件
 // 这一会儿在不在原地）。除此之外多问 anything——素材是什么、是不是图像——就是第二个判断。
-assert.match(pictureLine[0], /^ {2}const picture = edge\?\.paintable && url \? /, "画不画得了那一格不止问了引擎的 paintable 与有没有地址");
+assert.match(pictureLine[0], /^ {2}const picture = edge\?\.paintable && url && compositeLive\(edge\.motion, playing\) \? /, "画不画得了那一格不止问了引擎给的那三个答案");
+// 「什么时候画得成」也只许有一个主人：视图问 `compositeLive`，不许自己比 `motion` 是哪一档。
+assert.equal(count(effects, "export const compositeLive = "), 1, "「什么时候画得成」的判断不止一处");
+assert.ok(!/motion === "paused"/.test(preview), "视图自己又问了一遍 motion 是哪一档（第二处判断）");
+assert.ok(preview.includes("compositeLive(edge.motion, playing)"), "监视器没在问那唯一的时机判断");
 assert.doesNotMatch(pictureLine[0], /\b(isImage|kind|asset)\b/, "条件里又问了这一段素材是什么");
 assert.ok(!/kind === "image"/.test(stack), "视图自己问了一遍素材是什么（那是第二个判断）");
 assert.match(engine, /composite\?: CompositeEdge \| null/, "清单那一行的类型里没有这条边");
-assert.match(engine, /export type CompositeEdge = \{ mode: BlendMode; mix: number; paintable: boolean \}/, "那一行的形状被改了");
+assert.match(engine, /export type CompositeEdge = \{ mode: BlendMode; mix: number; paintable: boolean; motion\?: "always" \| "paused" \| null \}/, "那一行的形状被改了");
 
 // 4) 容器必须隔离，否则 `mix-blend-mode` 会穿到别的轨道底下去（1.189 那一课）。
 assert.match(css, /\.composite-top \{[^}]*isolation: isolate/, "容器没隔离：这一级会与别的轨道相合");
@@ -77,7 +81,8 @@ assert.ok(contracts.includes('"composite_preview": True'), "capabilities 里少�
 // 6) 卡片那一段必须说清两件具体的事（图像这一段会画、视频那一段还不画），不许留一刀切。
 const card = fields.slice(fields.indexOf('if (node.kind === "composite")'));
 assert.match(card, /监视器现在会画/, "卡片没说这一级现在会画");
-assert.match(card, /视频素材那一段还不画/, "卡片没把视频那一档如实说出来");
+assert.match(card, /视频素材那一段暂停与逐帧时会画/, "卡片没说视频那一档什么时候画得成");
+assert.match(card, /播放中这一级不画/, "卡片没说播放中不画这一档（那是量出来的代价）");
 assert.match(card, /paintable/, "卡片没说这一格由引擎逐段决定");
 assert.doesNotMatch(card, /预览不生效、导出生效/, "卡片还留着那条一刀切的旧说法");
 

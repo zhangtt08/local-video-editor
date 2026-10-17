@@ -527,22 +527,29 @@ def composite_row(clip: Clip, project: Project) -> dict | None:
     `normal` 要交换容器里那两层的顺序——FFmpeg 的 `normal` 交回**第一个**输入、CSS 的
     `normal` 交回**上面那一层**，与 1.189 为图层量过的那条是同一件事。
 
-    只有**图像素材且记录里有那一次真的探测**才交回 `paintable: true`。视频素材这一头要另开两路
-    解码（同一条链的输入被画三次），那笔代价本轮量了（见 AGENTS 1.193 那一节，实测 78 级），
-    量不过就不给这一档——「预览与导出同一句话」不等于「预览愿意为每一段付多少钱都由界面自己决定」，
-    这一格由引擎说一次。没有探测记录时界面拿到的是空地址，画上去是两个空 `<img>`，也不是第二幅画。
+    只有**记录里有那一次真的探测**才交回 `paintable: true`，而「什么时候画得成」由同一行里的
+    `motion` 说：图像是 `"always"`（两幅都是已经解码好的位图，随时画）；视频是 `"paused"`——
+    本轮量过（AGENTS 1.195 那一节）：暂停与逐帧时把主画面那一路用 `drawImage` 拓进一张 canvas，
+    与导出逐格 0 差；而播放中再开一路解码会把主线程的动画帧率打掉一半（rAF 181 → 94），
+    所以播放中这一级不画。没有探测记录时界面拿到的是空地址，画上去是两个空的图层，
+    不是第二幅画，于是 `paintable` 假、`motion` 为 null。这一格由引擎说一次，界面只照着办。
     """
     edges = composite_stages(clip.color)
     if not edges:
         return None
     asset = project.assets.get(clip.asset_id)
     stage = edges[0]
+    ready = asset is not None and asset.verified is not None
+    motion = (
+        "always" if ready and asset is not None and asset.kind == "image"
+        else "paused" if ready and asset is not None and asset.kind == "video"
+        else None
+    )
     return {
         "mode": stage["mode"],
         "mix": stage["mix"],
-        # 「图像素材」还不够：没有 `verified` 就没有一次真的探测，界面那一头拿到的是空的地址，
-        # 那时画出来的是两个空 `<img>` 叠在错误提示上，不是第二幅画。
-        "paintable": asset is not None and asset.kind == "image" and asset.verified is not None,
+        "paintable": motion is not None,
+        "motion": motion,
     }
 
 
