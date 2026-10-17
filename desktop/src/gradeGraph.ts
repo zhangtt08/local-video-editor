@@ -29,8 +29,10 @@ export const DEFAULT_COMPOSITE: { kind: "composite"; mode: BlendMode; mix: numbe
 
 /** 「叠一张外部画面」点下去得到什么：方式与权重是引擎下发的词表，素材那一格由界面
  *  填工程里第一张验过的图——视图不许自带第二份名字，也不许自己拼 URL。 */
-export const DEFAULT_LAYER: { kind: "layer"; asset_id: string; mode: BlendMode; mix: number; enabled: boolean } =
-  { kind: "layer", asset_id: "", mode: "multiply", mix: 0.5, enabled: true };
+export const DEFAULT_LAYER: {
+  kind: "layer"; asset_id: string; mode: BlendMode; mix: number;
+  offset_x: number; offset_y: number; scale: number; enabled: boolean;
+} = { kind: "layer", asset_id: "", mode: "multiply", mix: 0.5, offset_x: 0, offset_y: 0, scale: 1, enabled: true };
 
 export type GraphLane = {
   label: string;

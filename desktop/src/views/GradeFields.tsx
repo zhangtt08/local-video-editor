@@ -37,6 +37,10 @@ export type GradeLimits = {
   mixerDepth?: number;
   /** 1.189：一条链最多叠几层外部画面，也是引擎下发。 */
   layers?: number;
+  /** 1.190：层自己的位置与缩放范围，也是引擎下发。 */
+  layerOffsetMax?: number;
+  layerScaleMin?: number;
+  layerScaleMax?: number;
   treeOperations?: number;
   blackMax?: number;
   whiteMin?: number;
@@ -285,6 +289,11 @@ function OpFields({ node, idPrefix, limits, onReplace, onCommit }: { node: Grade
     </div>;
   }
   if (node.kind === "layer") {
+    // 位置与缩放的上下限由引擎下发（`grade_limits.layer_*`）；没有能力表就动不了，
+    // 与层数那一条同一口径：界面不猜数。
+    const offsetMax = limits.layerOffsetMax ?? 0;
+    const scaleMin = limits.layerScaleMin ?? 0;
+    const scaleMax = limits.layerScaleMax ?? 0;
     return <div className="grade-body">
       <label className="mask-shape">叠哪一张画面
         <select className="input" aria-label="外部画面层的素材" value={node.asset_id} onChange={(e) => onCommit({ ...node, asset_id: e.target.value })}>
@@ -297,6 +306,15 @@ function OpFields({ node, idPrefix, limits, onReplace, onCommit }: { node: Grade
           {BLEND_MODES.map(([value, name]) => <option key={value} value={value}>{name}</option>)}
         </select>
       </label>
+      <Num id={`${idPrefix}-layer-x`} label="这一层往左右" value={round(node.offset_x * 100)}
+        min={-offsetMax * 100} max={offsetMax * 100} step={5} unit="%"
+        onCommit={(value) => onCommit({ ...node, offset_x: round(value / 100) })} />
+      <Num id={`${idPrefix}-layer-y`} label="这一层往上下" value={round(node.offset_y * 100)}
+        min={-offsetMax * 100} max={offsetMax * 100} step={5} unit="%"
+        onCommit={(value) => onCommit({ ...node, offset_y: round(value / 100) })} />
+      <Num id={`${idPrefix}-layer-scale`} label="这一层多大一块" value={round(node.scale * 100)}
+        min={scaleMin * 100} max={scaleMax * 100} step={5} unit="%"
+        onCommit={(value) => onCommit({ ...node, scale: round(value / 100) })} />
       <Num id={`${idPrefix}-layer-mix`} label="这一层的权重" value={node.mix * 100} min={0} max={100} step={5} unit="%"
         onCommit={(value) => onCommit({ ...node, mix: round(value / 100) })} />
       <p className="hint">这一层读的是<b>工程里另一张图</b>：它叠在这段画面走完自己那条链之后——不被这一段的遮罩切、不被这一段的柔焦糊，但转场会把它一起压过去。0% 就是这一层什么都不做。</p>
@@ -421,6 +439,9 @@ export function GradeFields({ clipId }: { clipId: string }) {
     weightMax: app.caps?.grade_limits?.branch_weight_max ?? FALLBACK_WEIGHT,
     mixerDepth: app.caps?.grade_limits?.max_mixer_depth ?? FALLBACK_MIXER_DEPTH,
     layers: app.caps?.grade_limits?.max_layers ?? 0,
+    layerOffsetMax: app.caps?.grade_limits?.layer_offset_max ?? 0,
+    layerScaleMin: app.caps?.grade_limits?.layer_scale_min ?? 0,
+    layerScaleMax: app.caps?.grade_limits?.layer_scale_max ?? 0,
     treeOperations: app.caps?.grade_limits?.max_tree_operations ?? FALLBACK_TREE_OPERATIONS,
     blackMax: app.caps?.grade_limits?.levels_black_max ?? FALLBACK_LEVELS.blackMax,
     whiteMin: app.caps?.grade_limits?.levels_white_min ?? FALLBACK_LEVELS.whiteMin,

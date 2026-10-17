@@ -16,6 +16,9 @@ FFmpeg」这句话必须重新量一遍——而且量的是**换过操作数之
 4. 一处说法：`grade.layer_stages` == 监视器清单里那一条 == 编译串里那几段 blend 与那几路输入。
 5. 补边交付（`contain`）时边带上的像素必须与不挂层**逐字节相同**：层只能盖画面那块。
 6. 三条拒绝各点名，且**两条写入路都要拒**——`clip.grade` 与 `clip.color` 都写得进整条链。
+7. 半张出界用**左右两半各一档灰度**的那张图来量：交付的必须是「按完整尺寸缩好、再裁出与画面相交
+   那一片」。「整个挤进相交那块」和「裁的位置差半张」在这张图上给出的是**另一档灰度**，纯灰板子
+   两样都看不出，所以这一条只能靠带子。
 """
 
 import subprocess
@@ -26,7 +29,7 @@ from fastapi.testclient import TestClient
 
 from agentcut.contracts import GRADE_LAYER_LIMIT, ClipColor, Project
 from agentcut.contracts import TIMEBASE as T
-from agentcut.grade import layer_stages
+from agentcut.grade import LAYER_FIELDS, layer_stages
 from agentcut.http_api import create_app
 from agentcut.jobs import JobRuntime
 from agentcut.media import MediaService
@@ -40,6 +43,7 @@ PRESET = "h264-1080p"
 FRAME_W, FRAME_H = 1920, 1080  # 这一档预设交付的就是 1080p；取样按分数换算
 BASE_GREY = 0x80
 LAYER_GREY = 0xC8
+BAND_DARK, BAND_LIGHT = 0x40, 0xC0
 MODES = ["normal", "multiply", "screen", "overlay", "darken", "lighten", "difference", "exclusion"]
 
 
@@ -56,6 +60,20 @@ def plate(folder: Path, name: str, grey: int) -> Path:
         FFMPEG, "-v", "error", "-y", "-f", "lavfi",
         "-i", f"color=c=0x{grey:02x}{grey:02x}{grey:02x}:s={SRC_W}x{SRC_H}:r=30:d=1",
         "-frames:v", "1", str(target),
+    ])
+    return target
+
+
+def band_plate(folder: Path, name: str) -> Path:
+    """左半深、右半浅的一张图：只有带子能分清「缩好后裁一半」与「整个挤进那半」。"""
+    target = folder / name
+    dark = f"color=c=0x{BAND_DARK:02x}{BAND_DARK:02x}{BAND_DARK:02x}"
+    light = f"color=c=0x{BAND_LIGHT:02x}{BAND_LIGHT:02x}{BAND_LIGHT:02x}"
+    run([
+        FFMPEG, "-v", "error", "-y",
+        "-f", "lavfi", "-i", f"{dark}:s={SRC_W // 2}x{SRC_H}:r=30",
+        "-f", "lavfi", "-i", f"{light}:s={SRC_W // 2}x{SRC_H}:r=30",
+        "-filter_complex", "[0:v][1:v]hstack=inputs=2", "-frames:v", "1", str(target),
     ])
     return target
 
@@ -110,8 +128,10 @@ def main() -> None:  # noqa: C901 - 一档门禁按节读，比拆成十个互�
         ) as client:
             base = plate(folder, "base.png", BASE_GREY)
             layer = plate(folder, "layer.png", LAYER_GREY)
+            band = band_plate(folder, "band.png")
             base_probe = client.post("/v1/media/import", json={"path": str(base)}).json()
             layer_probe = client.post("/v1/media/import", json={"path": str(layer)}).json()
+            band_probe = client.post("/v1/media/import", json={"path": str(band)}).json()
 
             def render(project: str, tag: str, fit: str = "stretch") -> Path:
                 job = client.post(project + "/renders", json={
@@ -143,6 +163,8 @@ def main() -> None:  # noqa: C901 - 一档门禁按节读，比拆成十个互�
                          "probe_id": base_probe["id"], "verified": base_probe["verified"]},
                         {"op": "asset.import", "asset_id": "ly", "label": "层",
                          "probe_id": layer_probe["id"], "verified": layer_probe["verified"]},
+                        {"op": "asset.import", "asset_id": "bd", "label": "带",
+                         "probe_id": band_probe["id"], "verified": band_probe["verified"]},
                         # 一格「有名字但没有验过的媒体」：reference 是不可信元数据，这一格必须被点名
                         {"op": "asset.register", "asset": {"id": "u", "kind": "image",
                                                            "label": "没验过", "reference": "x"}},
@@ -168,8 +190,10 @@ def main() -> None:  # noqa: C901 - 一档门禁按节读，比拆成十个互�
                     "commands": [command],
                 })
 
-            def layer_node(mode: str, mix: float = 1.0, asset: str = "ly", enabled: bool = True):
+            def layer_node(mode: str, mix: float = 1.0, asset: str = "ly", enabled: bool = True,
+                           offset_x: float = 0.0, offset_y: float = 0.0, scale: float = 1.0):
                 return {"kind": "layer", "asset_id": asset, "mode": mode, "mix": mix,
+                        "offset_x": offset_x, "offset_y": offset_y, "scale": scale,
                         "enabled": enabled}
 
             def curve(enabled: bool = True):
@@ -218,7 +242,7 @@ def main() -> None:  # noqa: C901 - 一档门禁按节读，比拆成十个互�
             stages = layer_stages(ClipColor(grade=grade))
             assert entry == stages, (entry, stages)
             assert [row["mode"] for row in entry] == ["screen", "difference"], entry
-            assert all(set(row) == {"asset_id", "mode", "mix"} for row in entry), entry
+            assert all(set(row) == set(LAYER_FIELDS) for row in entry), entry
             plan = compile_render_plan(Project(**document), PRESET, fit="stretch")
             text = "\n".join(plan.filters)
             assert text.count("blend=all_mode=screen") == 1, text
@@ -226,6 +250,56 @@ def main() -> None:  # noqa: C901 - 一档门禁按节读，比拆成十个互�
             assert text.count("blend=all_mode=normal:all_opacity") == 2, text
             stills = [a for a in plan.input_args if a.endswith("layer.png")]
             assert len(stills) == 2, plan.input_args
+
+            # 4b) 1.190 的位置与大小：层只盖它该盖的那一片，出界的部分不画也不多开一路输入
+            corner = [layer_node("screen", 1.0, offset_x=-0.25, offset_y=0.0, scale=0.5)]
+            answer = write(path, corner, tag="ly-corner")
+            assert answer.status_code == 200, answer.text
+            revision[path] = answer.json()["project"]["revision"]
+            placed = render(path, "ly-corner")
+            inside = grey_at(placed, fx=0.25, fy=0.5)
+            outside = grey_at(placed, fx=0.78, fy=0.5)
+            assert inside > base_value, (inside, base_value)
+            assert outside == base_value, (outside, base_value)
+            entry = client.get(path + "/preview-manifest").json()["clips"]["c"]["layer"]
+            assert entry[0]["offset_x"] == -0.25 and entry[0]["scale"] == 0.5, entry
+            # 整层都在画面外：像素与不挂层相同，编译里也不许多开那一路输入
+            gone = [layer_node("screen", 1.0, offset_x=1.0, scale=0.05)]
+            answer = write(path, gone, tag="ly-gone")
+            assert answer.status_code == 200, answer.text
+            revision[path] = answer.json()["project"]["revision"]
+            assert grey_at(render(path, "ly-gone")) == base_value, "出界的层还是画了一点"
+            offscreen = compile_render_plan(
+                Project(**client.get(path).json()), PRESET, fit="stretch")
+            stills = [a for a in offscreen.input_args if a.endswith("layer.png")]
+            assert not stills, offscreen.input_args
+            graph = chr(10).join(offscreen.filters)
+            assert "blend=all_mode=screen" not in graph, graph[:200]
+
+            # 4c) 半张出界（带子那张）：先按完整尺寸缩好、再裁出与画面相交的那一片。
+            #     相交区落在画面左半，看的必须是层的**右**半（浅带）；「整个挤进左半」会在那里
+            #     露出深带，「裁的位置差半张」会把浅带换成深带——两种做法都量得到。
+            band_path = seed("带片", "bd", "ly-band")
+            band_shot = render(band_path, "ly-band")
+            dark_value = grey_at(band_shot, fx=0.25, fy=0.5)
+            light_value = grey_at(band_shot, fx=0.78, fy=0.5)
+            assert dark_value != light_value, (dark_value, light_value)
+            assert light_value != base_value, (light_value, base_value)
+            print(f"   带子交付：左半 {dark_value}、右半 {light_value}（底片 {base_value}）")
+            clipped = [layer_node("screen", 1.0, asset="bd", offset_x=-0.5)]
+            answer = write(path, clipped, tag="ly-clipped")
+            assert answer.status_code == 200, answer.text
+            revision[path] = answer.json()["project"]["revision"]
+            shot = render(path, "ly-clipped")
+            want = blend("screen", base_value, light_value)
+            for fx in (0.10, 0.40):
+                value = grey_at(shot, fx=fx, fy=0.5)
+                assert abs(value - want) <= 6, f"出界那半边裁错：fx={fx} 量到 {value}，要看 {want}"
+            assert grey_at(shot, fx=0.75, fy=0.5) == base_value, "出界的那半画进了画面"
+            flow = chr(10).join(compile_render_plan(
+                Project(**client.get(path).json()), PRESET, fit="stretch").filters)
+            assert f"scale={FRAME_W}:{FRAME_H}" in flow, flow[:200]
+            assert f"crop={FRAME_W // 2}:{FRAME_H}:{FRAME_W // 2}:0" in flow, flow[:200]
 
             # 5) 补边：边带逐字节不变，画面里叠上了
             wide = client.post("/v1/projects", json={
@@ -296,7 +370,8 @@ def main() -> None:  # noqa: C901 - 一档门禁按节读，比拆成十个互�
             assert caps["grade_limits"]["max_layers"] == GRADE_LAYER_LIMIT
             print(f"   八档逐条：{seen}")
             print("   补边不盖黑边、两条写入路都被点名拒、dry_run 不留版本")
-    print("PASS: 第二路画面按八种方式落到像素、权重是中点、补边不盖黑边、拒绝两条写入路都点名")
+    print("PASS: 第二路画面按八种方式落到像素、权重是中点、半张出界裁的是缩好那张的另一半、"
+          "补边不盖黑边、拒绝两条写入路都点名")
 
 
 if __name__ == "__main__":

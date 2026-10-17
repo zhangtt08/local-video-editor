@@ -41,12 +41,22 @@ assert.ok(
 );
 // 层只能与这一段自己的画面相合：不 isolate 就会穿到别的轨道底下去。
 assert.ok(/\.preview-layer\s*\{[^}]*isolation:\s*isolate/.test(css), ".preview-layer 没有 isolate");
-assert.ok(/\.layer-grade\s*\{[^}]*object-fit:\s*fill/.test(css), ".layer-grade 不是铺满画面框");
+assert.ok(/\.layer-grade\s*\{[^}]*object-fit:\s*fill/.test(css), ".layer-grade 没有铺满它那一块");
+// 出界的那部分由容器裁掉——导出那一头是「夹到交付帧里」，两端说的是同一件事。
+assert.ok(/\.preview-layer\s*\{[^}]*overflow:\s*hidden/.test(css), ".preview-layer 不裁掉出界的层");
 
 // 2) 检查器：三个控件都在，词表只有一份，层数上限读引擎下发的数。
 assert.ok(fields.includes('aria-label="外部画面层的素材"'), "检查器没有那张「叠哪一张画面」的选择");
 assert.ok(fields.includes('aria-label="外部画面层的混合方式"'), "检查器没有相合方式的下拉");
 assert.ok(fields.includes("-layer-mix"), "检查器没有这一层那根权重");
+// 1.190：位置与大小三颗旋钮都在，且上下限读的是引擎下发的那三个数。
+for (const id of ["-layer-x", "-layer-y", "-layer-scale"]) {
+  assert.ok(fields.includes(id), `检查器少了那一颗：${id}`);
+}
+assert.ok(fields.includes("layer_offset_max"), "位置与缩放的上下限不是从 capabilities 来的");
+assert.ok(!/offset_x: round\(value\/100\)/.test(fields.replace(/\s+/g, "")) || fields.includes("limits.layerOffsetMax"), "界面上限自己写了数");
+assert.ok(engine.includes("layer?: { asset_id: string; mode: BlendMode; mix: number; offset_x: number; offset_y: number; scale: number }[]"), "清单类型里没有那三个数");
+assert.ok(preview.includes("row.offset_x") && preview.includes("row.scale"), "监视器没按清单里的位置与大小画这一层");
 assert.ok(
   fields.includes('kind === "layer" && enabledLayers >= (limits.layers ?? 0)'),
   "加层那颗按钮没按引擎下发的上限挡"

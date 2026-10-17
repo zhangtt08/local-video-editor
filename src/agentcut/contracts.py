@@ -21,7 +21,9 @@ MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 
 SCHEMA_VERSION = (
 
-    22  # v22 lets a chain read a second picture; v21 rows carry no layer node at all, and an
+    23  # v23 gives that picture a place and a size; v22 rows have them absent and read as
+    #     "cover the picture box", which is exactly what the missing fields meant. v22 lets a
+    #     chain read a second picture; v21 rows carry no layer node at all, and an
 
     #     older engine must fail the union rather than guess at one. v21 lets that angle carry
 
@@ -35,7 +37,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.189.0"
+APP_VERSION = "1.190.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 
@@ -1600,6 +1602,14 @@ GRADE_MIXER_DEPTH = 3
 
 GRADE_LAYER_LIMIT = 3
 
+# 层自己的位置与缩放：偏移按画面框的「一半」说（1 就是整个层心挪到边外），缩放 0.05..4。
+
+LAYER_OFFSET_MAX = 1.0
+
+LAYER_SCALE_MIN = 0.05
+
+LAYER_SCALE_MAX = 4.0
+
 
 
 
@@ -1806,6 +1816,14 @@ class GradeLayer(Contract):
     mode: BlendMode = "screen"
 
     mix: GradeMix = 0.5
+
+    # 1.190：层自己的位置与大小。三个数都按**画面框**说（0 = 画面中心，1 = 那一边的边外），
+    # 与盒遮罩同一口径；缩放 1 = 铺满画面框。上下限由 `capabilities.grade_limits` 下发。
+    offset_x: Annotated[float, Field(ge=-LAYER_OFFSET_MAX, le=LAYER_OFFSET_MAX)] = 0.0
+
+    offset_y: Annotated[float, Field(ge=-LAYER_OFFSET_MAX, le=LAYER_OFFSET_MAX)] = 0.0
+
+    scale: Annotated[float, Field(ge=LAYER_SCALE_MIN, le=LAYER_SCALE_MAX)] = 1.0
 
     enabled: bool = True
 
@@ -6416,6 +6434,12 @@ def capabilities(
 
             "max_layers": GRADE_LAYER_LIMIT,
 
+            "layer_offset_max": LAYER_OFFSET_MAX,
+
+            "layer_scale_min": LAYER_SCALE_MIN,
+
+            "layer_scale_max": LAYER_SCALE_MAX,
+
             "max_curve_points": CURVE_POINT_LIMIT,
 
             "max_lut_samples": LUT_SAMPLE_LIMIT,
@@ -6914,6 +6938,10 @@ def capabilities(
             # 「引擎收不收这种载荷」，条数在 grade_limits.max_layers，模式就是 BlendMode 那张表。
 
             "grade_layer": True,
+
+            # 1.190：层可以只盖画面的一角。开关说的还是「引擎收不收这种载荷」。
+
+            "grade_layer_placement": True,
 
             "timeline_marks": True,
 

@@ -81,7 +81,7 @@ export type GradeOperation =
   /** 1.144：第二路画面输入。这条边读两幅画（链的输出与链的输入），所以它不是每通道函数：
    *  导出走 FFmpeg 的 `split` + `blend`，浏览器没有对应的原语，预览明说不生效。 */
   | { kind: "composite"; mode: BlendMode; mix: number; enabled: boolean }
-  | { kind: "layer"; asset_id: string; mode: BlendMode; mix: number; enabled: boolean }
+  | { kind: "layer"; asset_id: string; mode: BlendMode; mix: number; offset_x: number; offset_y: number; scale: number; enabled: boolean }
   /** 色彩空间转换。`purpose` 只有引擎的 `clip.color_manage` 会写：它把这一对节点标记成「一键套上的
    *  色彩管理」，取下时只删自己被标过的两个，中间谁手工加的都原样留着。界面不许自己造第三个值。 */
   | { kind: "transfer"; input_space: ColorSpace; output_space: ColorSpace; enabled: boolean; mix?: number; blend?: BlendMode; purpose?: "color_manage" | null }
@@ -263,7 +263,7 @@ export type SharpenSteps = {
 };
 export type SharpenSpec = SharpenStatic | SharpenSteps;
 export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; grade?: GradeTables | null; sharpen?: SharpenSpec | null; speed?: RampPiece[] | null; mask_image?: string | null; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; mask_shape?: MaskShapeWindow[] | null; mask_rotation_windows?: MaskRotationWindow[] | null; spatial?: Partial<Record<SpatialProperty, Curve>> | null; edge_filter?: string | null; curves: Record<AnimatedEffect, Curve>; transition: TransitionEnvelope; fade?: Record<"opacity" | "gain", Curve> | null;
-      layer?: { asset_id: string; mode: BlendMode; mix: number }[] }> };
+      layer?: { asset_id: string; mode: BlendMode; mix: number; offset_x: number; offset_y: number; scale: number }[] }> };
 
 /** 引擎给这条片段记下的那一次稳定：有了它，再按一次是换一档强度而不是叠第二遍。 */
 export type Stabilization = {
@@ -620,6 +620,10 @@ export type Capabilities = {
     max_mixer_depth?: number;
     /** 1.189：一条链最多叠几层外部画面（`GRADE_LAYER_LIMIT`）。 */
     max_layers?: number;
+    /** 1.190：层自己的位置与缩放，上下限也是引擎下发。 */
+    layer_offset_max?: number;
+    layer_scale_min?: number;
+    layer_scale_max?: number;
     max_tree_operations?: number;
     max_curve_points: number;
     max_lut_samples: number;

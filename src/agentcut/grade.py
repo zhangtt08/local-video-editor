@@ -463,6 +463,9 @@ def grade_stages(color) -> list[dict] | None:
                         "asset_id": node.asset_id,
                         "mode": node.mode,
                         "mix": node.mix,
+                        "offset_x": node.offset_x,
+                        "offset_y": node.offset_y,
+                        "scale": node.scale,
                     }
                 )
             continue
@@ -484,14 +487,17 @@ def composite_stages(color) -> list[dict]:
     ]
 
 
+LAYER_FIELDS = ("asset_id", "mode", "mix", "offset_x", "offset_y", "scale")
+
+
 def layer_stages(color) -> list[dict]:
     """这条链要叠的那几层外部画面，按链里的顺序交回来；没有就交回空表。
 
-    只有一个地方问「有没有、第几层、叠什么」：`render.py` 据此决定要不要多开一路输入，
-    `preview_manifest` 据此给界面同样的顺序，两边走的是同一份判断。
+    只有一个地方问「有没有、第几层、叠什么、盖在哪多大一块」：`render.py` 据此决定要不要多开一路
+    输入与那一片矩形，`preview_manifest` 据此给界面同样的顺序与同一组数，两边走的是同一份判断。
     """
     return [
-        {"asset_id": stage["asset_id"], "mode": stage["mode"], "mix": stage["mix"]}
+        {key: stage[key] for key in LAYER_FIELDS}
         for stage in (grade_stages(color) or [])
         if stage["type"] == "layer"
     ]
@@ -555,11 +561,10 @@ def grade_tables(color) -> dict | None:
             built.append(
                 {
                     "type": "layer",
-                    "id": f"y{_stage_id([stage['asset_id'], stage['mode'], stage['mix']])}",
-                    "asset_id": stage["asset_id"],
-                    "mode": stage["mode"],
-                    "mix": stage["mix"],
+                    # id 要盖住这一层的六个数：换了位置或大小，滤镜定义不能还挂同一个 id。
+                    "id": f"y{_stage_id([stage[key] for key in LAYER_FIELDS])}",
                     "preview": False,
+                    **{key: stage[key] for key in LAYER_FIELDS},
                 }
             )
             continue

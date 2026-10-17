@@ -1295,10 +1295,6 @@ def compile_render_plan(
     def apply_layers(clip, pad: str) -> str:
         """1.189 的第二路画面：把链尾那几层外部图按顺序相合进来（`layer_stages` 是唯一说法）。
 
-        收口只有一处：这一段画面走完自己的滤镜与适配之后、进轨道合成之前。界面画的是同一个位置
-        （clip 根节点里最后那几张图，外面包一层 `isolation`），所以「层不被这一段的遮罩切、不被
-        这一段的柔焦糊、但被转场压住」两端是同一句话。输入与输出都是一个标签，接法不会有两种形状。
-
         与 composite 那条边同形：先按方式相合，再与「到目前为止的结果」用 normal 插值——一个旋钮
         同时当方式和权重会谎报两端（那条边当年就是这么量的）。差别只在第二幅画来自工程里另一张图。
 
@@ -1306,14 +1302,15 @@ def compile_render_plan(
         的 `mix-blend-mode: normal` 交回**上面那一层**。把层放到第一位，两端就又是同一幅画——
         `tests/layer_check.py` 逐模式量的就是换过之后的数。
 
-        补边交付（`contain`）时画面只占交付帧中间那块，层不能盖到黑边上：把那一片裁出来相合，
-        再叠回去。`blend` 两路必须同尺寸，所以裁出来的那一块自己也要 split 一份当插值的底。
-        等比交付时帧就是画面，串里不多那两级——两条形状各有断言。
+        1.190：层自己有位置与大小（都按**画面框**说，与界面读的是同一组数）。`blend` 只能整块整块
+        地相合，所以走「裁出那一片 → 相合 → 叠回去」：目标矩形先夹到交付帧里（出界的那部分不画，
+        与浏览器里被容器裁掉是同一件事），层先按自己**完整**的尺寸缩好，再从里裁出与画面相交的那一片
+        ——直接缩到交集会把出界部分的比例拉回来，那不是「被裁掉」。插值的底也必须用裁出来那一份，
+        不然两路尺寸不一样，FFmpeg 在 configure 阶段就死。
         """
         stages = layer_stages(clip.color)
         if not stages:
             return pad
-        offset_x, offset_y = int(round(bar_x)), int(round(bar_y))
         current = pad
         for stage in stages:
             asset = project.assets.get(stage["asset_id"])
@@ -1327,6 +1324,18 @@ def compile_render_plan(
                     422,
                     asset_id=stage["asset_id"],
                 )
+            want_w = max(1, int(round(picture_w * stage["scale"])))
+            want_h = max(1, int(round(picture_h * stage["scale"])))
+            center_x = int(round(bar_x + (0.5 + stage["offset_x"]) * picture_w))
+            center_y = int(round(bar_y + (0.5 + stage["offset_y"]) * picture_h))
+            left, top = center_x - want_w // 2, center_y - want_h // 2
+            x = max(left, 0)
+            y = max(top, 0)
+            width = min(left + want_w, out_w) - x
+            height = min(top + want_h, out_h) - y
+            if width < 1 or height < 1:
+                # 整层都在交付帧外：这一层什么都不画，也不许多开一路输入与两段 blend。
+                continue
             index = plan.next_input()
             plan.input_args += [
                 "-loop",
@@ -1339,42 +1348,37 @@ def compile_render_plan(
                 asset.verified.path,
             ]
             plan.owners[index], plan.allocations = clip.id, plan.allocations + 1
-            sized = plan.tag("lyr")
+            full = plan.tag("lyrf")
             plan.filters.append(
-                f"[{index}:v]scale={picture_w}:{picture_h}:force_original_aspect_ratio=disable,"
-                f"format=gbrp,fps={fps},settb=AVTB{sized}"
+                f"[{index}:v]scale={want_w}:{want_h}:force_original_aspect_ratio=disable,"
+                f"format=gbrp,fps={fps},settb=AVTB{full}"
             )
+            sized = full
+            if (width, height) != (want_w, want_h):
+                sized = plan.tag("lyr")
+                plan.filters.append(
+                    f"{full}crop={width}:{height}:{x - left}:{y - top}{sized}"
+                )
             canvas = plan.tag("lcv")
             plan.filters.append(f"{current}format=gbrp{canvas}")
             halves = [plan.tag("lhalf") for _ in range(2)]
             plan.filters.append(f"{canvas}split=2{''.join(halves)}")
-            if letterbox:
-                # 画面只占交付帧中间那块：裁出来相合，插值的底也用裁出来的那一份（同尺寸）。
-                box = plan.tag("lbox")
-                plan.filters.append(
-                    f"{halves[0]}crop={picture_w}:{picture_h}:{offset_x}:{offset_y}{box}"
-                )
-                pair = [plan.tag("lpart") for _ in range(2)]
-                plan.filters.append(f"{box}split=2{pair[0]}{pair[1]}")
-            else:
-                pair = halves
+            box = plan.tag("lbox")
+            plan.filters.append(f"{halves[0]}crop={width}:{height}:{x}:{y}{box}")
+            pair = [plan.tag("lpart") for _ in range(2)]
+            plan.filters.append(f"{box}split=2{pair[0]}{pair[1]}")
             blended = plan.tag("lmode")
-            first, second = (
-                (sized, pair[0]) if stage["mode"] == "normal" else (pair[0], sized)
-            )
+            first, second = (sized, pair[0]) if stage["mode"] == "normal" else (pair[0], sized)
             plan.filters.append(f"{first}{second}blend=all_mode={stage['mode']}{blended}")
             lerped = plan.tag("llerp")
             plan.filters.append(
                 f"{blended}{pair[1]}blend=all_mode=normal"
                 f":all_opacity={stage['mix']:.6g}{lerped}"
             )
-            if letterbox:
-                current = plan.tag("lout")
-                plan.filters.append(
-                    f"{halves[1]}{lerped}overlay=x={offset_x}:y={offset_y}:format=gbrp{current}"
-                )
-            else:
-                current = lerped
+            current = plan.tag("lout")
+            plan.filters.append(
+                f"{halves[1]}{lerped}overlay=x={x}:y={y}:format=gbrp{current}"
+            )
         return current
 
 

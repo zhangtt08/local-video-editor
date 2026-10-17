@@ -291,7 +291,9 @@ textarea.input { resize: vertical; line-height: 1.5; }
 /* isolation：第二路画面只与这一段自己的画面相合，不能穿到别的轨道底下去。
    .layer-grade 是引擎下发的那一层：位置、方式与权重都照清单，界面不做第二次换算。 */
 .preview-layer { pointer-events: none; isolation: isolate; }
-.layer-grade { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
+.preview-layer { overflow: hidden; }
+/* 位置与大小都按画面框说百分数，与导出那一片矩形同一组数；出界的部分由容器裁掉。 */
+.layer-grade { position: absolute; object-fit: fill; pointer-events: none; }
 .audio-layer { visibility: hidden; }
 .gain-sample { position: absolute; width: 1px; height: 1px; visibility: hidden; }
 .layer-error { position: absolute; inset: 0; display: grid; place-items: center; color: #ef9ea4; background: #22282a; font-size: 12px; }
