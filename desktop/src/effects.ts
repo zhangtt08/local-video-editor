@@ -1,5 +1,5 @@
 import type { GradeCapacity } from "./engine";
-import type { AnimatedEffect, Asset, Capabilities, Clip, Curve, Effects, LayerWindow, MaskProperty, Project, SharpenSpec, SharpenStatic, SharpenSteps, ShapeMask, SpatialProperty, WipeChannel } from "./engine";
+import type { AnimatedEffect, Asset, BlendMode, Capabilities, Clip, Curve, Effects, LayerWindow, MaskProperty, Project, SharpenSpec, SharpenStatic, SharpenSteps, ShapeMask, SpatialProperty, WipeChannel } from "./engine";
 import { DEFAULT_EFFECTS } from "./engine";
 import { TIMEBASE } from "./time";
 
@@ -464,6 +464,12 @@ export const LAYER_KEY_LABEL: Record<string, string> = {
   offset_y: "这一层往上下",
   scale: "这一层多大一块",
 };
+
+/** 1.193：容器里那两层谁在下面——`normal` 要把「已调色」放上面。
+ *  导出那两步是 `(1-mix)·raw + mix·mode(graded, raw)`，而 FFmpeg 的 `normal` 交回**第一个**输入、
+ *  CSS 的 `normal` 交回**上面那一层**：不交换这一档，监视器在 mix=1 会显示原图而不是调完的画。
+ *  1.189 为图层量过同一条（那次是编译时换操作数）。判断只写在这里，视图只问一次。 */
+export const compositeSwap = (mode: BlendMode) => mode === "normal";
 
 /** 播放头那一格换成引擎那把尺上的数：层的针存的是含 `animation_offset_ticks` 的时钟，
  *  与 `Clip.keyframes` 同一条规矩。折那一次只在这里折——视图里再抄一遍就会抄成两套刻度。 */

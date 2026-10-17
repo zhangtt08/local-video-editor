@@ -294,6 +294,12 @@ textarea.input { resize: vertical; line-height: 1.5; }
 .preview-layer { overflow: hidden; }
 /* 位置与大小都按画面框说百分数，与导出那一片矩形同一组数；出界的部分由容器裁掉。 */
 .layer-grade { position: absolute; object-fit: fill; pointer-events: none; }
+/* 1.193「叠一层原图」：底层是这条链进来的那幅画，上面那个 opacity=mix 的容器里
+   「已调色」与「原图」按引擎下发的方式相合。容器必须 isolate——不隔离就会与别的轨道
+   的画面相合，屏幕上看到的和文件里的不是一回事（1.189 那一课）。 */
+.composite-stack, .composite-top { position: absolute; inset: 0; }
+.composite-top { isolation: isolate; pointer-events: none; }
+.composite-raw { pointer-events: none; }
 .audio-layer { visibility: hidden; }
 .gain-sample { position: absolute; width: 1px; height: 1px; visibility: hidden; }
 .layer-error { position: absolute; inset: 0; display: grid; place-items: center; color: #ef9ea4; background: #22282a; font-size: 12px; }

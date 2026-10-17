@@ -544,7 +544,9 @@ def grade_tables(color) -> dict | None:
             continue
         if stage["type"] == "composite":
             # 浏览器的一条滤镜链没有第二个画面输入，所以这一级带着 `preview: False` 出门，
-            # 由 `preview_grade` 整条丢掉、由界面写明「预览不生效、导出生效」——与 3D LUT 同一条路。
+            # 由 `preview_grade` 整条丢掉——它不是滤镜，是 DOM 上的一层：1.193 起界面从清单里的
+            # `composite` 那一行把它画出来（`animation.composite_row`）。混进 `color_filter`
+            # 就等于让「已调色」那层自己与原图相合两次，导出可没有这一份。
             built.append(
                 {
                     "type": "composite",

@@ -255,6 +255,9 @@ export type TransitionEnvelope = {
 
 /** 一片清晰（unsharp）：静态就是那一份 `<filter>` 的数；有曲线时是导出同一份窗表，
  *  每一窗一个 def，`curve` 里 `id: null` 的那一窗浏览器显示 `none`（导出根本不为它串阶段）。 */
+/** 1.193：「叠一层原图」这条边在浏览器里画不画得了，由引擎在这一行说一次（`paintable`）。
+ *  界面不许自己再问「这段素材是什么」——那是第二个判断，迟早与引擎不一致。 */
+export type CompositeEdge = { mode: BlendMode; mix: number; paintable: boolean };
 /** 1.192：第二路画面自己那枚针（与契约 `LayerKeyframe` 同一形状，刻度含 `animation_offset_ticks`）。 */
 export type LayerKeyframe = {
   property: "offset_x" | "offset_y" | "scale";
@@ -273,7 +276,8 @@ export type SharpenSteps = {
 };
 export type SharpenSpec = SharpenStatic | SharpenSteps;
 export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; grade?: GradeTables | null; sharpen?: SharpenSpec | null; speed?: RampPiece[] | null; mask_image?: string | null; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; mask_shape?: MaskShapeWindow[] | null; mask_rotation_windows?: MaskRotationWindow[] | null; spatial?: Partial<Record<SpatialProperty, Curve>> | null; edge_filter?: string | null; curves: Record<AnimatedEffect, Curve>; transition: TransitionEnvelope; fade?: Record<"opacity" | "gain", Curve> | null;
-      layer?: { asset_id: string; mode: BlendMode; mix: number; offset_x: number; offset_y: number; scale: number; windows?: LayerWindow[] }[] }> };
+      layer?: { asset_id: string; mode: BlendMode; mix: number; offset_x: number; offset_y: number; scale: number; windows?: LayerWindow[] }[];
+      composite?: CompositeEdge | null }> };
 
 /** 引擎给这条片段记下的那一次稳定：有了它，再按一次是换一档强度而不是叠第二遍。 */
 export type Stabilization = {

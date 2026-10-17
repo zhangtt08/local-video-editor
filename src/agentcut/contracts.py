@@ -39,7 +39,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.192.0"
+APP_VERSION = "1.193.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 
@@ -7055,6 +7055,11 @@ def capabilities(
             # 针的额度在 limits.layer_key_limit，一次最多几段在 limits.layer_schedule_segments。
 
             "layer_keyframes": True,
+
+            # 1.193：「叠一层原图」这条边现在监视器真的画（逐档与导出对过表）。哪一段画得了由
+            # `preview-manifest` 那一行的 `paintable` 说，界面无条件听引擎，不再自己问素材是什么。
+
+            "composite_preview": True,
 
             "timeline_marks": True,
 

@@ -211,6 +211,8 @@ preview-manifest 的「显式零段」另有说法（1.187）：`?no_clips=1`（
 
 那一层现在可以自己带针（1.192）：`GradeLayer` 多一个 `keys`，每枚是 `{"property":"offset_x"|"offset_y"|"scale","at_ticks":…,"value":…,"interpolation":"linear"|"hold"|"ease"|"bezier","bezier":…}`。刻度与 `Clip.keyframes` 同一把尺——存的是含 `animation_offset_ticks` 的时钟；而链是一次**状态写入**（`clip.color` 收进来什么就存什么），所以写的时候不挪针：隐式 rebase 会让 dry-run、粘贴属性与撤销各数出一个落点。落在这段之外的针回 422 `LAYER_KEY_RANGE`（带 `clip_id`/`property`/`at_ticks`/`animation_offset_ticks`/`duration_ticks`，`clip.grade` 与 `clip.color` 两条写入路都问 `timeline._check_layer_clock`），同一格给同一条属性钉两枚回 422 `LAYER_KEY_CLASH`，一枚一层超过 `capabilities.limits.layer_key_limit`（＝24）回 422 `LAYER_KEY_LIMIT`——三条都点名出路，不抽稀、不静默夹到边上。三个数在**同一次** `animation.frame_windows` 里换值（一次采样那组三元），所以「挪到哪」与「多大一块」永远踩同一批整帧边界；最多切几段由 `capabilities.limits.layer_schedule_segments`（＝8）下发，每一段是一路 `crop` + 两段 `blend` + 一次 `overlay:enable`，比柔焦那一段只多一个 `gblur` 贵，因此比 `blur_schedule_segments` 更小：30 帧片段上 15 枚互不相同的针实测落回 8 窗。能动的那三个数由 `capabilities.grade_limits.layer_key_props` 交回，开关是 `capabilities.features.layer_keyframes`，工程 schema 23→24（v23 的链里没有 `keys`，读进来就是空表，编译串与 1.190 逐字节相同）。`preview-manifest` 每一行多带自己那份 `windows`（`offset`/`easing`/`offset_x`/`offset_y`/`scale`），监视器把它画成 `steps(1, end)` 的动画帧——窗表是唯一权威，界面不许补中间态。实测（`tests/layerkey_check.py`，随包 FFmpeg 真导出，期望由两处自己量的端点现算）：带子图（左半交付 64、右半 192）当层、底片交付 128，`offset_x` 从 −0.5 到 +0.5 两枚 hold 针，前一窗读到 [192, 128]、后一窗读到 [128, 64]——盖住的那一片换了边，没盖到的那一侧仍逐点等于底片；而按 1.190 那条裁法，`offset_x=-0.5` 那窗露出的正是带的**右**半。同一档还钉「清单==窗表==编译串里那几次 `overlay:enable`」「一枚针（整段同值）与静态那一个数交回同一组矩形」与「`keys` 缺席读回逐字节相同」。
 
+「叠一层原图」这条边现在监视器也会画（1.193）：`preview-manifest` 每个片段多一个 `composite`，形状是 `{mode, mix, paintable}`，由 `animation.composite_row` 一处算出——`mode`/`mix` 与 `grade.composite_stages` 逐字相同（导出与界面读同一份，没有第二次换算），`paintable` 要三样都成立：素材查得到、`kind == "image"`、`asset.verified` 那一次真的探测在记录里，缺一就是假。开关是 `capabilities.features.composite_preview`；一条链最多一条这一级（`COMPOSITE_LIMIT`，1.144 起），界面才敢只读一行。这一级仍带 `preview:false` 也照旧从 `preview_grade` 那份**滤镜**阶段表里整条丢掉——它不是滤镜原语，混进 `color_filter` 就等于让「已调色」那一层自己与原图相合两次，导出可没有这一份。它走的是 DOM：底层画这条链进来的那幅原图，上面套一个 `opacity=mix` 的隔离容器（`isolation: isolate`），容器内「已调色」作底、原图按 `mix-blend-mode` 相合，展开正是导出那两步的 `(1-mix)·raw + mix·mode(graded, raw)`；`normal` 那一档要交换容器里那两层，判断只在 `effects.compositeSwap` 一处（FFmpeg 的 `normal` 交回**第一个**输入、CSS 的交回**上面那一层**）。界面那一头的条件只许问两句（`edge?.paintable && url`）：前者是引擎的答案，多问「这段素材是什么」就是第二个判断；后者是引擎问不到的那件事——文件这一会儿还在不在原地。实测（构建后的监视器截图 vs 随包引擎导出的同一格，同一块 640×360 纯色板、曝光 0.5、`mix` 0.5）：八种方式逐通道最大差 normal 1／multiply 4／screen 1／overlay 1／darken 1／lighten 1／difference 2／exclusion 2，上限 8 是这把尺自己的抖（yuv420p 往返 ±6，见 `tests/composite_check.py` 的 `greys`；CSS 混合 ±2，本轮逐档量过），八档在画面上读出 7 个不同的数（`graded` 三个通道都不低于 `raw` 时逐点取大就等于 `graded`，normal 与 lighten 于是同值）。权重那一格也真的在动：multiply 的 0／0.5／1 三格读数是 (40,179,118)／(24,177,97)／(9,177,77)，0↔1 跨度 41 级，中间那格与两端线性中点逐通道差 ≤1。**视频那一段还不画，代价是量出来的**：同一条边挂到视频素材上清单答 `paintable:false`，预览读数与不挂这条边的那一段逐通道差 0（确实一个字都没画），与导出差 78 级，而导出那两段自己差 74 级——所以这是「还没画」而不是「画得差不多」。两档新门禁：`tests/compositepreview_check.py` 与第 65 档壳检 `tests/desktop_compositepreview_check.ts`，19 把突变逐条红在自己那句上。
+
 `POST /v1/projects/{id}/edits` 多一种回执形状：`?receipt=slim`（MCP `timeline_edit` 的同名参数）只交回 `receipt`、`project_id`、`revision`、`base_revision`、`committed`、`replayed` 这六个数，不再代带整份工程；默认仍是 `full`，也就是桌面客户端要的那份权威状态。`revision` 就是写完之后的那一版，可以直接当下一笔的 `expected_revision`；`dry_run` 与幂等重放在两种形状下语义一致（`committed` 假／`replayed` 真，工程不涨）。`receipt` 取别的值回 422 `INVALID_REQUEST`，句子里写着 `full` 与 `slim` 两种合法取值，被拒那一笔不留版本。开关由 `capabilities.features.edit_receipt_slim` 下发。200 段工程上实测整份 171307 字节 → slim 142 字节；`tests/editreceipt_check.py` 钉这些，随包引擎自己复测过同样的数。
 
 
@@ -2785,8 +2787,16 @@ H.264，装不下透明度，于是整条被让掉并在悬停里说清为什么
   `composite`，所以把它塞进并联的某一支是 `INVALID_REQUEST`（422，pydantic 的 `extra="forbid"` 拦下 `mode`）。
   界面这一侧同一件事也只有一处口径：这一级的「方式／权重」住在 `OpFields`（串行节点的旋钮都从那里出去），
   不在 `MixFields`（只挂在并联节点与它的支上）——写在错的一侧，引擎与契约都还全对，屏幕上就是没有这两个控件。
-- 预览这一端：`capabilities.features.grade_composite` 为真，但这一级带 `preview:false`，
-  `preview_grade` 把它整条丢掉——浏览器没有能画第二条画面输入的原语，界面卡片写「预览不生效、导出生效」。
+- 预览这一端（1.193 起会画）：`capabilities.features.grade_composite` 与 `composite_preview` 都为真。
+  这一级仍带 `preview:false`，也照旧从 `preview_grade` 那份**滤镜**阶段表里整条丢掉——浏览器的滤镜链
+  没有第二个画面输入，混进 `color_filter` 就等于让「已调色」那一层自己与原图相合两次，导出可没有这一份。
+  它改从 `preview-manifest` 每一行的 `composite`（`{mode, mix, paintable}`，由
+  `animation.composite_row` 一处算出）出去：底层画原图，上面套一个 `opacity=mix` 的隔离容器，容器内
+  「已调色」作底、原图按 `mix-blend-mode` 相合，展开正是导出那两步的 `(1-mix)·raw + mix·mode(graded, raw)`。
+  `normal` 那一档要交换容器里那两层的次序（判断只在 `effects.compositeSwap` 一处）：FFmpeg 的 `normal`
+  交回**第一个**输入、CSS 的交回**上面那一层**，与 1.189 为图层量过的那条是同一件事。
+  `paintable` 只由素材是什么决定（图像真、视频假、素材引用悬着也假），界面不许自己再问第二遍——
+  那是第二个判断，迟早与引擎不一致。卡片因此是两句各自属实的：图像那一段监视器会画，视频那一段还不画。
 - 导出这一端编成滤镜图里的两刀：`split` 出原图那一路（只做同样的适配、不调色），
   三路各自 `format=gbrp` 后 `blend=all_mode=<mode>`，再 `blend=all_mode=normal:all_opacity=<mix>`。
   这两段都是量出来的必要性：YUV 平面上直接 screen 会把中性灰改成品红，单个 `all_opacity`

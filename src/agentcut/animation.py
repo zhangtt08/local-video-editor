@@ -23,7 +23,7 @@ from .contracts import (
     Project,
     Track,
 )
-from .grade import layer_stages, preview_grade
+from .grade import composite_stages, layer_stages, preview_grade
 from .masks import animated_mask_image, cover_svg_image, fit_box, mask_image
 from .speed import describe, segments
 from .timeline import link_status
@@ -518,6 +518,34 @@ def layer_curve(clip: Clip, table: list[dict]) -> list[dict]:
     ]
 
 
+def composite_row(clip: Clip, project: Project) -> dict | None:
+    """这条链要不要在监视器里把「叠一层原图」画出来，以及画的是哪一档方式与权重。
+
+    导出那两步是 `(1-mix)·raw + mix·mode(graded, raw)`（`render.py` 里那条边），浏览器用两层
+    DOM 就能一次不差地画出来：底层原图，上面一个 `opacity=mix` 的容器，容器内「已调色」作底、
+    原图按 `mix-blend-mode` 相合。2026-10-17 逐档量过：八种方式里七种与导出逐通道差 ≤2 级；
+    `normal` 要交换容器里那两层的顺序——FFmpeg 的 `normal` 交回**第一个**输入、CSS 的
+    `normal` 交回**上面那一层**，与 1.189 为图层量过的那条是同一件事。
+
+    只有**图像素材且记录里有那一次真的探测**才交回 `paintable: true`。视频素材这一头要另开两路
+    解码（同一条链的输入被画三次），那笔代价本轮量了（见 AGENTS 1.193 那一节，实测 78 级），
+    量不过就不给这一档——「预览与导出同一句话」不等于「预览愿意为每一段付多少钱都由界面自己决定」，
+    这一格由引擎说一次。没有探测记录时界面拿到的是空地址，画上去是两个空 `<img>`，也不是第二幅画。
+    """
+    edges = composite_stages(clip.color)
+    if not edges:
+        return None
+    asset = project.assets.get(clip.asset_id)
+    stage = edges[0]
+    return {
+        "mode": stage["mode"],
+        "mix": stage["mix"],
+        # 「图像素材」还不够：没有 `verified` 就没有一次真的探测，界面那一头拿到的是空的地址，
+        # 那时画出来的是两个空 `<img>` 叠在错误提示上，不是第二幅画。
+        "paintable": asset is not None and asset.kind == "image" and asset.verified is not None,
+    }
+
+
 def outline_keys(clip: Clip) -> list[MaskShapeKeyframe]:
     return sorted(clip.mask_shape_keys, key=lambda key: key.at_ticks)
 
@@ -940,6 +968,8 @@ def preview_manifest(
             "edge_filter": (
                 f" url(#{sharpen['id']})" if sharpen and spatial and not stepped else None
             ),
+            # 1.193：「叠一层原图」这条边也交给界面去画——画不画得了由引擎在这一处说一次。
+            "composite": composite_row(clip, project),
             # 1.189：第二路画面按链里的顺序交出去，界面只负责把每张图叠在它那一层。
             # 方式与权重不在这里换算——`grade.layer_stages` 就是导出读的那一份。
             # 1.192：每一行还带它自己那份窗表（一枚针都没有就是空表，界面走静态那条老路）。

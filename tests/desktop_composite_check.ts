@@ -23,7 +23,8 @@ assert.match(engineSrc, /kind: "composite"; mode: BlendMode; mix: number; enable
 assert.match(graph, /composite: "叠一层原图",/, "graph-names-the-edge");
 assert.match(fields, /"parallel", "composite"/, "button-offers-the-edge");
 assert.match(fields, /aria-label="叠一层原图的混合方式"/, "card-lets-you-pick-the-mode");
-assert.ok(fields.includes("预览不生效、导出生效"), "card-says-preview-does-not-apply");
+// 1.193：这一级现在监视器会画（图像那一段）。卡片那三句断言在下面的 `opBody` 段里——
+// 那里才有函数体的切片（旧的那句「卡片明写预览不生效」在这里不再成立，也不再是判据）。
 
 // 引擎那两头：预览整条丢掉这一级；拒绝的句子必须点名走得通的出路。
 assert.match(grade, /if stage\["type"\] == "composite":/, "grade-recognises-the-edge");
@@ -50,7 +51,13 @@ const opBody = fields.slice(fields.indexOf("function OpFields"), fields.indexOf(
 assert.match(opBody, /if \(node\.kind === "composite"\)/, "reachable-in-chain-editor");
 assert.match(opBody, /aria-label="叠一层原图的混合方式"/, "chain-editor-carries-the-mode");
 assert.match(opBody, /这一层的权重/, "chain-editor-carries-the-weight");
-assert.match(opBody, /预览不生效、导出生效/, "chain-editor-says-preview-does-not-apply");
+// 卡片那一段（1.193 改了口径）：必须说清「图像这一段监视器会画」与「视频那一段还不画」，
+// 而且这条边的卡片里不许再留着那条一刀切的「预览不生效、导出生效」——那份字面量现在只属于
+// 3D LUT 那一档（上面第 26 行那条旧断言就是因此换掉的，不是放宽：新断言问的是两件具体的事）。
+const compositeCard = opBody.slice(opBody.indexOf('if (node.kind === "composite")'));
+assert.match(compositeCard, /监视器现在会画/, "card-says-the-monitor-paints-it");
+assert.match(compositeCard, /视频素材那一段还不画/, "card-names-the-video-gap");
+assert.doesNotMatch(compositeCard, /预览不生效、导出生效/, "card-still-carries-the-old-blanket-claim");
 assert.doesNotMatch(
   fields.slice(fields.indexOf("function MixFields")),
   /if \(node\.kind === "composite"\)/,
