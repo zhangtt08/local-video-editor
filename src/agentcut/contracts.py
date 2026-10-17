@@ -3,7 +3,7 @@
 
 
 import re
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal, Union, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -21,7 +21,9 @@ MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 
 SCHEMA_VERSION = (
 
-    23  # v23 gives that picture a place and a size; v22 rows have them absent and read as
+    24  # v24 lets that picture move: a layer carries its own keys, so a v23 row has none and
+    #     reads as the static offset/scale it already carried. v23 gives that picture a place
+    #     and a size; v22 rows have them absent and read as
     #     "cover the picture box", which is exactly what the missing fields meant. v22 lets a
     #     chain read a second picture; v21 rows carry no layer node at all, and an
 
@@ -37,7 +39,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.191.0"
+APP_VERSION = "1.192.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 
@@ -1611,6 +1613,32 @@ LAYER_SCALE_MIN = 0.05
 LAYER_SCALE_MAX = 4.0
 
 
+# 1.192：那一层自己也能动。可动的就是它自己那三个数（不是新属性名，也不是新单位），
+# 所以一根针的值域与静态那三个同一条带——否则「打点」与「填框」会给出两套合法区间。
+
+LayerProperty = Literal["offset_x", "offset_y", "scale"]
+
+LAYER_KEY_LIMITS = {
+
+    "offset_x": (-LAYER_OFFSET_MAX, LAYER_OFFSET_MAX),
+
+    "offset_y": (-LAYER_OFFSET_MAX, LAYER_OFFSET_MAX),
+
+    "scale": (LAYER_SCALE_MIN, LAYER_SCALE_MAX),
+
+}
+
+# 一层最多带几枚针。满了点名拒（少钉几枚，或切成两层各自动），不抽稀——与遮罩轮廓那一族同
+# 一条规矩：额度是挡扩张的，不是替人挑画面的。
+
+LAYER_KEY_LIMIT = 24
+
+# 一份窗表最多切几段。每一段是一路 `crop` 加两段 `blend` 再加一次 `overlay`，比柔焦那一段只
+# 多一个 `gblur` 贵得多，所以这一族自己带一个更小的天花板。
+
+LAYER_SCHEDULE_MAX = 8
+
+
 
 
 
@@ -1783,6 +1811,63 @@ class GradeComposite(Contract):
     enabled: bool = True
 
 
+class Bezier(Contract):
+
+    x1: Annotated[float, Field(ge=0, le=1)] = 1 / 3
+
+    y1: Annotated[float, Field(ge=-4, le=4)] = 0.0
+
+    x2: Annotated[float, Field(ge=0, le=1)] = 2 / 3
+
+    y2: Annotated[float, Field(ge=-4, le=4)] = 1.0
+
+
+
+
+
+class LayerKeyframe(Contract):
+
+    """1.192：第二路画面自己的一枚针。
+
+    尺子还是大家那一把：存的是含 `animation_offset_ticks` 的时钟，`animation.layer_value_at`
+    采样时折的那一次与 `sample` 折的是同一次。这一层的针住在链里，而链是一次**状态写入**
+    （`clip.color` 收进来什么就存什么），所以不在写的时候挪针——一次隐式的 rebase 会让
+    dry-run、粘贴属性与撤销各数出一个落点。落在这一段之外由 `timeline._check_layer_clock`
+    点名拒，不是夹住。
+
+    三个数也不各走各的格子：`animation.layer_schedule` 一次采样那一组三元，边界一起换。
+    """
+
+    property: LayerProperty
+
+    at_ticks: Ticks
+
+    value: float
+
+    interpolation: Literal["linear", "hold", "ease", "bezier"] = "linear"
+
+    bezier: Bezier | None = None
+
+    @model_validator(mode="after")
+
+    def property_range(self):
+
+        lo, hi = LAYER_KEY_LIMITS[self.property]
+
+        if not lo <= self.value <= hi:
+
+            raise ValueError(f"layer {self.property} must be in [{lo}, {hi}]")
+
+        if self.bezier is not None and self.interpolation != "bezier":
+
+            raise ValueError("bezier controls require bezier interpolation")
+
+        return self
+
+
+
+
+
 class GradeLayer(Contract):
 
     """第二路画面：把**另一张图像素材**叠在这条链的输出上（AE 的图层·达芬奇往上叠一层媒体）。
@@ -1824,6 +1909,10 @@ class GradeLayer(Contract):
     offset_y: Annotated[float, Field(ge=-LAYER_OFFSET_MAX, le=LAYER_OFFSET_MAX)] = 0.0
 
     scale: Annotated[float, Field(ge=LAYER_SCALE_MIN, le=LAYER_SCALE_MAX)] = 1.0
+
+    # 1.192：这一层自己的针。空表就是 1.190 那一版（一段一个值），老工程读进来一字不差。
+
+    keys: list[LayerKeyframe] = []
 
     enabled: bool = True
 
@@ -1941,6 +2030,35 @@ class ClipColor(Contract):
                     "把这一层移到链尾即可（界面上那颗「移到最后」）",
                     422,
                     following=[node.kind for node in following],
+                )
+        # 第三条判断是关于层自己那几枚针的（1.192）：同一格给同一条属性钉两枚，`_walk` 那把
+        # 唯一的尺子就没有「这一段走哪一条」的答案；针数超过额度则是拿编译期换一次点击。
+        # 两条都点名走得通的出路，不抽稀、不假装看不见。
+        for node in layers:
+            seen: set[tuple[str, int]] = set()
+            for key in node.keys:
+                spot = (key.property, key.at_ticks)
+                if spot in seen:
+                    raise EditorError(
+                        "LAYER_KEY_CLASH",
+                        f"这一层在 {key.at_ticks} 那一格给「{key.property}」钉了两枚针："
+                        "同一格只能有一个答案，把其中一枚挪开或删掉",
+                        422,
+                        asset_id=node.asset_id,
+                        property=key.property,
+                        at_ticks=key.at_ticks,
+                        keys=len(node.keys),
+                    )
+                seen.add(spot)
+            if len(node.keys) > LAYER_KEY_LIMIT:
+                raise EditorError(
+                    "LAYER_KEY_LIMIT",
+                    f"这一层带了 {len(node.keys)} 枚针，引擎收的是 {LAYER_KEY_LIMIT} 枚："
+                    "少钉几枚，或者把这段切成两层各自动，不要一段上挤满",
+                    422,
+                    asset_id=node.asset_id,
+                    keys=len(node.keys),
+                    limit=LAYER_KEY_LIMIT,
                 )
         return self
 
@@ -2077,20 +2195,6 @@ class ShapeMask(Contract):
                 raise ValueError("path vertices must be distinct")
 
         return self
-
-
-
-
-
-class Bezier(Contract):
-
-    x1: Annotated[float, Field(ge=0, le=1)] = 1 / 3
-
-    y1: Annotated[float, Field(ge=-4, le=4)] = 0.0
-
-    x2: Annotated[float, Field(ge=0, le=1)] = 2 / 3
-
-    y2: Annotated[float, Field(ge=-4, le=4)] = 1.0
 
 
 
@@ -6440,6 +6544,10 @@ def capabilities(
 
             "layer_scale_max": LAYER_SCALE_MAX,
 
+            # 1.192：那一层能动的是哪三个数也只由引擎说一次（界面不许自备一份属性名表）。
+
+            "layer_key_props": list(get_args(LayerProperty)),
+
             "max_curve_points": CURVE_POINT_LIMIT,
 
             "max_lut_samples": LUT_SAMPLE_LIMIT,
@@ -6943,6 +7051,11 @@ def capabilities(
 
             "grade_layer_placement": True,
 
+            # 1.192：那一层的位置与大小现在能按窗动。开关口径不变——「引擎收不收这种载荷」；
+            # 针的额度在 limits.layer_key_limit，一次最多几段在 limits.layer_schedule_segments。
+
+            "layer_keyframes": True,
+
             "timeline_marks": True,
 
             "range_export": True,
@@ -7032,6 +7145,13 @@ def capabilities(
             "mask_shape_schedule_segments": MASK_SHAPE_SCHEDULE_MAX,
 
             "mask_rotation_schedule_segments": MASK_ROTATION_SCHEDULE_MAX,
+
+            # 1.192：第二路画面那三个数一共几枚针、一次下发几段（每段是一路 crop 加两段
+            # blend 再加一次 overlay，所以这一族自己带一个比柔焦更小的天花板）。
+
+            "layer_key_limit": LAYER_KEY_LIMIT,
+
+            "layer_schedule_segments": LAYER_SCHEDULE_MAX,
 
             "denoise_db": DENOISE_LIMIT,
 

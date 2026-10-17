@@ -240,9 +240,12 @@ def main() -> None:  # noqa: C901 - 一档门禁按节读，比拆成十个互�
             document = client.get(path).json()
             entry = client.get(path + "/preview-manifest").json()["clips"]["c"]["layer"]
             stages = layer_stages(ClipColor(grade=grade))
-            assert entry == stages, (entry, stages)
+            # 1.192 起每一行还多带它自己那份窗表；这几层一枚针都没有，所以那份表必须是空的——
+            # 「没针就走静态那一条腿」在这里是一个看得见的数，不是一句承诺。
+            assert [{k: row[k] for k in LAYER_FIELDS} for row in entry] == stages, (entry, stages)
+            assert all(row["windows"] == [] for row in entry), entry
             assert [row["mode"] for row in entry] == ["screen", "difference"], entry
-            assert all(set(row) == set(LAYER_FIELDS) for row in entry), entry
+            assert all(set(row) == set(LAYER_FIELDS) | {"windows"} for row in entry), entry
             plan = compile_render_plan(Project(**document), PRESET, fit="stretch")
             text = "\n".join(plan.filters)
             assert text.count("blend=all_mode=screen") == 1, text

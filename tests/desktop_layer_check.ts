@@ -55,7 +55,12 @@ for (const id of ["-layer-x", "-layer-y", "-layer-scale"]) {
 }
 assert.ok(fields.includes("layer_offset_max"), "位置与缩放的上下限不是从 capabilities 来的");
 assert.ok(!/offset_x: round\(value\/100\)/.test(fields.replace(/\s+/g, "")) || fields.includes("limits.layerOffsetMax"), "界面上限自己写了数");
-assert.ok(engine.includes("layer?: { asset_id: string; mode: BlendMode; mix: number; offset_x: number; offset_y: number; scale: number }[]"), "清单类型里没有那三个数");
+// 1.192 改了那一行的形状（每行多带自己那份窗表），所以这里问的不再是一整段字面量，
+// 而是「那一行到底有没有这四个字段」——把式子换成按字段核，旧的三颗旋钮少一个照样红。
+const layerRow = engine.match(/layer\?: \{([^}]*)\}\[\]/)?.[1] ?? "";
+for (const field of ["offset_x: number", "offset_y: number", "scale: number", "windows?: LayerWindow[]"]) {
+  assert.ok(layerRow.includes(field), `清单那一行少了 ${field}`);
+}
 assert.ok(preview.includes("row.offset_x") && preview.includes("row.scale"), "监视器没按清单里的位置与大小画这一层");
 assert.ok(
   fields.includes('kind === "layer" && enabledLayers >= (limits.layers ?? 0)'),

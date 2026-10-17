@@ -534,6 +534,35 @@ def _check_layer_sources(project, grade) -> None:
             )
 
 
+def _check_layer_clock(clip, grade) -> None:
+    """层里那几枚针用的是大家那把尺：存的是含 `animation_offset_ticks` 的时钟。
+
+    落在这段之外就点名拒，不夹到边上。窗表只在片段自己的长度里采样，越界那一枚本来不会多画
+    一段，可「写进去的数」与「画面上那一格」一旦不相等，检查器读回来的那一个值就在骗人。
+    为什么不在写的时候 rebase：链是一次状态写入（`clip.color` 收进来什么就存什么），隐式挪针
+    会让 dry-run、粘贴属性与撤销各数出一个落点。
+    """
+    for node in grade:
+        if node.kind != "layer":
+            continue
+        for key in node.keys:
+            local = key.at_ticks - clip.animation_offset_ticks
+            if 0 <= local <= clip.duration_ticks:
+                continue
+            raise EditorError(
+                "LAYER_KEY_RANGE",
+                f"这一层的针钉在 {key.at_ticks} 那一格，可这一段从 "
+                f"{clip.animation_offset_ticks} 起只有 {clip.duration_ticks} 长：把播放头挪进"
+                "这一段再打点，或先把这一段加长，或删掉那一枚",
+                422,
+                clip_id=clip.id,
+                property=key.property,
+                at_ticks=key.at_ticks,
+                animation_offset_ticks=clip.animation_offset_ticks,
+                duration_ticks=clip.duration_ticks,
+            )
+
+
 def apply_commands(
     project: Project, commands: list[Command], sequence_id: str | None = None
 ) -> Project:
@@ -864,9 +893,10 @@ def apply_commands(
                 elif command.op == "clip.color":
                     if candidate.assets[clip.asset_id].kind == "audio":
                         raise EditorError("INVALID_COLOR", "audio has no color properties")
-                    # 这一条也写得进整条链（界面上那排节点走的就是它），所以同一句
-                    # 「第二路画面指的是谁」在这里也要问一次——两处只有一个主人。
+                    # 这一条也写得进整条链（界面上那排节点走的就是它），所以同一句「第二路
+                    # 画面指的是谁」与「那几枚针落在哪一格」在这里各问一次——只有一个主人。
                     _check_layer_sources(candidate, command.color.grade)
+                    _check_layer_clock(clip, command.color.grade)
                     clip.color = command.color.model_copy(deep=True)
                 elif command.op == "clip.color_manage":
                     if candidate.assets[clip.asset_id].kind == "audio":
@@ -880,6 +910,7 @@ def apply_commands(
                     if candidate.assets[clip.asset_id].kind == "audio":
                         raise EditorError("INVALID_COLOR", "audio has no color properties")
                     _check_layer_sources(candidate, command.grade)
+                    _check_layer_clock(clip, command.grade)
                     clip.color = ClipColor.model_validate(
                         {**clip.color.model_dump(), "grade": command.grade}
                     )

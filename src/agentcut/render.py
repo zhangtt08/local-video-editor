@@ -19,6 +19,7 @@ from .animation import (
     axis_steps,
     expression,
     fade_active,
+    layer_schedule,
     mask_box_schedule,
     mask_shape_schedule,
     outline_mask,
@@ -1292,6 +1293,75 @@ def compile_render_plan(
         )
         return label
 
+    def layer_rect(offset_x: float, offset_y: float, scale: float) -> tuple | None:
+        """那一层盖住交付帧里的哪一块——这一族唯一的算法（静态与逐窗两条腿都问它）。
+
+        1.190 量出来的两条规矩一字未动：目标矩形先夹到交付帧（出界那半不画，与浏览器里被容器
+        裁掉是同一件事），层先按自己**完整**的尺寸缩好、再从里裁出与画面相交那一片——直接缩到
+        交集会把出界部分的比例拉回来，那不是「被裁掉」。整层都在画外时交回 None。
+        """
+        want_w = max(1, int(round(picture_w * scale)))
+        want_h = max(1, int(round(picture_h * scale)))
+        center_x = int(round(bar_x + (0.5 + offset_x) * picture_w))
+        center_y = int(round(bar_y + (0.5 + offset_y) * picture_h))
+        left, top = center_x - want_w // 2, center_y - want_h // 2
+        x = max(left, 0)
+        y = max(top, 0)
+        width = min(left + want_w, out_w) - x
+        height = min(top + want_h, out_h) - y
+        if width < 1 or height < 1:
+            return None
+        return want_w, want_h, left, top, x, y, width, height
+
+    def blend_layer(current: str, sized: str, stage: dict, rect, gate: str) -> str:
+        """把裁出来的那一片按这一层的方式与权重相合回去（`crop` 与 `overlay` 都在那一片上）。
+
+        插值的底必须用裁出来那一份，不然两路尺寸不一样，FFmpeg 在 configure 阶段就死。
+        `gate` 在静态那一条腿上就是空串——那一行的串与 1.190 逐字节相同；`blend` 与 `overlay`
+        都认 `enable`（1.123 为清晰那对量过 `blend`：关掉的那段原样交回第一个输入）。
+        """
+        _, _, _, _, x, y, width, height = rect
+        canvas = plan.tag("lcv")
+        plan.filters.append(f"{current}format=gbrp{canvas}")
+        halves = [plan.tag("lhalf") for _ in range(2)]
+        plan.filters.append(f"{canvas}split=2{''.join(halves)}")
+        box = plan.tag("lbox")
+        plan.filters.append(f"{halves[0]}crop={width}:{height}:{x}:{y}{box}")
+        pair = [plan.tag("lpart") for _ in range(2)]
+        plan.filters.append(f"{box}split=2{pair[0]}{pair[1]}")
+        blended = plan.tag("lmode")
+        first, second = (sized, pair[0]) if stage["mode"] == "normal" else (pair[0], sized)
+        plan.filters.append(f"{first}{second}blend=all_mode={stage['mode']}{gate}{blended}")
+        lerped = plan.tag("llerp")
+        plan.filters.append(
+            f"{blended}{pair[1]}blend=all_mode=normal"
+            f":all_opacity={stage['mix']:.6g}{gate}{lerped}"
+        )
+        out = plan.tag("lout")
+        plan.filters.append(f"{halves[1]}{lerped}overlay=x={x}:y={y}:format=gbrp{gate}{out}")
+        return out
+
+    def size_layer(
+        current: str, stage: dict, rect, layer_index: int | None, fan: str | None, gate: str
+    ) -> str:
+        """缩好那一路、裁出相交那一片、相合回去——静态与逐窗共用的这一条腿。
+
+        `layer_index` 与 `fan` 二选一：没有针的那一段直接从输入接一路（串的 shape 与 1.190
+        相同），多窗的那一段从 `split` 出来的那一份接。缩与裁用的都是 `layer_rect` 交回那几个数。
+        """
+        want_w, want_h, left, top, x, y, width, height = rect
+        source = f"[{layer_index}:v]" if fan is None else fan
+        full = plan.tag("lyrf")
+        plan.filters.append(
+            f"{source}scale={want_w}:{want_h}:force_original_aspect_ratio=disable,"
+            f"format=gbrp,fps={fps},settb=AVTB{full}"
+        )
+        sized = full
+        if (width, height) != (want_w, want_h):
+            sized = plan.tag("lyr")
+            plan.filters.append(f"{full}crop={width}:{height}:{x - left}:{y - top}{sized}")
+        return blend_layer(current, sized, stage, rect, gate)
+
     def apply_layers(clip, pad: str) -> str:
         """1.189 的第二路画面：把链尾那几层外部图按顺序相合进来（`layer_stages` 是唯一说法）。
 
@@ -1302,17 +1372,16 @@ def compile_render_plan(
         的 `mix-blend-mode: normal` 交回**上面那一层**。把层放到第一位，两端就又是同一幅画——
         `tests/layer_check.py` 逐模式量的就是换过之后的数。
 
-        1.190：层自己有位置与大小（都按**画面框**说，与界面读的是同一组数）。`blend` 只能整块整块
-        地相合，所以走「裁出那一片 → 相合 → 叠回去」：目标矩形先夹到交付帧里（出界的那部分不画，
-        与浏览器里被容器裁掉是同一件事），层先按自己**完整**的尺寸缩好，再从里裁出与画面相交的那一片
-        ——直接缩到交集会把出界部分的比例拉回来，那不是「被裁掉」。插值的底也必须用裁出来那一份，
-        不然两路尺寸不一样，FFmpeg 在 configure 阶段就死。
+        1.192：这一层可以按窗挪动与缩放（`animation.layer_schedule`，与柔焦／清晰／遮罩那一族
+        同一把尺）。段数由引擎下发（`limits.layer_schedule_segments`），每一段是一路 `crop` +
+        两段 `blend` + 一次 `overlay`；那一层没有针时走的就是上面那一条腿，编译串一字不改。
         """
         stages = layer_stages(clip.color)
         if not stages:
             return pad
+        tables = layer_schedule(clip, settings.frame_ticks)
         current = pad
-        for stage in stages:
+        for index, stage in enumerate(stages):
             asset = project.assets.get(stage["asset_id"])
             if asset is None or asset.kind != "image" or asset.verified is None:
                 # 写的时候 reducer 已经问过一遍；素材后来被删/换掉留下的孤儿由这里兜住：
@@ -1324,19 +1393,20 @@ def compile_render_plan(
                     422,
                     asset_id=stage["asset_id"],
                 )
-            want_w = max(1, int(round(picture_w * stage["scale"])))
-            want_h = max(1, int(round(picture_h * stage["scale"])))
-            center_x = int(round(bar_x + (0.5 + stage["offset_x"]) * picture_w))
-            center_y = int(round(bar_y + (0.5 + stage["offset_y"]) * picture_h))
-            left, top = center_x - want_w // 2, center_y - want_h // 2
-            x = max(left, 0)
-            y = max(top, 0)
-            width = min(left + want_w, out_w) - x
-            height = min(top + want_h, out_h) - y
-            if width < 1 or height < 1:
-                # 整层都在交付帧外：这一层什么都不画，也不许多开一路输入与两段 blend。
+            alive: list[tuple[dict | None, tuple]] = []
+            for window in tables[index] or [None]:
+                values = (
+                    (stage["offset_x"], stage["offset_y"], stage["scale"])
+                    if window is None
+                    else tuple(window["value"])
+                )
+                rect = layer_rect(*values)
+                if rect is not None:
+                    alive.append((window, rect))
+            if not alive:
+                # 整层都在交付帧外（或每一窗都在外面）：这一层什么都不画，也不许多开一路输入。
                 continue
-            index = plan.next_input()
+            layer_index = plan.next_input()
             plan.input_args += [
                 "-loop",
                 "1",
@@ -1347,38 +1417,20 @@ def compile_render_plan(
                 "-i",
                 asset.verified.path,
             ]
-            plan.owners[index], plan.allocations = clip.id, plan.allocations + 1
-            full = plan.tag("lyrf")
-            plan.filters.append(
-                f"[{index}:v]scale={want_w}:{want_h}:force_original_aspect_ratio=disable,"
-                f"format=gbrp,fps={fps},settb=AVTB{full}"
-            )
-            sized = full
-            if (width, height) != (want_w, want_h):
-                sized = plan.tag("lyr")
-                plan.filters.append(
-                    f"{full}crop={width}:{height}:{x - left}:{y - top}{sized}"
+            plan.owners[layer_index], plan.allocations = clip.id, plan.allocations + 1
+            if len(alive) == 1:
+                current = size_layer(current, stage, alive[0][1], layer_index, None, "")
+                continue
+            # 多窗：一路解码，`split` 出每窗那一份，各自按自己那一窗的尺寸缩好。窗与窗之间时间不
+            # 相交，所以那几次 `overlay` 串起来就是「到这一格换这一片」，不会叠出两层。
+            fans = [plan.tag("lysp") for _ in alive]
+            plan.filters.append(f"[{layer_index}:v]split={len(alive)}{''.join(fans)}")
+            for (window, rect), fan in zip(alive, fans, strict=True):
+                gate = (
+                    f":enable='between(t,{sec(window['from_ticks'])},"
+                    f"{sec(window['to_ticks'])})'"
                 )
-            canvas = plan.tag("lcv")
-            plan.filters.append(f"{current}format=gbrp{canvas}")
-            halves = [plan.tag("lhalf") for _ in range(2)]
-            plan.filters.append(f"{canvas}split=2{''.join(halves)}")
-            box = plan.tag("lbox")
-            plan.filters.append(f"{halves[0]}crop={width}:{height}:{x}:{y}{box}")
-            pair = [plan.tag("lpart") for _ in range(2)]
-            plan.filters.append(f"{box}split=2{pair[0]}{pair[1]}")
-            blended = plan.tag("lmode")
-            first, second = (sized, pair[0]) if stage["mode"] == "normal" else (pair[0], sized)
-            plan.filters.append(f"{first}{second}blend=all_mode={stage['mode']}{blended}")
-            lerped = plan.tag("llerp")
-            plan.filters.append(
-                f"{blended}{pair[1]}blend=all_mode=normal"
-                f":all_opacity={stage['mix']:.6g}{lerped}"
-            )
-            current = plan.tag("lout")
-            plan.filters.append(
-                f"{halves[1]}{lerped}overlay=x={x}:y={y}:format=gbrp{current}"
-            )
+                current = size_layer(current, stage, rect, None, fan, gate)
         return current
 
 

@@ -5,6 +5,7 @@ from math import sqrt
 
 from .contracts import (
     FADE_SHAPE_CURVES,
+    LAYER_SCHEDULE_MAX,
     MASK_FIELDS,
     MASK_ROTATION_SCHEDULE_MAX,
     MASK_SHAPE_SCHEDULE_MAX,
@@ -456,6 +457,67 @@ def sharpen_schedule(clip: Clip, quantum: int, limit: int | None = None) -> list
     return frame_windows(clip, quantum, SHARPEN_SCHEDULE_MAX if limit is None else limit, value_at)
 
 
+LAYER_KEY_PROPS = ("offset_x", "offset_y", "scale")
+
+
+def layer_nodes(clip: Clip) -> list:
+    """有哪几层、按什么顺序——这一族只在这里数一次。
+
+    `grade.layer_stages` 走的是 `grade_stages` 里那条「链尾、启用的才算」的判断，这里问的是
+    同一批节点：`render.py` 与 `preview_manifest` 拿同一份顺序去对同一份窗表，不许各数各的。
+    """
+    return [node for node in clip.color.grade if node.kind == "layer" and node.enabled]
+
+
+def layer_keys(node, prop: str) -> list:
+    return sorted((key for key in node.keys if key.property == prop), key=lambda key: key.at_ticks)
+
+
+def layer_value_at(node, prop: str, at_ticks: int) -> float:
+    """这一层在某一格上到底是几。没有针就读静态那一个数，与 `sample` 回落同一个地方。"""
+    keys = layer_keys(node, prop)
+    if not keys:
+        return round(float(getattr(node, prop)), 9)
+    return round(_walk(keys, at_ticks), 9)
+
+
+def layer_schedule(clip: Clip, quantum: int, limit: int | None = None) -> list[list[dict]]:
+    """每一层一份窗表；没有针的那一层交回空表，走静态那一条老路，编译串一字不改。
+
+    三个数在**同一次** `frame_windows` 里换值，所以「挪到哪」与「多大一块」不会各自踩各自的
+    格子——与清晰那两颗旋钮共用一张表是同一个理由（`sharpen_schedule`）。导出为每一窗串一路
+    `crop` + 两段 `blend` + 一次 `overlay:enable`，浏览器把同一份窗表画成 `steps(1, end)` 的帧。
+    """
+    ceiling = LAYER_SCHEDULE_MAX if limit is None else max(1, limit)
+    tables: list[list[dict]] = []
+    for node in layer_nodes(clip):
+        if not node.keys:
+            tables.append([])
+            continue
+
+        def value_at(source: Clip, at: int, layer=node) -> tuple:
+            clock = at + source.animation_offset_ticks
+            return tuple(layer_value_at(layer, prop, clock) for prop in LAYER_KEY_PROPS)
+
+        tables.append(frame_windows(clip, quantum, ceiling, value_at))
+    return tables
+
+
+def layer_curve(clip: Clip, table: list[dict]) -> list[dict]:
+    """浏览器那份：每窗一个点，三个数一起换，`steps(1, end)` 就是导出那批格子的边界。"""
+    span = clip.duration_ticks
+    return [
+        {
+            "offset": window["from_ticks"] / span,
+            "easing": "steps(1, end)",
+            "offset_x": window["value"][0],
+            "offset_y": window["value"][1],
+            "scale": window["value"][2],
+        }
+        for window in table
+    ]
+
+
 def outline_keys(clip: Clip) -> list[MaskShapeKeyframe]:
     return sorted(clip.mask_shape_keys, key=lambda key: key.at_ticks)
 
@@ -880,7 +942,15 @@ def preview_manifest(
             ),
             # 1.189：第二路画面按链里的顺序交出去，界面只负责把每张图叠在它那一层。
             # 方式与权重不在这里换算——`grade.layer_stages` 就是导出读的那一份。
-            "layer": layer_stages(clip.color),
+            # 1.192：每一行还带它自己那份窗表（一枚针都没有就是空表，界面走静态那条老路）。
+            # `strict=True` 不是洁癖：层数在两处各数一遍迟早数出不一样的顺序，而编译读的就是
+            # 同一批节点（`layer_nodes`），对不齐要当场炸，不是画出一张错图。
+            "layer": [
+                dict(stage, windows=layer_curve(clip, table))
+                for stage, table in zip(
+                    layer_stages(clip.color), layer_schedule(clip, quantum), strict=True
+                )
+            ],
             "grade": grade,
             "transition": transition_curves[clip.id],
             "fade": fade or None,

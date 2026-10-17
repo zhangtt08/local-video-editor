@@ -1,10 +1,11 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 
 import { branchBlend, DEFAULT_COMPOSITE, DEFAULT_LAYER, branchTree, branchWeight, blendsAfterAdd, blendsAfterPick, blendsAfterRemove, chainFieldsFor, mapMixer, mixerAt, NODE_NAMES, cardsFor, moveWithin, resolveMixerPath, weightsAfterAdd, weightsAfterRemove, weightsAfterWeight, type GraphLane } from "../gradeGraph";
-import {blendLabel, DEFAULT_TRANSFER, COLOR_SPACES, DEFAULT_CURVE_POINTS, DEFAULT_WHEELS, type GradeBranch, type GradeCapacity, type GradeChannel, type GradeCurvePoint, type GradeNode, type GradeOperation, type GradeParallel, type ColorSpace, type ClipColorSpaceReport, BLEND_MODES, type BlendMode} from "../engine";
-import { applyGradeToTrack, editableProject, setClipColor, useApp, applyLut, autoGradeClip, colorManageClip, fetchGradeCapacity, readClipColorSpace } from "../store";
+import {blendLabel, DEFAULT_TRANSFER, COLOR_SPACES, DEFAULT_CURVE_POINTS, DEFAULT_WHEELS, type GradeBranch, type GradeCapacity, type GradeChannel, type GradeCurvePoint, type GradeNode, type GradeOperation, type GradeParallel, type ColorSpace, type ClipColorSpaceReport, BLEND_MODES, type BlendMode, type LayerKeyframe} from "../engine";
+import { applyGradeToTrack, editableProject, setClipColor, useApp, usePlay, applyLut, autoGradeClip, colorManageClip, fetchGradeCapacity, readClipColorSpace } from "../store";
 import { autoSourceBlocker, autoSourceOffered, colorSpaceWords, handPickLive, handPickWords, managedPair, managedWords, manageFits, manageSourceValue, manageSpaces, shouldReadColorSpace, taggedCount, transferTagWords, type ColorSpacePhase } from "../colorManage";
-import { autoGradeBlocker, gradeCapacityLine } from "../effects";
+import { autoGradeBlocker, gradeCapacityLine, LAYER_KEY_LABEL, layerKeyTick } from "../effects";
+import { TIMEBASE } from "../time";
 import { foldBlocker, foldedRow, foldIn, foldWords, usableRows } from "../gamutFold";
 
 const CHANNELS: [GradeChannel, string][] = [["rgb", "主色"], ["red", "红"], ["green", "绿"], ["blue", "蓝"]];
@@ -41,6 +42,9 @@ export type GradeLimits = {
   layerOffsetMax?: number;
   layerScaleMin?: number;
   layerScaleMax?: number;
+  /** 1.192：这一层能动的那三个数与针的额度，都由引擎下发（界面不自己数、不自己列名字）。 */
+  layerKeyProps?: string[];
+  layerKeyLimit?: number;
   treeOperations?: number;
   blackMax?: number;
   whiteMin?: number;
@@ -219,7 +223,32 @@ function CurvePad({ points, maxPoints, onCommit }: { points: GradeCurvePoint[]; 
 }
 
 /** 一个操作的编辑控件：曲线、白平衡、色彩空间、RGB 增益、LUT。串行节点与并联分支共用这一套。 */
-function OpFields({ node, idPrefix, limits, onReplace, onCommit }: { node: GradeNode; idPrefix: string; limits: GradeLimits; onReplace?: () => void; onCommit: (next: GradeNode) => void }) {
+/** 1.192：给这一层的那个数在播放头那一格钉一枚针。折刻度只有 `layerKeyTick` 一处，按钮不许自己
+ *  再算一遍；撞针或到额度时那颗是灰的，而且当场就说明出路（先在下面删掉那一枚 / 切成两层）。 */
+function KeyDot({ property, keys, tick, value, limit, props, onCommit }: {
+  property: string;
+  keys: LayerKeyframe[];
+  tick: number | null;
+  value: number;
+  limit: number;
+  props: string[];
+  onCommit: (next: LayerKeyframe[]) => void;
+}) {
+  if (!props.includes(property) || limit <= 0 || tick === null) return null;
+  const clash = keys.some((item) => item.property === property && item.at_ticks === tick);
+  const full = keys.length >= limit;
+  const reason = clash
+    ? "这一格已经有这一条的针：先在下面那排里删掉那一枚，再回来打"
+    : full
+      ? `这一层带了 ${keys.length} 枚针，到了引擎的额度 ${limit}：先在下面删掉一枚，或把这段切成两层各自动`
+      : `在 ${tick} 那一格记下现在这一个数`;
+  return <button className="btn tiny" disabled={clash || full} title={reason} aria-label={reason}
+    onClick={() => onCommit([...keys, { property: property as LayerKeyframe["property"], at_ticks: tick, value, interpolation: "hold" }])}>
+    在这里打点
+  </button>;
+}
+
+function OpFields({ node, idPrefix, limits, layerTick, layerOffset, onReplace, onCommit }: { node: GradeNode; idPrefix: string; limits: GradeLimits; layerTick?: number | null; layerOffset?: number; onReplace?: () => void; onCommit: (next: GradeNode) => void }) {
   // 第二路画面指的是哪一张，只能从工程里那份素材表选：界面不自己列名字，也不自己拼 URL。
   const app = useApp();
   const images = Object.values(app.project?.assets ?? {}).filter((row) => row.kind === "image" && row.verified);
@@ -294,6 +323,15 @@ function OpFields({ node, idPrefix, limits, onReplace, onCommit }: { node: Grade
     const offsetMax = limits.layerOffsetMax ?? 0;
     const scaleMin = limits.layerScaleMin ?? 0;
     const scaleMax = limits.layerScaleMax ?? 0;
+    // 1.192：能动的那三个数、针的额度，全部听引擎下发；老引擎不回就是空表与 0，按钮一颗都不出现。
+    const keyProps = limits.layerKeyProps ?? [];
+    const keyLimit = limits.layerKeyLimit ?? 0;
+    const keys = node.keys ?? [];
+    const dot = (property: string, value: number) => (
+      <KeyDot property={property} keys={keys} tick={layerTick ?? null} value={value}
+        limit={keyLimit} props={keyProps}
+        onCommit={(next) => onCommit({ ...node, keys: next })} />
+    );
     return <div className="grade-body">
       <label className="mask-shape">叠哪一张画面
         <select className="input" aria-label="外部画面层的素材" value={node.asset_id} onChange={(e) => onCommit({ ...node, asset_id: e.target.value })}>
@@ -306,20 +344,32 @@ function OpFields({ node, idPrefix, limits, onReplace, onCommit }: { node: Grade
           {BLEND_MODES.map(([value, name]) => <option key={value} value={value}>{name}</option>)}
         </select>
       </label>
-      <Num id={`${idPrefix}-layer-x`} label="这一层往左右" value={round(node.offset_x * 100)}
+      <Num id={`${idPrefix}-layer-x`} label={LAYER_KEY_LABEL.offset_x} value={round(node.offset_x * 100)}
         min={-offsetMax * 100} max={offsetMax * 100} step={5} unit="%"
         onCommit={(value) => onCommit({ ...node, offset_x: round(value / 100) })} />
-      <Num id={`${idPrefix}-layer-y`} label="这一层往上下" value={round(node.offset_y * 100)}
+      {dot("offset_x", node.offset_x)}
+      <Num id={`${idPrefix}-layer-y`} label={LAYER_KEY_LABEL.offset_y} value={round(node.offset_y * 100)}
         min={-offsetMax * 100} max={offsetMax * 100} step={5} unit="%"
         onCommit={(value) => onCommit({ ...node, offset_y: round(value / 100) })} />
-      <Num id={`${idPrefix}-layer-scale`} label="这一层多大一块" value={round(node.scale * 100)}
+      {dot("offset_y", node.offset_y)}
+      <Num id={`${idPrefix}-layer-scale`} label={LAYER_KEY_LABEL.scale} value={round(node.scale * 100)}
         min={scaleMin * 100} max={scaleMax * 100} step={5} unit="%"
         onCommit={(value) => onCommit({ ...node, scale: round(value / 100) })} />
+      {dot("scale", node.scale)}
       <Num id={`${idPrefix}-layer-mix`} label="这一层的权重" value={node.mix * 100} min={0} max={100} step={5} unit="%"
         onCommit={(value) => onCommit({ ...node, mix: round(value / 100) })} />
       <p className="hint">这一层读的是<b>工程里另一张图</b>：它叠在这段画面走完自己那条链之后——不被这一段的遮罩切、不被这一段的柔焦糊，但转场会把它一起压过去。0% 就是这一层什么都不做。</p>
       <p className="hint">监视器与导出读的是<b>同一份</b>方式与权重（引擎下发那八种，逐档量过）。它必须排在链尾：中间隔着会改画面的节点，两端就不是同一幅画，引擎按 LAYER_POSITION 点名拒。</p>
       {node.asset_id && !images.some((row) => row.id === node.asset_id) ? <p className="hint">这一层指的素材现在不在工程里（或没有验过的媒体），导出会按 LAYER_ASSET_UNAVAILABLE 拒：重新选一张。</p> : null}
+      {keys.length ? <div className="keyframe-list">
+        {keys.map((item, position) => <div key={`${item.property}-${item.at_ticks}`} className="keyframe-item">
+          <span className="keyframe-dot">◇</span>
+          {LAYER_KEY_LABEL[item.property] ?? item.property}
+          <span className="mono">{((item.at_ticks - (layerOffset ?? 0)) / TIMEBASE).toFixed(2)}s · {round(item.value * 100)}%</span>
+          <button aria-label="删掉这一枚" onClick={() => onCommit({ ...node, keys: keys.filter((_, index) => index !== position) })}>×</button>
+        </div>)}
+      </div> : null}
+      {keys.length ? <p className="hint">这一层带了 {keys.length} 枚针（引擎的额度 {keyLimit}）。位置与大小<b>在同一次切段里一起换</b>：监视器画的就是导出那几次 `enable` 的同一批格子，一格一步，谁都不补中间态。针钉在这一段之外会被按 LAYER_KEY_RANGE 拒。</p> : null}
     </div>;
   }
   if (node.kind === "composite") {
@@ -428,6 +478,10 @@ export function GradeFields({ clipId }: { clipId: string }) {
   }, [capacityProjectId, capacityRevision]);
   const capacityLine = gradeCapacityLine(capacity, capacityRevision);
   const clip = project?.clips[clipId];
+  // 1.192：层的针存的是含 `animation_offset_ticks` 的时钟，折那一次只在 `layerKeyTick` 一处；
+  //  这里只负责把「播放头现在在哪一格」交给卡片上的那颗打点按钮。
+  const play = usePlay();
+  const layerTick = clip ? layerKeyTick(clip, play.ticks) : null;
   const nodes = clip?.color?.grade ?? [];
   // 层数与「还能不能加」都由引擎下发的那个数管，界面不自己定一个。
   const enabledLayers = nodes.filter((node) => node.kind === "layer" && node.enabled).length;
@@ -442,6 +496,9 @@ export function GradeFields({ clipId }: { clipId: string }) {
     layerOffsetMax: app.caps?.grade_limits?.layer_offset_max ?? 0,
     layerScaleMin: app.caps?.grade_limits?.layer_scale_min ?? 0,
     layerScaleMax: app.caps?.grade_limits?.layer_scale_max ?? 0,
+    // 1.192：能动的那三个数与针的额度都听引擎的；老引擎不回这两个字段，就是 0 个、不能打点。
+    layerKeyProps: app.caps?.grade_limits?.layer_key_props ?? [],
+    layerKeyLimit: app.caps?.limits?.layer_key_limit ?? 0,
     treeOperations: app.caps?.grade_limits?.max_tree_operations ?? FALLBACK_TREE_OPERATIONS,
     blackMax: app.caps?.grade_limits?.levels_black_max ?? FALLBACK_LEVELS.blackMax,
     whiteMin: app.caps?.grade_limits?.levels_white_min ?? FALLBACK_LEVELS.whiteMin,
@@ -753,7 +810,7 @@ export function GradeFields({ clipId }: { clipId: string }) {
       </div> : <p className="hint">曝光、对比度、饱和度之后按顺序执行这些节点。曲线、白平衡、RGB 增益、色彩空间、1D LUT 与并联只改每通道值，预览与导出共用同一张表；通道混合与 3D LUT 按定义跨通道，各自自成一段——其中 3D LUT 浏览器画不出，只有导出生效。</p>}
       {capacityLine ? <p className="hint">{capacityLine}</p> : null}
 
-      {chainFields ? <OpFields node={chainFields} idPrefix="grade" limits={limits} onReplace={chainFields.kind === "lut" || chainFields.kind === "lut3d" ? () => pickLut(active) : undefined} onCommit={(next) => replace(active, next)} /> : null}
+      {chainFields ? <OpFields node={chainFields} idPrefix="grade" limits={limits} layerTick={layerTick} layerOffset={clip?.animation_offset_ticks ?? 0} onReplace={chainFields.kind === "lut" || chainFields.kind === "lut3d" ? () => pickLut(active) : undefined} onCommit={(next) => replace(active, next)} /> : null}
 
       {current?.kind === "parallel" ? <div className="grade-body">
         <div className="batch-actions">

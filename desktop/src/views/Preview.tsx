@@ -6,7 +6,7 @@ import { MaskPicture } from "./MaskPicture";
 import { TIMEBASE, frameTicks, humanDuration, pacing, rateLabel, timecode } from "../time";
 import type { AnimatedEffect, Clip, GradeTables, PreviewManifest, Project, Track } from "../engine";
 import { feColorMatrixValues } from "../engine";
-import { blurFrames, sharpenFilters, sharpenFrames, sharpenSteps, wipeClipPath } from "../effects";
+import { blurFrames, layerFrames, layerStyle, sharpenFilters, sharpenFrames, sharpenSteps, wipeClipPath } from "../effects";
 import { appInfo, clearProxyCache, clearDerivedCache, cycleSafeArea, editSource, fourPoint, jumpEditPoint, markSource, playhead, PROXY_WIDTHS, selectClip, selectedSource, setMonitorMode, setProxyWidth, setSourceCursor, setSourcePlaying, setSourceRipple, setSourceTarget, timelineEnd, useApp, usePlay } from "../store";
 
 let audioContext: AudioContext | undefined;
@@ -221,6 +221,8 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
   const fades = useRef<Partial<Record<"opacity" | "gain", HTMLElement | null>>>({});
   // 1.98: 柔焦的曲线编译成一格一步的窗，浏览器只把那份窗动画到这一层 `filter` 上。
   const blurs = useRef<Partial<Record<"blur" | "edge", HTMLElement | null>>>({});
+  // 1.192：第二路画面那几张图按引擎的窗表自己挪位置，每一张一个动画。
+  const layers = useRef<(HTMLElement | null)[]>([]);
   const blends = useRef<Partial<Record<"picture" | "sound" | "black" | "white", HTMLElement | null>>>({});
   // 转场搬的是整层：位移、放大与那条擦除各占一层包装，全部由引擎下发的点表驱动。
   // 嵌套的 transform 天生相加、嵌套的 opacity 天生相乘，所以预览与导出读同一份数就得到同一条边。
@@ -291,6 +293,15 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
       const animation = edge.animate(sharpenFrames(stepped.curve), { duration: plan.duration_ms, fill: "both" });
       animation.pause(); created.push(animation);
     }
+    // 第二路画面按窗挪动（1.192）：动画帧就是引擎那份窗表换的数，一格一步，
+    // 与导出那几次 `overlay:enable` 守同一批格子；没有窗的一张都不挂动画（走静态那条式子）。
+    (plan?.layer ?? []).forEach((row, index) => {
+      const node = layers.current[index];
+      const frames = layerFrames(row.windows);
+      if (!node || !frames) return;
+      const animation = node.animate(frames, { duration: plan.duration_ms, fill: "both" });
+      animation.pause(); created.push(animation);
+    });
     animations.current = created;
     return () => { created.forEach((a) => a.cancel()); animations.current = []; };
   }, [plan]);
@@ -329,10 +340,7 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
     <div ref={(node) => { fades.current.gain = node; }} className="gain-sample" aria-hidden="true" />
     <div ref={(node) => { blends.current.sound = node; }} className="gain-sample" aria-hidden="true" />
     <div ref={(node) => { blends.current.picture = node; }} className="layer-transform"><div ref={(node) => { moves.current.reveal = node; }} className="layer-transform"><div ref={(node) => { moves.current.motion_x = node; }} className="layer-transform"><div ref={(node) => { moves.current.motion_y = node; }} className="layer-transform"><div ref={(node) => { moves.current.zoom = node; }} className="layer-transform"><div ref={(node) => { fades.current.opacity = node; }} className="layer-transform"><div ref={(node) => { wrappers.current.opacity = node; }} className="layer-transform"><div ref={(node) => { wrappers.current.x = node; }} className="layer-transform"><div ref={(node) => { wrappers.current.y = node; }} className="layer-transform"><div ref={(node) => { wrappers.current.scale = node; }} className="layer-transform"><div ref={(node) => { wrappers.current.rotation = node; }} className="layer-transform"><MaskPicture clip={clip} image={plan?.mask_image} editable={interactive} animation={plan?.mask_curves && (plan.mask_unit || plan.mask_shape) ? { unit: plan.mask_unit ?? null, curves: plan.mask_curves } : null} shape={plan?.mask_shape} rotation={plan?.mask_rotation_windows}><div ref={(node) => { blurs.current.edge = node; }} className="layer-edge" style={{ filter: plan?.edge_filter ?? undefined }}><div ref={(node) => { blurs.current.blur = node; }} className="layer-blur"><div className="layer-transform" style={{ filter: plan?.color_filter }}>{media}</div></div></div></MaskPicture></div></div></div></div></div></div></div></div></div></div></div>
-    {(plan?.layer ?? []).map((row, index) => <img key={`${row.asset_id}-${index}`} className="layer-grade" alt="" aria-hidden="true" src={streams[row.asset_id]} style={{ mixBlendMode: row.mode, opacity: row.mix,
-        width: `${row.scale * 100}%`, height: `${row.scale * 100}%`,
-        left: `${(0.5 + row.offset_x) * 100 - row.scale * 50}%`,
-        top: `${(0.5 + row.offset_y) * 100 - row.scale * 50}%` }} />)}
+    {(plan?.layer ?? []).map((row, index) => <img key={`${row.asset_id}-${index}`} ref={(node) => { layers.current[index] = node; }} className="layer-grade" alt="" aria-hidden="true" src={streams[row.asset_id]} style={{ mixBlendMode: row.mode, opacity: row.mix, ...layerStyle(row.offset_x, row.offset_y, row.scale) }} />)}
     {error || playing && pace.rate > 0 && (effectiveRate < .0625 || effectiveRate > 16) ? <div className="layer-error">{error || "叠加速度超出浏览器连续播放范围，请暂停逐帧预览或导出检查"}</div> : null}
   </div>{!isAudio && plan?.transition.black.some((point) => point.value > 0) ? <div ref={(node) => { blends.current.black = node; }} className="transition-black" style={{ mixBlendMode: "plus-lighter" }} aria-hidden="true" /> : null}{!isAudio && plan?.transition.white?.some((point) => point.value > 0) ? <div ref={(node) => { blends.current.white = node; }} className="transition-white" aria-hidden="true" /> : null}</>;
 }

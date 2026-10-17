@@ -81,7 +81,7 @@ export type GradeOperation =
   /** 1.144：第二路画面输入。这条边读两幅画（链的输出与链的输入），所以它不是每通道函数：
    *  导出走 FFmpeg 的 `split` + `blend`，浏览器没有对应的原语，预览明说不生效。 */
   | { kind: "composite"; mode: BlendMode; mix: number; enabled: boolean }
-  | { kind: "layer"; asset_id: string; mode: BlendMode; mix: number; offset_x: number; offset_y: number; scale: number; enabled: boolean }
+  | { kind: "layer"; asset_id: string; mode: BlendMode; mix: number; offset_x: number; offset_y: number; scale: number; enabled: boolean; keys?: LayerKeyframe[] }
   /** 色彩空间转换。`purpose` 只有引擎的 `clip.color_manage` 会写：它把这一对节点标记成「一键套上的
    *  色彩管理」，取下时只删自己被标过的两个，中间谁手工加的都原样留着。界面不许自己造第三个值。 */
   | { kind: "transfer"; input_space: ColorSpace; output_space: ColorSpace; enabled: boolean; mix?: number; blend?: BlendMode; purpose?: "color_manage" | null }
@@ -255,6 +255,16 @@ export type TransitionEnvelope = {
 
 /** 一片清晰（unsharp）：静态就是那一份 `<filter>` 的数；有曲线时是导出同一份窗表，
  *  每一窗一个 def，`curve` 里 `id: null` 的那一窗浏览器显示 `none`（导出根本不为它串阶段）。 */
+/** 1.192：第二路画面自己那枚针（与契约 `LayerKeyframe` 同一形状，刻度含 `animation_offset_ticks`）。 */
+export type LayerKeyframe = {
+  property: "offset_x" | "offset_y" | "scale";
+  at_ticks: number;
+  value: number;
+  interpolation?: "linear" | "hold" | "ease" | "bezier";
+  bezier?: { x1: number; y1: number; x2: number; y2: number } | null;
+};
+/** 引擎编译好的那一窗：三个数一起换，`easing` 由引擎给（界面不自己补中间态）。 */
+export type LayerWindow = { offset: number; easing: string; offset_x: number; offset_y: number; scale: number };
 export type SharpenStatic = { id: string; amount: number; bbox: [number, number] };
 export type SharpenWindow = SharpenStatic & { from_ticks: number; to_ticks: number };
 export type SharpenSteps = {
@@ -263,7 +273,7 @@ export type SharpenSteps = {
 };
 export type SharpenSpec = SharpenStatic | SharpenSteps;
 export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; grade?: GradeTables | null; sharpen?: SharpenSpec | null; speed?: RampPiece[] | null; mask_image?: string | null; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; mask_shape?: MaskShapeWindow[] | null; mask_rotation_windows?: MaskRotationWindow[] | null; spatial?: Partial<Record<SpatialProperty, Curve>> | null; edge_filter?: string | null; curves: Record<AnimatedEffect, Curve>; transition: TransitionEnvelope; fade?: Record<"opacity" | "gain", Curve> | null;
-      layer?: { asset_id: string; mode: BlendMode; mix: number; offset_x: number; offset_y: number; scale: number }[] }> };
+      layer?: { asset_id: string; mode: BlendMode; mix: number; offset_x: number; offset_y: number; scale: number; windows?: LayerWindow[] }[] }> };
 
 /** 引擎给这条片段记下的那一次稳定：有了它，再按一次是换一档强度而不是叠第二遍。 */
 export type Stabilization = {
@@ -624,6 +634,8 @@ export type Capabilities = {
     layer_offset_max?: number;
     layer_scale_min?: number;
     layer_scale_max?: number;
+    /** 1.192：那一层能动的是哪三个数，也只由引擎说一次（界面不许自备属性名表）。 */
+    layer_key_props?: string[];
     max_tree_operations?: number;
     max_curve_points: number;
     max_lut_samples: number;
@@ -646,7 +658,7 @@ export type Capabilities = {
   max_commands_per_batch: number;
   commands: string[];
   features: Record<string, boolean>;
-  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; denoise_db?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number; track_max_gap_frames?: number; track_gap_default?: number; track_min_frames?: number; track_max_frames?: number; mask_rotation_limit?: number; mask_shape_keys?: number; mask_shape_schedule_segments?: number; blur_schedule_segments?: number; sharpen_schedule_segments?: number; attribute_paste_targets?: number };
+  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; denoise_db?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number; track_max_gap_frames?: number; track_gap_default?: number; track_min_frames?: number; track_max_frames?: number; mask_rotation_limit?: number; mask_shape_keys?: number; mask_shape_schedule_segments?: number; blur_schedule_segments?: number; sharpen_schedule_segments?: number; layer_key_limit?: number; layer_schedule_segments?: number; attribute_paste_targets?: number };
   render_presets: Preset[];
   /** 1.137：时间码的写法与「哪两个率才有丢帧码」由引擎说，界面不许自己写一份正则。 */
   timecode_shape?: string;
@@ -899,6 +911,9 @@ export function errorHints(): Record<string, string> {
       LAYER_LIMIT: "一条调色链叠外部画面到了上限：每多一层就要多解一路画面，引擎按上限拒。要更多层就把其中几层先合成一张图，或者把一层放到另一条画面轨上用那条轨的混合方式相合。",
       LAYER_POSITION: "外部画面层必须在链尾：导出按链里的顺序一段一段相合，浏览器按同一顺序画层，中间隔着会改画面的节点时两端就不是同一幅画。把这一层移到链尾即可。",
       LAYER_ASSET_UNAVAILABLE: "这一层要叠的画面现在拿不到：素材不在工程里、不是图像，或者还没有引擎验过的媒体记录。重新导入那个文件，或把这一层从链上摘掉。",
+      LAYER_KEY_RANGE: "这一层的针钉在这一段外面：窗表只在片段自己的长度里采样，那一枚本来不会多画一段。把播放头挪进这一段再打点，或先把这一段加长，或删掉那一枚。",
+      LAYER_KEY_CLASH: "同一格给同一条属性钉了两枚针，引擎不知道这一段该走哪一条。把其中一枚挪开，或按住 Alt 点掉那一枚。",
+      LAYER_KEY_LIMIT: "这一层带的针超过了引擎的额度：每多一枚就多切一段，导出要串更多的相合。少钉几枚，或者把这段切成两层各自动。",
       COMPOSITE_LIMIT: "一条调色链最多一条「叠一层原图」：两条边叠在一起时，「链的输出」指的是哪一段说不清，所以引擎两条就拒。要两层效果，把没调色的那份放到另一条画面轨上用轨道的混合方式相合，或者拆成两段嵌套合成。",
       SEQUENCE_NEEDS_CONTAINER: "图像序列交出的是一串文件（每帧一张），没有容器可以挂起始时间码，帧号就是位置。要时间码请换成 mov／mp4／mxf／webm 那几条；这一串的声音也不在里面，需要带声的成片请同时交一份 mp4／mov。",
       UNKNOWN_PRESET: "没有这个导出预设。能力表里列出的 id 才是可用的；界面下拉里选一个即可。",

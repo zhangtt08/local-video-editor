@@ -1,5 +1,5 @@
 import type { GradeCapacity } from "./engine";
-import type { AnimatedEffect, Asset, Capabilities, Clip, Curve, Effects, MaskProperty, Project, SharpenSpec, SharpenStatic, SharpenSteps, ShapeMask, SpatialProperty, WipeChannel } from "./engine";
+import type { AnimatedEffect, Asset, Capabilities, Clip, Curve, Effects, LayerWindow, MaskProperty, Project, SharpenSpec, SharpenStatic, SharpenSteps, ShapeMask, SpatialProperty, WipeChannel } from "./engine";
 import { DEFAULT_EFFECTS } from "./engine";
 import { TIMEBASE } from "./time";
 
@@ -434,6 +434,41 @@ export function fadeAdoptSummary(plan: {
 
 /** 一次淡角柄拖动的落库单位。`clipId` 带着走，是因为「这一组」不再只有被拖的那一条。 */
 export type FadeOp = { clipId: string; property: FadeProperty; side: FadeSide; ticks: number };
+
+/** 1.192：那一层在画面上盖哪一块——导出与预览共用的就这一条式子。
+ *  视图不许在别处再抄一遍：抄一份就会有「画面上是这样、文件里是那样」的那一天。
+ *  坐标按**画面框**说（与引擎 `layer_rect` 同一口径）：`scale` 1 = 铺满画面框，
+ *  `offset` 0 = 层心在画面中心，±1 = 层心挪到那一边的边外。 */
+export const layerStyle = (offsetX: number, offsetY: number, scale: number) => ({
+  width: `${scale * 100}%`,
+  height: `${scale * 100}%`,
+  left: `${(0.5 + offsetX) * 100 - scale * 50}%`,
+  top: `${(0.5 + offsetY) * 100 - scale * 50}%`,
+});
+
+/** 引擎那份窗表换成浏览器动画帧：每一窗一格、`easing` 用的就是引擎给的那个串，
+ *  三个数一个都不自己算。没有窗（一枚针都没有）就交回 null，那一行走上面那条静态式子。 */
+export function layerFrames(windows: LayerWindow[] | null | undefined) {
+  if (!windows?.length) return null;
+  return windows.map((point) => ({
+    ...layerStyle(point.offset_x, point.offset_y, point.scale),
+    offset: point.offset,
+    easing: point.easing,
+  }));
+}
+
+/** 界面说到这一层能动的那三个数时念的是中文名：唯一的表，键与引擎下发的
+ *  `grade_limits.layer_key_props` 逐字对齐（`tests/desktop_layerkey_check.ts` 钉这一条）。 */
+export const LAYER_KEY_LABEL: Record<string, string> = {
+  offset_x: "这一层往左右",
+  offset_y: "这一层往上下",
+  scale: "这一层多大一块",
+};
+
+/** 播放头那一格换成引擎那把尺上的数：层的针存的是含 `animation_offset_ticks` 的时钟，
+ *  与 `Clip.keyframes` 同一条规矩。折那一次只在这里折——视图里再抄一遍就会抄成两套刻度。 */
+export const layerKeyTick = (clip: Clip, ticks: number) =>
+  ticks - clip.position_ticks + (clip.animation_offset_ticks ?? 0);
 
 /** 1.98：引擎把柔焦曲线编译成一格一步的窗（`spatial_schedule`），浏览器照同一份点表动画 `filter`。
  *  值仍是「占画面高的比例」，所以单位是 cqh——与导出交给 `gblur=sigma=` 的是同一个数。
