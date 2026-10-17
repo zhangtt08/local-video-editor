@@ -30,6 +30,7 @@
 - 链条：`ruff`／stylewidth／62 档壳检／typecheck／error_vocabulary／layer 全 0 → `build_engine --verify` →
   `npm run dist` → 根 exe 与便携版 `cmp` → `released_package_check` → 真页面（含叠层那一条：监视器真的
   画出 `.layer-grade`，样式读的就是清单里那两个数）→ 空机单跑套件 空机单跑套件 123/123 全绿（`suite1189final.log`，新增那一档就是第 123 档）。
+- **装机复验（1.189 的交付物本身）**：`desktop/release/win-unpacked/AgentCut.exe` 起真窗口，按 pid 用 PrintWindow 量到 1480×900 画出来的帧（归档 `AgentCut-1.189-原生窗口.png`），标题栏那一格裁出来读的是「引擎在线 v1.189.0」；关窗后 agentcut 进程计数 0。这一腿看的是「装出来的应用还起得来、还画得出」——第二路画面在真窗口里的样子由 `mon1189` 那四档（随包引擎 + 构建后的渲染层）代答，使用者自己那份工程里没有层节点，所以这一张不会替那一档说话。
 - **下一轮入口（记下，不在这一轮动手）**：① `composite` 那条边仍是 `preview: false`（界面写着
   「预览不生效、导出生效」）。1.189 量到的这套两端一致正是它缺的那一步，但它要的第二幅画是**这一段
   自己的原图**——图像素材多一个 `<img>` 就行，视频素材要多一个解码的 `<video>`，这一笔代价没量过；
