@@ -280,7 +280,7 @@ textarea.input { resize: vertical; line-height: 1.5; }
 .side-note { margin-top: 12px; font-size: 11.5px; line-height: 1.7; color: var(--ink-3); }
 
 /* ---------- 编辑器 ---------- */
-.editor { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.editor { --preview-reserve: 430px; display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .editor-main { display: grid; grid-template-columns: 274px minmax(0, 1fr) 322px; min-height: 0; flex: 1; }
 .preview-layer, .layer-transform { position: absolute; inset: 0; }
 .preview-track { position: absolute; inset: 0; isolation: isolate; pointer-events: none; }
@@ -357,8 +357,12 @@ textarea.input { resize: vertical; line-height: 1.5; }
 .splitter:hover, .splitter:focus-visible { background: var(--accent-soft); }
 .splitter.vertical { width: 5px; cursor: col-resize; border-left: 1px solid var(--line); }
 .splitter.horizontal { height: 5px; cursor: row-resize; border-top: 1px solid var(--line); }
-.editor .timeline { height: var(--timeline-height, 300px); }
-.editor.source-open .timeline { height: clamp(180px, var(--timeline-height, 300px), calc(100dvh - 510px)); }
+.editor.source-open { --preview-reserve: 510px; }
+/* 时间线是**可以压缩的那一块**：窗口再矮，监视器也得留下看得清画面的高度。
+   量出来的那一对（同一个真浏览器窗口、发布包自己允许的最小尺寸 1040×660，里面 1016×568）：
+   旧的那一条固定高绝不让步时画面那一块是 32×18（等于没有），换成这条公式后是 245×138。
+   保留多少由 `--preview-reserve` 一处说，下限 180 是拖拽条还能用得下去的那一档。 */
+.editor .timeline { height: clamp(180px, var(--timeline-height, 300px), calc(100dvh - var(--preview-reserve))); }
 .editor.source-open .monitor-wrap { padding: 8px; }
 .editor .panel { border: none; }
 .editor .panel-head { height: 38px; }
