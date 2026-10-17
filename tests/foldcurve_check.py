@@ -133,8 +133,8 @@ def vocabulary_suite() -> list[dict]:
     ], f"能力表把那句「这一档是谁」写歪了：{rows}"
     assert DEFAULT_FOLD_TRANSFER == "bt709", f"默认档被挪走了：{DEFAULT_FOLD_TRANSFER}"
     assert rows[0]["id"] == DEFAULT_FOLD_TRANSFER, rows
-    assert SCHEMA_VERSION == 23, f"schema 不再是 23：{SCHEMA_VERSION}"
-    assert capabilities()["project_schema_version"] == 23
+    assert SCHEMA_VERSION == 24, f"schema 不再是 24：{SCHEMA_VERSION}"
+    assert capabilities()["project_schema_version"] == 24
     # 链子那一侧的 `rec709` 是纯幂 2.4——那正是名单里必须有 `gamma24` 的理由。
     assert GAMMA_BY_SPACE["rec709"] == POWER, GAMMA_BY_SPACE["rec709"]
     assert "srgb" not in FOLD_TRANSFERS, (

@@ -1648,13 +1648,26 @@ def main():
                 project_id = check_http(base_url, db_path, bool(ffmpeg))
                 check_clocks_and_images(base_url)
                 asyncio.run(check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe))
-                subprocess.run(
+                # 跑不动的那一次必须看得见是哪一句：以前 stdout/stderr 只写进 scratch 那份
+                # server.log，套件一删临时目录就什么都没了（1.192 那一轮就是这样：套件报
+                # self_check 红在 1651 行，而原因在一份读不到的日志里）。现在原样收下再交回
+                # 断言消息；预算也从 15 秒抬到 60 秒——那是「解释器 + httpx + 六个请求」的
+                # 起手开销，不是产品的规矩，15 秒在全量套件跑到后半程时被量到过一次不够。
+                example = subprocess.run(
                     [sys.executable, "examples/agent_workflow.py"],
                     env=env,
-                    check=True,
-                    timeout=15,
-                    stdout=log,
-                    stderr=log,
+                    timeout=60,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                log.write(example.stdout)
+                log.write(example.stderr)
+                log.flush()
+                assert example.returncode == 0, (
+                    f"examples/agent_workflow.py 退出 {example.returncode}："
+                    f"{(example.stdout + example.stderr)[-1200:]}"
                 )
             # Restart the actual API process, then retry a pre-restart MCP write over HTTP.
             with running_api(env, port, log, media_root, ffmpeg, ffprobe):
