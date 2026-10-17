@@ -369,6 +369,10 @@ textarea.input { resize: vertical; line-height: 1.5; }
    旧的那一条固定高绝不让步时画面那一块是 32×18（等于没有），换成这条公式后是 245×138。
    保留多少由 `--preview-reserve` 一处说，下限 180 是拖拽条还能用得下去的那一档。 */
 .editor .timeline { height: clamp(180px, var(--timeline-height, 300px), calc(100dvh - var(--preview-reserve))); }
+/* 1.194：夹到上面那条公式的下限之后，往上拖那条边不再起作用——这一行把这件事说出来。
+   句里两个数都是量出来的（要的那一个读 `--timeline-height`，得到的是真的盒子），
+   这里不再抄第三个常数：抄了就成第二条公式，改一处会漏一处。 */
+.editor .timeline .timeline-clamped { margin: 0; padding: 3px 10px; font-size: 11px; line-height: 1.45; background: rgba(217, 164, 65, .12); border-bottom: 1px solid var(--line-strong); }
 .editor.source-open .monitor-wrap { padding: 8px; }
 .editor .panel { border: none; }
 .editor .panel-head { height: 38px; }

@@ -194,6 +194,31 @@ export function Timeline() {
     };
   }, [project?.id]);
 
+  // 1.194：窗口矮下去时让步的是这条时间线（`.editor .timeline` 那条 clamp），可夹到下限以后
+  // 往上拖那条边就不再起作用——这句得说出来，不然用户以为拖坏了。要的那一个数读的是同一个
+  // CSS 变量（`--timeline-height`，自定义属性会继承下来），量到的是真的盒子；这里不出现 180
+  // 那个下限，也不写第二条 `calc(100dvh …)`——抄一份就成了第二条公式，改一处会漏一处。
+  const rootRef = useRef<HTMLElement | null>(null);
+  const [room, setRoom] = useState<{ wanted: number; got: number } | null>(null);
+  useEffect(() => {
+    const node = rootRef.current;
+    if (!node) return;
+    const measure = () => {
+      const wanted = Number(getComputedStyle(node).getPropertyValue("--timeline-height").replace("px", "").trim());
+      const got = node.getBoundingClientRect().height;
+      setRoom(Number.isFinite(wanted) && got > 0 ? { wanted, got } : null);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [project?.id, app.monitorMode]);
+  const clamped = room && room.wanted - room.got > 1 ? room : null;
+
 
   useEffect(() => {
     const scroll = scrollRef.current;
@@ -258,7 +283,8 @@ export function Timeline() {
     : "";
 
   return (
-    <section className="timeline" aria-label="时间线">
+    <section ref={rootRef} className="timeline" aria-label="时间线">
+      {clamped ? <p className="timeline-clamped" role="status">窗口太矮：这条时间线已经让到这一屏的下限（你要 <b className="mono">{Math.round(clamped.wanted)} px</b>，现在只剩 <b className="mono">{Math.round(clamped.got)} px</b>），往上拖那条边不会再变高——把窗口拉高，或退出「素材预览」那一屏（它比常态多占一截画面的高度）。</p> : null}
       <div className="tl-toolbar">
         <IconBtn icon="cursor" label={`选择工具（${chordWords(keymap()["tool-select"])}）：拖动片段改位置，拖左右边缘改时长`} active={edit.tool === "select"} onClick={() => prefs.setTool("select")} />
         <IconBtn icon="razor" label={`分割工具（${chordWords(keymap()["tool-razor"])}）：点片段即在点击处切一刀，切成两段可独立删除`} active={edit.tool === "razor"} onClick={() => prefs.setTool("razor")} />
