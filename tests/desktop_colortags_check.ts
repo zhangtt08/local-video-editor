@@ -200,7 +200,9 @@ assert.ok(grade.includes("{autoOn ? <p className=\"hint\">{spaceLine}</p> : null
 assert.ok(grade.includes("autoSourceOffered(app.caps?.features)"), "有没有这一档只问 capabilities");
 assert.equal(grade.split("autoSourceOffered(").length - 1, 1, "门禁只问那一个助手，不在别处再判一遍");
 assert.equal(grade.split("color_manage_auto").length - 1, 1, "flag 的名字在面板里只出现在那句明说的fallback里");
-assert.ok(grade.includes("capabilities 里没有 color_manage_auto 这一档"), "引擎没这一档要说出来，不许悄悄藏控件");
+// 1.209 那句话从「capabilities 里没有 color_manage_auto 这一档」收成「这一版引擎没有 color_manage_auto 这一档」：
+// 说的是同一件事，钉的也是同一件事——缺这一档时必须点名，不许悄悄把控件藏起来。
+assert.ok(/没有 color_manage_auto 这一档/.test(grade), "引擎没这一档要说出来，不许悄悄藏控件");
 assert.match(
   grade,
   /manageAutoGate \? <label[\s\S]{0,700}来源按文件自带标记[\s\S]{0,1400}: <p className="hint">/,

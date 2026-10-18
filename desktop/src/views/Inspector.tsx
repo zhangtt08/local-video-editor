@@ -98,7 +98,7 @@ export function Inspector() {
 
   return (
     <div className="panel-scroll">
-      {nestName !== null ? <Modal title="预合成选中片段" sub="内部图层、关键帧和声音继续保留，可进入合成编辑。" onClose={() => setNestName(null)} footer={<><button className="btn" onClick={() => setNestName(null)}>取消</button><button className="btn primary" disabled={!nestName.trim() || Boolean(app.busy)} onClick={() => { nestSelection(nestName); setNestName(null); }}>创建预合成</button></>}><label className="panel-label" htmlFor="nest-name">合成名称</label><input className="input" id="nest-name" autoFocus maxLength={256} value={nestName} onChange={(e) => setNestName(e.target.value)} /><p className="hint">合成使用工程画幅和帧率，透明区域保留。轨道混合在内部独立计算；声音一起收进合成。跨层夹着其它镜头时，请一并选择。</p></Modal> : null}
+      {nestName !== null ? <Modal title="预合成选中片段" sub="内部图层、关键帧和声音继续保留，可进入合成编辑。" onClose={() => setNestName(null)} footer={<><button className="btn" onClick={() => setNestName(null)}>取消</button><button className="btn primary" disabled={!nestName.trim() || Boolean(app.busy)} onClick={() => { nestSelection(nestName); setNestName(null); }}>创建预合成</button></>}><label className="panel-label" htmlFor="nest-name">合成名称</label><input className="input" id="nest-name" autoFocus maxLength={256} value={nestName} onChange={(e) => setNestName(e.target.value)} /><p className="hint">合成用工程画幅与帧率，透明区域保留；声音一起收进合成。</p></Modal> : null}
       {sequence ? <section className="insp-section"><span className="panel-label">当前合成</span><fieldset className="effects-fields" disabled={Boolean(app.busy || !readyProject)}><input className="input" key={sequence.id + sequence.name} aria-label="合成名称" defaultValue={sequence.name} maxLength={256} onBlur={(e) => { const name = e.target.value.trim(); if (name && name !== sequence.name) updateSequence({ name }); }} /><NumberField label="合成时长" hint="缩短时不能截断内部片段或已使用的源区间" value={seconds(sequence.duration_ticks)} quantum={project!.settings.timebase * project!.settings.frame_rate.denominator / project!.settings.frame_rate.numerator} min={project!.settings.frame_rate.denominator / project!.settings.frame_rate.numerator} onCommit={(v) => updateSequence({ duration_ticks: ticks(v) })} /></fieldset></section> : null}
       {app.selectedClips.length ? <section className="insp-section"><button className="btn" disabled={Boolean(app.busy || !readyProject)} onClick={() => setNestName(`合成 ${Object.keys(project?.sequences ?? {}).length + 1}`)}>预合成选中片段</button>{compound ? <button className="btn primary" disabled={Boolean(app.busy || app.batch.length)} onClick={() => openSequence(compound)}>进入合成</button> : null}</section> : null}
       {project ? <details className="insp-section" open={!clip && !multiple}><summary className="panel-label">工程设置</summary><ProjectSettings /></details> : null}
@@ -108,7 +108,7 @@ export function Inspector() {
         <p className="hint">拖动任一选中片段移动整组，保留间隔与相对轨道。Ctrl/Shift 点选增减，空白处拖动框选。</p>
         <div className="batch-actions"><button className="btn" onClick={copySelection}>复制</button><button className="btn" onClick={duplicateSelection}>追加副本</button><button className="btn" onClick={() => removeSelection()}>删除</button></div>
         <button className="btn" onClick={() => removeSelection(true)}>涟漪删除整组</button>
-        <p className="hint">涟漪删除只关闭所选片段独占的时间；其他镜头使用的转场重叠区间会保留。整组操作可一次撤销。</p>
+        <p className="hint">涟漪删除只关掉这一段独占的时间；别人用的重叠区间保留。</p>
       </section> : null}
 
       {multiple ? <GroupTrackFields /> : null}
@@ -254,7 +254,7 @@ function AssociationFields() {
   return <section className="insp-section"><div className="row-title"><span className="panel-label">组合与链接</span><button className={`btn tiny subtle${edit.linkedSelection ? " active" : ""}`} aria-pressed={edit.linkedSelection} onClick={() => prefs.toggleLinkedSelection()}>联动{edit.linkedSelection ? "开" : "关"}</button></div>
     <div className="insp-actions"><button className="btn tiny" disabled={clips.length < 2} onClick={() => groupSelection()}>组合</button><button className="btn tiny" disabled={!clips.some((c) => c.group_id)} onClick={() => groupSelection(true)}>取消组合</button></div>
     <div className="insp-actions"><button className="btn tiny" disabled={!canLink} title="先对齐视频与音频的开始、时长和速度；当前源入点差值作为同步基准。" onClick={() => linkSelection()}>链接音画</button><button className="btn tiny" disabled={!linkIds.length} onClick={() => linkSelection(true)}>解除链接</button></div>
-    <p className="hint">组合保存在工程里。链接联动移动、分割与修剪；Alt 点选可单选，关闭联动可独立编辑。只修链接的一边就是 J/L cut：Alt 单选那一路再拖它自己的边（Agent 用一条 clip.link_split_trim），下面的同步状态会说清差了多久，「拉回同步」一次拉回。</p>
+    <p className="hint">链接联动移动、分割与修剪；只修一边就是 J/L cut，下面的同步状态说差多久。</p>
     {linkIds.map((id) => { const link = current?.[id!]; return <div key={id} className={`link-status${link && !link.synchronized ? " out-of-sync" : ""}`} role="status">{!link ? current ? "同步状态不可用，请重新打开工程。" : "正在检查同步…" : link.synchronized ? `音画同步 · ${link.clip_ids.length} 段` : <>{linkOffsetSentence(link, (clipId) => { const member = project.clips[clipId]; const asset = member ? project.assets[member.asset_id] : undefined; return `${asset?.kind === "audio" ? "声音" : "画面"} ${asset?.label || clipId}`; }, (value) => offsetWords(value, project.settings.frame_rate))}<button className="btn tiny" title="把这一对的其他成员拉回基准片段的窗口，各自保留原来的源入点差值。" onClick={() => reconcileLink(id!)}>拉回同步</button></>}</div>; })}
   </section>;
 }
@@ -396,7 +396,7 @@ function EffectsFields({ clip }: { clip: Clip }) {
         <button className="btn tiny" disabled={slidingBlocked} title="整段左移：左边相邻段让出这些帧、右边相邻段收回同样多，这条轨总长不变" onClick={() => slideClip(clip.id, -slideFrames)}>滑移 ←</button>
         <button className="btn tiny" disabled={slidingBlocked} title="整段右移：右边让出、左边收回，总长不变" onClick={() => slideClip(clip.id, slideFrames)}>滑移 →</button>
       </div>
-      <p className="hint">{slidingBlocked ? "带变速曲线或已链接声音的片段不能划动/滑移：时间不是线性的，让出来的帧在两侧含义不同。请直接修剪，或先解除链接。" : "划动改这段素材的起点；滑移改这段在时间线上的位置，两侧相邻片段各自补/让同样的帧数，整条轨不变长——两侧都得有相邻片段才滑得动，素材头尾不够时引擎会拒绝并说明原因。"}</p>
+      <p className="hint">{slidingBlocked ? "带变速曲线或已链接声音的片段不能划动/滑移：请直接修剪，或先解除链接。" : "划动改素材起点；滑移改这段在时间线上的位置，两侧各自补/让同样的帧数。"}</p>
     </fieldset></details>
     <FadeControls clip={clip} locked={locked} properties={fadeProperties(clip, asset)} />
   </section>;
@@ -415,7 +415,7 @@ function FadeControls({ clip, locked, properties }: { clip: Clip; locked: boolea
       {app.caps?.features?.clip_fade_adopt && fadeAdoptHint(clip, property) ? <button className="btn tiny" disabled={locked} title="1.90 之前淡是写成关键帧的：那条淡在这两个数字里看不见，也不会跟着修剪与分割走。点一下把它搬成边窗口——引擎认得它原来那条从 0 缓到静止值的斜坡，搬完画面一个像素都不变；搬不动会点名说为什么（夹了别的点、起点不是 0、已经是窗口）。" onClick={() => adoptFade(clip.id, property)}>搬成边窗口</button> : null}
     </div>)}
     {app.caps?.features?.clip_fade_adopt_track && rows.length ? <button className="btn tiny subtle" disabled={locked || Boolean(app.busy)} title="把这一整条轨上 1.90 之前写成关键帧的淡一次搬成边窗口：先向引擎要一份只读规划，排出的就是普通 clip.fade_adopt 命令，一整轨只写一个版本。搬不动的那段不会被排进来，报告里会说是哪几段、为什么。" onClick={() => adoptTrackFades(clip.track_id)}>整轨搬成边窗口</button> : null}
-    <p className="hint">淡加在片段的两条边上，缓入缓出；它与音量关键帧、自动闪避、透明度动画相乘，不会互相抹掉。修剪、分割、挪动片段时淡跟着那条边走——切口不算一条边，所以中间不会凭空淡一下。</p>
+    <p className="hint">淡加在两条边上，跟着那条边走；切口不算一条边。</p>
   </fieldset></details>;
 }
 
@@ -491,7 +491,7 @@ function GroupTrackFields() {
     <div className="row-title"><span className="panel-label">遮罩跟踪</span><span className="tag accent">{picked.length} 段</span></div>
     <fieldset className="effects-fields" disabled={Boolean(app.busy)}>
       <div className="batch-actions"><button className="btn" disabled={Boolean(app.busy || group.blocked)} title={group.blocked ?? "每段各自从片段开头量到量得完的地方：一次分析、写进同一个版本，撤销一步整批退回；同一段画面叠几层、各盖一个主体时，它们共用同一趟读片"} onClick={() => trackMasks(group.targets)}>跟踪所选 {picked.length} 段</button></div>
-      <p className="hint">三个旋钮沿用应用偏好：挡住最多猜 {knobs.gap} 帧、{knobs.sweep ? "被挡住时在整幅画面上重找" : "被挡住时只按匀速猜"}、{knobs.scale ? "遮罩随远近缩放" : "遮罩不随远近缩放"}（一个跟踪点占 4 条曲线，另一段开着时只占 2 条），每段还各自受自己片段的曲线预算收短，装不下时整组被点名拒绝而不是写一半。{skipped ? ` 另有 ${skipped} 段没有遮罩或遮罩不能动，这一批不跟。` : ""}</p>
+      <p className="hint">三个旋钮沿用应用偏好：挡住最多猜 {knobs.gap} 帧、{knobs.sweep ? "被挡住时整幅重找" : "被挡住时按匀速猜"}、{knobs.scale ? "遮罩随远近缩放" : "遮罩不随远近缩放"}。{skipped ? ` 另有 ${skipped} 段这一批不跟。` : ""}</p>
     </fieldset>
   </section>;
 }
@@ -529,7 +529,7 @@ function MaskFields({ clip }: { clip: Clip }) {
     <fieldset className="effects-fields" disabled={disabled}>
       <label className="mask-shape">形状 <select className="input" aria-label="遮罩形状" value={mask?.shape ?? "none"} onChange={(e) => { const shape = e.target.value; if (shape === "none") { setClipMask(clip.id, null); return; } const base = { ...(mask ?? DEFAULT_MASK), shape: shape as ShapeMask["shape"] }; setClipMask(clip.id, shape === "path" ? { ...base, vertices: base.vertices?.length ? base.vertices : DEFAULT_PATH.map((vertex) => ({ ...vertex, handle_out: [...vertex.handle_out] as [number, number], handle_in: [...vertex.handle_in] as [number, number] })) } : { ...base, vertices: null }); }}><option value="none">无</option><option value="ellipse">椭圆</option><option value="rectangle">矩形</option><option value="path">路径</option></select></label>
       {mask ? <>
-        {mask.shape === "path" ? <p className="hint">路径顶点 {mask.vertices?.length ?? 0} 个：画面中拖顶点改形状（拖动即整体搬动轮廓），拖小方块改曲线控制柄，双击在最近的那条边上加一个点，选中后方向键微调、Delete 删除，或点画面下方出现的小面板用「删除顶点 / 抹成角点 / 自动平滑」。向内羽化按画面短边折算成高斯半径。轮廓按画好的形状与大小裁切（路径遮罩不带角度）：要让它随时间移动就点「跟踪主体」，或在曲线编辑器里给「遮罩中心 X/Y」双击加关键帧。{app.caps?.features.path_shape_keys ? "轮廓本身也能随时间变形：先记一帧，之后在画面里拖顶点就是给那一刻改形状。" : "形状与大小本身还不能随时间变化。"}</p> : null}
+        {mask.shape === "path" ? <p className="hint">路径顶点 {mask.vertices?.length ?? 0} 个：画面里拖顶点改形状，双击最近那条边加一个点。{app.caps?.features.path_shape_keys ? "轮廓本身也能随时间变形：先记一帧。" : "形状还不能随时间变化。"}</p> : null}
         {mask.shape === "path" && app.caps?.features.path_shape_keys ? <MaskShapeKeys clip={clip} mask={mask} disabled={disabled} at={at} /> : null}
         {(canAnimateMask(mask) ? maskRows(mask, app.caps) : []).map(([field, label, min, max, property]) => {
           const frame = frames.find((k) => k.property === property && k.at_ticks === at + (clip.animation_offset_ticks ?? 0));
@@ -554,7 +554,7 @@ function MaskFields({ clip }: { clip: Clip }) {
             <input type="checkbox" checked={trackScale} disabled={mask.shape === "path"} aria-label="跟踪时让遮罩盒随远近缩放" onChange={(e) => setTrackScale(e.target.checked)} /></label> : null}
           {animatable && project ? <button className="btn tiny" disabled={disabled || Boolean(clip.stabilization)} title={clip.stabilization ? "这段画面带着一次稳定：重构图写的就是稳定占用的位移/缩放三条曲线，跑一遍会把稳定悄悄抹掉。先「取消稳定」，再重构图。" : "读取刚跟踪出来的遮罩路径，写入把主体保持在画面正中的平移与缩放曲线；竖屏裁切出货时主体不会跑出画面。放大上限 4 倍，跟不到时会说明"} onClick={() => void reframeClip(clip.id)}>主体跟随重构图</button> : null}
           <button className="btn tiny" onClick={() => setClipMask(clip.id, { ...DEFAULT_MASK, shape: mask.shape, vertices: mask.shape === "path" ? DEFAULT_PATH.map((vertex) => ({ ...vertex, handle_out: [...vertex.handle_out] as [number, number], handle_in: [...vertex.handle_in] as [number, number] })) : null })}>重置遮罩</button></div>
-        <p className="hint">遮罩随片段变换；矩形/椭圆拖中间移动、拖四角缩放，羽化占半径比例。中心与大小可按◇打关键帧，「跟踪主体」会一次写入整条路径。路径遮罩按画好的轮廓裁切，可以打「中心 X / 中心 Y」关键帧、也可以跟踪{app.caps?.features.path_shape_keys ? "，轮廓的形状还能按上面那几帧随时间变形（导出按整格阶梯执行，预览读同一份窗表）" : ""}；反相遮罩不支持盒关键帧。遮罩角度是屏幕上的角度（正数顺时针，与画面旋转同一个读法），按◇可以打成关键帧——导出与预览都走引擎那份按帧对齐的阶梯（最多 `mask_rotation_schedule_segments` 段），不是一端连续一端台阶；转过的盒子还能打「中心 X/Y」曲线，宽/高那两条也一样能打——那张等比图改成每一窗烘一张、各自带着自己的角度与边（`capabilities.features.mask_rotation_size_curves` 报这一档），所以三步之内不会被非均匀拉伸。路径遮罩按画好的轮廓，没有角度这一格。声音保持原样。</p>
+        <p className="hint">遮罩随片段变换；中心、大小与角度都能按◇打点，两端走同一份阶梯。{app.caps?.features.path_shape_keys ? "反相遮罩不打盒关键帧。" : ""}</p>
       </> : null}
     </fieldset>
   </details>;
@@ -587,7 +587,7 @@ function MaskShapeKeys({ clip, mask, disabled, at }: { clip: Clip; mask: ShapeMa
           <button type="button" className="btn tiny subtle" disabled={disabled} title="删掉这一帧的形状；删到一枚不剩，遮罩就用画出来的那条轮廓" onClick={() => removeMaskShape(clip.id, local)}>删除</button>
         </li>;
       })}</ul>
-    </> : <p className="hint">还没有轮廓帧：按上面那颗按钮起第一帧。之后播放头停在哪一刻，画面里拖顶点就改哪一刻的形状。</p>}
+    </> : <p className="hint">还没有轮廓帧：按上面那颗起第一帧，之后拖顶点改的就是那一刻。</p>}
   </div>;
 }
 
@@ -641,7 +641,7 @@ function TextFields({ clip }: { clip: Clip }) {
       <div className="effect-row"><label htmlFor="text-box-color">垫子色</label><input id="text-box-color" type="color" value={text.box_color ?? "#000000"} onChange={(e) => setClipText(clip.id, { box_color: e.target.value })} /></div>
       <div className="effect-row"><label htmlFor="text-box-opacity">垫子浓度</label><EffectInput id="text-box-opacity" min={0} max={100} step={5} value={(text.box_opacity ?? 0.45) * 100} onCommit={(value) => setClipText(clip.id, { box_opacity: value / 100 })} /><span className="dim">%</span></div>
       <div className="effect-row"><label htmlFor="text-line-spacing">行距</label><EffectInput id="text-line-spacing" min={0} max={200} step={5} value={(text.line_spacing ?? 0.2) * 100} onCommit={(value) => setClipText(clip.id, { line_spacing: value / 100 })} /><span className="dim">% 字号</span></div>
-      <p className="hint">这些数在预览与导出里是同一组：描边、阴影偏移、行距与垫子浓度都按「字号的百分之几」换算，FFmpeg 的 drawtext 与浏览器各画一遍。阴影没有「模糊」这一档——drawtext 画不出模糊，给了就只有预览里看得到、成片里没有，所以不做。</p>
+      <p className="hint">这些数预览与导出是同一组：都按「字号的百分之几」换算。</p>
     </> : null}
     <button className="btn tiny" onClick={() => { const project = app.project; if (!project) return; void appInfo.engine()?.captions(project.id, project.revision, clip.track_id, app.sequenceId).then(async ({ srt }) => { const copied = await bridge.copyText(srt); toast(copied ? "ok" : "warn", copied ? "本轨字幕已复制为 SRT" : "无法访问剪贴板"); }).catch(() => toast("error", "字幕导出失败")); }}>复制本轨 SRT</button>
   </fieldset></section>;

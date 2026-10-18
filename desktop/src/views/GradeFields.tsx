@@ -283,7 +283,7 @@ function OpFields({ node, idPrefix, limits, layerTick, layerOffset, onReplace, o
         <span className="panel-label">{rowName}</span>
         {[0, 1, 2].map((column) => <Num key={column} id={`${idPrefix}-matrix-${row}-${column}`} label={MATRIX_COLUMNS[column]} value={node.coefficients[row * 3 + column] ?? 0} min={-limit} max={limit} step={0.01} onCommit={(value) => set(row * 3 + column, value)} />)}
       </div>)}
-      <p className="hint">每一行说「这个输出通道由多少红、多少绿、多少蓝组成」，九个数直接乘在画面的存储值上，不做线性光换算——所以它是通道混合与风格化偏色的工具，不是色彩管理。导出走 FFmpeg 的 colorchannelmixer，预览走同一组数的 SVG feColorMatrix（滤镜已声明 sRGB 插值），两端读同一份矩阵。想整体去色就点「灰度 BT.709」，想只动一个通道就把别的行留成 0。</p>
+      <p className="hint">九个数直接乘在存储值上，不做线性光换算：这是风格化工具，不是色彩管理。</p>
     </div>;
   }
   if (node.kind === "levels") {
@@ -294,28 +294,28 @@ function OpFields({ node, idPrefix, limits, layerTick, layerOffset, onReplace, o
       <Num id={`${idPrefix}-levels-black`} label="输入黑场" value={node.black * 255} min={0} max={blackMax} step={1} unit="/255" onCommit={(value) => onCommit({ ...node, black: round(value / 255), white: Math.max(node.white, round(Math.min(255, value + 1) / 255)) })} />
       <Num id={`${idPrefix}-levels-white`} label="输入白场" value={node.white * 255} min={whiteMin} max={255} step={1} unit="/255" onCommit={(value) => onCommit({ ...node, white: round(value / 255), black: Math.min(node.black, round(Math.max(0, value - 1) / 255)) })} />
       <Num id={`${idPrefix}-levels-gamma`} label="中间调" value={node.gamma} min={limits.gammaMin ?? FALLBACK_LEVELS.gammaMin} max={limits.gammaMax ?? FALLBACK_LEVELS.gammaMax} step={0.05} onCommit={(value) => onCommit({ ...node, gamma: round(value) })} />
-      <p className="hint">低于输入黑场的直接压成纯黑，高于输入白场的抬到纯白，中间调在两点之间挪位置，两个端点不动。引擎按发布公式把它采样成每通道一张表，预览的 feComponentTransfer 与导出的 lutrgb 读的是同一条折线，逐点误差不超过一个色阶（tests/autograde_check.py 把 256 级全量比过）。</p>
+      <p className="hint">黑场以下压成纯黑，白场以上抬成纯白，中间调在两点之间挪位置。</p>
     </div>;
   }
   if (node.kind === "transfer") {
     return <div className="grade-body">
       <label className="mask-shape">输入色彩空间 <select className="input" aria-label="输入色彩空间" value={node.input_space} onChange={(e) => onCommit({ ...node, input_space: e.target.value as ColorSpace })}>{COLOR_SPACES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <label className="mask-shape">输出色彩空间 <select className="input" aria-label="输出色彩空间" value={node.output_space} onChange={(e) => onCommit({ ...node, output_space: e.target.value as ColorSpace })}>{COLOR_SPACES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-      <p className="hint">只换算传递函数（gamma / sRGB / BT.1886），不动色域基色也不做矩阵变换：手机素材与屏幕录制是 sRGB，广播时间线是 BT.1886（等于 gamma 2.4），这一节把前者的暗部按发布标准抬到后者。预览与导出共用同一张每通道表，暗部拐点用自适应打点，误差不超过半个色阶。</p>
+      <p className="hint">只换算传递函数，不动基色也不做矩阵：把 sRGB 的暗部抬到 BT.1886。</p>
     </div>;
   }
   if (node.kind === "lut") {
     return <div className="grade-body">
-      <p className="hint">正在用「{node.title}」：三个通道各 {node.size} 个采样点，点与点之间线性插值。这张表是引擎解析 .cube 文件得到的，界面不自己读文件，预览和导出读同一组数。</p>
+      <p className="hint">正在用「{node.title}」：三个通道各 {node.size} 个采样点，两端读同一组数。</p>
       {onReplace ? <button className="btn tiny" onClick={onReplace}>换一张 LUT</button> : null}
-      <p className="hint">1D 表逐通道，所以预览与导出读同一张表。3D LUT（会把红绿蓝互相混在一起的那种）也支持了，但它在浏览器里没有对应的画法——导入它之后预览照旧，导出才生效，节点卡片上写着这一句。</p>
+      <p className="hint">1D 表逐通道，预览与导出读同一张表。</p>
     </div>;
   }
   if (node.kind === "lut3d") {
     return <div className="grade-body">
-      <p className="hint">正在用「{node.title}」：{node.size}³ 网格、共 {node.cells.length / 3} 个 RGB 格点，导出交给 FFmpeg 的 3D LUT 滤波并按四面体插值。</p>
-      <p className="hint">这一张表按定义跨通道，浏览器没有能画它的原语，所以<b>预览不生效、导出生效</b>——与降噪一样是明说的差别，不是近似。它也没有强度与混合方式：只有一端能执行的强度不是强度。</p>
-      {node.resampled_from ? <p className="hint">原文件是 {node.resampled_from}³，超出引擎存进工程状态的网格上限，导入时已按三线性插值重采样到 {node.size}³。</p> : null}
+      <p className="hint">正在用「{node.title}」：{node.size}³ 网格、共 {node.cells.length / 3} 个 RGB 格点。</p>
+      <p className="hint">跨通道的表浏览器画不出来，所以<b>预览不生效、导出生效</b>；它也没有强度与混合方式。</p>
+      {node.resampled_from ? <p className="hint">原文件 {node.resampled_from}³ 超出网格上限，导入时已重采样到 {node.size}³。</p> : null}
       {onReplace ? <button className="btn tiny" onClick={onReplace}>换一张 LUT</button> : null}
     </div>;
   }
@@ -368,9 +368,9 @@ function OpFields({ node, idPrefix, limits, layerTick, layerOffset, onReplace, o
       <Num id={`${idPrefix}-layer-mix`} label={LAYER_KEY_LABEL.mix} value={node.mix * 100} min={0} max={100} step={5} unit="%"
         onCommit={(value) => onCommit({ ...node, mix: round(value / 100) })} />
       {dot("mix", node.mix)}
-      <p className="hint">这一层读的是<b>工程里另一张图</b>：它叠在这段画面走完自己那条链之后——不被这一段的遮罩切、不被这一段的柔焦糊，但转场会把它一起压过去。0% 就是这一层什么都不做。</p>
-      <p className="hint">监视器与导出读的是<b>同一份</b>方式与权重（引擎下发那八种，逐档量过）。它必须排在链尾：中间隔着会改画面的节点，两端就不是同一幅画，引擎按 LAYER_POSITION 点名拒。</p>
-      {rotationMax ? <p className="hint">转角<b>顺时针为正</b>，与导出同一个方向（量过：+90° 两腿都把带子的左半边送到上边）。转出去的四个角是<b>透明</b>的，不是黑的——权重折进了这一层自己的 alpha，所以 45° 叠在画面上不会糊出一块方框。它和位置、大小、淡是<b>同一张窗表</b>上的第五个数：可以打点，监视器走的就是导出那几次 `enable` 的同一批格子，一格一步。</p> : null}
+      <p className="hint">这一层读的是<b>工程里另一张图</b>，叠在这段自己那条链走完之后。0% 就是什么都不做。</p>
+      <p className="hint">方式与权重两端读<b>同一份</b>。它必须排在链尾，否则引擎按 LAYER_POSITION 拒。</p>
+      {rotationMax ? <p className="hint">转角<b>顺时针为正</b>，转出去的四个角是<b>透明</b>的，不是黑的。</p> : null}
       {node.asset_id && !images.some((row) => row.id === node.asset_id) ? <p className="hint">这一层指的素材现在不在工程里（或没有验过的媒体），导出会按 LAYER_ASSET_UNAVAILABLE 拒：重新选一张。</p> : null}
       {keys.length ? <div className="keyframe-list">
         {keys.map((item, position) => <div key={`${item.property}-${item.at_ticks}`} className="keyframe-item">
@@ -380,7 +380,7 @@ function OpFields({ node, idPrefix, limits, layerTick, layerOffset, onReplace, o
           <button aria-label="删掉这一枚" onClick={() => onCommit({ ...node, keys: keys.filter((_, index) => index !== position) })}>×</button>
         </div>)}
       </div> : null}
-      {keys.length ? <p className="hint">这一层带了 {keys.length} 枚针（引擎的额度 {keyLimit}）。位置、大小与淡<b>在同一次切段里一起换</b>：监视器画的就是导出那几次 `enable` 的同一批格子，一格一步，谁都不补中间态。针钉在这一段之外会被按 LAYER_KEY_RANGE 拒。</p> : null}
+      {keys.length ? <p className="hint">这一层带了 {keys.length} 枚针（额度 {keyLimit}）：位置、大小与淡<b>共用同一张窗表</b>，在同一次切段里一起换。</p> : null}
     </div>;
   }
   if (node.kind === "composite") {
@@ -396,16 +396,9 @@ function OpFields({ node, idPrefix, limits, layerTick, layerOffset, onReplace, o
       <Num id={`${idPrefix}-composite-mix`} label="这一层的权重" value={node.mix * 100} min={0} max={100} step={5} unit="%"
         onCommit={(value) => onCommit({ ...node, mix: round(value / 100) })} />
       <p className="hint">
-        这一条边读两幅画：这条链<b>调完的结果</b>与<b>进来的那幅原图</b>。它在链里的位置不改变结果——
-        其余节点照常串联，这一级按出现的顺序一次一次把原图叠上去。0% 就是只看原图，100% 就是只看调完的。
+        这一条边读两幅画：这条链<b>调完的结果</b>与<b>进来的那幅原图</b>。0% 只看原图，100% 只看调完的。
       </p>
-      <p className="hint">这一级<b>监视器现在会画</b>（1.193）：底层是这条链进来的那幅原图，上面那个
-        容器按你选的<b>方式</b>把「调完的」与「原图」相合、再按<b>权重</b>插回原图——与导出那两步是
-        同一个式子，八种方式逐档对过表。<b>视频素材那一段暂停与逐帧时会画</b>（1.196）：原图不是再开
-        一路解码，而是把已经解码好的那一帧拓进一张 canvas，量到与导出逐格 0 差；<b>播放中这一级不画</b>——
-        再开一路解码会把动画帧率打掉一半（rAF 181→94，本轮量的）。画不画、什么时候画都由引擎那一行说
-        （<code>paintable</code> 与 <code>motion</code>），界面不自己判断。要看到合成的效果，也可以把没调色的那份
-        放到另一条画面轨上用轨道的混合方式相合。</p>
+      <p className="hint">这一级<b>监视器现在会画</b>；<b>视频素材那一段暂停与逐帧时会画</b>，<b>播放中这一级不画</b>；画不画由 <code>paintable</code> 说。</p>
     </div>;
   }
   if (node.kind === "wheels") {
@@ -415,7 +408,7 @@ function OpFields({ node, idPrefix, limits, layerTick, layerOffset, onReplace, o
         <span className="panel-label">{label}</span>
         {(["红", "绿", "蓝"] as const).map((name, index) => <Num key={name} id={`${idPrefix}-${field}-${index}`} label={name} value={node[field][index] - base} min={lo - base} max={hi - base} step={0.01} onCommit={(value) => { const next = node[field].slice(); next[index] = round(value + base); onCommit({ ...node, [field]: next }); }} />)}
       </div>)}
-      <p className="hint">圆盘左绿右品红、上黄下蓝，只改彩度；要整体提亮请用右侧数值。达芬奇式的色轮盘面方向一致，但这里不是完整的色彩管理。</p>
+      <p className="hint">圆盘左绿右品红、上黄下蓝，只改彩度；提亮请用右侧数值。</p>
     </div>;
   }
   return null;
@@ -430,14 +423,14 @@ function MixFields({ node, idPrefix, label, onCommit }: { node: GradeNode; idPre
     return null;
   }
   return <div className="grade-body">
-    {node.kind === "matrix" ? <p className="hint">通道混合没有「混合方式」可选：把矩阵用非线性模式（正片叠底之类）与它的输入混合，结果不再是矩阵，两端就没有同一份数可读了。要减弱效果请用下面的强度。</p> : <label className="mask-shape">混合方式
+    {node.kind === "matrix" ? <p className="hint">通道混合没有「混合方式」：那样两端就没有同一份数可读了。</p> : <label className="mask-shape">混合方式
       <select className="input" aria-label={`${label}混合方式`} value={node.blend ?? "normal"} onChange={(e) => onCommit({ ...node, blend: e.target.value as BlendMode })}>
         {BLEND_MODES.map(([value, name]) => <option key={value} value={value}>{name}</option>)}
       </select>
     </label>}
     <Num id={`${idPrefix}-mix`} label={`${label}强度`} value={(node.mix ?? 1) * 100} min={0} max={100} step={5} unit="%"
       onCommit={(value) => onCommit({ ...node, mix: round(value / 100) })} />
-    <p className="hint">强度把该{label === "节点" ? "节点" : "支"}的结果与它的输入按比例混合，0% 等于跳过；达芬奇的 Mix 语义，预览与导出仍共用同一张每通道表。</p>
+    <p className="hint">强度把该{label === "节点" ? "节点" : "支"}的结果与它的输入按比例混合，0% 等于跳过。</p>
   </div>;
 }
 
@@ -743,7 +736,7 @@ export function GradeFields({ clipId }: { clipId: string }) {
         <button className="btn tiny" disabled={Boolean(autoBlock) || locked}
           title={autoBlock ?? "让引擎读这段素材自己的画面，量出黑场与白场，写成一个色阶节点放在链子最前面；预览与导出读同一张表"}
           onClick={() => void autoGradeClip(clipId, autoMode, 0.005, autoReplace)}>量黑场白场并拉开</button>
-        <p className="hint">亮度模式只动整体明暗，不会凭空造出色偏；分通道模式能把偏色的素材拉回中性，但要占三个节点。量到的数会写在提示里，不满意就在上面的色阶卡片里自己改两个点。</p>
+        <p className="hint">亮度模式只动整体明暗；分通道模式能拉回偏色，但占三个节点。</p>
       </div>
       <div className="batch-actions grade-auto-row">
         <label className="mask-shape">素材从哪里读
@@ -762,7 +755,7 @@ export function GradeFields({ clipId }: { clipId: string }) {
           <input type="checkbox" aria-label="色彩管理来源按文件自带标记" checked={manageAuto}
             disabled={assetKind === "audio"} onChange={(e) => setManageAuto(e.target.checked)} />来源按文件自带标记
         </label>
-          : <p className="hint">这一版引擎不读文件自带的色彩标记（capabilities 里没有 color_manage_auto 这一档），来源只能在「素材从哪里读」里手工点一条；下面那两张下拉菜单照常可用。</p>}
+          : <p className="hint">这一版引擎没有 color_manage_auto 这一档，来源只能在下面手工点一条。</p>}
         <button className="btn tiny" disabled={Boolean(manageBlock) || locked || Boolean(app.busy)}
           title={manageBlock ?? "一次写下两个转换节点：素材读进线性光、调色在线性光里做、交付按你选的输出空间写回去。链子中间原有的节点一个不动；再套一次换的是同一对节点，不会叠出第二对。"}
           onClick={() => colorManageClip(clipId, managePicked, manageDisplay, autoOn)}>套上色彩管理</button>
@@ -771,7 +764,7 @@ export function GradeFields({ clipId }: { clipId: string }) {
           onClick={() => colorManageClip(clipId, null, manageDisplay)}>取下色彩管理</button>
         {autoOn ? <p className="hint">{spaceLine}</p> : null}
         {tagTable ? <p className="hint dim">{tagTable}</p> : null}
-        <p className="hint">{managedWords(managed, managedTagged, spaceLabel)} 同一条曲线在线性光里调与按存储值调，中点落点是两个数——越暗差别越大，而导出的文件读的就是这一份。</p>
+        <p className="hint">{managedWords(managed, managedTagged, spaceLabel)} 在线性光里调与按存储值调，中点是两个数。</p>
       </div>
       <div className="batch-actions grade-auto-row">
         <label className="mask-shape">按表换基色
@@ -823,7 +816,7 @@ export function GradeFields({ clipId }: { clipId: string }) {
         </Fragment>)}
         <span className="gg-wire" aria-hidden="true" />
         <span className="gg-io">输出</span>
-      </div> : <p className="hint">曝光、对比度、饱和度之后按顺序执行这些节点。曲线、白平衡、RGB 增益、色彩空间、1D LUT 与并联只改每通道值，预览与导出共用同一张表；通道混合与 3D LUT 按定义跨通道，各自自成一段——其中 3D LUT 浏览器画不出，只有导出生效。</p>}
+      </div> : <p className="hint">这些节点按顺序执行；只改每通道值的，预览与导出共用同一张表。</p>}
       {capacityLine ? <p className="hint">{capacityLine}</p> : null}
 
       {chainFields ? <OpFields node={chainFields} idPrefix="grade" limits={limits} layerTick={layerTick} layerOffset={clip?.animation_offset_ticks ?? 0} onReplace={chainFields.kind === "lut" || chainFields.kind === "lut3d" ? () => pickLut(active) : undefined} onCommit={(next) => replace(active, next)} /> : null}
@@ -851,7 +844,7 @@ export function GradeFields({ clipId }: { clipId: string }) {
                 {BLEND_MODES.map(([value, name]) => <option key={value} value={value}>{name}</option>)}
               </select>
             </label>
-            <p className="hint">这一支先按所选方式与进到本节点的画面相合，再按权重参与平均；选「正常」时就是原来的加权平均。停用的一支仍是直通，所以这个下拉在停用那一支上是灰的。</p>
+            <p className="hint">这一支先按所选方式与进到本节点的画面相合，再按权重参与平均。</p>
           </> : null}
           {weightsOn ? <>
             <Num id={`grade-b${slot}-weight`} label="这一支的权重" value={branchWeight(current, slot)} min={0} max={limits.weightMax} step={0.05}
@@ -861,7 +854,7 @@ export function GradeFields({ clipId }: { clipId: string }) {
           </> : null}
           <label className="grade-switch"><input type="checkbox" checked={shown.enabled} onChange={(e) => replaceBranch(current, slot, { ...shown, enabled: e.target.checked })} />启用本支</label>
         </> : null}
-        <p className="hint">并联的每一支都从本节点的输入重新开始算，节点输出取各支的加权平均（没给权重就是均分，与不设权重逐位相同）；停用一支等于那支直通，不会改变支数。权重全部拧到 0 时这一节不改画面，而不是交一帧黑。平均的对象仍然是每通道函数，所以整个并联节点还是一张表，预览与导出共用。</p>
+        <p className="hint">并联的每一支都从本节点的输入重算，输出取各支的加权平均。</p>
       </div> : null}
 
       {current ? <MixFields node={current} idPrefix="grade" label="节点" onCommit={(next) => replace(active, next)} /> : null}

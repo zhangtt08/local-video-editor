@@ -146,7 +146,8 @@ assert.ok(inspector.includes("max={rotationLimit}") && inspector.includes("min={
 assert.ok(inspector.includes("features.mask_rotation") && inspector.includes("mask_rotation_limit"),
   "没读 capabilities 就摆了颗旋钮");
 assert.ok(inspector.includes("这一版引擎没有遮罩角度这一格"), "老引擎那一档没说");
-assert.ok(inspector.includes("宽/高那两条也一样能打"), "能动尺寸这件事没写在界面上");
+// 1.209 把那一长段收成一行；「转过的盒子也能动大小」这一句还在，只是不再顺带讲烘图的机制（那部分在帮助里）。
+assert.ok(inspector.includes("大小与角度都能按◇打点"), "能动尺寸这件事没写在界面上");
 assert.ok(!inspector.includes("要先把角度转回 0°"), "界面还在说一条引擎已经不拒的拒绝");
 // 1.166 装机量到的那一幕：判断在 `maskAnimFields` 那一处是对的，可检查器算行名单时没把 caps 递过去，
 // 于是角度一非零，「宽度 / 高度」那两行就凭空消失。这里钉的是**调用点**，不是函数返回值。

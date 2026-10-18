@@ -558,7 +558,8 @@ select { color-scheme: dark; }
 .batch-actions .btn { flex: 1; justify-content: center; }
 .inline-error { display: flex; gap: 6px; align-items: flex-start; font-size: var(--fs-label); color: var(--danger); background: var(--danger-soft); border: 1px solid #754147; border-radius: var(--r-sm); padding: 7px 9px; margin-bottom: 8px; line-height: 1.5; }
 .inline-ok { display: flex; gap: 6px; align-items: center; font-size: var(--fs-label); color: #91d5af; background: var(--ok-soft); border: 1px solid #3f6350; border-radius: var(--r-sm); padding: 7px 9px; margin-bottom: 8px; }
-.hint { font-size: var(--fs-label); color: var(--ink-3); line-height: 1.75; margin-top: 8px; }
+/* 1.209：面板上那一行说明走正文那一档、用最暗那一档的字色是不对的——它是要人读的字，不是脚注。字号进 --fs-body，颜色进 --ink-2。 */
+.hint { font-size: var(--fs-body); color: var(--ink-2); line-height: 1.6; margin-top: 8px; }
 
 /* 时间线 */
 .timeline { border-top: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; height: 296px; flex: none; min-height: 0; }

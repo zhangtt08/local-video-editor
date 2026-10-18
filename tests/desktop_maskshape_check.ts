@@ -93,7 +93,7 @@ assert.match(preview, /animation=\{plan\?\.mask_curves && \(plan\.mask_unit \|\|
 // 入口只在引擎声明了能力之后出现；额度是引擎的数，界面那份只是没回字段时的兜底。
 assert.match(inspector, /features\.path_shape_keys \? <MaskShapeKeys/, "the outline section is capability-gated");
 assert.match(inspector, /features\.path_shape_keys \? "轮廓本身也能随时间变形/);
-assert.match(inspector, /轮廓的形状还能按上面那几帧随时间变形/);
+assert.match(inspector, /轮廓本身也能随时间变形：先记一帧/); // 1.209：那一句收成了一行，说的是同一件事
 assert.match(inspector, /const limit = app\.caps\?\.limits\?\.mask_shape_keys \?\? 32;/);
 assert.match(inspector, /还没有轮廓帧/, "an unarmed mask is told how to start");
 
