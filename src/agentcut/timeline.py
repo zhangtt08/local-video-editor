@@ -749,6 +749,27 @@ def apply_commands(
                     raise EditorError("NOT_FOUND", "asset does not exist", 404)
                 if any(clip.asset_id == command.asset_id for clip in _all_clips(root, candidate)):
                     raise EditorError("ASSET_IN_USE", "remove the clips using this asset first")
+                # 1.200：链上那一层也算「在用」。以前只查片段自己那一路，于是删掉一张只有层在用的
+                # 素材是允许的，删完预览什么也不画、导出整条按 LAYER_ASSET_UNAVAILABLE 拒——
+                # 界面给了一颗会把交付弄坏的动作。现在当场拒绝并点名是哪一段、说清两条出路。
+                holders = [
+                    clip.id
+                    for clip in _all_clips(root, candidate)
+                    if any(
+                        node.kind == "layer" and node.enabled and node.asset_id == command.asset_id
+                        for node in clip.color.grade
+                    )
+                ]
+                if holders:
+                    raise EditorError(
+                        "ASSET_IN_USE",
+                        f"这一段「{holders[0]}」的第二路画面还在用这个素材：先把那一层从链上摘掉"
+                        "（或让它指别的素材），删了它这一段导出会被 LAYER_ASSET_UNAVAILABLE 整条拒",
+                        422,
+                        asset_id=command.asset_id,
+                        clip_id=holders[0],
+                        layer_holders=len(holders),
+                    )
                 del candidate.assets[command.asset_id]
             elif command.op == "clips.add":
                 for clip in command.clips:

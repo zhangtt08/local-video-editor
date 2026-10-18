@@ -31,6 +31,30 @@ assert.ok(
   preview.includes("src={streams[row.asset_id]}"),
   "层的画面不是从那份唯一的素材 URL 表里拿的"
 );
+// 1.200：画不画得成只听清单那一行说的 `paintable`，视图不许自己去翻素材表猜。
+// 那一层画不成时监视器必须说一句（安静地少画一层 = 预览与导出又开始各说各话）。
+assert.ok(preview.includes("map((row, index) => row.paintable ? <img"), "那一层画不成时视图还是照画不误");
+assert.ok(preview.includes("(plan?.layer ?? []).some((row) => !row.paintable)"), "画不成的那一层没在监视器里说一句");
+assert.equal(
+  (preview.match(/row\.paintable/g) ?? []).length,
+  2,
+  `那一层画不画得成在视图里判了 ${(preview.match(/row\.paintable/g) ?? []).length} 次，该恰好两处（画与说）`
+);
+assert.equal(
+  (preview.match(/edge\?\.paintable/g) ?? []).length,
+  1,
+  "1.193 那条边的判断不该被这一轮搬动"
+);
+assert.ok(preview.includes('<p className="layer-offline" role="status">'), "那句实话不是 role=status 的一条");
+assert.ok(!/assets\[row\.asset_id\]/.test(preview), "视图自己去看素材表了（判断该由引擎一处说）");
+assert.ok(css.includes(".layer-offline {"), "那句实话没有样式（画不出来等于没说）");
+assert.ok(/\.layer-offline \{[^}]*border-radius: var\(--r-lg\)/.test(css), "那句实话不是 1.199 那一档圆角");
+const layerType = /layer\?: \{[^}]*\}\[\]/.exec(engine)?.[0] ?? "";
+assert.ok(layerType.length > 40, `读不到清单里那一行的类型：${layerType.slice(0, 40)}`);
+assert.ok(
+  /paintable: boolean/.test(layerType) && /reason\?: string \| null/.test(layerType),
+  "渲染层的类型不认这一行的实话（层那一行的类型没跟着改；合成那条边也带 paintable，别混作一处）"
+);
 assert.ok(
   preview.includes("mixBlendMode: row.mode, opacity: row.mix"),
   "方式与权重被界面改写过（导出读的是引擎那一份）"

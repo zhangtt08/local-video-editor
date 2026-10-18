@@ -554,6 +554,34 @@ def composite_row(clip: Clip, project: Project) -> dict | None:
     }
 
 
+def layer_rows(clip: Clip, project: Project, quantum: int) -> list[dict]:
+    """有哪几层、各盖在哪一块、现在画不画得成——一次算完，判断只在这一个函数里（1.200）。
+
+    `paintable`/`reason` 问的就是导出那条 `LAYER_ASSET_UNAVAILABLE` 问的三件事：素材不在工程里、
+    不是图像、没有引擎验过的媒体记录。1.193 为「叠一层原图」立的规矩是「画不画得了由引擎说一次」，
+    当时漏了第二路画面这一头：删掉一张**只有层在用**的素材，清单照旧把那层交出去，浏览器拿不到
+    地址就什么也不画，而导出整条拒绝——同一份状态两边说两种话。这一版让清单先说实话，
+    界面照着说一句人读得懂的。
+    """
+    rows = [
+        dict(stage, windows=layer_curve(clip, table))
+        for stage, table in zip(
+            layer_stages(clip.color), layer_schedule(clip, quantum), strict=True
+        )
+    ]
+    for row in rows:
+        asset = project.assets.get(row["asset_id"])
+        if asset is None:
+            row["paintable"], row["reason"] = False, "missing"
+        elif asset.kind != "image":
+            row["paintable"], row["reason"] = False, "kind"
+        elif asset.verified is None:
+            row["paintable"], row["reason"] = False, "unverified"
+        else:
+            row["paintable"], row["reason"] = True, None
+    return rows
+
+
 def outline_keys(clip: Clip) -> list[MaskShapeKeyframe]:
     return sorted(clip.mask_shape_keys, key=lambda key: key.at_ticks)
 
@@ -983,12 +1011,9 @@ def preview_manifest(
             # 1.192：每一行还带它自己那份窗表（一枚针都没有就是空表，界面走静态那条老路）。
             # `strict=True` 不是洁癖：层数在两处各数一遍迟早数出不一样的顺序，而编译读的就是
             # 同一批节点（`layer_nodes`），对不齐要当场炸，不是画出一张错图。
-            "layer": [
-                dict(stage, windows=layer_curve(clip, table))
-                for stage, table in zip(
-                    layer_stages(clip.color), layer_schedule(clip, quantum), strict=True
-                )
-            ],
+            # 1.200：有哪几层、各盖在哪一块、现在画不画得成，全由 `layer_rows` 一处说——
+            # 界面不许再问一遍「这个素材还在不在」。
+            "layer": layer_rows(clip, project, quantum),
             "grade": grade,
             "transition": transition_curves[clip.id],
             "fade": fade or None,
