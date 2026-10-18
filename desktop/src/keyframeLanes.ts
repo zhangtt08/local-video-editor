@@ -8,8 +8,6 @@
  * 曲线——宁可少画，也不留一枚点不到的针。
  */
 
-import type { Keyframe, Property } from "./engine";
-
 export const LANE_PITCH_PIXELS = 12;
 /** 片段底部留给针道的像素高（`.clip` 的上下内边距之外），界面不许在别处再数一遍。 */
 export const NEEDLE_AREA_PIXELS = 37;
@@ -20,13 +18,17 @@ export const NEEDLE_HALF_PIXELS = 10;
 /** 「+N」那块牌子从右边缘往里占住的距离：CSS 给它 `right: 8` 与 `min-width: 24`，两处必须一起改。 */
 export const CHIP_KEEP_PIXELS = 32;
 
-export type NeedleRows = { rowOf: Map<Property, number>; lanes: number; hidden: Property[] };
+/** 一道曲线叫什么：片段自己的属性名，或第二路画面那一层的复合键（`layer0:rotation`）。
+ *  1.208 起两样都进同一张分道表——一条属性一道这一句对两者都成立，所以不必分两套道。 */
+export type LaneKey = string;
+
+export type NeedleRows = { rowOf: Map<LaneKey, number>; lanes: number; hidden: LaneKey[] };
 
 /** 按属性第一次出现的顺序分道；超过 `capacity` 条的属性进 `hidden`（界面据此画 `+N`，不画点不到的针）。 */
-export function needleRows(keys: { property: Property }[], capacity: number): NeedleRows {
-  const order: Property[] = [];
+export function needleRows(keys: { property: LaneKey }[], capacity: number): NeedleRows {
+  const order: LaneKey[] = [];
   for (const key of keys) if (!order.includes(key.property)) order.push(key.property);
-  const rowOf = new Map<Property, number>();
+  const rowOf = new Map<LaneKey, number>();
   order.slice(0, Math.max(0, capacity)).forEach((property, index) => rowOf.set(property, index));
   return { rowOf, lanes: rowOf.size, hidden: order.slice(Math.max(0, capacity)) };
 }
@@ -40,5 +42,5 @@ export function laneCapacity(availablePixels: number, pitch = LANE_PITCH_PIXELS)
  * 一组的身份：针属于「哪条曲线的哪一格」，所以选中标识用工程里存的那个刻度，不用画出来的像素。
  * 拖动之后刻度会变，一次抓取落库就把这一组清掉——留着那串旧刻度，下一次框选会挑中一枚已经不在那儿的针。
  */
-export const needleId = (key: Keyframe): string => `${key.property}|${key.at_ticks}`;
+export const needleId = (key: { property: LaneKey; at_ticks: number }): string => `${key.property}|${key.at_ticks}`;
 

@@ -53,8 +53,15 @@ assert.match(source, /laneCapacity\(/, "and derives how many lanes fit from pixe
 assert.match(source, /bottom: 1 \+ \(rowOf\.get\(k\.property\) \?\? 0\) \* LANE_PITCH_PIXELS/, "each lane sits at its own bottom offset");
 // 只画得了道的针：把 filter 去掉就会又叠回同一堆像素。1.119 起这一份「画出来的那几枚」还要给框选当命中集，
 // 所以它先落成一个名字，界面与框选读的都是它——断到那一行本身，去掉 filter 它就变了。
-assert.match(source, /const painted = visible\.filter\(\(k\) => rowOf\.has\(k\.property\)\);/, "needles of hidden properties must not be drawn at all");
-assert.match(source, /painted\.map\(\(k\) => \{/, "and the diamonds come from that painted set, one name for one fact");
+assert.match(source, /const painted = laned\.filter\(\(k\) => rowOf\.has\(k\.property\)\);/, "needles of hidden properties must not be drawn at all");
+// 1.208：层的针进的是**同一张**道表，所以「画不下的不画」这一句对两只手都成立——两处渲染都必须
+// 从 painted 里筛，不许有一排绕过道表自己画（那样就会有两枚针叠在同一堆像素里，正是这一档存在的理由）。
+assert.match(source, /const clipPainted = painted\.filter\(\(k\): k is Keyframe => !\("field" in k\)\);/, "片段自己那一排只能画 painted 筛出来的那些");
+assert.match(source, /const layerPainted = painted\.filter\(\(k\): k is LayerNeedle => "field" in k\);/, "层那一排同样只能画 painted 筛出来的那些");
+assert.doesNotMatch(source, /\{layered\.map\(|layered\.forEach/, "层的针不许绕过道表自己画一排");
+assert.match(source, /\{clipPainted\.map\(\(k\) => \{/, "and the diamonds come from that painted set, one name for one fact");
+assert.match(source, /\{layerPainted\.map\(\(k\) => \{/, "层的那一排菱形同样只能来自那一份 painted");
+assert.doesNotMatch(source, /\{visible\.map\(/, "不许绕过道表直接画片段自己那一排（绕过去就会有两枚针叠在同一堆像素里）");
 // 「+N」那枚牌子不许被短路成永不出现：断到它的类型与类名，而不是只断前缀。
 assert.match(source, /\{more \? <button type="button" className="clip-keyframe-more"/, "the hidden properties get a named chip instead of an unreachable needle");
 assert.match(source, /setGraphOpen\(true\)/, "and clicking that chip opens the curve editor for this clip");

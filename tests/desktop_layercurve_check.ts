@@ -50,7 +50,8 @@ for (const op of ["keyframes.move", "keyframe.move", "keyframe.set", "keyframes.
 }
 assert.ok(effects.includes('return { op: "clip.grade", clip_id: clip.id, grade: next.color?.grade };'),
   "那一层写的不是那一条整链状态写入");
-assert.ok(effects.includes("const stored = keys"), "刻度折回不是在唯一那一处做的");
+assert.ok(effects.includes("const stamped = keys"), "刻度折回不是在唯一那一处做的");
+assert.equal((effects.match(/at_ticks: key\.at_ticks \+ offset/g) ?? []).length, 1, "折回刻度那一处只许有一个主人（1.208 起那份并集也在同一处）");
 assert.ok(!/animation_offset_ticks \?\? 0\)\s*;?\s*$/.test(editor.split("\n").filter((line) => line.includes("at_ticks + ")).join("\n")),
   "视图自己在把刻度加回去（那是第二把尺）");
 

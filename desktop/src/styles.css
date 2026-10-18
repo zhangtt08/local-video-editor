@@ -380,6 +380,9 @@ canvas.composite-raw { width: 100%; height: 100%; object-fit: contain; display: 
 .clip-keyframe.ghost { pointer-events: none; opacity: .6; z-index: 6; }
 .clip-keyframe.dragging { color: #fff; font-size: var(--fs-label); }
 .clip-keyframe.selected { color: #7df3e1; text-shadow: 0 0 5px rgba(80, 201, 196, .8); }
+/* 1.208：第二路画面那一层的针。同一只手、同一条道、同一份吸附，只是长得不一样——空心的 ◈ 配
+   「第二路画面」那一片的紫，所以它在条上说的与检查器里那一层是同一件事，不必再学一种新形状。 */
+.clip-keyframe.layer-needle { color: var(--clip-image-stripe); }
 .clip-keyframe.blocked { color: #ff9a9a; }
 /* 针道空处是框选的手：左右让开修剪柄（最外 7px）与淡角柄（9..18px），高度就是留给针的那 37px。
    这两个数由 keyframeMarquee.ts / keyframeLanes.ts 下发到内联样式，这里只留不可移动的那一半。 */

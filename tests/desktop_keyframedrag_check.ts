@@ -133,7 +133,17 @@ assert.match(source, /playhead_ticks: playhead\.value - clip\.position_ticks/, "
 // 落库只允许是那一行：不许在它前面挂第二个副作用，也不许绕开带 expected_revision 的那条链。
 // 1.119 起交出去的是 `next.commands`（一枚时它只有一条），历史那一行按抓了几枚分开写。
 assert.match(source, /^\s{6}editAtRevision\(next\.commands, project\.id, project\.revision, group\.length > 1 \? `\$\{duplicate \? "复制" : "拖动"} \$\{group\.length} 枚关键帧` : duplicate \? "复制关键帧" : "拖动关键帧", app\.sequenceId\);$/m, "the write is exactly that one call through the ordinary edit chain, and the history line counts the needles it moved");
-assert.equal((source.match(/editAtRevision\(/g) ?? []).length, 2, "the needle path has exactly two writes: the drag and the Alt + tap removal, and no second side effect");
+// 1.208 改准了这一句的口径：它要钉的从来是「拖针这一只手只落一次库」，不是「整个 Timeline.tsx 里
+// 只有两次 editAtRevision」——那次数的是全文件，修剪、淡、批量那些写本来也在里头，只是恰好没超。
+// 现在条上有两只手：片段自己的针（拖动 + Alt 点删，两处写）与第二路画面那一层的针（一处写）。
+const clipHand = /const startKey = \([\s\S]*?\n  \};/.exec(source);
+const layerHand = /const startLayerKey = \([\s\S]*?\n  \};/.exec(source);
+assert.ok(clipHand && layerHand, "两只手都得在：片段自己的针与层的针各有一只");
+assert.equal((clipHand![0].match(/editAtRevision\(/g) ?? []).length, 2, "拖自己那枚针的落库只有两处：拖动与按住 Alt 点掉，没有第三个副作用");
+assert.equal((layerHand![0].match(/editAtRevision\(/g) ?? []).length, 1, "拖层针只落一次库，且不许在它前面挂第二个副作用");
+assert.match(layerHand![0], /planLayerNeedleDrag\(\{/, "层针落在哪一格也问那一份共用的几何，界面不许自己算");
+assert.match(layerHand![0], /editAtRevision\(next\.commands, project\.id, project\.revision, `拖动第 \$\{needle\.field\.layer \+ 1} 层的关键帧`, app\.sequenceId\);/, "层针走的是同一条带 expected_revision 的链，历史那一行点名是哪一层");
+assert.equal((source.match(/editAtRevision\(/g) ?? []).length, 3, "Timeline.tsx 里落库的那三处（两只手加 Alt 点删）之外不许长出第四处");
 // 没拖动就还是「点一下跳过去」，而按住 Alt 点一下是删掉这一枚——两条都断到同一个分支里，
 // 因为把删除接在另一个入口上就等于在时间线上开第二条写路径。
 assert.match(source,

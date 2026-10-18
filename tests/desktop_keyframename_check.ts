@@ -64,8 +64,9 @@ assert.match(timeline, /const label = FIELD_LABEL\[k\.property\] \?\? k\.propert
 assert.match(timeline, /title=\{`\$\{label\} · /, "and the tooltip starts with that name");
 assert.match(timeline, /aria-label=\{`拖动\$\{label\}关键帧`\}/, "and so does the accessibility name");
 assert.match(timeline, /moreLabels\.join\("、"\)/, "the 「+N」 chip names the rows it could not draw, in Chinese");
-assert.match(timeline, /hidden\.map\(\(property\) => FIELD_LABEL\[property\] \?\? property\)/, "片段自己那些画不下的属性仍由 FIELD_LABEL 那一处念名字");
-assert.match(timeline, /LAYER_KEY_LABEL\[row\.property\] \?\? row\.property/, "第二路画面那一层的行也由同一张名字表念，时间线不另抄一份");
+assert.match(timeline, /FIELD_LABEL\[property as keyof typeof FIELD_LABEL\] \?\? property/, "片段自己那些画不下的属性仍由 FIELD_LABEL 那一处念名字");
+assert.match(timeline, /LAYER_KEY_LABEL\[row\.field\.key\] \?\? row\.field\.key/, "第二路画面那一层的行也由同一张名字表念，时间线不另抄一份");
+assert.match(timeline, /LAYER_KEY_LABEL\[k\.field\.key\] \?\? k\.field\.key/, "条上那枚层针自己也要念得出中文名");
 assert.equal((timeline.match(/\$\{k\.property\} · |拖动\$\{k\.property\}关键帧|hidden\.join/g) ?? []).length, 0, "the raw-id spellings must be gone");
 
 const curve = read(["desktop/src/views/CurveEditor.tsx", "src/views/CurveEditor.tsx"]);

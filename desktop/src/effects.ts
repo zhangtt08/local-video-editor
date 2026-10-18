@@ -513,7 +513,7 @@ export function layerCurveFields(
       const unit = LAYER_CURVE_UNITS[prop as LayerProperty];
       if (!band || !unit) return;
       out.push({
-        property: `layer${layer}:${prop}`,
+        property: layerNeedleProperty(layer, prop as LayerProperty),
         key: prop as LayerProperty,
         layer,
         label: `第 ${layer + 1} 层 · ${LAYER_KEY_LABEL[prop] ?? prop}`,
@@ -535,44 +535,65 @@ export function layerCurveBase(clip: Clip, field: LayerCurveField): number {
   return typeof value === "number" ? value : 0;
 }
 
-/** 这一颗片段上「有针、但没画在针道里」的那些层行：层的顺序与曲线编辑器那一份同源（链里启用的那几层，
- *  按链里的顺序数），一行算的是 (层, 属性) 这一对，刻度夹在本片段动画窗口内——与 `clip.keyframes`
- *  那一条画不下的算法同一个口径。时间线那枚「+N」与曲线编辑器都问这一处要，界面不自数一遍。 */
-export function layerKeyedRows(clip: Clip): { layer: number; property: LayerProperty }[] {
+/** 层的针在针道里的身份：一条 (层, 属性) 就是一道曲线。拼法与 `layerCurveFields` 里那个复合键
+ *  同出一处（`layer${layer}:${prop}`），所以曲线编辑器选中的那道与时间线上画出来的那枚是同一个名字。 */
+export const layerNeedleProperty = (layer: number, key: LayerProperty) => `layer${layer}:${key}`;
+
+/** 写一层针的口子只需要两个数：第几层、哪个数。曲线编辑器交来的是完整的 `LayerCurveField`
+ *  （还带标签与量程），时间线交来的是这一枚针自己——两处共用同一个实现，不另开第二份折刻度。 */
+export type LayerNeedleField = { layer: number; key: LayerProperty };
+
+/** 一枚层的针：`at_ticks` 是片段本地的（画在条上的位置就是它），`field` 是写回去要的那两个数。 */
+export type LayerNeedle = { field: LayerNeedleField; property: string; at_ticks: number; value: number };
+
+/** 这一颗片段上**每一枚**层的针：刻度折成本片段自己的（画在条上的位置就是它），层的顺序与曲线
+ *  编辑器同源（链里启用的那几层，按链里的顺序数），窗口夹法与 `clip.keyframes` 那一条同一个口径。 */
+export function layerNeedles(clip: Clip): LayerNeedle[] {
   const offset = clip.animation_offset_ticks ?? 0;
-  const out: { layer: number; property: LayerProperty }[] = [];
+  const out: LayerNeedle[] = [];
   let layer = -1;
   (clip.color?.grade ?? []).forEach((node) => {
     if (node.kind !== "layer" || !node.enabled) return;
     layer += 1;
-    const seen = new Set<LayerProperty>();
     (node.keys ?? []).forEach((key) => {
       if (key.at_ticks < offset || key.at_ticks > offset + clip.duration_ticks) return;
-      seen.add(key.property);
+      out.push({ field: { layer, key: key.property }, property: layerNeedleProperty(layer, key.property), at_ticks: key.at_ticks - offset, value: key.value });
     });
-    seen.forEach((property) => out.push({ layer, property }));
   });
   return out;
 }
 
+/** 这一层现在有的那批针（片段本地刻度，含这一层全部属性）：拖一枚要把整层交回那条 `clip.grade`，
+ *  所以读的是整层而不是一个属性——折刻度与 `layerKeysOf` 写回去的那一次正好互为逆。 */export function layerKeysRead(clip: Clip, field: LayerNeedleField): LayerKeyframe[] {
+  const offset = clip.animation_offset_ticks ?? 0;
+  const layers = (clip.color?.grade ?? []).filter((node) => node.kind === "layer" && node.enabled);
+  const node = layers[field.layer];
+  const keys = node && node.kind === "layer" ? node.keys ?? [] : [];
+  return keys.map((key) => ({ ...key, at_ticks: key.at_ticks - offset }));
+}
+
 /** 把「这一串新针」折回链里的**唯一一处**：刻度在这里加回 `animation_offset_ticks`
  *  （读的时候引擎折的那一次在这里还原），命令仍是那一条 `clip.grade`——不新增命令、不新增规则。 */
-export function layerKeysOf(clip: Clip, field: LayerCurveField, keys: LayerKeyframe[]): Clip {
+export function layerKeysOf(clip: Clip, field: LayerNeedleField, keys: LayerKeyframe[]): Clip {
   const offset = clip.animation_offset_ticks ?? 0;
-  const stored = keys
-    .map((key) => ({ ...key, property: field.key, at_ticks: key.at_ticks + offset }))
-    .sort((a, b) => a.at_ticks - b.at_ticks);
+  // 交回来的这一串是「那一层的这一个数」的全部针；**同一层别的数的针原样留着**。
+  // 1.204~1.207 这一处是把整层的针直接覆盖成这一串的，所以在动画曲线上改 rotation 会把 offset_x
+  // 那几枚抹掉——那一路只有曲线编辑器一个写口、而它的夹具只有一道曲线，直到 1.208 条上画出两枚
+  // 不同数的针才被量出来（真页面：三枚针变两枚，offset_x 那一枚还改了名字）。
+  const stamped = keys.map((key) => ({ ...key, property: field.key, at_ticks: key.at_ticks + offset }));
   let seen = -1;
   const grade = (clip.color?.grade ?? []).map((node) => {
     if (!(node.kind === "layer" && node.enabled)) return node;
     seen += 1;
-    return seen === field.layer ? { ...node, keys: stored } : node;
+    if (seen !== field.layer) return node;
+    const others = (node.keys ?? []).filter((key) => key.property !== field.key);
+    return { ...node, keys: [...others, ...stamped].sort((a, b) => a.at_ticks - b.at_ticks) };
   });
   return { ...clip, color: { ...(clip.color ?? {}), grade } } as Clip;
 }
 
 /** 草稿预览与写入共用同一份链：界面不许自己把那串针再折一次刻度。 */
-export function layerKeyCommand(clip: Clip, field: LayerCurveField, keys: LayerKeyframe[]): Command {
+export function layerKeyCommand(clip: Clip, field: LayerNeedleField, keys: LayerKeyframe[]): Command {
   const next = layerKeysOf(clip, field, keys);
   return { op: "clip.grade", clip_id: clip.id, grade: next.color?.grade };
 }

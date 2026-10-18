@@ -5,7 +5,7 @@ import { TIMEBASE, align, frameTicks, humanDuration, timecode } from "../time";
 import { countHidden, firstView, laneTicks, paintClips, rulerSeconds, unionRange, WINDOW_NOTE, type TickRange, type View } from "../timelineWindow";
 import { transitionLabel } from "../engine";
 import type { Clip, Keyframe, Marker, Project, Track } from "../engine";
-import { planKeyframeDrag, planNeedleRemoval } from "../keyframeDrag";
+import { planKeyframeDrag, planLayerNeedleDrag, planNeedleRemoval } from "../keyframeDrag";
 import { CHIP_KEEP_PIXELS, LANE_PITCH_PIXELS, NEEDLE_AREA_PIXELS, NEEDLE_HALF_PIXELS, laneCapacity, needleId, needleRows } from "../keyframeLanes";
 import { MARQUEE_INSET_PIXELS, type PixelBox, commitPick, draggedEnough, hitsInBand, marqueeBox, togglePick } from "../keyframeMarquee";
 import {
@@ -56,7 +56,7 @@ import {
 import { chordWords } from "../keymap";
 import { copyBlocker, pasteBlocker, pasteTargets } from "../attributePaste";
 import { AttributeDialog } from "./AttributeDialog";
-import { EMPTY_TRACK_HINT, FIELD_LABEL, LAYER_KEY_LABEL, layerKeyedRows, trackToolBlocker, fadeDragBatch, fadeDragTicks, fadeProperties, fadeWindows, type FadeProperty, type FadeSide } from "../effects";
+import { EMPTY_TRACK_HINT, FIELD_LABEL, LAYER_KEY_LABEL, layerNeedles, trackToolBlocker, fadeDragBatch, fadeDragTicks, fadeProperties, fadeWindows, type FadeProperty, type FadeSide, type LayerNeedle } from "../effects";
 import { selectionQuantum, timelineTracks } from "../selection";
 
 const HEAD = 112;
@@ -818,7 +818,7 @@ function ClipBlock({
 
   /** 屏幕上真画出来的那几枚针的矩形——框选挑中的必须是点得到的，画不下的那几属性压根不在这里。 */
   const paintedBoxes = (): { id: string; box: PixelBox }[] => Array.from(
-    box.current?.querySelectorAll<HTMLElement>(".clip-keyframe:not(.ghost)") ?? [],
+    box.current?.querySelectorAll<HTMLElement>(".clip-keyframe:not(.ghost):not(.layer-needle)") ?? [],
   ).flatMap((node) => {
     const id = node.dataset.keyId;
     if (!id) return [];
@@ -910,6 +910,49 @@ function ClipBlock({
       // 一次抓取只交一次：一组针落在同一条命令（或同一批次）里，撤销一步就整组回来。
       editAtRevision(next.commands, project.id, project.revision, group.length > 1 ? `${duplicate ? "复制" : "拖动"} ${group.length} 枚关键帧` : duplicate ? "复制关键帧" : "拖动关键帧", app.sequenceId);
       setPicked([]);
+      playhead.pause(); playhead.set(clip.position_ticks + next.at_ticks);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+  };
+
+  /** 1.208：第二路画面那一层的针也在这条道上拖。抓取、吸附、让位与上面那一只手同一批原语
+   *  （`planLayerNeedleDrag`），差别只在落库：写的还是那一条 `clip.grade` 整链替换，
+   *  所以这里只交回命令，不新造第二份折刻度。组的挑选、Alt 复制与 Alt 点删故意**不给**这一枚——
+   *  那三只手说的是「一条曲线上的几枚针」，层针的曲线在检查器与动画曲线里各有自己的名字，
+   *  混进这一组就会有一枚针被两条路同时改。悬停里点名的是这个去处，不是「不支持」。 */
+  const startLayerKey = (event: React.PointerEvent, needle: LayerNeedle) => {
+    event.stopPropagation();
+    if (razor || event.button !== 0 || track.locked || !box.current || !app.caps?.features?.keyframes) return;
+    event.preventDefault();
+    const node = box.current;
+    const id = needleId(needle);
+    const from = needle.at_ticks;
+    const grab = ((event.clientX - node.getBoundingClientRect().left) / px) * TIMEBASE - from;
+    const plan = (clientX: number) => planLayerNeedleDrag({
+      clip, field: needle.field, from, px, snap, quantum: q,
+      pointer_ticks: ((clientX - node.getBoundingClientRect().left) / px) * TIMEBASE - grab,
+      playhead_ticks: playhead.value - clip.position_ticks,
+    });
+    const held = (next: ReturnType<typeof planLayerNeedleDrag>): NeedleHeld => next.kind === "noop"
+      ? { anchor: id, at: from, blocked: false, duplicate: false, targets: [] }
+      : next.kind === "blocked"
+        ? { anchor: id, at: next.at_ticks, blocked: true, duplicate: false, targets: [{ id, from, at: next.at_ticks }] }
+        : { anchor: id, at: next.at_ticks, blocked: false, duplicate: false, targets: [{ id, from, at: next.at_ticks }] };
+    const move = (ev: PointerEvent) => setKeyDrag(held(plan(ev.clientX)));
+    const stop = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      setKeyDrag(null);
+      selectClip(clip.id);
+      if (ev.type === "pointercancel") return;
+      if (Math.abs(ev.clientX - event.clientX) < 2) { playhead.pause(); playhead.set(clip.position_ticks + from); return; }
+      const next = plan(ev.clientX);
+      if (next.kind === "noop") return;
+      if (next.kind === "blocked") { toast("warn", "那一格已经有一枚针", next.reason); return; }
+      editAtRevision(next.commands, project.id, project.revision, `拖动第 ${needle.field.layer + 1} 层的关键帧`, app.sequenceId);
       playhead.pause(); playhead.set(clip.position_ticks + next.at_ticks);
     };
     window.addEventListener("pointermove", move);
@@ -1060,15 +1103,22 @@ function ClipBlock({
         // 一条属性一道：同一秒上的两枚针画在同一堆像素里，其中一枚就点不到（实测过）。
         // 画不下的属性宁可不画，也不许叠回去——改成一枚 +N 的牌子把人带回动画曲线。
         const visible = (clip.keyframes ?? []).filter((k) => k.at_ticks >= (clip.animation_offset_ticks ?? 0) && k.at_ticks <= (clip.animation_offset_ticks ?? 0) + clip.duration_ticks);
-        const { rowOf, hidden } = needleRows(visible, laneCapacity(NEEDLE_AREA_PIXELS));
-        const painted = visible.filter((k) => rowOf.has(k.property));
+        // 1.208：第二路画面那一层的针进的是**同一张分道表**——「一条属性一道」这句话对它同样成立，
+        // 所以不分两套道，也不许有两处「画得下几道」的算术。
+        const layered = layerNeedles(clip);
+        const laned = [...visible, ...layered];
+        const { rowOf, hidden } = needleRows(laned, laneCapacity(NEEDLE_AREA_PIXELS));
+        const painted = laned.filter((k) => rowOf.has(k.property));
+        const clipPainted = painted.filter((k): k is Keyframe => !("field" in k));
+        const layerPainted = painted.filter((k): k is LayerNeedle => "field" in k);
         const laneOf = new Map(painted.map((k) => [needleId(k), rowOf.get(k.property) ?? 0]));
-        const layered = layerKeyedRows(clip);
-        // 「+N」说的还是那一句话——画不下的属性有几个——只是数的口径如今带上第二路画面那一层：
-        // 片段自己的针按行算，层的针按 (层, 数) 算。层上的针不在这里拖，牌子只负责把人带进曲线。
-        const more = hidden.length + layered.length;
-        const moreLabels = [...hidden.map((property) => FIELD_LABEL[property] ?? property),
-          ...layered.map((row) => `第 ${row.layer + 1} 层 · ${LAYER_KEY_LABEL[row.property] ?? row.property}`)];
+        // 「+N」说的还是那一句话——画不下的属性有几个——只是这一轮起层的行也按同一张道表算：
+        // 画得下的那几行不再进牌子，画不下的才进，两处不会各数一遍。
+        const more = hidden.length;
+        const moreLabels = hidden.map((property) => {
+          const row = layered.find((k) => k.property === property);
+          return row ? `第 ${row.field.layer + 1} 层 · ${LAYER_KEY_LABEL[row.field.key] ?? row.field.key}` : FIELD_LABEL[property as keyof typeof FIELD_LABEL] ?? property;
+        });
         // 针与它的影子共用这一句夹法：贴边那枚要看得见；牌子上场时右端让开的是**它自己的方子**
         // 加针自己伸出去的那一半——1.112 那句 16px 把 left 当成了针的左边缘，量错了一整枚针的宽度。
         const keep = more ? CHIP_KEEP_PIXELS + NEEDLE_HALF_PIXELS : 6;
@@ -1078,7 +1128,7 @@ function ClipBlock({
             title="在针道的空处拉一个框，框里的针一起挑中：整组拖就是同时改同一份时间差。按住 Shift 点一枚是加进这一组或从组里摘出去。"
             onPointerDown={startMarquee} /> : null}
           {band ? <span className="clip-marquee" style={{ left: band.x0, top: band.y0, width: Math.max(0, band.x1 - band.x0), height: Math.max(0, band.y1 - band.y0) }} aria-hidden="true" /> : null}
-          {painted.map((k) => {
+          {clipPainted.map((k) => {
             const from = k.at_ticks - (clip.animation_offset_ticks ?? 0);
             const id = needleId(k);
             const target = keyDrag && !keyDrag.duplicate ? keyDrag.targets.find((item) => item.id === id) : undefined;
@@ -1097,12 +1147,27 @@ function ClipBlock({
               aria-disabled={track.locked || razor || !app.caps?.features?.keyframes}
               onPointerDown={(event) => startKey(event, k)}>◆</button>;
           })}
+          {layerPainted.map((k) => {
+            const id = needleId(k);
+            const target = keyDrag ? keyDrag.targets.find((item) => item.id === id) : undefined;
+            const refused = Boolean(keyDrag?.blocked && keyDrag.anchor === id);
+            const at = target ? target.at : k.at_ticks;
+            const label = `第 ${k.field.layer + 1} 层 · ${LAYER_KEY_LABEL[k.field.key] ?? k.field.key}`;
+            return <button
+              key={id} data-key-id={id} type="button"
+              className={`clip-keyframe layer-needle${target ? " dragging" : ""}${refused ? " blocked" : ""}`}
+              style={{ left: needleX(at), bottom: 1 + (rowOf.get(k.property) ?? 0) * LANE_PITCH_PIXELS }}
+              title={`${label} · ${humanDuration(k.at_ticks)}${keyDrag ? ` → ${humanDuration(at)}` : " · 横向拖只改这一枚的时间；要改值、加针或删针，点这条片段右端的 +N 进动画曲线，那里画的就是导出执行的那批格子"}`}
+              aria-label={`拖动${label}关键帧`}
+              aria-disabled={track.locked || razor || !app.caps?.features?.keyframes}
+              onPointerDown={(event) => startLayerKey(event, k)}>◈</button>;
+          })}
           {keyDrag?.duplicate ? keyDrag.targets.filter((item) => item.at !== item.from).map((item) => <span
             key={item.id} className={`clip-keyframe ghost${keyDrag.blocked ? " blocked" : ""}`}
             style={{ left: needleX(item.at), bottom: 1 + (laneOf.get(item.id) ?? 0) * LANE_PITCH_PIXELS }}
             aria-hidden="true">◆</span>) : null}
           {more ? <button type="button" className="clip-keyframe-more" aria-label={`${more} 条属性的针没有画在这里`}
-            title={`画不下的针：${moreLabels.join("、")}——点开进动画曲线看这条片段的全部针（层的针在那里看阶梯，不在这里拖）`}
+            title={`画不下的针：${moreLabels.join("、")}——点开进动画曲线看这条片段的全部针（层上的针在这条道上能拖时间，改值与删针在那条曲线的阶梯上）`}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={() => { selectClip(clip.id); setGraphOpen(true); }}>+{more}</button> : null}
         </>;

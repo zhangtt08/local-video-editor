@@ -15,7 +15,7 @@
 
 import { type Clip, type Command, type Keyframe, type Property } from "./engine";
 import { clampGroupTimeShift } from "./curveDrag";
-import { FIELD_LABEL } from "./effects";
+import { FIELD_LABEL, LAYER_KEY_LABEL, layerKeyCommand, layerKeysRead, type LayerNeedleField } from "./effects";
 import { needleId } from "./keyframeLanes";
 import { keyframeTick } from "./keyframeSnap";
 import { TIMEBASE } from "./time";
@@ -67,6 +67,56 @@ export function planNeedleRemoval(clip: Clip, keys: Keyframe[]): Command {
 }
 
 const seconds = (ticks: number) => (ticks / TIMEBASE).toFixed(3);
+
+/**
+ * 1.208：第二路画面那一层的针也能在片段条上拖。几何用的是**同一批原语**（同一份吸附、同一份
+ * 「不许越出片段两头」），只有一处不同：写回去的还是那一条 `clip.grade` 整链替换——引擎没有、
+ * 也不需要「挪一枚层针」这条命令，所以交回的是**这一层的全部针**，别的属性一字不动，
+ * 一次抓取一条命令、只涨一个 revision。撞针仍只是提前认出引擎 `LAYER_KEY_CLASH` 那个结局。
+ */
+export type LayerNeedleDrag = {
+  clip: Clip;
+  field: LayerNeedleField;
+  /** 抓住的那一枚在哪一格（片段本地刻度）。 */
+  from: number;
+  pointer_ticks: number;
+  playhead_ticks: number;
+  px: number;
+  snap: boolean;
+  quantum: number;
+};
+
+export function planLayerNeedleDrag(drag: LayerNeedleDrag): KeyframeDragPlan {
+  const span = drag.clip.duration_ticks;
+  const keys = layerKeysRead(drag.clip, drag.field);
+  const sameCurve = keys.filter((key) => key.property === drag.field.key);
+  const obstacles = sameCurve.filter((key) => key.at_ticks !== drag.from).map((key) => key.at_ticks);
+  const at = keyframeTick(
+    drag.pointer_ticks,
+    { clip: drag.clip, quantum: drag.quantum, span, plot: (span / TIMEBASE) * drag.px },
+    drag.snap,
+    { playhead: drag.playhead_ticks, keys: obstacles, attract: true },
+  );
+  const shift = clampGroupTimeShift([drag.from], span, at - drag.from);
+  if (shift === 0) return { kind: "noop" };
+  const to = drag.from + shift;
+  if (obstacles.includes(to)) {
+    const label = LAYER_KEY_LABEL[drag.field.key] ?? drag.field.key;
+    return {
+      kind: "blocked",
+      at_ticks: to,
+      reason: `第 ${drag.field.layer + 1} 层的${label}在第 ${seconds(to)} 秒已经有一枚针，先松到一个空格上，或到动画曲线里删掉那一枚。`,
+    };
+  }
+  // 交回的是**那一道曲线的全部针**（同层别的数由 `layerKeysOf` 原样留着），与曲线编辑器同一个契约。
+  const next = sameCurve.map((key) => (key.at_ticks === drag.from ? { ...key, at_ticks: to } : key));
+  return {
+    kind: "move",
+    at_ticks: to,
+    shifts: [{ property: drag.field.key as Property, from: drag.from, at: to }],
+    commands: [layerKeyCommand(drag.clip, drag.field, next)],
+  };
+}
 
 const local = (key: Keyframe, offset: number) => key.at_ticks - offset;
 
