@@ -104,7 +104,37 @@ for (const selector of ["\\.card", "\\.status-card", "\\.proj-card", "\\.boot-ca
 }
 assert.ok(/--edge-hi:/.test(css), "卡片表面那道很淡的顶部高光没了（圆角要靠一道边光才看得出是抬起来的）");
 
-// 4) 打进发布包的那份 CSS 带着同一套刻度——源码改了、包里没有，用户看到的还是旧的那一套
+// 4) 1.199：圆润再往里一档——分段控件是一枚胶囊、弹层用同一档大圆角、动效只有一条曲线。
+const slot = /\n\.seg \{([^}]*)\}/.exec(css);
+assert.ok(slot && /border-radius: var\(--r-pill\)/.test(slot[1]), "分段控件的槽不是那枚胶囊");
+const thumb = /\n\.seg button \{([^}]*)\}/.exec(css);
+assert.ok(thumb && /border-radius: var\(--r-pill\)/.test(thumb[1]), "分段控件选中那颗不是胶囊（还是方块）");
+const lit = /\n\.seg button\.active \{([^}]*)\}/.exec(css);
+assert.ok(lit && /var\(--edge-hi\)/.test(lit[1]), "选中那颗没有抬起来（少了那道边光，就只是换了块底色）");
+for (const layer of ["toast", "dialog", "help", "boot-card"]) {
+  const hit = new RegExp("\\n\\." + layer + " \\{([^}]*)\\}").exec(css);
+  assert.ok(hit, `读不到 ${layer} 那一条规则`);
+  assert.ok(
+    /border-radius: var\(--r-lg\)/.test(hit![1]),
+    `${layer} 用的不是最大那一档圆角（弹层该与卡片同一档）`
+  );
+}
+const clipRule = /\n\.clip \{([^}]*)\}/.exec(css);
+assert.ok(clipRule && /border-radius: var\(--r-md\)/.test(clipRule[1]), "时间线那一片用的不是这一档的圆角");
+assert.ok(
+  /\.dialog-backdrop, \.help-backdrop \{[^}]*backdrop-filter: blur\(/.test(css),
+  "弹层背后那层纱没有模糊（浮起来的那一层看不出来是浮起来的）"
+);
+assert.ok(/--dur: \.\d+s/.test(css), "动效没有那一条时长刻度");
+assert.ok(/--ease: cubic-bezier\(/.test(css), "动效没有那一条曲线刻度");
+const swings = [...css.matchAll(/transition:([^;]*);/g)].map((row) => row[1].trim());
+const strays = swings.filter(
+  (text) => !text.includes("var(--dur)") && !text.startsWith("none") && !/^width \.3s$/.test(text)
+);
+assert.deepEqual(strays, [], `还有各写各毫秒的过渡：${strays.slice(0, 3).join(" | ")}`);
+assert.ok(swings.length >= 5, `读到 ${swings.length} 条过渡，量具没摆开`);
+
+// 5) 打进发布包的那份 CSS 带着同一套刻度——源码改了、包里没有，用户看到的还是旧的那一套
 const dir = [
   resolve(process.cwd(), "desktop/dist/renderer/assets"),
   resolve(process.cwd(), "../../desktop/dist/renderer/assets"),
