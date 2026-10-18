@@ -63,7 +63,7 @@ export function Home() {
                 <Icon name="plus" />
                 新建第一个工程
               </button>
-              <div className="se-hint">默认 1080p 30fps，会自动备好一条画面轨和一条声音轨。</div>
+              <p className="hint">默认 1080p 30fps，会自动备好一条画面轨和一条声音轨。</p>
               <div className="se-alt">
                 或者先
                 <button className="linklike" onClick={() => void importFiles()} disabled={!features.media_probe}>导入素材</button>

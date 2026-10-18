@@ -14,10 +14,10 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { planKeyframeDrag, planNeedleRemoval } from "../desktop/src/keyframeDrag";
+import { planKeyframeDrag, planLayerNeedleDrag, planLayerNeedleRemoval, planNeedleRemoval } from "../desktop/src/keyframeDrag";
 import { clampGroupTimeShift, groupShift } from "../desktop/src/curveDrag";
 import { FIELD_LABEL } from "../desktop/src/effects";
-import type { Clip, Keyframe } from "../desktop/src/engine";
+import type { Clip, Keyframe, LayerKeyframe } from "../desktop/src/engine";
 
 const TIMEBASE = 70_560_000;
 const FRAME = Math.floor((TIMEBASE * 1001) / 30000);   // 2 354 352
@@ -140,10 +140,18 @@ const clipHand = /const startKey = \([\s\S]*?\n  \};/.exec(source);
 const layerHand = /const startLayerKey = \([\s\S]*?\n  \};/.exec(source);
 assert.ok(clipHand && layerHand, "两只手都得在：片段自己的针与层的针各有一只");
 assert.equal((clipHand![0].match(/editAtRevision\(/g) ?? []).length, 2, "拖自己那枚针的落库只有两处：拖动与按住 Alt 点掉，没有第三个副作用");
-assert.equal((layerHand![0].match(/editAtRevision\(/g) ?? []).length, 1, "拖层针只落一次库，且不许在它前面挂第二个副作用");
+assert.equal((layerHand![0].match(/editAtRevision\(/g) ?? []).length, 2, "1.211 起层针这一只手有两处落库：拖（含 Alt 复制）与按住 Alt 点掉那一枚，没有第三个副作用");
 assert.match(layerHand![0], /planLayerNeedleDrag\(\{/, "层针落在哪一格也问那一份共用的几何，界面不许自己算");
-assert.match(layerHand![0], /editAtRevision\(next\.commands, project\.id, project\.revision, `拖动第 \$\{needle\.field\.layer \+ 1} 层的关键帧`, app\.sequenceId\);/, "层针走的是同一条带 expected_revision 的链，历史那一行点名是哪一层");
-assert.equal((source.match(/editAtRevision\(/g) ?? []).length, 3, "Timeline.tsx 里落库的那三处（两只手加 Alt 点删）之外不许长出第四处");
+assert.match(layerHand![0], /quantum: q, duplicate,/, "Alt 这个手势在按下那一刻就定下来，整次抓取不变（与上面 ◆ 那一只手同一口径）");
+assert.match(layerHand![0], /editAtRevision\(\[gone\], project\.id, project\.revision, `删掉第 \$\{needle\.field\.layer \+ 1} 层的关键帧`, app\.sequenceId\)/, "Alt 点删交的还是那一条 clip.grade——绕开它就不许有第二条写路径");
+assert.match(layerHand![0], /else toast\("warn", "那一枚已经不在了"/, "人与 Agent 共用时这一枚可能已经被别人删掉：那一步不落库，但要把话说清并指出哪里能看见还剩哪几枚");
+assert.match(layerHand![0], /editAtRevision\(next\.commands, project\.id, project\.revision, duplicate \? `复制第 \$\{needle\.field\.layer \+ 1} 层的关键帧` : `拖动第 \$\{needle\.field\.layer \+ 1} 层的关键帧`, app\.sequenceId\)/, "层针走的是同一条带 expected_revision 的链，历史那一行分得开拖动、复制与删");
+assert.match(layerHand![0], /if \(next\.kind === "noop"\) \{ if \(duplicate\) toast\("warn", "没有多出一枚针"/, "复制落回原格不算多出一枚：这句要与上面 ◆ 那一只手同词");
+assert.equal((source.match(/editAtRevision\(/g) ?? []).length, 4, "Timeline.tsx 里落库的那四处（自己那两只手加层那两只手）之外不许长出第五处");
+// 悬停说的手必须是这只手势真会的手，指的去处必须是屏幕上真在的控件。
+assert.match(source, /按住 Alt 拖是复制一枚，按住 Alt 点一下是删掉这一枚。要改那一个数/, "层针的悬停要把它自己会的两只手说出来，出路指着那一层卡片里真在的那一排");
+assert.ok(!source.includes("点这条片段右端的 +N 进动画曲线"), "那句出路指的是那块只在画不下时才出现的牌子——它不在屏幕上的时候那句话就是空的（1.211 换成指这一层卡片下面那一排 ◇）");
+assert.match(source, /aria-hidden="true">\{keyDrag\.layer \? "◈" : "◆"\}/, "复制的影子跟着被复制那一枚的样子走：层针是 ◈，片段自己的是 ◆——影子画错字形就是在教错一只手");
 // 没拖动就还是「点一下跳过去」，而按住 Alt 点一下是删掉这一枚——两条都断到同一个分支里，
 // 因为把删除接在另一个入口上就等于在时间线上开第二条写路径。
 assert.match(source,
@@ -296,9 +304,70 @@ assert.match(source, /picked\.includes\(id\) \? " selected" : ""/, "the picked n
 assert.equal((source.match(/keyDrag\.property/g) ?? []).length, 0, "the drag state no longer pretends one needle is the whole gesture");
 assert.match(source, /\$\{duplicate \? "复制" : "拖动"\} \$\{group\.length} 枚关键帧/, "the history line counts the needles that moved");
 
+// —— 1.211：第二路画面那一层的针，条上那两只手（Alt 拖复制 / Alt 点删）断的是行为 ——————————————
+const FIELD = { layer: 0, key: "offset_x" as const };
+const lkey = (property: string, at: number, value = 0.25): LayerKeyframe => ({
+  property: property as LayerKeyframe["property"], at_ticks: at, value, interpolation: "linear", bezier: null,
+});
+// 工程里那一层的针存的是**含偏移**的刻度（引擎那份时钟），界面读出来要折、写回去要加回来——只此一次。
+const clipWithLayer = (keys: LayerKeyframe[]): Clip => ({
+  id: "clip-key", track_id: "track-1", asset_id: "asset-1", kind: "video",
+  position_ticks: POSITION, duration_ticks: DURATION, source_in_ticks: 0, source_duration_ticks: DURATION,
+  animation_offset_ticks: OFFSET, keyframes: [],
+  color: { grade: [{ kind: "layer", enabled: true, asset_id: "asset-2", offset_x: 0.1, offset_y: 0, scale: 1, mix: 0.5, rotation: 0, keys }] },
+} as unknown as Clip);
+const layerKeys = (command: unknown) => ((command as { grade: { keys?: LayerKeyframe[] }[] }).grade[0].keys ?? []);
+const layerDrag = (keys: LayerKeyframe[], from: number, pointer: number, duplicate = false) => planLayerNeedleDrag({
+  clip: clipWithLayer(keys), field: FIELD, from, duplicate, pointer_ticks: pointer,
+  playhead_ticks: -1, px: PX, snap: true, quantum: FRAME,
+});
+const pair = [lkey("offset_x", OFFSET + 30_000), lkey("offset_y", OFFSET + PHASE, 0.6)];
+
+// 普通拖动：还是那一条 `clip.grade`，别的数的针一字不动，只有被拖那一枚换了格子。
+const lmove = layerDrag(pair, 30_000, 30_000 + PHASE / 2);
+assert.equal(lmove.kind, "move", "没有 Alt 就还是拖动");
+assert.equal(lmove.commands.length, 1, "一次抓取一条命令");
+assert.equal((lmove.commands[0] as { op: string }).op, "clip.grade", "层针不许冒充片段自己的那两条命令");
+assert.deepEqual(
+  layerKeys(lmove.commands[0]).map((k) => `${k.property}@${k.at_ticks}=${k.value}`).sort(),
+  [`offset_x@${OFFSET + lmove.at_ticks}=0.25`, `offset_y@${OFFSET + PHASE}=0.6`].sort(),
+  "写回的是「这一道全部针 + 同层别的数」那份并集，刻度只折加一次（不同属性同格合法，所以按字符串比，不比顺序）",
+);
+
+// Alt 拖：原针留在原地，落点多出一枚，值与插法原样带走（不是第二次插值）。
+const ldup = layerDrag(pair, 30_000, 30_000 + PHASE / 2, true);
+assert.equal(ldup.kind, "add", "按住 Alt 拖规划的是多出一枚");
+const dupKeys = layerKeys(ldup.commands[0]);
+assert.equal(dupKeys.length, 3, "复制是加一枚，不是挪一枚");
+assert.ok(dupKeys.some((k) => k.property === "offset_x" && k.at_ticks === OFFSET + 30_000), "原针留在原地");
+const added = dupKeys.filter((k) => k.property === "offset_x" && k.at_ticks !== OFFSET + 30_000);
+assert.equal(added.length, 1, "新落点只有一枚");
+assert.equal(added[0].value, 0.25, "复制带走的是那一个数");
+assert.equal(added[0].interpolation, "linear", "连插法一起带走");
+// 落回原格不算「多出一枚」；落在**同一条曲线**别人的格子上要当场说清是复制走不通（别的数同格是合法的）。
+assert.equal(layerDrag(pair, 30_000, 30_000, true).kind, "noop", "复制落回自己那一格就是没动");
+const twoOnCurve = [lkey("offset_x", OFFSET + 30_000), lkey("offset_x", OFFSET + PHASE, 0.6)];
+const lclash = layerDrag(twoOnCurve, 30_000, PHASE, true);
+assert.ok(lclash.kind === "blocked" && /复制/.test((lclash as { reason: string }).reason),
+  `撞针那句要说是复制：${lclash.kind} ${JSON.stringify(lclash)}`);
+assert.ok(!/动画曲线里删掉/.test((lclash as { reason: string }).reason), "出路不许再指另一屏——条上自己就能 Alt 点掉那一枚");
+const lclashMove = layerDrag(twoOnCurve, 30_000, PHASE);
+assert.ok(lclashMove.kind === "blocked" && /按住 Alt 点掉那一枚/.test((lclashMove as { reason: string }).reason),
+  `没有 Alt 时那句要指出条上就能删：${lclashMove.kind} ${JSON.stringify(lclashMove)}`);
+
+// Alt 点：删的也是那一条 `clip.grade`，同层别的数的针留下；那一枚已经不在了就一条命令都不发。
+const lremove = planLayerNeedleRemoval(clipWithLayer(pair), FIELD, 30_000) as { op: string; grade: unknown } | null;
+assert.ok(lremove, "那一枚在，就该交回一条命令");
+assert.equal(lremove!.op, "clip.grade", "删除不开第二条写路径");
+assert.deepEqual(layerKeys(lremove).map((k) => [k.property, k.at_ticks]), [["offset_y", OFFSET + PHASE]], "去掉那一枚，别的数原样");
+assert.equal(planLayerNeedleRemoval(clipWithLayer(pair), FIELD, 9_999_999), null, "那一枚不在了就什么都不发——撤销台上不许留一步空操作");
+assert.equal(pair[0].at_ticks, OFFSET + 30_000, "规划不改工程里那份记录");
+
 console.log(
   "PASS: 时间线上拖针写的是普通 `keyframe.move`——偏移折掉一次、只改时间、回到原格就是 noop、"
     + "同属性邻居占格在松手前就点名（不同属性照吸）、容差跟着屏幕像素走、越界永远夹回可写区间；"
     + "1.119 起一次抓一组走同一条算术：整组被自己两头夹、撞针逐条属性判、一枚一条命令、复制那组把原针也算占位；"
-    + "1.121 起 Alt 点一下删掉挑中的那一组（一批一条 `keyframes.remove`，重复的那格先去掉）",
+    + "1.121 起 Alt 点一下删掉挑中的那一组（一批一条 `keyframes.remove`，重复的那格先去掉）；"
+    + "1.211 起条上那枚层针 ◈ 同样两只手：Alt 拖复制一枚（值与插法带走、原针不动）、Alt 点删掉这一枚，"
+    + "两只手写回去的都还是那一条 clip.grade，同层别的数的针一字不动",
 );

@@ -87,7 +87,16 @@ const hand = body(drag, "planLayerNeedleDrag");
 assert.match(hand, /keyframeTick\(/, "层针的落点没走那一份共用的吸附");
 assert.match(hand, /clampGroupTimeShift\(\[drag\.from\], span, at - drag\.from\)/, "层针没有夹在片段两头内");
 assert.match(hand, /commands: \[layerKeyCommand\(drag\.clip, drag\.field, next\)\]/, "层针写的不是那一条 clip.grade——界面上就会出现第二种落库");
-assert.match(hand, /const next = sameCurve\.map\(\(key\) => \(key\.at_ticks === drag\.from \? \{ \.\.\.key, at_ticks: to \} : key\)\);/, "交回的不是那一道曲线的全部针（与曲线编辑器同一个契约）");
+assert.match(hand, /const next = drag\.duplicate/, "复制与拖动在哪一路分岔只许有一处判断");
+assert.match(hand, /\[\.\.\.sameCurve, \.\.\.sameCurve\.filter\(\(key\) => key\.at_ticks === drag\.from\)\.map\(\(key\) => \(\{ \.\.\.key, at_ticks: to \}\)\)\]/, "复制那一路不许自己编一个数：它搬的是抓住那一枚的值与插法");
+assert.match(hand, /: sameCurve\.map\(\(key\) => \(key\.at_ticks === drag\.from \? \{ \.\.\.key, at_ticks: to \} : key\)\)/, "交回的不是那一道曲线的全部针（与曲线编辑器同一个契约）");
+// 1.211：条上那两只手的主人只许有一个——落点、撞针、复制与删的算术都在 `planLayerNeedle*` 这两处。
+const removal = body(drag, "planLayerNeedleRemoval");
+assert.match(removal, /layerKeysRead\(clip, field\)/, "删那一枚之前读的仍是那一份共用的读法");
+assert.match(removal, /layerKeyCommand\(clip, field, sameCurve\.filter\(\(key\) => key\.at_ticks !== at\)\)/, "删走的仍是那一条 clip.grade，交回的是这一道的其余针");
+assert.match(removal, /if \(!sameCurve\.some\(\(key\) => key\.at_ticks === at\)\) return null;/, "那一枚不在就一条命令都不发（撤销台上不许留一步空操作）");
+assert.doesNotMatch(removal, /op: "keyframe\./, "删层针也不许冒充片段自己的那两条命令");
+assert.equal((drag.match(/export function planLayerNeedle/g) ?? []).length, 2, "层针的规划只有「拖（含复制）」与「删」这两处主人，别在界面里再算一遍");
 // 1.208 顺手还清的一笔旧账：写一层的一个数，不许把同层别的数的针抹掉。
 // 1.204~1.207 那一路是整层覆盖，曲线编辑器的夹具只喂过一道曲线，所以直到条上画出两枚不同数的针才量到。
 assert.match(effects, /const others = \(node\.keys \?\? \[\]\)\.filter\(\(key\) => key\.property !== field\.key\);/, "同层别的数的针没有被留下来");

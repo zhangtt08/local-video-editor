@@ -5,7 +5,7 @@ import { TIMEBASE, align, frameTicks, humanDuration, timecode } from "../time";
 import { countHidden, firstView, laneTicks, paintClips, rulerSeconds, unionRange, WINDOW_NOTE, type TickRange, type View } from "../timelineWindow";
 import { transitionLabel } from "../engine";
 import type { Clip, Keyframe, Marker, Project, Track } from "../engine";
-import { planKeyframeDrag, planLayerNeedleDrag, planNeedleRemoval } from "../keyframeDrag";
+import { planKeyframeDrag, planLayerNeedleDrag, planLayerNeedleRemoval, planNeedleRemoval } from "../keyframeDrag";
 import { CHIP_KEEP_PIXELS, LANE_PITCH_PIXELS, NEEDLE_AREA_PIXELS, NEEDLE_HALF_PIXELS, laneCapacity, needleId, needleRows } from "../keyframeLanes";
 import { MARQUEE_INSET_PIXELS, type PixelBox, commitPick, draggedEnough, hitsInBand, marqueeBox, togglePick } from "../keyframeMarquee";
 import {
@@ -69,7 +69,7 @@ type DragMode = "move" | "trim-l" | "trim-r" | "roll-l" | "roll-r";
  * `targets` 只装真的在走的那几枚：按住 Alt 复制时原针一格也不动，就不许看起来在动（1.114 定的那条），
  * 而 `blocked` 时只有被抓的那一枚被画到它想去却去不了的那一格上。
  */
-type NeedleHeld = { anchor: string; at: number; blocked: boolean; duplicate: boolean; targets: { id: string; from: number; at: number }[] };
+type NeedleHeld = { anchor: string; at: number; blocked: boolean; duplicate: boolean; layer: boolean; targets: { id: string; from: number; at: number }[] };
 type Drag = {
   clipId: string;
   mode: DragMode;
@@ -885,10 +885,10 @@ function ClipBlock({
       playhead_ticks: playhead.value - clip.position_ticks,
     });
     const held = (next: ReturnType<typeof planKeyframeDrag>): NeedleHeld => next.kind === "noop"
-      ? { anchor: id, at: from, blocked: false, duplicate, targets: [] }
+      ? { anchor: id, at: from, blocked: false, duplicate, layer: false, targets: [] }
       : next.kind === "blocked"
-        ? { anchor: id, at: next.at_ticks, blocked: true, duplicate, targets: [{ id, from, at: next.at_ticks }] }
-        : { anchor: id, at: next.at_ticks, blocked: false, duplicate,
+        ? { anchor: id, at: next.at_ticks, blocked: true, duplicate, layer: false, targets: [{ id, from, at: next.at_ticks }] }
+        : { anchor: id, at: next.at_ticks, blocked: false, duplicate, layer: false,
           targets: next.shifts.map((member, index) => ({ id: needleId(group[index]), from: member.from, at: member.at })) };
     const move = (ev: PointerEvent) => setKeyDrag(held(plan(ev.clientX)));
     const stop = (ev: PointerEvent) => {
@@ -919,9 +919,11 @@ function ClipBlock({
 
   /** 1.208：第二路画面那一层的针也在这条道上拖。抓取、吸附、让位与上面那一只手同一批原语
    *  （`planLayerNeedleDrag`），差别只在落库：写的还是那一条 `clip.grade` 整链替换，
-   *  所以这里只交回命令，不新造第二份折刻度。组的挑选、Alt 复制与 Alt 点删故意**不给**这一枚——
-   *  那三只手说的是「一条曲线上的几枚针」，层针的曲线在检查器与动画曲线里各有自己的名字，
-   *  混进这一组就会有一枚针被两条路同时改。悬停里点名的是这个去处，不是「不支持」。 */
+   *  所以这里只交回命令，不新造第二份折刻度。
+   *  1.211 把 1.208 故意欠下的两只手补上了：**按住 Alt 拖是复制一枚**（原针留下，落点上有别人的针就当场
+   *  说清是复制走不通），**按住 Alt 点一下是删掉这一枚**（`planLayerNeedleRemoval`，与拖动同一条落库链）。
+   *  仍不给的只有一只：Shift 挑组——组的语义是「一条曲线上的几枚针一起走」，而层针在检查器与动画曲线里
+   *  各有自己的名字，混进那一组就会有一枚针被两条路同时改。 */
   const startLayerKey = (event: React.PointerEvent, needle: LayerNeedle) => {
     event.stopPropagation();
     if (razor || event.button !== 0 || track.locked || !box.current || !app.caps?.features?.keyframes) return;
@@ -929,17 +931,18 @@ function ClipBlock({
     const node = box.current;
     const id = needleId(needle);
     const from = needle.at_ticks;
+    const duplicate = event.altKey;
     const grab = ((event.clientX - node.getBoundingClientRect().left) / px) * TIMEBASE - from;
     const plan = (clientX: number) => planLayerNeedleDrag({
-      clip, field: needle.field, from, px, snap, quantum: q,
+      clip, field: needle.field, from, px, snap, quantum: q, duplicate,
       pointer_ticks: ((clientX - node.getBoundingClientRect().left) / px) * TIMEBASE - grab,
       playhead_ticks: playhead.value - clip.position_ticks,
     });
     const held = (next: ReturnType<typeof planLayerNeedleDrag>): NeedleHeld => next.kind === "noop"
-      ? { anchor: id, at: from, blocked: false, duplicate: false, targets: [] }
+      ? { anchor: id, at: from, blocked: false, duplicate, layer: true, targets: [] }
       : next.kind === "blocked"
-        ? { anchor: id, at: next.at_ticks, blocked: true, duplicate: false, targets: [{ id, from, at: next.at_ticks }] }
-        : { anchor: id, at: next.at_ticks, blocked: false, duplicate: false, targets: [{ id, from, at: next.at_ticks }] };
+        ? { anchor: id, at: next.at_ticks, blocked: true, duplicate, layer: true, targets: [{ id, from, at: next.at_ticks }] }
+        : { anchor: id, at: next.at_ticks, blocked: false, duplicate, layer: true, targets: [{ id, from, at: next.at_ticks }] };
     const move = (ev: PointerEvent) => setKeyDrag(held(plan(ev.clientX)));
     const stop = (ev: PointerEvent) => {
       window.removeEventListener("pointermove", move);
@@ -948,11 +951,20 @@ function ClipBlock({
       setKeyDrag(null);
       selectClip(clip.id);
       if (ev.type === "pointercancel") return;
-      if (Math.abs(ev.clientX - event.clientX) < 2) { playhead.pause(); playhead.set(clip.position_ticks + from); return; }
+      if (Math.abs(ev.clientX - event.clientX) < 2) {
+        // 点一下（没拖动）仍是「把播放头跳到那一格」；按住 Alt 点一下是删掉这一枚——与上面 ◆ 那一只手
+        // 同一个入口、同一条带 expected_revision 的落库链，只是写的还是那一条 `clip.grade`。
+        if (duplicate) {
+          const gone = planLayerNeedleRemoval(clip, needle.field, from);
+          if (gone) editAtRevision([gone], project.id, project.revision, `删掉第 ${needle.field.layer + 1} 层的关键帧`, app.sequenceId);
+          else toast("warn", "那一枚已经不在了", "这一格上没有这一层的这根针了：右边那一层卡片下面那一排 ◇ 里能看到还剩哪几枚。");
+        }
+        playhead.pause(); playhead.set(clip.position_ticks + from); return;
+      }
       const next = plan(ev.clientX);
-      if (next.kind === "noop") return;
+      if (next.kind === "noop") { if (duplicate) toast("warn", "没有多出一枚针", "复制的落点就在原针那一格上，先往旁边挪一点再松手。"); return; }
       if (next.kind === "blocked") { toast("warn", "那一格已经有一枚针", next.reason); return; }
-      editAtRevision(next.commands, project.id, project.revision, `拖动第 ${needle.field.layer + 1} 层的关键帧`, app.sequenceId);
+      editAtRevision(next.commands, project.id, project.revision, duplicate ? `复制第 ${needle.field.layer + 1} 层的关键帧` : `拖动第 ${needle.field.layer + 1} 层的关键帧`, app.sequenceId);
       playhead.pause(); playhead.set(clip.position_ticks + next.at_ticks);
     };
     window.addEventListener("pointermove", move);
@@ -1157,7 +1169,7 @@ function ClipBlock({
               key={id} data-key-id={id} type="button"
               className={`clip-keyframe layer-needle${target ? " dragging" : ""}${refused ? " blocked" : ""}`}
               style={{ left: needleX(at), bottom: 1 + (rowOf.get(k.property) ?? 0) * LANE_PITCH_PIXELS }}
-              title={`${label} · ${humanDuration(k.at_ticks)}${keyDrag ? ` → ${humanDuration(at)}` : " · 横向拖只改这一枚的时间；要改值、加针或删针，点这条片段右端的 +N 进动画曲线，那里画的就是导出执行的那批格子"}`}
+              title={`${label} · ${humanDuration(k.at_ticks)}${keyDrag ? ` → ${humanDuration(at)}` : " · 横向拖只改这一枚的时间；按住 Alt 拖是复制一枚，按住 Alt 点一下是删掉这一枚。要改那一个数，就在右边这一层卡片下面那一排里改——◇ 那一条就是这一层的针"}`}
               aria-label={`拖动${label}关键帧`}
               aria-disabled={track.locked || razor || !app.caps?.features?.keyframes}
               onPointerDown={(event) => startLayerKey(event, k)}>◈</button>;
@@ -1165,7 +1177,7 @@ function ClipBlock({
           {keyDrag?.duplicate ? keyDrag.targets.filter((item) => item.at !== item.from).map((item) => <span
             key={item.id} className={`clip-keyframe ghost${keyDrag.blocked ? " blocked" : ""}`}
             style={{ left: needleX(item.at), bottom: 1 + (laneOf.get(item.id) ?? 0) * LANE_PITCH_PIXELS }}
-            aria-hidden="true">◆</span>) : null}
+            aria-hidden="true">{keyDrag.layer ? "◈" : "◆"}</span>) : null}
           {more ? <button type="button" className="clip-keyframe-more" aria-label={`${more} 条属性的针没有画在这里`}
             title={`画不下的针：${moreLabels.join("、")}——点开进动画曲线看这条片段的全部针（层上的针在这条道上能拖时间，改值与删针在那条曲线的阶梯上）`}
             onPointerDown={(event) => event.stopPropagation()}

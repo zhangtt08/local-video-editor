@@ -175,24 +175,37 @@ for (const needle of ["每帧一个文件", "声音不在里面", "起始时间�
 
 // 那一行走的是正文那一档，不是最暗那一档：小字 + 灰到看不清才是「堆信息」。
 const css = read("desktop/src/styles.css");
-const hintRule = /\n\.hint \{([^}]*)\}/.exec(css);
+const cssCode = css.replace(/\/\*[\s\S]*?\*\//g, ""); // 注释里引用旧写法不算一处违规（本轮的说明就引了一次）
+const hintRule = /\n\.hint \{([^}]*)\}/.exec(cssCode);
 assert.ok(hintRule, "读不到 .hint 那一条规则");
 assert.match(hintRule![1], /font-size: var\(--fs-body\)/, "面板说明还停在比正文小一号的那一档");
 assert.match(hintRule![1], /color: var\(--ink-2\)/, "面板说明还在用最暗那一档字色");
 // 任何一条命中 `.hint` 的覆盖规则都不许再把字号调小：1.209 把基尺定在 --fs-body，
 // 而 `.ps-working .hint` 那一处把它压回 --fs-label——装机读数 12.5px 就是这么来的（本轮量到的）。
 const shrunk: string[] = [];
-for (const rule of css.matchAll(/([^\n{}]+)\{([^}]*)\}/g)) {
+for (const rule of cssCode.matchAll(/([^\n{}]+)\{([^}]*)\}/g)) {
   const selector = rule[1].trim();
   if (!/(^|[\s,>+~(])\.hint\b/.test(selector)) continue;
   if (selector === ".hint") continue; // 基尺那一条就是它自己，上面已经量过它了
   if (/font-size\s*:/.test(rule[2])) shrunk.push(`${selector} → ${/font-size\s*:\s*([^;]+)/.exec(rule[2])![1].trim()}`);
 }
 assert.deepEqual(shrunk, [], `这些规则把面板说明的字号又压小了：${shrunk.join("；")}`);
+// 更前一层的洞：尺认的是 `.hint` 这个**类名**，而「面板说明」是一件事。1.211 之前首页那句
+// 「默认 1080p 30fps…」用的是 `.se-hint`（--fs-label + --ink-3），换个名字就整条躲过这把尺。
+// 判的是「另起一个 -hint 类名又把字压小」这件事本身：`.tl-hint` 只排个版、不动字号，不算；
+// `.lane-hint` 是空轨上那一句占位提示（画在道里的 7 个字，不是一段要读的说明），本轮明着放它一马。
+const aliases: string[] = [];
+for (const rule of cssCode.matchAll(/\.([a-z]+-hint)\s*\{([^}]*)\}/g)) {
+  if (rule[1] === "lane-hint") continue;
+  if (/font-size\s*:/.test(rule[2])) aliases.push(`.${rule[1]} → ${/font-size\s*:\s*([^;]+)/.exec(rule[2])![1].trim()}`);
+}
+assert.deepEqual(aliases, [], `这些类名在扮演「面板上那一行说明」却不走 .hint 那一档：${aliases.join("；")}`);
+assert.ok(!cssCode.includes(".se-hint"), ".se-hint 又回来了：那一条正是把首页那句压成小字灰字的元凶");
+assert.match(read("desktop/src/views/Home.tsx"), /<p className="hint">默认 1080p 30fps/, "首页那句要走正文那一档（它以前是 .se-hint）");
 // 几何这一半：那一行说明要自己占一整行。flex 行不换行时汉字会被挤到一格一个字——
 // 本轮装机量到 .grade-auto-row 里那条说明是 27px 宽、25 行高。字收短了而形状没修，用户看到的还是那堆竖排小字。
-assert.match(css, /\.batch-actions \{[^}]*flex-wrap: wrap/, "那一行是 flex 却没有换行——说明会被挤成竖排");
-assert.match(css, /\.batch-actions > \.hint \{[^}]*flex: 1 1 100%/, "面板说明没有被安排成自己占一整行");
+assert.match(cssCode, /\.batch-actions \{[^}]*flex-wrap: wrap/, "那一行是 flex 却没有换行——说明会被挤成竖排");
+assert.match(cssCode, /\.batch-actions > \.hint \{[^}]*flex: 1 1 100%/, "面板说明没有被安排成自己占一整行");
 
 console.log(
   `desktop_prose_check: ${panelFiles.length} 个面板文件里 ${counted} 条说明最长 ${LIMIT} 字以内（含 hint 的切变体、含函数拼出来的那 ${spoken.length} 句），` +

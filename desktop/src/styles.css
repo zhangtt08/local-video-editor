@@ -850,7 +850,9 @@ table.table tr.current td { background: var(--accent-soft); }
 .num.go { color: var(--ink-3); display: flex; justify-content: flex-end; }
 .start-empty { padding: 74px 24px 82px; display: flex; flex-direction: column; align-items: center; gap: 13px; text-align: center; }
 .se-line { font-size: var(--fs-body); color: var(--ink-2); }
-.se-hint { font-size: var(--fs-label); color: var(--ink-3); }
+/* 1.211：这里原来有一条 `.se-hint { font-size: var(--fs-label); color: var(--ink-3); }`——
+   首页空状态那句「默认 1080p 30fps…」走的就是它，正是被拒的那种「比正文小一号 + 最暗一档字色」的灰字，
+   而 1.209 立的尺只认 `.hint` 这个类名，换名就躲过去了。现在那一处直接用 `.hint`，这一条删掉。 */
 .se-alt { font-size: var(--fs-body); color: var(--ink-3); display: flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: center; }
 .linklike { color: var(--accent-deep); text-decoration: underline; text-underline-offset: 2px; height: auto; padding: 0; }
 .linklike:disabled { color: var(--ink-3); text-decoration: none; }

@@ -79,6 +79,8 @@ export type LayerNeedleDrag = {
   field: LayerNeedleField;
   /** 抓住的那一枚在哪一格（片段本地刻度）。 */
   from: number;
+  /** 按住 Alt 拖着这一枚是**复制**一枚（原针留在原地），普通拖动是把它挪走。与上面 ◆ 那一只手同一口径。 */
+  duplicate: boolean;
   pointer_ticks: number;
   playhead_ticks: number;
   px: number;
@@ -90,7 +92,10 @@ export function planLayerNeedleDrag(drag: LayerNeedleDrag): KeyframeDragPlan {
   const span = drag.clip.duration_ticks;
   const keys = layerKeysRead(drag.clip, drag.field);
   const sameCurve = keys.filter((key) => key.property === drag.field.key);
-  const obstacles = sameCurve.filter((key) => key.at_ticks !== drag.from).map((key) => key.at_ticks);
+  // 复制时原针留在原地，所以那一格也算被占着；普通拖动则这一枚先腾空（与 `planKeyframeDrag` 同一句判断）。
+  const obstacles = sameCurve
+    .filter((key) => drag.duplicate || key.at_ticks !== drag.from)
+    .map((key) => key.at_ticks);
   const at = keyframeTick(
     drag.pointer_ticks,
     { clip: drag.clip, quantum: drag.quantum, span, plot: (span / TIMEBASE) * drag.px },
@@ -98,24 +103,38 @@ export function planLayerNeedleDrag(drag: LayerNeedleDrag): KeyframeDragPlan {
     { playhead: drag.playhead_ticks, keys: obstacles, attract: true },
   );
   const shift = clampGroupTimeShift([drag.from], span, at - drag.from);
-  if (shift === 0) return { kind: "noop" };
-  const to = drag.from + shift;
+  if (drag.duplicate ? at === drag.from : shift === 0) return { kind: "noop" };
+  const to = drag.duplicate ? at : drag.from + shift;
   if (obstacles.includes(to)) {
     const label = LAYER_KEY_LABEL[drag.field.key] ?? drag.field.key;
     return {
       kind: "blocked",
       at_ticks: to,
-      reason: `第 ${drag.field.layer + 1} 层的${label}在第 ${seconds(to)} 秒已经有一枚针，先松到一个空格上，或到动画曲线里删掉那一枚。`,
+      reason: `第 ${drag.field.layer + 1} 层的${label}在第 ${seconds(to)} 秒已经有一枚针，${drag.duplicate ? "复制就得先松到一个空格上" : "先松到空格上，或按住 Alt 点掉那一枚"}。`,
     };
   }
-  // 交回的是**那一道曲线的全部针**（同层别的数由 `layerKeysOf` 原样留着），与曲线编辑器同一个契约。
-  const next = sameCurve.map((key) => (key.at_ticks === drag.from ? { ...key, at_ticks: to } : key));
+  // 交回的是**那一道曲线的全部针**（同层别的数由 `layerKeyCommand` 原样留着），与曲线编辑器同一个契约。
+  // 复制那一路是把抓住那一枚的值与插法原样多写一份到新格子——不是第二次插值。
+  const next = drag.duplicate
+    ? [...sameCurve, ...sameCurve.filter((key) => key.at_ticks === drag.from).map((key) => ({ ...key, at_ticks: to }))]
+    : sameCurve.map((key) => (key.at_ticks === drag.from ? { ...key, at_ticks: to } : key));
   return {
-    kind: "move",
+    kind: drag.duplicate ? "add" : "move",
     at_ticks: to,
     shifts: [{ property: drag.field.key as Property, from: drag.from, at: to }],
     commands: [layerKeyCommand(drag.clip, drag.field, next)],
   };
+}
+
+/**
+ * 1.211：按住 Alt 点一下删掉那一枚层针。写的还是那一条 `clip.grade`——引擎没有也不需要「删一枚层针」
+ *  这条命令，所以交回的是「这一道去掉那一枚之后的全部针」，同层别的数一字不动（与拖动同一处主人）。
+ *  那一枚已经不在了就回 `null`：撤销台上不该留一步什么都不改的历史。
+ */
+export function planLayerNeedleRemoval(clip: Clip, field: LayerNeedleField, at: number): Command | null {
+  const sameCurve = layerKeysRead(clip, field).filter((key) => key.property === field.key);
+  if (!sameCurve.some((key) => key.at_ticks === at)) return null;
+  return layerKeyCommand(clip, field, sameCurve.filter((key) => key.at_ticks !== at));
 }
 
 const local = (key: Keyframe, offset: number) => key.at_ticks - offset;
