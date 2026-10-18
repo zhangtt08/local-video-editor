@@ -466,6 +466,8 @@ def grade_stages(color) -> list[dict] | None:
                         "offset_x": node.offset_x,
                         "offset_y": node.offset_y,
                         "scale": node.scale,
+                        # 1.203：转角与位置同一格说（0 就是老工程读进来的那一张矩形）。
+                        "rotation": node.rotation,
                     }
                 )
             continue
@@ -487,7 +489,7 @@ def composite_stages(color) -> list[dict]:
     ]
 
 
-LAYER_FIELDS = ("asset_id", "mode", "mix", "offset_x", "offset_y", "scale")
+LAYER_FIELDS = ("asset_id", "mode", "mix", "offset_x", "offset_y", "scale", "rotation")
 
 
 def layer_stages(color) -> list[dict]:
@@ -563,7 +565,7 @@ def grade_tables(color) -> dict | None:
             built.append(
                 {
                     "type": "layer",
-                    # id 要盖住这一层的六个数：换了位置或大小，滤镜定义不能还挂同一个 id。
+                    # id 要盖住这一层的全部七个数：换了位置、大小或转角，滤镜定义不能还挂同一个 id。
                     "id": f"y{_stage_id([stage[key] for key in LAYER_FIELDS])}",
                     "preview": False,
                     **{key: stage[key] for key in LAYER_FIELDS},

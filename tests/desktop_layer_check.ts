@@ -117,6 +117,31 @@ for (const code of ["LAYER_LIMIT", "LAYER_POSITION", "LAYER_ASSET_UNAVAILABLE"])
   );
 }
 
+// 1.203：那一层会转。这一族的规矩还是「式子只有一处、数只听引擎」，而且钉的是**调用点**——
+// 只在 helper 里出现过 `rotation` 不等于监视器真的转了（那一课已经付过一次学费）。
+const effects = read("desktop/src/effects.ts", "../../desktop/src/effects.ts");
+const styleBody = effects.slice(effects.indexOf("export const layerStyle"), effects.indexOf("export function layerFrames"));
+assert.ok(/layerStyle = \(offsetX: number, offsetY: number, scale: number, rotation = 0\)/.test(styleBody), "那一条唯一的式子不接转角");
+assert.ok(styleBody.includes("`rotate(${rotation}deg)`"), "式子没有把转角交给 CSS");
+assert.ok(styleBody.includes("...(rotation ? { transform"), "0° 也在写 transform：那种层的 DOM 不该被动过");
+assert.ok(preview.includes("layerStyle(row.offset_x, row.offset_y, row.scale, row.rotation ?? 0)"), "监视器没把清单里的转角喂进那一条式子");
+assert.ok(!/layerStyle\([^)]*offset_x[^)]*,\s*\)/.test(preview), "监视器自己又拼了一遍式子");
+// 上限听引擎：卡片读 `limits.layerRotationMax`，而那一份是从 grade_limits 来的——两头都要钉。
+assert.ok(fields.includes("layerRotationMax: app.caps?.grade_limits?.layer_rotation_max ?? 0"), "转角的上下限不是从 capabilities 来的");
+assert.ok(layerBranch.includes("const rotationMax = limits.layerRotationMax ?? 0;"), "层那一格没读 limits 里那一个上限");
+assert.ok(layerBranch.includes('label="这一层转多少度"'), "层那一格没有那颗旋钮");
+assert.ok(layerBranch.includes("{rotationMax ? <Num"), "老引擎不回上限时那颗旋钮照样会出现");
+assert.ok(engine.includes("layer_rotation_max?: number;"), "能力表的类型里少了这一格");
+assert.ok(/kind: "layer"[^}]*rotation\?: number/.test(engine), "界面那份层节点的类型里少了转角");
+assert.ok(/layer\?: \{[^}]*rotation\?: number/.test(engine), "监视器清单那一行的类型里少了转角");
+assert.ok(contracts.includes("LAYER_ROTATION_MAX = "), "转角的上限不是契约里那一个数");
+assert.ok(contracts.includes('"layer_rotation_max": LAYER_ROTATION_MAX'), "上限没随 capabilities 下发");
+assert.ok(contracts.includes('"layer_rotation": True'), "features 里少了这一档的开关");
+assert.ok(/rotation: Annotated\[float, Field\(ge=-LAYER_ROTATION_MAX, le=LAYER_ROTATION_MAX\)\] = 0\.0/.test(contracts), "GradeLayer 没带那一个默认 0 的转角字段");
+// 转角只能静态：它不在引擎那份可动名单里，界面那句「还不能打点」才说得住（说了能做就是谎）。
+assert.ok(contracts.includes('LayerProperty = Literal["offset_x", "offset_y", "scale", "mix"]'), "可动名单里混进了转角（界面那句话就过时了）");
+assert.ok(layerBranch.includes("还不能打点"), "卡片没说清这一档不能打点");
+
 console.log(
   "desktop_layer_check: 第二路画面在界面只读引擎那份清单与那个数——层从清单来、URL 从 streams 来、方式与权重不改写，且 .preview-layer 隔离"
 );

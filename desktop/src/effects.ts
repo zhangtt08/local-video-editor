@@ -438,12 +438,18 @@ export type FadeOp = { clipId: string; property: FadeProperty; side: FadeSide; t
 /** 1.192：那一层在画面上盖哪一块——导出与预览共用的就这一条式子。
  *  视图不许在别处再抄一遍：抄一份就会有「画面上是这样、文件里是那样」的那一天。
  *  坐标按**画面框**说（与引擎 `layer_rect` 同一口径）：`scale` 1 = 铺满画面框，
- *  `offset` 0 = 层心在画面中心，±1 = 层心挪到那一边的边外。 */
-export const layerStyle = (offsetX: number, offsetY: number, scale: number) => ({
+ *  `offset` 0 = 层心在画面中心，±1 = 层心挪到那一边的边外。
+ *  1.203：`rotation` 是度数，**顺时针为正**（量过：这台 FFmpeg 的 `rotate=a='θ*PI/180'`
+ *  把左半边送到上边，与 CSS 的 `rotate(θdeg)` 同一边，所以两腿取同一个数、不取反）。
+ *  转动绕元素自己的中心，而引擎的 `layer_rect` 交回的正是「中心不动的那只外接框」；
+ *  出界那半由容器裁掉，与导出裁到交付帧同一件事。0 就是不给 `transform`——
+ *  那种层的 DOM 与 1.202 一字不差。 */
+export const layerStyle = (offsetX: number, offsetY: number, scale: number, rotation = 0) => ({
   width: `${scale * 100}%`,
   height: `${scale * 100}%`,
   left: `${(0.5 + offsetX) * 100 - scale * 50}%`,
   top: `${(0.5 + offsetY) * 100 - scale * 50}%`,
+  ...(rotation ? { transform: `rotate(${rotation}deg)` } : {}),
 });
 
 /** 引擎那份窗表换成浏览器动画帧：每一窗一格、`easing` 用的就是引擎给的那个串，

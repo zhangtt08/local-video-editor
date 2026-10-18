@@ -10,6 +10,7 @@ no overlay input ever starts late and stalls the graph.
 """
 
 import hashlib
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -1293,27 +1294,40 @@ def compile_render_plan(
         )
         return label
 
-    def layer_rect(offset_x: float, offset_y: float, scale: float) -> tuple | None:
+    def layer_rect(offset_x: float, offset_y: float, scale: float, rotation: float) -> tuple | None:
         """那一层盖住交付帧里的哪一块——这一族唯一的算法（静态与逐窗两条腿都问它）。
 
         1.190 量出来的两条规矩一字未动：目标矩形先夹到交付帧（出界那半不画，与浏览器里被容器
         裁掉是同一件事），层先按自己**完整**的尺寸缩好、再从里裁出与画面相交那一片——直接缩到
         交集会把出界部分的比例拉回来，那不是「被裁掉」。整层都在画外时交回 None。
+
+        1.203：转角不为 0 时盖住的是**转过之后的外接框**（`|w·cos|+|h·sin|` 那一对），中心不动。
+        那一只外接框就是 `rotate` 交回的画面尺寸，两边按同一个框裁才会裁掉同一片。`rotation=0`
+        时外接框等于原框，交回的数与 1.190 一字不差。
         """
         want_w = max(1, int(round(picture_w * scale)))
         want_h = max(1, int(round(picture_h * scale)))
         center_x = int(round(bar_x + (0.5 + offset_x) * picture_w))
         center_y = int(round(bar_y + (0.5 + offset_y) * picture_h))
-        left, top = center_x - want_w // 2, center_y - want_h // 2
+        box_w, box_h = want_w, want_h
+        if rotation:
+            cosine = abs(math.cos(math.radians(rotation)))
+            sine = abs(math.sin(math.radians(rotation)))
+            box_w = max(1, int(round(want_w * cosine + want_h * sine)))
+            box_h = max(1, int(round(want_w * sine + want_h * cosine)))
+        left, top = center_x - box_w // 2, center_y - box_h // 2
         x = max(left, 0)
         y = max(top, 0)
-        width = min(left + want_w, out_w) - x
-        height = min(top + want_h, out_h) - y
+        width = min(left + box_w, out_w) - x
+        height = min(top + box_h, out_h) - y
         if width < 1 or height < 1:
             return None
-        return want_w, want_h, left, top, x, y, width, height
+        return want_w, want_h, box_w, box_h, left, top, x, y, width, height
 
-    def blend_layer(current: str, sized: str, stage: dict, rect, gate: str, mix: float) -> str:
+    def blend_layer(
+        current: str, sized: str, stage: dict, rect, gate: str, mix: float,
+        mask: str | None = None,
+    ) -> str:
         """把裁出来的那一片按这一层的方式与权重相合回去（`crop` 与 `overlay` 都在那一片上）。
 
         插值的底必须用裁出来那一份，不然两路尺寸不一样，FFmpeg 在 configure 阶段就死。
@@ -1321,8 +1335,14 @@ def compile_render_plan(
         都认 `enable`（1.123 为清晰那对量过 `blend`：关掉的那段原样交回第一个输入）。
         `mix` 是当窗的那一个权重（1.198：这一层自己会淡）；没有针的那一层交回来的就是
         `stage["mix"]`，所以静态那一条腿的串一字未改。
+
+        `mask` 只有转过的层才给（1.203）：那一层转完的四个角是**透明**的，而 `blend` 看不见
+        alpha——用 `all_opacity` 会把透明角也算进权重，量出来就是黑角。改交 `maskedmerge`：
+        逐格按 `alpha × mix` 在「底」与「相合结果」之间插值，这正是 CSS 的 `mix-blend-mode`
+        加 `opacity` 在同一像素上做的事（`colorchannelmixer=aa` 已把权重折进 alpha，
+        所以那一步里不再出现 `mix`）。
         """
-        _, _, _, _, x, y, width, height = rect
+        _, _, _, _, _, _, x, y, width, height = rect
         canvas = plan.tag("lcv")
         plan.filters.append(f"{current}format=gbrp{canvas}")
         halves = [plan.tag("lhalf") for _ in range(2)]
@@ -1335,9 +1355,12 @@ def compile_render_plan(
         first, second = (sized, pair[0]) if stage["mode"] == "normal" else (pair[0], sized)
         plan.filters.append(f"{first}{second}blend=all_mode={stage['mode']}{gate}{blended}")
         lerped = plan.tag("llerp")
-        plan.filters.append(
-            f"{blended}{pair[1]}blend=all_mode=normal" f":all_opacity={mix:.6g}{gate}{lerped}"
-        )
+        if mask is None:
+            plan.filters.append(
+                f"{blended}{pair[1]}blend=all_mode=normal" f":all_opacity={mix:.6g}{gate}{lerped}"
+            )
+        else:
+            plan.filters.append(f"{pair[1]}{blended}{mask}maskedmerge{lerped}")
         out = plan.tag("lout")
         plan.filters.append(f"{halves[1]}{lerped}overlay=x={x}:y={y}:format=gbrp{gate}{out}")
         return out
@@ -1350,19 +1373,45 @@ def compile_render_plan(
 
         `layer_index` 与 `fan` 二选一：没有针的那一段直接从输入接一路（串的 shape 与 1.190
         相同），多窗的那一段从 `split` 出来的那一份接。缩与裁用的都是 `layer_rect` 交回那几个数。
+
+        1.203：转过的层在这条腿里多三步——**先 `format=rgba` 再 `rotate`**（顺序反了、或漏了
+        `fillcolor=none`，四个角就是黑的而不是透明，2026-10-18 逐档量过），`ow/oh` 就是外接框，
+        再把 `alpha × mix` 抽成一张灰 mask 交给相合那一步。没转的那一层走的还是 1.190 那两步，
+        编译串一字未改。
         """
-        want_w, want_h, left, top, x, y, width, height = rect
+        want_w, want_h, box_w, box_h, left, top, x, y, width, height = rect
         source = f"[{layer_index}:v]" if fan is None else fan
-        full = plan.tag("lyrf")
-        plan.filters.append(
-            f"{source}scale={want_w}:{want_h}:force_original_aspect_ratio=disable,"
-            f"format=gbrp,fps={fps},settb=AVTB{full}"
+        rotation = stage["rotation"]
+        scaled = (
+            f"{source}scale={want_w}:{want_h}:force_original_aspect_ratio=disable"
         )
+        full = plan.tag("lyrf")
+        if rotation:
+            plan.filters.append(
+                f"{scaled},fps={fps},settb=AVTB,format=rgba,"
+                f"rotate=a='{rotation}*PI/180':ow={box_w}:oh={box_h}:fillcolor=none{full}"
+            )
+        else:
+            plan.filters.append(f"{scaled},format=gbrp,fps={fps},settb=AVTB{full}")
         sized = full
-        if (width, height) != (want_w, want_h):
+        if (width, height) != (box_w, box_h):
             sized = plan.tag("lyr")
             plan.filters.append(f"{full}crop={width}:{height}:{x - left}:{y - top}{sized}")
-        return blend_layer(current, sized, stage, rect, gate, mix)
+        mask = None
+        if rotation:
+            # 一个标签只能被消费一次（量出来的：第二次引用会在 configure 阶段报 "matches no
+            # streams"），所以 RGB 与 alpha 两份要从一次 `split` 里出来。相合那一步要的三路
+            # 同格式：RGB 一份给 `blend`，alpha 折上权重后抽成灰的一份给 `maskedmerge` 当插值尺。
+            outs = [plan.tag("lysp"), plan.tag("lysp")]
+            plan.filters.append(f"{sized}split=2{outs[0]}{outs[1]}")
+            rgb = plan.tag("lyrg")
+            plan.filters.append(f"{outs[0]}format=gbrp{rgb}")
+            mask = plan.tag("lymk")
+            plan.filters.append(
+                f"{outs[1]}colorchannelmixer=aa={mix:.6g},format=rgba,alphaextract{mask}"
+            )
+            sized = rgb
+        return blend_layer(current, sized, stage, rect, gate, mix, mask)
 
     def apply_layers(clip, pad: str) -> str:
         """1.189 的第二路画面：把链尾那几层外部图按顺序相合进来（`layer_stages` 是唯一说法）。
@@ -1404,7 +1453,8 @@ def compile_render_plan(
                 )
                 # 前三个数是矩形，第四个是这一窗的权重（1.198：那一层自己会淡）——矩形那一只不许
                 # 看见第四个数，所以这里切片；静态那一条腿交回的就是 `stage["mix"]`，串一字未改。
-                rect = layer_rect(*values[:3])
+                # 转角（1.203）不在针那一张名单里，两腿都取 `stage["rotation"]`：同一层各窗同角度。
+                rect = layer_rect(*values[:3], stage["rotation"])
                 if rect is not None:
                     alive.append((window, rect))
 

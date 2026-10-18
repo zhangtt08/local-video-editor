@@ -81,7 +81,7 @@ export type GradeOperation =
   /** 1.144：第二路画面输入。这条边读两幅画（链的输出与链的输入），所以它不是每通道函数：
    *  导出走 FFmpeg 的 `split` + `blend`，浏览器没有对应的原语，预览明说不生效。 */
   | { kind: "composite"; mode: BlendMode; mix: number; enabled: boolean }
-  | { kind: "layer"; asset_id: string; mode: BlendMode; mix: number; offset_x: number; offset_y: number; scale: number; enabled: boolean; keys?: LayerKeyframe[] }
+  | { kind: "layer"; asset_id: string; mode: BlendMode; mix: number; offset_x: number; offset_y: number; scale: number; rotation?: number; enabled: boolean; keys?: LayerKeyframe[] }
   /** 色彩空间转换。`purpose` 只有引擎的 `clip.color_manage` 会写：它把这一对节点标记成「一键套上的
    *  色彩管理」，取下时只删自己被标过的两个，中间谁手工加的都原样留着。界面不许自己造第三个值。 */
   | { kind: "transfer"; input_space: ColorSpace; output_space: ColorSpace; enabled: boolean; mix?: number; blend?: BlendMode; purpose?: "color_manage" | null }
@@ -276,7 +276,7 @@ export type SharpenSteps = {
 };
 export type SharpenSpec = SharpenStatic | SharpenSteps;
 export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; grade?: GradeTables | null; sharpen?: SharpenSpec | null; speed?: RampPiece[] | null; mask_image?: string | null; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; mask_shape?: MaskShapeWindow[] | null; mask_rotation_windows?: MaskRotationWindow[] | null; spatial?: Partial<Record<SpatialProperty, Curve>> | null; edge_filter?: string | null; curves: Record<AnimatedEffect, Curve>; transition: TransitionEnvelope; fade?: Record<"opacity" | "gain", Curve> | null;
-      layer?: { asset_id: string; mode: BlendMode; mix: number; offset_x: number; offset_y: number; scale: number; windows?: LayerWindow[]; paintable: boolean; reason?: string | null }[];
+      layer?: { asset_id: string; mode: BlendMode; mix: number; offset_x: number; offset_y: number; scale: number; rotation?: number; windows?: LayerWindow[]; paintable: boolean; reason?: string | null }[];
       composite?: CompositeEdge | null }> };
 
 /** 引擎给这条片段记下的那一次稳定：有了它，再按一次是换一档强度而不是叠第二遍。 */
@@ -638,6 +638,8 @@ export type Capabilities = {
     layer_offset_max?: number;
     layer_scale_min?: number;
     layer_scale_max?: number;
+    /** 1.203：那一层最多转多少度（正负同一条带，引擎下发）。 */
+    layer_rotation_max?: number;
     /** 1.192：那一层能动的是哪三个数，也只由引擎说一次（界面不许自备属性名表）。 */
     layer_key_props?: string[];
     max_tree_operations?: number;

@@ -42,6 +42,8 @@ export type GradeLimits = {
   layerOffsetMax?: number;
   layerScaleMin?: number;
   layerScaleMax?: number;
+  /** 1.203：那一层最多转多少度也是引擎下发；老引擎不回就是 0，那颗旋钮不出现。 */
+  layerRotationMax?: number;
   /** 1.192：这一层能动的那三个数与针的额度，都由引擎下发（界面不自己数、不自己列名字）。 */
   layerKeyProps?: string[];
   layerKeyLimit?: number;
@@ -323,6 +325,8 @@ function OpFields({ node, idPrefix, limits, layerTick, layerOffset, onReplace, o
     const offsetMax = limits.layerOffsetMax ?? 0;
     const scaleMin = limits.layerScaleMin ?? 0;
     const scaleMax = limits.layerScaleMax ?? 0;
+    // 1.203：转角的上限同样听引擎；不回就是 0，那一颗旋钮一颗都不出现。
+    const rotationMax = limits.layerRotationMax ?? 0;
     // 1.192：能动的那四个数（1.198 起加上这一层自己的淡）、针的额度，全部听引擎下发；
     // 老引擎不回就是空表与 0，按钮一颗都不出现。
     const keyProps = limits.layerKeyProps ?? [];
@@ -357,11 +361,15 @@ function OpFields({ node, idPrefix, limits, layerTick, layerOffset, onReplace, o
         min={scaleMin * 100} max={scaleMax * 100} step={5} unit="%"
         onCommit={(value) => onCommit({ ...node, scale: round(value / 100) })} />
       {dot("scale", node.scale)}
+      {rotationMax ? <Num id={`${idPrefix}-layer-rot`} label="这一层转多少度" value={node.rotation ?? 0}
+        min={-rotationMax} max={rotationMax} step={5} unit="°"
+        onCommit={(value) => onCommit({ ...node, rotation: round(value) })} /> : null}
       <Num id={`${idPrefix}-layer-mix`} label={LAYER_KEY_LABEL.mix} value={node.mix * 100} min={0} max={100} step={5} unit="%"
         onCommit={(value) => onCommit({ ...node, mix: round(value / 100) })} />
       {dot("mix", node.mix)}
       <p className="hint">这一层读的是<b>工程里另一张图</b>：它叠在这段画面走完自己那条链之后——不被这一段的遮罩切、不被这一段的柔焦糊，但转场会把它一起压过去。0% 就是这一层什么都不做。</p>
       <p className="hint">监视器与导出读的是<b>同一份</b>方式与权重（引擎下发那八种，逐档量过）。它必须排在链尾：中间隔着会改画面的节点，两端就不是同一幅画，引擎按 LAYER_POSITION 点名拒。</p>
+      {rotationMax ? <p className="hint">转角<b>顺时针为正</b>，与导出同一个方向（量过：+90° 两腿都把带子的左半边送到上边）。转出去的四个角是<b>透明</b>的，不是黑的——权重折进了这一层自己的 alpha，所以 45° 叠在画面上不会糊出一块方框。这一档<b>还不能打点</b>：它不在引擎那份可动名单里，动的是位置、大小与淡那四个数。</p> : null}
       {node.asset_id && !images.some((row) => row.id === node.asset_id) ? <p className="hint">这一层指的素材现在不在工程里（或没有验过的媒体），导出会按 LAYER_ASSET_UNAVAILABLE 拒：重新选一张。</p> : null}
       {keys.length ? <div className="keyframe-list">
         {keys.map((item, position) => <div key={`${item.property}-${item.at_ticks}`} className="keyframe-item">
@@ -502,6 +510,7 @@ export function GradeFields({ clipId }: { clipId: string }) {
     layerOffsetMax: app.caps?.grade_limits?.layer_offset_max ?? 0,
     layerScaleMin: app.caps?.grade_limits?.layer_scale_min ?? 0,
     layerScaleMax: app.caps?.grade_limits?.layer_scale_max ?? 0,
+    layerRotationMax: app.caps?.grade_limits?.layer_rotation_max ?? 0,
     // 1.192：能动的那三个数与针的额度都听引擎的；老引擎不回这两个字段，就是 0 个、不能打点。
     layerKeyProps: app.caps?.grade_limits?.layer_key_props ?? [],
     layerKeyLimit: app.caps?.limits?.layer_key_limit ?? 0,

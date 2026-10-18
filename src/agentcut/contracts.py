@@ -39,7 +39,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.202.0"
+APP_VERSION = "1.203.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 
@@ -1612,6 +1612,12 @@ LAYER_SCALE_MIN = 0.05
 
 LAYER_SCALE_MAX = 4.0
 
+# 1.203：那一层自己可以转。按**度**说（与界面同一个单位，不是弧度也不是百分比），左右各到半圈；
+# 半圈之外没有新形状（转 181° 就是转 -179°），所以上限就是 180，不许多给一个数。
+# 这一档只能静态：针那一张名单（`LayerProperty`）里没有它，界面也就不给它的打点按钮。
+
+LAYER_ROTATION_MAX = 180.0
+
 
 # 1.192：那一层自己也能动。可动的就是它自己那三个数（不是新属性名，也不是新单位），
 # 所以一根针的值域与静态那三个同一条带——否则「打点」与「填框」会给出两套合法区间。
@@ -1913,6 +1919,10 @@ class GradeLayer(Contract):
     offset_y: Annotated[float, Field(ge=-LAYER_OFFSET_MAX, le=LAYER_OFFSET_MAX)] = 0.0
 
     scale: Annotated[float, Field(ge=LAYER_SCALE_MIN, le=LAYER_SCALE_MAX)] = 1.0
+
+    # 1.203：这一层自己的转角，单位是**度**（顺时针，与浏览器 `rotate()` 同一个方向）。
+    # 0 就是 1.190 那一张矩形；老工程读进来没有这一格，交回 0，编译串一字不改。
+    rotation: Annotated[float, Field(ge=-LAYER_ROTATION_MAX, le=LAYER_ROTATION_MAX)] = 0.0
 
     # 1.192：这一层自己的针。空表就是 1.190 那一版（一段一个值），老工程读进来一字不差。
 
@@ -6548,6 +6558,10 @@ def capabilities(
 
             "layer_scale_max": LAYER_SCALE_MAX,
 
+            # 1.203：转角的上限同样只由这里下发；老引擎不回这个数，界面就不给那一颗旋钮。
+
+            "layer_rotation_max": LAYER_ROTATION_MAX,
+
             # 1.192：那一层能动的是哪三个数也只由引擎说一次（界面不许自备一份属性名表）。
 
             "layer_key_props": list(get_args(LayerProperty)),
@@ -7064,6 +7078,11 @@ def capabilities(
             # `preview-manifest` 那一行的 `paintable` 说，界面无条件听引擎，不再自己问素材是什么。
 
             "composite_preview": True,
+
+            # 1.203：第二路画面会转。导出走 `rotate` + 一条按 alpha 做的 mask，监视器走同一转角
+            # 的 `rotate()`；两边逐档量过（`tests/layerrotate_check.py`）才敢下发这一格。
+
+            "layer_rotation": True,
 
             "timeline_marks": True,
 

@@ -35,7 +35,7 @@ for (const [name, text] of [["Preview.tsx", preview], ["GradeFields.tsx", fields
   assert.ok(!/0\.5 \+ (row|node)\.offset_[xy]\) \* 100/.test(text), `${name} 自己抄了一遍位置式子`);
   assert.ok(!/scale \* 50/.test(text), `${name} 自己算了一遍那半幅`);
 }
-assert.ok(preview.includes("...layerStyle(row.offset_x, row.offset_y, row.scale)"), "静态那一行没在用那唯一的式子");
+assert.ok(preview.includes("...layerStyle(row.offset_x, row.offset_y, row.scale, row.rotation ?? 0)"), "静态那一行没在用那唯一的式子");
 
 // 2) 动画帧只从引擎那份窗表来，`easing` 一个都不自己补。
 //    断的是 `layerFrames` 那一段函数体自己——`easing: point.easing` 这句在别处也用（柔焦、清晰），
