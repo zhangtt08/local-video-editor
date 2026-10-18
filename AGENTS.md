@@ -122,7 +122,7 @@
 - **真页面**（冻结引擎 1.211.0，`ui_layerhands_1211.cjs`，真 `pointerdown` 带 `altKey`，1480×900）：
   层针 **3 → Alt 点 → 2 → Alt 拖 → 3**，revision **1 → 3**（一次抓取正好涨一次），片段自己那两枚 opacity 一字未动，
   悬停文案当场读到。跨屏形状扫描（同一只尺，五屏 × 两档窗口）**没有 green**：1211big：21 条面板说明、最长 5 行、最窄 68px、最小字号 13.5px、被切 0；1211min：21 条面板说明、最长 5 行、最窄 68px、最小字号 13.5px、被切 0；量到的那一处是「[1211big] 剪辑·导出 「选择成片的保存位置；不选则使用默」画上 5 行（68px 宽）」——1.210 修掉的那一类（说明被父级 flex 挤窄）在导出面板又长出来一处。本轮不顺手改它：改了就得重出包、重跑全套，而这一轮的发布链是按改前的树验完的；它记为下一轮（1.212）的第一条，且这条扫描从这一轮起进每轮必跑的清单。
-- **发布账**：70 档壳检全绿；`build_engine --verify` 过、自报 1.211.0；`npm run dist` 后根 exe 与便携版
+- **发布账**：71 档壳检全绿；`build_engine --verify` 过、自报 1.211.0；`npm run dist` 后根 exe 与便携版
   逐字节相同（sha256 `c6262172f439909166e631cbe7fce64b30380ef3c346fdc22d4b69a1ba0d28dd`）；
   `released_package_check` 绿（asar 1.211.0、84 个文件、47 句中文）；typecheck / vite / ruff / stylewidth /
   docs_shape / docs_facts 干净；空闲机单跑 `tests/suite_check.py` **129/129**（`SUITE_EXIT=0`）。
