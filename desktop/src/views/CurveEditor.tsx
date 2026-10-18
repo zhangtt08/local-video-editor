@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type PointerEvent } from "react";
 
-import { type AnimationGraph, type Clip, type Keyframe, type Property, type Bezier } from "../engine";
-import { EFFECT_FIELDS, FIELD_LABEL, INTERPOLATIONS, curveBase, maskAnimFields, spatialAnimFields } from "../effects";
+import { type AnimationGraph, type Clip, type Keyframe, type LayerKeyframe, type Property, type Bezier } from "../engine";
+import { EFFECT_FIELDS, FIELD_LABEL, INTERPOLATIONS, curveBase, layerCurveBase, layerCurveFields, layerKeyCommand, layerKeysOf, layerStepAt, maskAnimFields, spatialAnimFields, type LayerCurveField } from "../effects";
 import { TIMEBASE, timecode } from "../time";
 import { keyframeTick } from "../keyframeSnap";
 import { applyShift, bandEdges, bandEntry, groupShift, quantizeToBand } from "../curveDrag";
@@ -46,9 +46,23 @@ export function CurveEditor() {
 
 function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; disabled: boolean }) {
   const app = useApp(); const play = usePlay(); const project = app.project!;
-  const options = [...EFFECT_FIELDS.filter((f) => !audio || f.property === "gain"), ...maskAnimFields(clip.mask, app.caps), ...(audio ? [] : spatialAnimFields(app.caps, project.settings.height))];
-  const [property, setProperty] = useState<Property>(() => audio ? "gain" : clip.keyframes?.[0]?.property ?? "opacity");
+  const options = [...EFFECT_FIELDS.filter((f) => !audio || f.property === "gain"), ...maskAnimFields(clip.mask, app.caps), ...(audio ? [] : spatialAnimFields(app.caps, project.settings.height)), ...layerCurveFields(clip, app.caps?.grade_limits?.layer_key_props, app.caps?.grade_limits?.layer_key_bands)];
+  const [property, setProperty] = useState<string>(() => audio ? "gain" : clip.keyframes?.[0]?.property ?? "opacity");
   const field = options.find((f) => f.property === property) ?? options[0];
+  /** 1.205：那一层的针住在链里，不住在 `clip.keyframes`——针的来源、起笔值、草稿与写入
+   *  都按这一个判断走，别处不再数第二遍「这是哪一层」。 */
+  const layerField = "layer" in field ? field as LayerCurveField : null;
+  const layerNode = layerField
+    ? (clip.color?.grade ?? []).filter((node) => node.kind === "layer" && node.enabled)[layerField.layer]
+    : undefined;
+  // 链里那个节点上的针：`GradeNode` 是联合类型，只有层那一支带 `keys`，所以这一处收口成一次 cast
+  // （别处只读 `layerKeys`，不再各自钻 `node.keys`）。
+  const layerKeys = (layerNode as unknown as { keys?: LayerKeyframe[] } | undefined)?.keys ?? [];
+  const allKeys = (layerField ? layerKeys : clip.keyframes ?? []) as typeof clip.keyframes;
+  const keyName = layerField ? layerField.key : field.property;
+  // `field.property` 现在是复合身份（那一层的写成「层 0·rotation」），要交回引擎的地方都用真名。
+  const propName = field.property as Property;
+  const layerOptions = options.filter((f) => "layer" in f);
   const [selectedAt, setSelectedAt] = useState<number | null>(null);
   const [selection, setSelection] = useState<number[]>([]);
   const selectionMemory = useRef(new Map<string, { times: number[]; at: number | null }>());
@@ -65,7 +79,7 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
   const clipPathId = useId().replace(/:/g, "");
   const offset = clip.animation_offset_ticks ?? 0;
   const signaturePrefix = `${field.property}/${offset}/${clip.duration_ticks}/`;
-  const signature = useMemo(() => signaturePrefix+keySignature(clip.keyframes ?? []), [clip.keyframes, signaturePrefix]);
+  const signature = useMemo(() => signaturePrefix+keySignature(allKeys ?? []), [allKeys, signaturePrefix]);
   useEffect(() => {
     const saved = selectionMemory.current.get(signature);
     if (saved) { selectionMemory.current.delete(signature); selectionMemory.current.set(signature, saved); setSelection(saved.times); setSelectedAt(saved.at); }
@@ -73,7 +87,7 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
     const limit = app.undo.length+app.redo.length+2;
     while (selectionMemory.current.size > limit) selectionMemory.current.delete(selectionMemory.current.keys().next().value!);
   }, [signature, app.busy, app.dryRunBusy]);
-  const keys = useMemo(() => (clip.keyframes ?? []).filter((k) => k.property === field.property && k.at_ticks >= offset && k.at_ticks <= offset + clip.duration_ticks).map((k) => ({ ...k, at_ticks: k.at_ticks - offset })).sort((a, b) => a.at_ticks - b.at_ticks), [clip, field.property, offset]);
+  const keys = useMemo(() => ((allKeys ?? []) as typeof clip.keyframes ?? []).filter((k) => k.property === keyName && k.at_ticks >= offset && k.at_ticks <= offset + clip.duration_ticks).map((k) => ({ ...k, at_ticks: k.at_ticks - offset })).sort((a, b) => a.at_ticks - b.at_ticks), [allKeys, keyName, offset, clip.duration_ticks]);
   const selected = keys.find((k) => k.at_ticks === selectedAt);
   const selectionSet = useMemo(() => new Set(selection), [selection]);
   const selectedKeys = useMemo(() => keys.filter((k) => selectionSet.has(k.at_ticks)), [keys, selectionSet]);
@@ -86,23 +100,31 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
   const sourceTimes = useMemo(() => new Set(sources.map((k) => k.at_ticks)), [sources]);
   const draftTimes = useMemo(() => new Set(drafts?.map((k) => k.at_ticks)), [drafts]);
   const collision = Boolean(drafts && keys.some((k) => !sourceTimes.has(k.at_ticks) && draftTimes.has(k.at_ticks)));
-  const input = useMemo(() => drafts && !collision ? { ...clip, keyframes: [...(clip.keyframes ?? []).filter((k) => !(k.property === field.property && sourceTimes.has(k.at_ticks-offset))), ...drafts.map((k) => ({ ...k, at_ticks: k.at_ticks + offset }))] } : clip, [clip, drafts, collision, field.property, offset, sourceTimes]);
+  const input = useMemo(() => drafts && !collision ? (layerField
+    // 那一层的草稿不写进 `clip.keyframes`：折刻度与挑出「第几层」只有一处实现（`layerKeysOf`），
+    // 预演与提交读的因此是同一条链，不会出现「屏幕上那一格与文件里那一格不是同一个数」。
+    ? layerKeysOf(clip, layerField, drafts as never[])
+    : { ...clip, keyframes: [...(clip.keyframes ?? []).filter((k) => !(k.property === field.property && sourceTimes.has(k.at_ticks-offset))), ...drafts.map((k) => ({ ...k, at_ticks: k.at_ticks + offset }))] }) : clip, [clip, drafts, collision, field.property, offset, sourceTimes, layerField]);
 
   useEffect(() => {
     let live = true;
     const timer = window.setTimeout(() => {
-      void appInfo.engine()?.animationCurve(input, field.property).then((graph) => {
-        if (live) { setResult({ base: clip, property: field.property, graph }); setError(""); }
+      // 普通曲线走那条老读法；那一层走新的那一条——两条都只有一处调用，界面不自己 walk 窗表。
+      const request = layerField
+        ? appInfo.engine()?.animationLayerCurve(input, layerField.key, layerField.layer, quantum(project, audio ? "audio" : "video"))
+        : appInfo.engine()?.animationCurve(input, field.property as Property);
+      void request?.then((graph) => {
+        if (live) { setResult({ base: clip, property: field.property, graph: graph as AnimationGraph }); setError(""); }
       }).catch((e) => { if (live) { setResult(null); setError(e instanceof Error ? e.message : "曲线读取失败"); } });
     }, draft ? 100 : 0);
     return () => { live = false; window.clearTimeout(timer); };
-  }, [input, clip, field.property]);
+  }, [input, clip, field.property, layerField]);
   const graph = result?.base === clip && result.property === field.property ? result.graph : null;
   // Keep the value scale fixed while dragging so a moving point cannot move its own ruler.
   const values = useMemo(() => {
-    const points = (clip.keyframes ?? []).filter((k) => k.property === field.property).sort((a, b) => a.at_ticks-b.at_ticks);
-    return points.flatMap((k, i) => k.interpolation === "bezier" && points[i+1] ? [k.value, k.value+(points[i+1].value-k.value)*(k.bezier ?? DEFAULT_BEZIER).y1, k.value+(points[i+1].value-k.value)*(k.bezier ?? DEFAULT_BEZIER).y2] : [k.value]).concat(curveBase(clip, field));
-  }, [clip, field.property]);
+    const points = (((allKeys ?? []) as typeof clip.keyframes ?? []).filter((k) => k.property === keyName)).sort((a, b) => a.at_ticks-b.at_ticks);
+    return points.flatMap((k, i) => k.interpolation === "bezier" && points[i+1] ? [k.value, k.value+(points[i+1].value-k.value)*(k.bezier ?? DEFAULT_BEZIER).y1, k.value+(points[i+1].value-k.value)*(k.bezier ?? DEFAULT_BEZIER).y2] : [k.value]).concat(layerField ? layerCurveBase(clip, layerField) : curveBase(clip, field as never));
+  }, [clip, keyName, allKeys, field, layerField]);
   const band = { min: field.min, max: field.max, step: field.step, factor: field.factor };
   const { hardMin, hardMax } = bandEdges(band);
   const padding = Math.max((Math.max(...values) - Math.min(...values)) * .12, (hardMax - hardMin) * .04);
@@ -129,7 +151,10 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
   };
   const rememberEdit = (from: Keyframe[], next: Keyframe[]) => {
     const fromTimes = new Set(from.map((k) => k.at_ticks));
-    const after = [...(clip.keyframes ?? []).filter((k) => !(k.property === field.property && fromTimes.has(k.at_ticks-offset))), ...next.map((k) => ({ ...k, at_ticks: k.at_ticks+offset }))];
+    const kept = layerField
+      ? (layerKeys as unknown as NonNullable<typeof clip.keyframes>).filter((k) => !(k.property === keyName && fromTimes.has(k.at_ticks-offset)))
+      : (clip.keyframes ?? []).filter((k) => !(k.property === propName && fromTimes.has(k.at_ticks-offset)));
+    const after = [...kept, ...next.map((k) => ({ ...k, at_ticks: k.at_ticks+offset }))];
     selectionMemory.current.delete(signature);
     selectionMemory.current.set(signature, { times: from.length ? from.map((k) => k.at_ticks) : selection, at: selectedAt });
     const target = { times: next.map((k) => k.at_ticks), at: next[Math.max(0,from.findIndex((k) => k.at_ticks === selectedAt))]?.at_ticks ?? null };
@@ -143,13 +168,29 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
     return keys.filter((k) => next.includes(k.at_ticks));
   };
   const translate = (points: Keyframe[], dt: number, dv: number) => applyShift(points, groupShift(points, band, clip.duration_ticks, dt, dv), band);
+  /** 1.205：写针只有一处分流。普通曲线交回那几条 `keyframe*` 命令，那一层交回把整条链改写的
+   *  `clip.grade`（刻度折回去只在那一处实现里做）。加、拖、移、删四个写点全从这里出命令，
+   *  所以不会出现「有一处忘了分流、界面上能拖而写进的是别的数」。 */
+  const layerWrites = (next: Keyframe[]) => [layerKeyCommand(clip, layerField as LayerCurveField, next as unknown as LayerKeyframe[])];
+  const moveCommands = (from: Keyframe[], next: Keyframe[]) => layerField
+    ? layerWrites(next)
+    : [{ op: "keyframes.move", clip_id: clip.id, moves: next.map((keyframe, i) => ({ from_ticks: from[i].at_ticks, keyframe })) }];
+  const shiftCommands = (from: number, key: Keyframe) => layerField
+    ? layerWrites(keys.map((k) => k.at_ticks === from ? key : k))
+    : [{ op: "keyframe.move", clip_id: clip.id, from_ticks: from, keyframe: key }];
+  const addCommands = (key: Keyframe) => layerField
+    ? layerWrites([...keys.filter((k) => k.at_ticks !== key.at_ticks), key])
+    : [{ op: "keyframe.set", clip_id: clip.id, keyframe: { ...key, property: field.property } }];
+  const removeCommands = (targets: Keyframe[]) => layerField
+    ? layerWrites(keys.filter((k) => !targets.some((t) => t.at_ticks === k.at_ticks)))
+    : [{ op: "keyframes.remove", clip_id: clip.id, keyframes: targets.map((k) => ({ property: k.property, at_ticks: k.at_ticks })) }];
   const commitPoints = (from: Keyframe[], next: Keyframe[], revision = project.revision, projectId = project.id) => {
     if (disabled || !from.length) return;
     const fromTimes = new Set(from.map((k) => k.at_ticks)), nextTimes = new Set(next.map((k) => k.at_ticks));
     if (keys.some((k) => !fromTimes.has(k.at_ticks) && nextTimes.has(k.at_ticks))) { toast("warn", "这个时间已有关键帧", "选区未修改，也不会覆盖未选中的点。"); return; }
     if (JSON.stringify(from) === JSON.stringify(next)) return;
     rememberEdit(from, next);
-    editAtRevision([{ op: "keyframes.move", clip_id: clip.id, moves: next.map((keyframe, i) => ({ from_ticks: from[i].at_ticks, keyframe })) }], projectId, revision, "编辑动画曲线", app.sequenceId);
+    editAtRevision(moveCommands(from, next), projectId, revision, "编辑动画曲线", app.sequenceId);
     setSelection(next.map((k) => k.at_ticks)); const at = next[Math.max(0, from.findIndex((k) => k.at_ticks === selectedAt))].at_ticks; setSelectedAt(at); seek(at);
   };
   const commit = (from: number, next: Keyframe, revision = project.revision, projectId = project.id) => {
@@ -157,7 +198,7 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
     if (keys.some((k) => k.at_ticks !== from && k.at_ticks === next.at_ticks)) { toast("warn", "这个时间已有关键帧", "放大曲线后选一个空位置，原关键帧未修改。"); return; }
     if (selected && from === next.at_ticks && selected.value === next.value && selected.interpolation === next.interpolation && JSON.stringify(selected.bezier ?? null) === JSON.stringify(next.bezier ?? null)) return;
     if (selected) rememberEdit([selected], [next]);
-    editAtRevision([{ op: "keyframe.move", clip_id: clip.id, from_ticks: from, keyframe: next }], projectId, revision, "编辑动画曲线", app.sequenceId);
+    editAtRevision(shiftCommands(from, next), projectId, revision, "编辑动画曲线", app.sequenceId);
     setSelection([next.at_ticks]); setSelectedAt(next.at_ticks); seek(next.at_ticks);
   };
   const cancel = () => {
@@ -188,15 +229,15 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
     if (disabled) return;
     at = attract ? alignTime(at) : Math.max(0, Math.min(clip.duration_ticks, Math.round(at)));
     if (keys.some((k) => k.at_ticks === at)) { selectPoint(at); seek(at); return; }
-    editAtRevision([{ op: "keyframe.set", clip_id: clip.id, keyframe: { property: field.property, at_ticks: at, value: quantizeValue(value), interpolation: newInterpolation } }], project.id, project.revision, "编辑动画曲线", app.sequenceId);
-    rememberEdit([], [{ property: field.property, at_ticks: at, value: quantizeValue(value), interpolation: newInterpolation, bezier: null }]);
+    editAtRevision(addCommands({ property: propName, at_ticks: at, value: quantizeValue(value), interpolation: newInterpolation, bezier: null }), project.id, project.revision, "编辑动画曲线", app.sequenceId);
+    rememberEdit([], [{ property: propName, at_ticks: at, value: quantizeValue(value), interpolation: newInterpolation, bezier: null }]);
     setSelection([at]); setSelectedAt(at); seek(at);
   };
   const remove = () => {
     if (!selectedKeys.length || disabled) return;
     svg.current?.focus();
     rememberEdit(selectedKeys, []);
-    editAtRevision([{ op: "keyframes.remove", clip_id: clip.id, keyframes: selectedKeys.map((k) => ({ property: k.property, at_ticks: k.at_ticks })) }], project.id, project.revision, "删除动画选区", app.sequenceId);
+    editAtRevision(removeCommands(selectedKeys), project.id, project.revision, "删除动画选区", app.sequenceId);
     setSelection([]); setSelectedAt(null);
   };
   const [copied, setCopied] = useState<CopiedKeys | null>(copiedKeys());
@@ -209,8 +250,15 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
   };
   const atHead = () => {    // 播放头本身就落在格子上（标尺按同一份量子吸附），所以这里写的就是看到的那个位置：
     // 吸附不参与，否则相邻的针会把新针拽走，采到的值与落下的时间就对不上了。
+    if (layerField) {
+      // 那一层没有 `animationSample` 可问（那条路只认片段自己那六个数）：起笔读的是引擎那份
+      // 阶梯在播放头这一格**已经算好的那一级**，界面不第二次插值。
+      const step = layerStepAt(graph as never, clip.duration_ticks ? head / clip.duration_ticks : 0);
+      add(head, step ?? layerCurveBase(clip, layerField), false);
+      return;
+    }
     void appInfo.engine()?.animationSample(clip, head).then((sample) => {
-      add(head, sample.values[field.property], false);
+      add(head, sample.values[propName], false);
     }).catch(() => toast("error", "当前位置采样失败"));
   };
   const zoomTo = (factor: number) => {
@@ -226,9 +274,11 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
 
   return <>
     <div className="curve-controls">
-      <select className="input" aria-label="曲线属性" value={field.property} onChange={(e) => { cancel(); selectionMemory.current.clear(); setProperty(e.target.value as typeof property); setSelection([]); setSelectedAt(null); }}>
-        {options.map((f) => <option key={f.property} value={f.property}>{f.label}</option>)}
+      <select className="input" aria-label="曲线属性" value={field.property} onChange={(e) => { cancel(); selectionMemory.current.clear(); setProperty(e.target.value); setSelection([]); setSelectedAt(null); }}>
+        <optgroup label="片段自身">{options.filter((f) => !("layer" in f)).map((f) => <option key={f.property} value={f.property}>{f.label}</option>)}</optgroup>
+        {layerOptions.length ? <optgroup label="第二路画面">{layerOptions.map((f) => <option key={f.property} value={f.property}>{f.label}</option>)}</optgroup> : null}
       </select>
+      {layerField ? <p className="hint">这一行画的就是<b>导出执行的那批格子</b>：一级台阶是一个 `enable` 区间，拖动写回的仍是那一条 `clip.grade`——监视器与文件读同一份窗表，界面不第二次插值。</p> : null}
       <button className="btn tiny" disabled={!keys.length} onClick={() => jump(-1)}>上一关键帧</button><button className="btn tiny" disabled={!keys.length} onClick={() => jump(1)}>下一关键帧</button>
       <button className="btn tiny" disabled={disabled || (app.mode === "batch" && app.batch.length > 0)} onClick={atHead}>播放头添加</button>
       <button className="btn tiny" disabled={disabled || !selectedKeys.length} onClick={remove}>{selectedKeys.length > 1 ? `删除 ${selectedKeys.length} 点` : "删除关键帧"}</button>
@@ -256,6 +306,12 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
           if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") { e.preventDefault(); e.stopPropagation(); cancel(); chooseSelection(keys.map((k) => k.at_ticks), keys[0]?.at_ticks ?? null); return; }
           if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") {
             e.preventDefault(); e.stopPropagation();
+            if (layerField) {
+              // 复制/粘贴那条 clipboard 认的是片段自己的针；这条阶梯住在链里，硬搬会把两回事混成
+              // 一份数，所以这一档明说不做，并给一条现在就走得通的路（检查器逐枚钉）。
+              toast("warn", "这一层的针还不能跨片段搬", "这条阶梯住在调色链里，clipboard 认的是片段自己的针。要在另一段上也动它：选中那一层，按播放头逐枚钉。");
+              return;
+            }
             const copy = copyKeys(project.id, selectedKeys);
             rememberCopy(copy); setCopied(copy);
             svg.current?.focus();   // 针上还留着焦点时，紧跟的 Ctrl+V 会被 Chromium 当成页面粘贴吃掉：复制完把焦点交回画布

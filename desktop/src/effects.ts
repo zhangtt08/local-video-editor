@@ -1,5 +1,5 @@
 import type { GradeCapacity } from "./engine";
-import type { AnimatedEffect, Asset, BlendMode, Capabilities, Clip, Curve, Effects, LayerWindow, MaskProperty, Project, SharpenSpec, SharpenStatic, SharpenSteps, ShapeMask, SpatialProperty, WipeChannel } from "./engine";
+import type { AnimatedEffect, Asset, BlendMode, Capabilities, Clip, Command, Curve, Effects, LayerKeyframe, LayerProperty, LayerWindow, MaskProperty, Project, SharpenSpec, SharpenStatic, SharpenSteps, ShapeMask, SpatialProperty, WipeChannel } from "./engine";
 import { DEFAULT_EFFECTS } from "./engine";
 import { TIMEBASE } from "./time";
 
@@ -469,6 +469,107 @@ export function layerFrames(windows: LayerWindow[] | null | undefined) {
 }
 
 /** 界面说到这一层能动的那四个数时念的是中文名：唯一的表，键与引擎下发的
+ *  `grade_limits.layer_key_props` 逐字对齐（`tests/desktop_layerkey_check.ts` 钉这一条）。 */
+/** 1.205：那一层的针进得了动画曲线编辑器。这里只说**显示**的事（单位、步长）：
+ *  能动的是哪几个数、各自能到几，全听引擎（`grade_limits.layer_key_props` 与 `layer_key_bands`）。
+ *  步长与检查器那几颗框同一档（5%、5°），所以从滑杆推到的数与在曲线上落的点是同一格。 */
+export const LAYER_CURVE_UNITS: Record<LayerProperty, { unit: string; factor: number; step: number }> = {
+  offset_x: { unit: "%", factor: 100, step: 5 },
+  offset_y: { unit: "%", factor: 100, step: 5 },
+  scale: { unit: "%", factor: 100, step: 5 },
+  mix: { unit: "%", factor: 100, step: 5 },
+  rotation: { unit: "°", factor: 1, step: 5 },
+};
+
+/** 曲线列表里那一行的身份：`property` 是**复合键**（第几层·哪个数），因为 `scale`、`rotation`
+ *  这两个名字与普通曲线撞名——不撞开就会有两行选到同一条数组上。`key` 才是引擎认的那个属性名。 */
+export type LayerCurveField = {
+  property: string;
+  key: LayerProperty;
+  layer: number;
+  label: string;
+  unit: string;
+  min: number;
+  max: number;
+  step: number;
+  factor: number;
+};
+
+/** 有哪几层、每层能动哪几个数，一次列出来：层的顺序与 `animation.layer_nodes`、清单、编译
+ *  那三处是同一份（链里启用的那几层，按链里的顺序数）；名单与量程缺一份就是老引擎，一行都不出现。 */
+export function layerCurveFields(
+  clip: Clip | undefined,
+  props: string[] | undefined,
+  bands: Record<string, [number, number]> | undefined,
+): LayerCurveField[] {
+  if (!clip || !props?.length || !bands) return [];
+  const layers = (clip.color?.grade ?? []).filter(
+    (node) => node.kind === "layer" && node.enabled,
+  );
+  const out: LayerCurveField[] = [];
+  layers.forEach((node, layer) => {
+    props.forEach((prop) => {
+      const band = bands[prop];
+      const unit = LAYER_CURVE_UNITS[prop as LayerProperty];
+      if (!band || !unit) return;
+      out.push({
+        property: `layer${layer}:${prop}`,
+        key: prop as LayerProperty,
+        layer,
+        label: `第 ${layer + 1} 层 · ${LAYER_KEY_LABEL[prop] ?? prop}`,
+        unit: unit.unit,
+        min: band[0] * unit.factor,
+        max: band[1] * unit.factor,
+        step: unit.step,
+        factor: unit.factor,
+      });
+    });
+  });
+  return out;
+}
+
+/** 起笔与纵轴定标用的那一个数：这一层在检查器里现在写着几，就是几（与普通曲线的 `curveBase` 同理）。 */
+export function layerCurveBase(clip: Clip, field: LayerCurveField): number {
+  const node = clip.color?.grade?.filter((item) => item.kind === "layer" && item.enabled)[field.layer];
+  const value = node && (node as unknown as Record<string, number>)[field.key];
+  return typeof value === "number" ? value : 0;
+}
+
+/** 把「这一串新针」折回链里的**唯一一处**：刻度在这里加回 `animation_offset_ticks`
+ *  （读的时候引擎折的那一次在这里还原），命令仍是那一条 `clip.grade`——不新增命令、不新增规则。 */
+export function layerKeysOf(clip: Clip, field: LayerCurveField, keys: LayerKeyframe[]): Clip {
+  const offset = clip.animation_offset_ticks ?? 0;
+  const stored = keys
+    .map((key) => ({ ...key, property: field.key, at_ticks: key.at_ticks + offset }))
+    .sort((a, b) => a.at_ticks - b.at_ticks);
+  let seen = -1;
+  const grade = (clip.color?.grade ?? []).map((node) => {
+    if (!(node.kind === "layer" && node.enabled)) return node;
+    seen += 1;
+    return seen === field.layer ? { ...node, keys: stored } : node;
+  });
+  return { ...clip, color: { ...(clip.color ?? {}), grade } } as Clip;
+}
+
+/** 草稿预览与写入共用同一份链：界面不许自己把那串针再折一次刻度。 */
+export function layerKeyCommand(clip: Clip, field: LayerCurveField, keys: LayerKeyframe[]): Command {
+  const next = layerKeysOf(clip, field, keys);
+  return { op: "clip.grade", clip_id: clip.id, grade: next.color?.grade };
+}
+
+/** 那一层现在这一格执行的是几：读引擎那份阶梯里「不超过播放头的那一级」。
+ *  这不是第二次插值——窗表每级一个常数，界面只是挑已经算好的那一级。 */
+export function layerStepAt(graph: { curve: { offset: number; value: number }[] } | null, fraction: number): number | null {
+  if (!graph?.curve?.length) return null;
+  let value = graph.curve[0].value;
+  for (const point of graph.curve) {
+    if (point.offset > fraction + 1e-9) break;
+    value = point.value;
+  }
+  return value;
+}
+
+/** 界面说到这一层能动的那几个数时念的是中文名：唯一的表，键与引擎下发的
  *  `grade_limits.layer_key_props` 逐字对齐（`tests/desktop_layerkey_check.ts` 钉这一条）。 */
 export const LAYER_KEY_LABEL: Record<string, string> = {
   offset_x: "这一层往左右",

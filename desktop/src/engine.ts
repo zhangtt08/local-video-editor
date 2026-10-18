@@ -230,6 +230,9 @@ export type MaskShapeWindow = { from_ticks: number; to_ticks: number; image: str
 export type MaskRotationWindow = { from_ticks: number; to_ticks: number; angle: number; width: number; height: number; image: string };
 export type Curve = { offset: number; value: number; easing: string }[];
 export type AnimationGraph = { property: Property; duration_ticks: number; limits: [number, number]; path: string; curve: Curve; keys: Keyframe[] };
+/** 1.205：那一层的阶梯走的是同一条读法，只是多带「第几层、哪一路画面」——`curve` 与
+ *  `keys` 的形状与普通曲线一致，所以画布、拖拽、夹值那一套不必再写第二份。 */
+export type LayerGraph = Omit<AnimationGraph, "property"> & { property: LayerProperty; layer: number; asset_id: string };
 /** 转场种类由引擎的 capabilities.transition_kinds 下发；这里是同一份清单的类型。 */
 export type TransitionKind = "dissolve" | "dip_black" | "dip_white" | "wipe_from_left" | "wipe_from_right" | "wipe_from_top" | "wipe_from_bottom" | "zoom_in" | "zoom_out";
 export type TransitionChoice = { id: string; label: string };
@@ -258,9 +261,12 @@ export type TransitionEnvelope = {
 /** 1.193：「叠一层原图」这条边在浏览器里画不画得了，由引擎在这一行说一次（`paintable`）。
  *  界面不许自己再问「这段素材是什么」——那是第二个判断，迟早与引擎不一致。 */
 export type CompositeEdge = { mode: BlendMode; mix: number; paintable: boolean; motion?: "always" | "paused" | null };
-/** 1.192：第二路画面自己那枚针（与契约 `LayerKeyframe` 同一形状，刻度含 `animation_offset_ticks`）。 */
+/** 1.192：第二路画面自己那枚针（与契约 `LayerKeyframe` 同一形状，刻度含 `animation_offset_ticks`）。
+ *  1.198 起多了 `mix`、1.204 起多了 `rotation`——这里若还只写三个名字，界面就是在自己数一份
+ *  比引擎旧的名单；哪一个数能动由 `capabilities.grade_limits.layer_key_props` 说。 */
+export type LayerProperty = "offset_x" | "offset_y" | "scale" | "mix" | "rotation";
 export type LayerKeyframe = {
-  property: "offset_x" | "offset_y" | "scale";
+  property: LayerProperty;
   at_ticks: number;
   value: number;
   interpolation?: "linear" | "hold" | "ease" | "bezier";
@@ -642,6 +648,8 @@ export type Capabilities = {
     layer_rotation_max?: number;
     /** 1.192：那一层能动的是哪三个数，也只由引擎说一次（界面不许自备属性名表）。 */
     layer_key_props?: string[];
+    /** 1.205：那五个数各自能到几（存储值，不是百分比）——曲线编辑器画纵轴与夹值都读这一份。 */
+    layer_key_bands?: Record<string, [number, number]>;
     max_tree_operations?: number;
     max_curve_points: number;
     max_lut_samples: number;
@@ -920,6 +928,7 @@ export function errorHints(): Record<string, string> {
       LAYER_KEY_RANGE: "这一层的针钉在这一段外面：窗表只在片段自己的长度里采样，那一枚本来不会多画一段。把播放头挪进这一段再打点，或先把这一段加长，或删掉那一枚。",
       LAYER_KEY_CLASH: "同一格给同一条属性钉了两枚针，引擎不知道这一段该走哪一条。把其中一枚挪开，或按住 Alt 点掉那一枚。",
       LAYER_KEY_LIMIT: "这一层带的针超过了引擎的额度：每多一枚就多切一段，导出要串更多的相合。少钉几枚，或者把这段切成两层各自动。",
+      LAYER_CURVE_TARGET: "这一层的阶梯读不到：那一层不在这条链上（被停用或根本没有），或者格长不是一个正数，或者问的不是那五个能动的数。选中一条链上启用的层再进来。",
       COMPOSITE_LIMIT: "一条调色链最多一条「叠一层原图」：两条边叠在一起时，「链的输出」指的是哪一段说不清，所以引擎两条就拒。要两层效果，把没调色的那份放到另一条画面轨上用轨道的混合方式相合，或者拆成两段嵌套合成。",
       SEQUENCE_NEEDS_CONTAINER: "图像序列交出的是一串文件（每帧一张），没有容器可以挂起始时间码，帧号就是位置。要时间码请换成 mov／mp4／mxf／webm 那几条；这一串的声音也不在里面，需要带声的成片请同时交一份 mp4／mov。",
       UNKNOWN_PRESET: "没有这个导出预设。能力表里列出的 id 才是可用的；界面下拉里选一个即可。",
@@ -1420,6 +1429,15 @@ export class Engine {
 
   animationCurve(clip: Clip, property: Property) {
     return this.request<AnimationGraph>("POST", `/v1/animation/curve?property=${property}`, clip);
+  }
+
+  /** 1.205：那一层那一个数的阶梯——交回的就是导出那批 `enable` 格子，界面不自己 walk。 */
+  animationLayerCurve(clip: Clip, property: LayerProperty, layer: number, quantum: number) {
+    return this.request<LayerGraph>(
+      "POST",
+      `/v1/animation/layer_curve?property=${property}&layer=${layer}&quantum=${quantum}`,
+      clip,
+    );
   }
 
   previewCandidate(project: Project, sequenceId: string | null = null) {

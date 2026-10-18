@@ -96,9 +96,34 @@
 自己 `SyntaxError`，被 `Runtime.evaluate` 回空吞掉了；把它独立成 `overlay_measure.js` 并在启动时
 `node --check` 一次之后，先炸出语法错、再修掉 `Array.prototype.slice.call(Set)` 那条静默空表，
 才有上面那张绿表。「动画曲线编辑器」那一档起初 `.curve-plot` 不在 DOM，是因为要**先点一颗片段**
-再点那颗分段按钮（量具补了这一步），不是那一屏不画画布。
+再点那颗分段按钮——而且必须是真 `pointerdown`（`element.click()` 不算选中，片段的选中写在 `onPointerDown` 里），不是那一屏不画画布。
 
-## 当前停放点（1.204：那一层的转角也能打点——五个数共用引擎那一张窗表）
+## 当前停放点（1.205：那一层的针画进动画曲线——画布与导出执行的是同一批格子）
+
+- **只加一条读，不加一条写**：新只读路由 `POST /v1/animation/layer_curve`（MCP 同名工具）把
+  `animation.layer_graph` 的阶梯交回界面；写针还是 `clip.grade` 那一条整链状态命令，命令表与错误码
+  一个字没多。`path` 只由 `M/H/V` 组成（段起头那一格就跳），`limits` 就是 `LAYER_KEY_LIMITS[prop]`，
+  `layer_key_bands` 与 `features.layer_curve` 由 caps 下发——界面自己没有第二套值域、第二套标签。
+- **刻度只折一次，量到的是往返不漂**：门禁里那一节把针存成 `at_ticks 16464000`，读回 `4704000`，
+  再读还是这个数；变异 MB（少折一次）就在这一条红。
+- **真页面的决定性一枚**：窗表 `[0.0, 90.0]`、播放头 28224000，画布线是
+  `M 0.0 0.0 H 0.5333333333333333 V 90.0 H 1.0 V 90.0` 加两枚针；点「播放头添加」变三枚，引擎那份
+  工程读回 `[(0, 0.0), (28224000, 0.0), (35280000, 90.0)]`——落在窗表那一格执行的值 0.0 上，**不是**
+  静态那个 25.0，静态 `rotation` 一字未动。会写静态值的界面在这里会当场红。
+- **还了 1.204 那笔「待判」**：`.curve-plot` 起初不在 DOM 是量具的错，不是那一屏不画画布。决定性
+  细节：片段的选中写在 `onPointerDown` 里，`element.click()` 只会留下「先选一个片段」那句话；派发
+  真 `PointerEvent('pointerdown')`（带 `button: 0` 与中心坐标）之后画布、下拉、针全在。以后任何
+  进曲线编辑器的探针都必须走指针事件，`click` 不算。
+- **名册门禁把我拦下过一次**：全套单跑到 `self_check.py` 红——`ExceptionGroup … AssertionError:
+  {'animation_layer_curve'}`：MCP 那颗只读工具是真有的，但我没把它写进 `self_check` 里那份手抄的
+  `expected` 名册。补进名册、补一条 `readOnlyHint`，并把它对 Agent 暴露的四个参数名钉死
+  （`clip` / `property` / `layer` / `quantum`，少一个名字就是一座只会猜的桥）。这一条不是形式主义：
+  名册红的时候，HTTP 那两条门禁全绿——只有 `self_check` 看得见 Agent 那一头。
+- **还没给的能力，说清在哪一步拒绝**：层针的跨片段复制粘贴没做——`Ctrl+C` 选中层那一行时当场拒绝，
+  并指出还能在检查器逐行打点。下一轮从这条缝接着切；其余仍是多遮罩叠加／往转过的框里跟点、
+  DCI-P3 出片与浏览器侧 `lut3d`、按可见名的子合成。
+
+## 上一轮停放点（1.204：那一层的转角也能打点——五个数共用引擎那一张窗表）
 
 - **只多了一个能动的数，不多一条命令**：`LayerProperty` 四个数长成五个
   （`offset_x / offset_y / scale / mix / rotation`），`LAYER_KEY_LIMITS["rotation"]` 就是静态那一条带

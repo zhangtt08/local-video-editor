@@ -5,6 +5,7 @@ from math import sqrt
 
 from .contracts import (
     FADE_SHAPE_CURVES,
+    LAYER_KEY_LIMITS,
     LAYER_SCHEDULE_MAX,
     MASK_FIELDS,
     MASK_ROTATION_SCHEDULE_MAX,
@@ -1039,9 +1040,12 @@ def preview_manifest(
     }
 
 
-def graph_curve(clip: Clip, prop: str) -> dict:
-    """SVG geometry from the same scalar curve as WAAPI, including clipped ease tangents."""
-    curve = property_curve(clip, prop)
+def path_from(curve: list[dict]) -> str:
+    """把一份点表画成 SVG 路径——**唯一那一个画法**：普通曲线与那一层的阶梯共用它。
+
+    `steps(1, end)` 画成「横到边界再竖上去」的直角，正是导出那批 `enable` 格子与浏览器
+    `steps(1, end)` 帧的形状；两条腿因此不是各画各的图。
+    """
     first = curve[0]
     path = [f"M {first['offset']} {first['value']}"]
     for left, right in zip(curve, curve[1:]):
@@ -1058,11 +1062,17 @@ def graph_curve(clip: Clip, prop: str) -> dict:
             )
         else:
             path.append(f"L {right['offset']} {right['value']}")
+    return " ".join(path)
+
+
+def graph_curve(clip: Clip, prop: str) -> dict:
+    """SVG geometry from the same scalar curve as WAAPI, including clipped ease tangents."""
+    curve = property_curve(clip, prop)
     return {
         "property": prop,
         "duration_ticks": clip.duration_ticks,
         "limits": PROPERTY_LIMITS[prop],
-        "path": " ".join(path),
+        "path": path_from(curve),
         "curve": curve,
         "keys": [
             {**key.model_dump(), "at_ticks": key.at_ticks - clip.animation_offset_ticks}
@@ -1070,5 +1080,51 @@ def graph_curve(clip: Clip, prop: str) -> dict:
             if clip.animation_offset_ticks
             <= key.at_ticks
             <= clip.animation_offset_ticks + clip.duration_ticks
+        ],
+    }
+
+
+def layer_curve_points(clip: Clip, node_index: int, prop: str, quantum: int) -> list[dict]:
+    """那一层那一个数在片段里到底怎么变——交回的就是**导出执行的那张窗表**。
+
+    有针：每窗一个点，`easing` 就是引擎给的那个 `steps(1, end)`，再补一个 `offset=1` 的收口点
+    （它不是一枚针，只是把最后那一级台阶画到头）。没针：整段一级台阶，值就是静态那一个数——
+    于是曲线编辑器里看到的平线与检查器里那个框是同一个数，不是在屏幕上另算一遍。
+    """
+    node = layer_nodes(clip)[node_index]
+    table = layer_schedule(clip, quantum)[node_index]
+    windows = layer_curve(clip, table)
+    if not windows:
+        value = round(float(getattr(node, prop)), 9)
+        return [
+            {"offset": 0.0, "value": value, "easing": "steps(1, end)"},
+            {"offset": 1.0, "value": value, "easing": "steps(1, end)"},
+        ]
+    points = [{"offset": w["offset"], "value": w[prop], "easing": w["easing"]} for w in windows]
+    return points + [{"offset": 1.0, "value": points[-1]["value"], "easing": "steps(1, end)"}]
+
+
+def layer_graph(clip: Clip, node_index: int, prop: str, quantum: int) -> dict:
+    """那一层的一条阶梯曲线（读，不写）：与 `graph_curve` 同一份返回形状、同一个画法。
+
+    `limits` 就是契约里那一条带 `LAYER_KEY_LIMITS[prop]`——与检查器里那个框、打点时那句拒绝
+    同一条带；界面不许自己写数字。刻度按这一族唯一的折法折过一次（`animation_offset_ticks`），
+    与 `graph_curve` 里那些针同一个口径。
+    """
+    node = layer_nodes(clip)[node_index]
+    curve = layer_curve_points(clip, node_index, prop, quantum)
+    start, stop = clip.animation_offset_ticks, clip.animation_offset_ticks + clip.duration_ticks
+    return {
+        "property": prop,
+        "layer": node_index,
+        "asset_id": node.asset_id,
+        "duration_ticks": clip.duration_ticks,
+        "limits": list(LAYER_KEY_LIMITS[prop]),
+        "path": path_from(curve),
+        "curve": curve,
+        "keys": [
+            {**key.model_dump(), "at_ticks": key.at_ticks - clip.animation_offset_ticks}
+            for key in sorted(node.keys, key=lambda item: item.at_ticks)
+            if start <= key.at_ticks <= stop
         ],
     }

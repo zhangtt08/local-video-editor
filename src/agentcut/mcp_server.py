@@ -30,6 +30,7 @@ from .contracts import (
     GradeApplyTrackRequest,
     Identifier,
     ImportRequest,
+    LayerProperty,
     LoudnessRequest,
     LutParse,
     MarkerSplitRequest,
@@ -222,6 +223,23 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         """
         return await call(
             "POST", f"/v1/animation/curve?property={property}", clip.model_dump(mode="json")
+        )
+
+    @server.tool(annotations=read)
+    async def animation_layer_curve(
+        clip: Clip, property: LayerProperty, layer: Ticks, quantum: Ticks
+    ) -> dict[str, Any]:
+        """Read one second-input layer's stepped curve — the same window table the export runs.
+
+        `layer` counts the enabled layer nodes on this clip's chain (0-based, the order the
+        compiler uses); `quantum` is that track's render-frame length, so the steps the Agent
+        reads are the steps FFmpeg enables, not a browser-side approximation. Keys come back
+        folded to the visible clip, exactly like `animation_curve`.
+        """
+        return await call(
+            "POST",
+            f"/v1/animation/layer_curve?property={property}&layer={layer}&quantum={quantum}",
+            clip.model_dump(mode="json"),
         )
 
     @server.tool(annotations=read)

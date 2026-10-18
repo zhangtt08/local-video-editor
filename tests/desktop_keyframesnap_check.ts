@@ -104,7 +104,7 @@ const drag = source.split("\n").find((row) => row.includes("gesture.point.at_tic
 assert.ok(drag && /alignTime\(/.test(drag) && !/, false\)/.test(drag), "the drag must be the grabbing gesture");
 for (const [what, pattern] of [
   ["数值框", /alignTime\(value\*TIMEBASE, false\)/],
-  ["播放头添加", /add\(head, sample\.values\[field\.property\], false\)/],
+  ["播放头添加", /add\(head, sample\.values\[propName\], false\)/],
   ["标尺 seek", /seek\(alignTime\([^\n]*, false\)\)/],
 ] as const) {
   assert.ok(pattern.test(source), `${what} must keep its exact position`);

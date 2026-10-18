@@ -30,7 +30,7 @@ from . import fourpoint as fourpoint_module
 from . import markers as marker_plan
 from . import reframe as reframe_plan
 from . import stabilize as stabilize_module
-from .animation import graph_curve, preview_manifest, sample_values
+from .animation import graph_curve, layer_graph, layer_nodes, preview_manifest, sample_values
 from .attributes import attribute_plan
 from .bundles import MAX_BUNDLE_BYTES, export_bundle, import_bundle
 from .colortags import detect_space
@@ -56,6 +56,7 @@ from .contracts import (
     GradeApplyTrackRequest,
     Identifier,
     ImportRequest,
+    LayerProperty,
     LoudnessRequest,
     LutParse,
     MarkerSplitRequest,
@@ -2137,6 +2138,39 @@ def create_app(
     def animation_curve(clip: Clip, property: Property):
         """Read-only geometry for a committed or dry-run clip; no media IO or writes."""
         return graph_curve(clip, property)
+
+    @app.post("/v1/animation/layer_curve", dependencies=auth)
+    def animation_layer_curve(clip: Clip, property: LayerProperty, layer: int, quantum: Ticks):
+        """那一层那一个数的阶梯——只读，交回的就是**导出执行的那张窗表**。
+
+        1.192 起那一层会按窗挪位置、改大小、自己淡，1.204 起还会转；这些台阶以前只能在检查器里
+        逐枚敲，曲线编辑器里看不见——因为读路由只认 `Clip.keyframes` 那一条数组。这一条补的就是
+        那一句：`limits` 取自契约的同一条带，`curve` 取自同一份 `layer_schedule`，刻度折的那一次
+        与别的针一样，界面因此不自己算任何数。`layer` 是「这一条链上启用的那几层」里的第几个
+        （顺序只由 `animation.layer_nodes` 数一次），越界点名拒并说清一共几层。
+        """
+        nodes = layer_nodes(clip)
+        if quantum < 1:
+            raise EditorError(
+                "LAYER_CURVE_TARGET",
+                f"那一层的阶梯得按一个格长来切：quantum 给的是 {quantum}，"
+                "要至少 1 格（界面传的就是这条轨的渲染格长）",
+                422,
+                layer=layer,
+                quantum=quantum,
+                layers=len(nodes),
+            )
+        if not 0 <= layer < len(nodes):
+            raise EditorError(
+                "LAYER_CURVE_TARGET",
+                f"这条片段的链上没有第 {layer + 1} 层外部画面（启用的现在一共 {len(nodes)} 层）："
+                "先在检查器里选一层，或把这一层加回来",
+                422,
+                layer=layer,
+                layers=len(nodes),
+                property=property,
+            )
+        return layer_graph(clip, layer, property, quantum)
 
     @app.post("/v1/animation/sample", dependencies=auth)
     def animation_sample(clip: Clip, at_ticks: Ticks):

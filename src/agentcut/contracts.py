@@ -39,7 +39,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.204.0"
+APP_VERSION = "1.205.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 
@@ -6570,6 +6570,12 @@ def capabilities(
 
             "layer_key_props": list(get_args(LayerProperty)),
 
+            # 1.205：那五个数各自能到几，也只由这里说一次（曲线编辑器画纵轴、检查器打点、写入时
+            # 那句拒绝必须问的是同一条带，不然「界面允许、引擎拒绝」就又回来了）。
+            "layer_key_bands": {
+                name: [band[0], band[1]] for name, band in LAYER_KEY_LIMITS.items()
+            },
+
             "max_curve_points": CURVE_POINT_LIMIT,
 
             "max_lut_samples": LUT_SAMPLE_LIMIT,
@@ -7077,6 +7083,11 @@ def capabilities(
             # 针的额度在 limits.layer_key_limit，一次最多几段在 limits.layer_schedule_segments。
 
             "layer_keyframes": True,
+
+            # 1.205：那一层的阶梯进得了曲线编辑器（读路由 `/v1/animation/layer_curve`）。
+            # 界面这一档只有在这个开关为真时才排那几行属性，老引擎不回就是没有。
+
+            "layer_curve": True,
 
             # 1.193：「叠一层原图」这条边现在监视器真的画（逐档与导出对过表）。哪一段画得了由
             # `preview-manifest` 那一行的 `paintable` 说，界面无条件听引擎，不再自己问素材是什么。

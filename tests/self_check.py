@@ -389,6 +389,7 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
                 "preview_manifest",
                 "animation_curve",
                 "animation_sample",
+                "animation_layer_curve",
                 "preview_candidate",
                 "clip_sample",
                 "captions_export",
@@ -528,6 +529,12 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
             assert tools["project_get"].outputSchema["type"] == "object"
             assert tools["animation_curve"].annotations.readOnlyHint
             assert tools["animation_sample"].annotations.readOnlyHint
+            assert tools["animation_layer_curve"].annotations.readOnlyHint
+            # Agent 那一头读得到的必须是这四个名字：少一个参数或换了名字，工具就成了一座
+            # 只会猜的桥——`layer` 是这一路的第几层，`quantum` 是刻度，两者都不能省。
+            assert set(tools["animation_layer_curve"].inputSchema["properties"]) == {
+                "clip", "property", "layer", "quantum"
+            }, sorted(tools["animation_layer_curve"].inputSchema["properties"])
             assert tools["preview_candidate"].annotations.readOnlyHint
             await check_curve_mcp(session)
             result = await session.call_tool("project_get", {"project_id": project_id})
