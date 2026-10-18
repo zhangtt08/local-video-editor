@@ -32,17 +32,20 @@ const line = (pattern: RegExp, where: string): string => {
 };
 
 // 1) 一条公式、两个常数：让步的是时间线，保留多少由 `--preview-reserve` 一处说。
+// 1.197 圆润化把外框那几排各加高 4px（标题栏 40→44、工作条 40→44、面板头 38→42、状态栏 24→28），
+// 保留数跟着各加 18；最小窗 1016×568 那一格画面重量为 208×117（1.191 是 245×138）——
+// 让的是外框给字腾的那 16px，不是画面：时间线在那一档本来就贴在 180px 的下限上，保留数不参与。
 const rule = line(
   /\.editor \.timeline \{ height: clamp\(\s*180px,\s*var\(--timeline-height, 300px\),\s*calc\(100dvh - var\(--preview-reserve\)\)\s*\);\s*\}/,
   "时间线的高度不是「按视口夹住」那一条公式（窗口一矮就轮到画面被挤没了）"
 );
 assert.ok(rule.includes("100dvh"), "公式里没有视口这一项");
 assert.ok(
-  /\.editor \{[^}]*--preview-reserve: 430px;/.test(css),
-  "常态那一档没交代给画面保留多少（430 这个数是在发布包最小窗口 1016×568 那一格量出来的：留出这一截，画面才有 245×138）"
+  /\.editor \{[^}]*--preview-reserve: 448px;/.test(css),
+  "常态那一档没交代给画面保留多少（448 这个数是在发布包最小窗口 1016×568 那一格重量的：留出这一截，画面才有 208×117）"
 );
 assert.ok(
-  /\.editor\.source-open \{ --preview-reserve: 510px; \}/.test(css),
+  /\.editor\.source-open \{ --preview-reserve: 528px; \}/.test(css),
   "源片那一档的保留数不在它该在的地方（那一屏多一条取源片的横条）"
 );
 
