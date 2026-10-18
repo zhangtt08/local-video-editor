@@ -98,7 +98,34 @@
 才有上面那张绿表。「动画曲线编辑器」那一档起初 `.curve-plot` 不在 DOM，是因为要**先点一颗片段**
 再点那颗分段按钮——而且必须是真 `pointerdown`（`element.click()` 不算选中，片段的选中写在 `onPointerDown` 里），不是那一屏不画画布。
 
-## 当前停放点（1.205：那一层的针画进动画曲线——画布与导出执行的是同一批格子）
+## 当前停放点（1.206：那一层的针在片段条上有交代——顺带把「留 16px」那笔旧账量错了的地方量对）
+
+- **一处数，两处念**：`effects.layerKeyedRows(clip)` 是唯一那一处口径（链里启用的层、按链序数层号、
+  刻度夹在本片段动画窗口内、一行一个 (层, 数) 对）；片段条上「+N」的数目与它的悬停文字都问它要，
+  名字仍各从各的表取（片段 `FIELD_LABEL`、层 `LAYER_KEY_LABEL`）。不新增路由、命令、错误码——
+  牌子只是导航。
+- **牌子该说的数**：真页面（冻结 1.206.0）量到针道里 2 枚（片段自己的 opacity 两枚，一条属性一行）、
+  牌子 **+2**（层上 rotation 两枚 + offset_x 一枚 = 两行）、点进去开的是这一颗片段（`clipValue=c1`）、
+  那一层五行都在、画布 1454×112，引擎那份工程的层针、片段针与静态 25.0 一字未动。
+- **旧账量对了一处**：`.clip-keyframe` 用 `translateX(-50%)` 把 ◆ 钉在中心，1.112 那句
+  `width - 6 - 16` 却把 `left` 当成左边缘——针的右半边从来没让开过牌子。本轮牌子在多一类口径下
+  出现，压住的针当场量到 **1 枚**；换成「牌子自己的方子（CSS `right: 8px` + `min-width: 24px`
+  = `CHIP_KEEP_PIXELS 32`）+ 针伸出去的那一半（`NEEDLE_HALF_PIXELS 10`）」之后复测 **0 枚**。
+  两个常数与那两行 CSS 一起钉在门禁里，谁改了另一边就红。
+- **门禁**：新增 `tests/desktop_layerneedle_check.ts`（口径、窗口夹法、(层,数) 一行、数目、两处标签
+  同源、CSS 与常数不分家、牌子带路）；三条陈旧针跟着换口径（`desktop_keyframelane` /
+  `desktop_keyframedrag` / `desktop_keyframename`——它们钉的是 `hidden.length ? 16 : 0` 与
+  `hidden.map(...).join("、")` 这些**旧形状**，规则没变、名字变了）。六刀变异各自把 ts 门禁整套跑红：
+  五刀红在新增那一档，「牌子不再带路」那一刀红在 `desktop_keyframelane`（它钉着点击开曲线那一句）。
+- **量具的账（还会再踩）**：台子起不来先怀疑上一台还活着——Windows 上杀父进程不带子进程，
+  `rmtree(ignore_errors=True)` 会把「引擎还占着 scratch 目录」悄悄吞掉，于是新台子读到旧密钥、
+  在 `POST /v1/projects` 处拿到 UNAUTHORIZED，看着像产品坏了。本轮改成按端口的主人杀
+  （`Get-NetTCPConnection -LocalPort … -State Listen` 的 OwningProcess）并让台子自己断言
+  「scratch 目录必须真被抹掉」「建工程没回 project 就点名是端口撞了」。
+- **还没给的**：层的针仍不能在片段条上拖（要拖就得把 (层,数) 塞进 `keyframes.move` 那一类命令的口径，
+  那是另一轮）；层针的跨片段复制粘贴仍拒；多遮罩叠加／往转过的框里跟点、DCI-P3 出片与浏览器侧
+  `lut3d`、按可见名的子合成，账继续挂着。
+## 上一轮停放点（1.205：那一层的针画进动画曲线——画布与导出执行的是同一批格子）
 
 - **只加一条读，不加一条写**：新只读路由 `POST /v1/animation/layer_curve`（MCP 同名工具）把
   `animation.layer_graph` 的阶梯交回界面；写针还是 `clip.grade` 那一条整链状态命令，命令表与错误码

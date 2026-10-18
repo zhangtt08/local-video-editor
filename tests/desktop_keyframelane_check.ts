@@ -56,14 +56,15 @@ assert.match(source, /bottom: 1 \+ \(rowOf\.get\(k\.property\) \?\? 0\) \* LANE_
 assert.match(source, /const painted = visible\.filter\(\(k\) => rowOf\.has\(k\.property\)\);/, "needles of hidden properties must not be drawn at all");
 assert.match(source, /painted\.map\(\(k\) => \{/, "and the diamonds come from that painted set, one name for one fact");
 // 「+N」那枚牌子不许被短路成永不出现：断到它的类型与类名，而不是只断前缀。
-assert.match(source, /\{hidden\.length \? <button type="button" className="clip-keyframe-more"/, "the hidden properties get a named chip instead of an unreachable needle");
+assert.match(source, /\{more \? <button type="button" className="clip-keyframe-more"/, "the hidden properties get a named chip instead of an unreachable needle");
 assert.match(source, /setGraphOpen\(true\)/, "and clicking that chip opens the curve editor for this clip");
 // 「点开进动画曲线」必须真的点得开：片段根节点自己吃了 onPointerDown（那是拖动整条片段的手势），
 // 牌子若不把指针交回自己，click 就落在片段上，出路只剩一句提示。装机实测过它点了没反应。
 assert.match(source, /onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}[\s\S]{0,60}onClick=\{\(\) => \{ selectClip\(clip\.id\); setGraphOpen\(true\)/,
   "the chip must keep its own click instead of feeding the clip's move gesture");
-// 针不许爬到「+N」那块牌子上：有隐藏属性时右端留出牌子的位置。
-assert.match(source, /Math\.min\(width - 6 - \(hidden\.length \? 16 : 0\)/, "needles reserve the chip's corner");
+// 针不许爬到「+N」那块牌子上：牌子上场时右端让开的是它自己的方子（CSS 的 right 8 + min-width 24）
+// 再加针伸出去的那一半——1.112 拿 16px 当整块牌子，是把针的 `left`（中心）当成了左边缘。
+assert.match(source, /Math\.min\(width - keep,/, "needles reserve the chip's corner");
 
 // 道距必须容得下针的命中盒，否则相邻两道的矩形互相盖住——那就是这次要修的叠像素缺陷的垂直版本。
 const cssPath = ["desktop/src/styles.css", "src/styles.css"].map((part) => resolve(process.cwd(), part)).find(existsSync);

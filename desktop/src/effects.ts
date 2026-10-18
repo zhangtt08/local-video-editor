@@ -535,6 +535,26 @@ export function layerCurveBase(clip: Clip, field: LayerCurveField): number {
   return typeof value === "number" ? value : 0;
 }
 
+/** 这一颗片段上「有针、但没画在针道里」的那些层行：层的顺序与曲线编辑器那一份同源（链里启用的那几层，
+ *  按链里的顺序数），一行算的是 (层, 属性) 这一对，刻度夹在本片段动画窗口内——与 `clip.keyframes`
+ *  那一条画不下的算法同一个口径。时间线那枚「+N」与曲线编辑器都问这一处要，界面不自数一遍。 */
+export function layerKeyedRows(clip: Clip): { layer: number; property: LayerProperty }[] {
+  const offset = clip.animation_offset_ticks ?? 0;
+  const out: { layer: number; property: LayerProperty }[] = [];
+  let layer = -1;
+  (clip.color?.grade ?? []).forEach((node) => {
+    if (node.kind !== "layer" || !node.enabled) return;
+    layer += 1;
+    const seen = new Set<LayerProperty>();
+    (node.keys ?? []).forEach((key) => {
+      if (key.at_ticks < offset || key.at_ticks > offset + clip.duration_ticks) return;
+      seen.add(key.property);
+    });
+    seen.forEach((property) => out.push({ layer, property }));
+  });
+  return out;
+}
+
 /** 把「这一串新针」折回链里的**唯一一处**：刻度在这里加回 `animation_offset_ticks`
  *  （读的时候引擎折的那一次在这里还原），命令仍是那一条 `clip.grade`——不新增命令、不新增规则。 */
 export function layerKeysOf(clip: Clip, field: LayerCurveField, keys: LayerKeyframe[]): Clip {

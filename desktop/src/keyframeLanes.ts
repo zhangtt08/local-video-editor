@@ -14,6 +14,12 @@ export const LANE_PITCH_PIXELS = 12;
 /** 片段底部留给针道的像素高（`.clip` 的上下内边距之外），界面不许在别处再数一遍。 */
 export const NEEDLE_AREA_PIXELS = 37;
 
+/** ◆ 那一枚的盒子有一半在 `left` 之外（CSS 用 `translateX(-50%)` 把它钉在中心），所以夹的必须是
+ *  中心：`left + 这一半` 才是针的右边缘。1.112 起这句把 16px 当成了整块牌子的宽度，量错了。 */
+export const NEEDLE_HALF_PIXELS = 10;
+/** 「+N」那块牌子从右边缘往里占住的距离：CSS 给它 `right: 8` 与 `min-width: 24`，两处必须一起改。 */
+export const CHIP_KEEP_PIXELS = 32;
+
 export type NeedleRows = { rowOf: Map<Property, number>; lanes: number; hidden: Property[] };
 
 /** 按属性第一次出现的顺序分道；超过 `capacity` 条的属性进 `hidden`（界面据此画 `+N`，不画点不到的针）。 */

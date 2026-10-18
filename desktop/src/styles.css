@@ -378,7 +378,7 @@ canvas.composite-raw { width: 100%; height: 100%; object-fit: contain; display: 
    这两个数由 keyframeMarquee.ts / keyframeLanes.ts 下发到内联样式，这里只留不可移动的那一半。 */
 .clip-needles { position: absolute; bottom: 0; z-index: 1; cursor: crosshair; }
 .clip-marquee { position: absolute; border: 1px dashed var(--accent); background: #50c9c41f; pointer-events: none; z-index: 2; }
-.clip-keyframe-more { position: absolute; right: 9px; bottom: 1px; z-index: 5; font-size: var(--fs-micro); color: #ffe3a3; background: transparent; border: 0; cursor: pointer; padding: 2px 3px; }
+.clip-keyframe-more { position: absolute; right: 8px; bottom: 1px; z-index: 5; font-size: var(--fs-micro); color: #ffe3a3; background: transparent; border: 0; cursor: pointer; padding: 2px 3px; min-width: 24px; text-align: center; }
 .key-readout { position: absolute; top: 1px; left: 50%; transform: translateX(-50%); font-size: var(--fs-micro); padding: 1px 5px; border-radius: var(--r-xs); color: var(--accent-deep); background: var(--accent-soft); white-space: nowrap; z-index: 5; pointer-events: none; }
 .key-readout.blocked { color: #ffdada; background: #5a1f24; }
 .insp-section > summary { cursor: pointer; margin-bottom: 8px; }

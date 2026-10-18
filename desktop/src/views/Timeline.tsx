@@ -6,7 +6,7 @@ import { countHidden, firstView, laneTicks, paintClips, rulerSeconds, unionRange
 import { transitionLabel } from "../engine";
 import type { Clip, Keyframe, Marker, Project, Track } from "../engine";
 import { planKeyframeDrag, planNeedleRemoval } from "../keyframeDrag";
-import { LANE_PITCH_PIXELS, NEEDLE_AREA_PIXELS, laneCapacity, needleId, needleRows } from "../keyframeLanes";
+import { CHIP_KEEP_PIXELS, LANE_PITCH_PIXELS, NEEDLE_AREA_PIXELS, NEEDLE_HALF_PIXELS, laneCapacity, needleId, needleRows } from "../keyframeLanes";
 import { MARQUEE_INSET_PIXELS, type PixelBox, commitPick, draggedEnough, hitsInBand, marqueeBox, togglePick } from "../keyframeMarquee";
 import {
   addLibraryItemToTimeline,
@@ -56,7 +56,7 @@ import {
 import { chordWords } from "../keymap";
 import { copyBlocker, pasteBlocker, pasteTargets } from "../attributePaste";
 import { AttributeDialog } from "./AttributeDialog";
-import { EMPTY_TRACK_HINT, FIELD_LABEL, trackToolBlocker, fadeDragBatch, fadeDragTicks, fadeProperties, fadeWindows, type FadeProperty, type FadeSide } from "../effects";
+import { EMPTY_TRACK_HINT, FIELD_LABEL, LAYER_KEY_LABEL, layerKeyedRows, trackToolBlocker, fadeDragBatch, fadeDragTicks, fadeProperties, fadeWindows, type FadeProperty, type FadeSide } from "../effects";
 import { selectionQuantum, timelineTracks } from "../selection";
 
 const HEAD = 112;
@@ -1063,8 +1063,16 @@ function ClipBlock({
         const { rowOf, hidden } = needleRows(visible, laneCapacity(NEEDLE_AREA_PIXELS));
         const painted = visible.filter((k) => rowOf.has(k.property));
         const laneOf = new Map(painted.map((k) => [needleId(k), rowOf.get(k.property) ?? 0]));
-        // 针与它的影子共用这一句夹法：贴边那枚要看得见，右端那 16px 永远留给「+N」牌子。
-        const needleX = (at: number) => Math.min(width - 6 - (hidden.length ? 16 : 0), Math.max(6, (at / clip.duration_ticks) * width));
+        const layered = layerKeyedRows(clip);
+        // 「+N」说的还是那一句话——画不下的属性有几个——只是数的口径如今带上第二路画面那一层：
+        // 片段自己的针按行算，层的针按 (层, 数) 算。层上的针不在这里拖，牌子只负责把人带进曲线。
+        const more = hidden.length + layered.length;
+        const moreLabels = [...hidden.map((property) => FIELD_LABEL[property] ?? property),
+          ...layered.map((row) => `第 ${row.layer + 1} 层 · ${LAYER_KEY_LABEL[row.property] ?? row.property}`)];
+        // 针与它的影子共用这一句夹法：贴边那枚要看得见；牌子上场时右端让开的是**它自己的方子**
+        // 加针自己伸出去的那一半——1.112 那句 16px 把 left 当成了针的左边缘，量错了一整枚针的宽度。
+        const keep = more ? CHIP_KEEP_PIXELS + NEEDLE_HALF_PIXELS : 6;
+        const needleX = (at: number) => Math.min(width - keep, Math.max(6, (at / clip.duration_ticks) * width));
         return <>
           {painted.length ? <span className="clip-needles" style={{ left: MARQUEE_INSET_PIXELS, right: MARQUEE_INSET_PIXELS, height: NEEDLE_AREA_PIXELS }}
             title="在针道的空处拉一个框，框里的针一起挑中：整组拖就是同时改同一份时间差。按住 Shift 点一枚是加进这一组或从组里摘出去。"
@@ -1093,10 +1101,10 @@ function ClipBlock({
             key={item.id} className={`clip-keyframe ghost${keyDrag.blocked ? " blocked" : ""}`}
             style={{ left: needleX(item.at), bottom: 1 + (laneOf.get(item.id) ?? 0) * LANE_PITCH_PIXELS }}
             aria-hidden="true">◆</span>) : null}
-          {hidden.length ? <button type="button" className="clip-keyframe-more" aria-label={`${hidden.length} 条属性的针没有画在这里`}
-            title={`画不下的针：${hidden.map((property) => FIELD_LABEL[property] ?? property).join("、")}——点开进动画曲线看这条片段的全部针`}
+          {more ? <button type="button" className="clip-keyframe-more" aria-label={`${more} 条属性的针没有画在这里`}
+            title={`画不下的针：${moreLabels.join("、")}——点开进动画曲线看这条片段的全部针（层的针在那里看阶梯，不在这里拖）`}
             onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => { selectClip(clip.id); setGraphOpen(true); }}>+{hidden.length}</button> : null}
+            onClick={() => { selectClip(clip.id); setGraphOpen(true); }}>+{more}</button> : null}
         </>;
       })()}
       {keyDrag ? <span className={`key-readout mono${keyDrag.blocked ? " blocked" : ""}`}>{(keyDrag.at / TIMEBASE).toFixed(3)}s{keyDrag.blocked ? " 已占用" : ""}{keyDrag.targets.length > 1 ? ` ×${keyDrag.targets.length} 枚` : ""}</span> : null}

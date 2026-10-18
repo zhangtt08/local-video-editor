@@ -281,7 +281,7 @@ assert.match(source, /targets: next\.shifts\.map\(\(member, index\) => \(\{ id: 
   "every landing the planner reports is drawn, in the order the group was handed over");
 assert.match(source, /const target = keyDrag && !keyDrag\.duplicate \? keyDrag\.targets\.find\(\(item\) => item\.id === id\) : undefined/, "a copy's source diamonds must not look like they move");
 assert.match(source, /bottom: 1 \+ \(laneOf\.get\(item\.id\) \?\? 0\) \* LANE_PITCH_PIXELS/, "and a copy's ghost rides its own needle's lane, not lane zero");
-assert.equal((source.match(/Math\.min\(width - 6 - \(hidden\.length \? 16 : 0\)/g) ?? []).length, 1, "needles and ghosts share one clamp, so a ghost can never sit on the +N chip");
+assert.equal((source.match(/Math\.min\(width - keep,/g) ?? []).length, 1, "needles and ghosts share one clamp, so a ghost can never sit on the +N chip");
 assert.match(source, /picked\.includes\(id\) \? " selected" : ""/, "the picked needles are the ones that look picked");
 assert.equal((source.match(/keyDrag\.property/g) ?? []).length, 0, "the drag state no longer pretends one needle is the whole gesture");
 assert.match(source, /\$\{duplicate \? "复制" : "拖动"\} \$\{group\.length} 枚关键帧/, "the history line counts the needles that moved");
