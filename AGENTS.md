@@ -130,6 +130,32 @@
   至少留几格」立成一处刻度并由栏自己收缩，而不是再抄一条 clamp）。其余仍是 1.206 那笔：层的针不能在片段条上拖、
   层针跨片段复制粘贴仍拒、多遮罩叠加／往转过的框里跟点、DCI-P3 出片与浏览器侧 `lut3d`、按可见名的子合成。
 
+- **发布账（数字全部从这一轮的运行里读出来）**：`npm run typecheck` 与 `vite build` 干净；70 档壳检全绿
+  （`PASS: 70 shell checks ran under node`）；`scripts/build_engine.py --verify` 通过、冻结引擎自报 1.207.0；
+  `npm run dist` 后根 `AgentCut.exe` 与 `desktop/release/AgentCut-便携版.exe` **逐字节相同**
+  （sha256 `5adb044be6492f4b…`），`released_package_check` 绿：app.asar 带 1.207.0、84 个文件、47 句人能读的中文、
+  随包引擎与语音模型与暂存那份同名；`ruff` / `stylewidth` / `docs_shape`（8 份文档 41 张表 460 行）/ `docs_facts` 绿；
+  空闲机单独跑 `tests/suite_check.py` **129/129**（见 `suite_1207.log`，`SUITE_EXIT=0`）。
+  装机那一腿：`Start-Process .\AgentCut.exe`（便携版自解到 `%TEMP%\3KsJysHBNSu9ycNjC1opMkFjekY`）约 50 秒出窗，
+  Windows Graphics Capture 按窗口取到 1480×900 真帧，标题栏那枚徽标写 **引擎在线 v1.207.0**，
+  打开的是用户自己的工程（瑞典牛排广告短片创作.mp4，监视器里有画面、时间线三段、检查器有内容），
+  `CloseMainWindow()` 之后 `Get-Process -Name AgentCut` 计数 0，无残留。
+- **下一轮（1.208）的具体入口**：
+  1. **检查器里那几段长说明是这一轮装机截图里唯一还在「用小字堆信息」的地方**——工程设置、折叠曲线、
+     工作空间那三段灰底长句（每条三四行、12.5px、挤在 342px 宽的栏里）。苹果的做法是一行说清 + 要细看再去帮助：
+     每段收成一行摘要（正文那一档），全文搬进帮助「区域说明」，判断本身一个字不改（`docs` 与壳检钉的句子要一起改口，
+     帮助里已有的那条事实不许出现第二份）。
+  2. 矮窗里**谁让步**：发布包允许的最小窗（内 1016×568）里素材栏只剩 67px 列表高，因为栏头 42 + 筛选 77 +
+     脚注 77 = 196 吃掉了 263 里的绝大部分；再矮（内高 476，已低于那条下限）列表挤到 0 高、脚注伸出本栏压到时间线。
+     要立的判断是「素材列表至少留几格」由一处刻度说，让步的是脚注那句提示（它同时是帮助里的一条），
+     不是画面（1.191 与 1.194 已经定过：画面不让）。
+  3. **层的针要能在片段条上拖**——这一档是纯界面活，引擎一个字不用改：曲线编辑器写层针走的就是
+     `effects.layerKeyCommand(clip, field, nextKeys)`（`desktop/src/effects.ts:575`，它只发一条 `clip.grade`
+     整链替换，一次落库只涨一个 revision），时间线这边把 `layerKeyedRows` 从「一行一个 (层,数)」扩成能交回
+     每一枚针的表，抓取/吸附/让位照用 `keyframeDrag.planKeyframeDrag` 那套几何，只是障碍表要换成**同一层同一属性**
+     那批针；引擎侧 `_check_layer_clock` 与 `LAYER_KEY_CLASH` 已经把落点兜住。`Timeline.tsx:1068` 那句
+     「层上的针不在这里拖」是这一档要改口的唯一注释，`desktop_layerneedle_check.ts` 钉的牌子口径不能碰坏。
+
 ## 上一轮停放点（1.206：那一层的针在片段条上有交代——顺带把「留 16px」那笔旧账量错了的地方量对）
 
 - **一处数，两处念**：`effects.layerKeyedRows(clip)` 是唯一那一处口径（链里启用的层、按链序数层号、
