@@ -460,6 +460,9 @@ export function layerFrames(windows: LayerWindow[] | null | undefined) {
   return windows.map((point) => ({
     ...layerStyle(point.offset_x, point.offset_y, point.scale),
     opacity: point.mix,
+    // 1.204：每一帧都自己写一遍 transform，**包括 0°**。少写一帧，那一格就会回落到元素行内
+    // 那一个静态转角（针与静态是两个不同的数），阶梯就不是引擎那一张窗表了。
+    transform: `rotate(${point.rotation ?? 0}deg)`,
     offset: point.offset,
     easing: point.easing,
   }));
@@ -472,6 +475,7 @@ export const LAYER_KEY_LABEL: Record<string, string> = {
   offset_y: "这一层往上下",
   scale: "这一层多大一块",
   mix: "这一层的权重",
+  rotation: "这一层转多少度",
 };
 
 /** 1.193：容器里那两层谁在下面——`normal` 要把「已调色」放上面。

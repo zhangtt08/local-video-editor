@@ -68,7 +68,41 @@
 仍未量到的：帮助那一层（它是浮层，不在主视图页签里；样式在 1.199 那轮钉了 `--r-lg` + 边光 +
 背后那层纱的模糊）与交付面板那一屏（也不在那几颗页签里）——下一轮把这两处的入口也接进这把尺。
 
-## 当前停放点（1.203：第二路画面会转——导出与监视器两端逐像素量过）
+## 当前停放点（1.204：那一层的转角也能打点——五个数共用引擎那一张窗表）
+
+- **只多了一个能动的数，不多一条命令**：`LayerProperty` 四个数长成五个
+  （`offset_x / offset_y / scale / mix / rotation`），`LAYER_KEY_LIMITS["rotation"]` 就是静态那一条带
+  （±180），名单仍只由 `capabilities.grade_limits.layer_key_props` 下发。写针走的还是 `clip.grade`
+  那一条整链状态写入：不新增命令、不新增错误码，越界由契约与 `_check_layer_clock` 两路都问。
+- **导出逐窗各转各的，而 0° 那一窗不转**：实测编译串里窗数 2、`rotate=a='90.0*PI/180'` 一次、
+  `maskedmerge` 一次——静态那条「转角为 0 就不出现 rotate」的规矩在逐窗这一腿同样说话。
+  这一条是我自己写错的期望被真实串否掉的（原先猜「两窗就两次 rotate」），门禁按量到的改。
+- **浏览器那一头只有真页面能抓的坑**：`layerFrames` 必须每帧自己写
+  `transform: rotate(θdeg)`，**包括 0°**。少写一帧，那一格就回落到元素行内的静态角度——
+  而带针的那一层，行内那个数与窗表那一个数本来就是两回事。
+- **量到的数**（`tests/layerrotkey_check.py`，底 128、带子 64/192、`normal`、`mix=1`、`scale=1`）：
+  0.4s 左 64 右 192 而上下一档（64/64）；0.9s 上 64 下 192 而左右一档（64/64）；
+  边界取样 0.533s（段起点头一格）已经换新角度、0.466s（段尾前一格）还是旧角度；
+  一枚针钉在静态同一个角度时，串摘掉 `enable` 与没有针逐字节相同。
+- **真页面两档深链**（随包 1.204.0，画面 419×235，静态 `rotation=0`、两枚针 0°/90°）：
+  第一格 `matrix(1,0,0,1,0,0)` 外接框 419×235、第二格 `matrix(0,1,-1,0,0,0)` 外接框 235×419，
+  而 `node.style.transform` **两档都是空的**——画出来的角度只可能来自引擎那份窗表。
+  量具 `ui_1204rot_host.py` + `monitor_request_1204rot.cjs` + `page_proof_1204rot.py`（端口 18833/34）。
+- **门禁与突变**：新增 `tests/layerrotkey_check.py`（五节）；`desktop_layer_check.ts` 添 6 条、
+  `desktop_layerkey_check.ts` 与 `layerkey_check.py` 里钉「四个数 / 还不能打点 / 三个参数的旧调用形状」
+  的旧针跟着名单与签名改准——那是上一轮的字面量在本轮成了违例，不跟着改就是门禁自己在说谎。
+  三条突变各自红：转角不听窗（`rot_of` 只回静态）红在方向那一节、窗表少交一个数红在
+  「每窗那五个键」、动画帧少写 `transform` 红在 `desktop_layer_check`。
+- **交付链**：ruff 与 stylewidth 干净、typecheck 干净、67 档壳检全绿、`build_engine --verify` 过、
+  `npm run dist` 出包、根 exe 与便携版 cmp 相同、`released_package_check` PASS（app.asar 1.204.0）、
+  层族五档（`layer` / `layerkey` / `layerrotate` / `layerrotkey` / `layeroffline`）与
+  `compositepreview` / `grade` 全绿；全套单跑 **128/128 通过**（新增一档从 127 到 128）。
+- **还没到**：「全面替代剪映 / 达芬奇 / AE」仍不成立。层的针进动画曲线编辑器（`CurveEditor` 现在
+  只编 `clip.keyframes` 那一条数组，层的针住在链里，要一条新的引擎读路由才能画那条阶梯——见下一节）、
+  多遮罩叠与旋转框内跟踪、DCI-P3 与浏览器侧 `lut3d`、按可见名做子合成；帮助浮层与交付面板那一屏
+  的量具已写好（`page_overlay_sweep.cjs`），下一轮接进去跑。
+
+## 上一轮停放点（1.203：第二路画面会转——导出与监视器两端逐像素量过）
 
 - **契约只多一个数**：`GradeLayer.rotation`（单位**度**，顺时针为正，`±LAYER_ROTATION_MAX=180`，
   默认 0）。半圈之外没有新形状，所以上限就是 180，不许多给一个数。这一档**只能静态**：

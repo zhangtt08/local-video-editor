@@ -361,15 +361,16 @@ function OpFields({ node, idPrefix, limits, layerTick, layerOffset, onReplace, o
         min={scaleMin * 100} max={scaleMax * 100} step={5} unit="%"
         onCommit={(value) => onCommit({ ...node, scale: round(value / 100) })} />
       {dot("scale", node.scale)}
-      {rotationMax ? <Num id={`${idPrefix}-layer-rot`} label="这一层转多少度" value={node.rotation ?? 0}
+      {rotationMax ? <Num id={`${idPrefix}-layer-rot`} label={LAYER_KEY_LABEL.rotation} value={node.rotation ?? 0}
         min={-rotationMax} max={rotationMax} step={5} unit="°"
         onCommit={(value) => onCommit({ ...node, rotation: round(value) })} /> : null}
+      {rotationMax ? dot("rotation", node.rotation ?? 0) : null}
       <Num id={`${idPrefix}-layer-mix`} label={LAYER_KEY_LABEL.mix} value={node.mix * 100} min={0} max={100} step={5} unit="%"
         onCommit={(value) => onCommit({ ...node, mix: round(value / 100) })} />
       {dot("mix", node.mix)}
       <p className="hint">这一层读的是<b>工程里另一张图</b>：它叠在这段画面走完自己那条链之后——不被这一段的遮罩切、不被这一段的柔焦糊，但转场会把它一起压过去。0% 就是这一层什么都不做。</p>
       <p className="hint">监视器与导出读的是<b>同一份</b>方式与权重（引擎下发那八种，逐档量过）。它必须排在链尾：中间隔着会改画面的节点，两端就不是同一幅画，引擎按 LAYER_POSITION 点名拒。</p>
-      {rotationMax ? <p className="hint">转角<b>顺时针为正</b>，与导出同一个方向（量过：+90° 两腿都把带子的左半边送到上边）。转出去的四个角是<b>透明</b>的，不是黑的——权重折进了这一层自己的 alpha，所以 45° 叠在画面上不会糊出一块方框。这一档<b>还不能打点</b>：它不在引擎那份可动名单里，动的是位置、大小与淡那四个数。</p> : null}
+      {rotationMax ? <p className="hint">转角<b>顺时针为正</b>，与导出同一个方向（量过：+90° 两腿都把带子的左半边送到上边）。转出去的四个角是<b>透明</b>的，不是黑的——权重折进了这一层自己的 alpha，所以 45° 叠在画面上不会糊出一块方框。它和位置、大小、淡是<b>同一张窗表</b>上的第五个数：可以打点，监视器走的就是导出那几次 `enable` 的同一批格子，一格一步。</p> : null}
       {node.asset_id && !images.some((row) => row.id === node.asset_id) ? <p className="hint">这一层指的素材现在不在工程里（或没有验过的媒体），导出会按 LAYER_ASSET_UNAVAILABLE 拒：重新选一张。</p> : null}
       {keys.length ? <div className="keyframe-list">
         {keys.map((item, position) => <div key={`${item.property}-${item.at_ticks}`} className="keyframe-item">

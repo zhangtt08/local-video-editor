@@ -267,7 +267,7 @@ export type LayerKeyframe = {
   bezier?: { x1: number; y1: number; x2: number; y2: number } | null;
 };
 /** 引擎编译好的那一窗：三个数一起换，`easing` 由引擎给（界面不自己补中间态）。 */
-export type LayerWindow = { offset: number; easing: string; offset_x: number; offset_y: number; scale: number; mix: number };
+export type LayerWindow = { offset: number; easing: string; offset_x: number; offset_y: number; scale: number; mix: number; rotation?: number };
 export type SharpenStatic = { id: string; amount: number; bbox: [number, number] };
 export type SharpenWindow = SharpenStatic & { from_ticks: number; to_ticks: number };
 export type SharpenSteps = {

@@ -82,12 +82,12 @@ assert.ok(fields.includes('dot("mix", node.mix)'), "检查器没给这一层的�
 
 // 5) 引擎这一头：Literal、两个常数、三份 capabilities，一个都不缺。
 assert.ok(
-  contracts.includes('LayerProperty = Literal["offset_x", "offset_y", "scale", "mix"]'),
-  "契约里那四个可动的数换了名单"
+  contracts.includes('LayerProperty = Literal["offset_x", "offset_y", "scale", "mix", "rotation"]'),
+  "契约里那五个可动的数换了名单"
 );
-const labelKeys = [...effects.matchAll(/^  (offset_x|offset_y|scale|mix): "/gm)].map((row) => row[1]);
+const labelKeys = [...effects.matchAll(/^  (offset_x|offset_y|scale|mix|rotation): "/gm)].map((row) => row[1]);
 const literal = contracts.match(/LayerProperty = Literal\[([^\]]+)\]/)![1];
-for (const prop of ["offset_x", "offset_y", "scale", "mix"]) {
+for (const prop of ["offset_x", "offset_y", "scale", "mix", "rotation"]) {
   assert.ok(literal.includes(`"${prop}"`), `契约的 LayerProperty 少了 ${prop}`);
   assert.ok(labelKeys.includes(prop), `界面那张表少了 ${prop}`);
 }

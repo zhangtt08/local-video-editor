@@ -39,7 +39,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.203.0"
+APP_VERSION = "1.204.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 
@@ -1622,7 +1622,7 @@ LAYER_ROTATION_MAX = 180.0
 # 1.192：那一层自己也能动。可动的就是它自己那三个数（不是新属性名，也不是新单位），
 # 所以一根针的值域与静态那三个同一条带——否则「打点」与「填框」会给出两套合法区间。
 
-LayerProperty = Literal["offset_x", "offset_y", "scale", "mix"]
+LayerProperty = Literal["offset_x", "offset_y", "scale", "mix", "rotation"]
 
 LAYER_KEY_LIMITS = {
 
@@ -1635,6 +1635,10 @@ LAYER_KEY_LIMITS = {
     # 1.198：这一层自己的淡。值域与静态那个字段 `GradeMix` 同一条带（0..1），所以「在检查器里
     # 拧」与「打一枚针」不会给出两套合法区间。
     "mix": (0.0, 1.0),
+
+    # 1.204：转角也能打点。同一条带（±LAYER_ROTATION_MAX）——与位置、大小、淡那一个理由：
+    # 「拧滑杆」与「落一枚针」必须落在同一区间里，否则界面允许、引擎拒绝。
+    "rotation": (-LAYER_ROTATION_MAX, LAYER_ROTATION_MAX),
 
 }
 

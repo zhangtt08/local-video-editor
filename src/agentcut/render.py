@@ -1367,7 +1367,7 @@ def compile_render_plan(
 
     def size_layer(
         current: str, stage: dict, rect, layer_index: int | None, fan: str | None, gate: str,
-        mix: float,
+        mix: float, rotation: float,
     ) -> str:
         """缩好那一路、裁出相交那一片、相合回去——静态与逐窗共用的这一条腿。
 
@@ -1381,7 +1381,6 @@ def compile_render_plan(
         """
         want_w, want_h, box_w, box_h, left, top, x, y, width, height = rect
         source = f"[{layer_index}:v]" if fan is None else fan
-        rotation = stage["rotation"]
         scaled = (
             f"{source}scale={want_w}:{want_h}:force_original_aspect_ratio=disable"
         )
@@ -1447,19 +1446,23 @@ def compile_render_plan(
             alive: list[tuple[dict | None, tuple]] = []
             for window in tables[index] or [None]:
                 values = (
-                    (stage["offset_x"], stage["offset_y"], stage["scale"], stage["mix"])
+                    (stage["offset_x"], stage["offset_y"], stage["scale"], stage["mix"],
+                     stage["rotation"])
                     if window is None
                     else tuple(window["value"])
                 )
-                # 前三个数是矩形，第四个是这一窗的权重（1.198：那一层自己会淡）——矩形那一只不许
-                # 看见第四个数，所以这里切片；静态那一条腿交回的就是 `stage["mix"]`，串一字未改。
-                # 转角（1.203）不在针那一张名单里，两腿都取 `stage["rotation"]`：同一层各窗同角度。
-                rect = layer_rect(*values[:3], stage["rotation"])
+                # 前三个数是矩形，第四个是这一窗的权重（1.198），第五个是这一窗的转角（1.204）——
+                # 矩形那一只不许看见后面两个数，所以这里切片；静态那一条腿交回的就是
+                # `stage["mix"]` 与 `stage["rotation"]`，串一字未改。
+                rect = layer_rect(*values[:3], values[4])
                 if rect is not None:
                     alive.append((window, rect))
 
             def mix_of(window: dict | None, layer=stage) -> float:
                 return layer["mix"] if window is None else window["value"][3]
+
+            def rot_of(window: dict | None, layer=stage) -> float:
+                return layer["rotation"] if window is None else window["value"][4]
             if not alive:
                 # 整层都在交付帧外（或每一窗都在外面）：这一层什么都不画，也不许多开一路输入。
                 continue
@@ -1477,7 +1480,8 @@ def compile_render_plan(
             plan.owners[layer_index], plan.allocations = clip.id, plan.allocations + 1
             if len(alive) == 1:
                 current = size_layer(
-                    current, stage, alive[0][1], layer_index, None, "", mix_of(alive[0][0])
+                    current, stage, alive[0][1], layer_index, None, "", mix_of(alive[0][0]),
+                    rot_of(alive[0][0]),
                 )
                 continue
             # 多窗：一路解码，`split` 出每窗那一份，各自按自己那一窗的尺寸缩好。窗与窗之间时间不
@@ -1489,7 +1493,8 @@ def compile_render_plan(
                     f":enable='between(t,{sec(window['from_ticks'])},"
                     f"{sec(window['to_ticks'])})'"
                 )
-                current = size_layer(current, stage, rect, None, fan, gate, mix_of(window))
+                current = size_layer(current, stage, rect, None, fan, gate, mix_of(window),
+                                     rot_of(window))
         return current
 
 

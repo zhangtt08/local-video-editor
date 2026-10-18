@@ -160,7 +160,9 @@ def main() -> None:  # noqa: C901 - 一档门禁按节读，比拆成十个互�
             assert caps["limits"]["layer_key_limit"] == LAYER_KEY_LIMIT
             assert caps["limits"]["layer_schedule_segments"] == LAYER_SCHEDULE_MAX
             props = caps["grade_limits"]["layer_key_props"]
-            assert props == ["offset_x", "offset_y", "scale", "mix"], props
+            # 1.204：名单多了一个数（转角也能打点）。这一条按新的口径改准，不是放宽——
+            # 它仍然钉死「就是这几个、就是这个顺序」，界面那张名字表必须一起长。
+            assert props == ["offset_x", "offset_y", "scale", "mix", "rotation"], props
 
             # 1) 端点：带子自己交付时左右两半各是几、底片自己是几
             band_path = seed("带", "bd", "lyk-band")

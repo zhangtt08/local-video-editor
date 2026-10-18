@@ -129,7 +129,7 @@ assert.ok(!/layerStyle\([^)]*offset_x[^)]*,\s*\)/.test(preview), "监视器自�
 // 上限听引擎：卡片读 `limits.layerRotationMax`，而那一份是从 grade_limits 来的——两头都要钉。
 assert.ok(fields.includes("layerRotationMax: app.caps?.grade_limits?.layer_rotation_max ?? 0"), "转角的上下限不是从 capabilities 来的");
 assert.ok(layerBranch.includes("const rotationMax = limits.layerRotationMax ?? 0;"), "层那一格没读 limits 里那一个上限");
-assert.ok(layerBranch.includes('label="这一层转多少度"'), "层那一格没有那颗旋钮");
+assert.ok(layerBranch.includes("-layer-rot`"), "层那一格没有那颗旋钮");
 assert.ok(layerBranch.includes("{rotationMax ? <Num"), "老引擎不回上限时那颗旋钮照样会出现");
 assert.ok(engine.includes("layer_rotation_max?: number;"), "能力表的类型里少了这一格");
 assert.ok(/kind: "layer"[^}]*rotation\?: number/.test(engine), "界面那份层节点的类型里少了转角");
@@ -139,8 +139,16 @@ assert.ok(contracts.includes('"layer_rotation_max": LAYER_ROTATION_MAX'), "上�
 assert.ok(contracts.includes('"layer_rotation": True'), "features 里少了这一档的开关");
 assert.ok(/rotation: Annotated\[float, Field\(ge=-LAYER_ROTATION_MAX, le=LAYER_ROTATION_MAX\)\] = 0\.0/.test(contracts), "GradeLayer 没带那一个默认 0 的转角字段");
 // 转角只能静态：它不在引擎那份可动名单里，界面那句「还不能打点」才说得住（说了能做就是谎）。
-assert.ok(contracts.includes('LayerProperty = Literal["offset_x", "offset_y", "scale", "mix"]'), "可动名单里混进了转角（界面那句话就过时了）");
-assert.ok(layerBranch.includes("还不能打点"), "卡片没说清这一档不能打点");
+// 1.204：转角进了那张可动名单——名单由引擎下发，界面只照着排；名字表里也得有它。
+assert.ok(contracts.includes('LayerProperty = Literal["offset_x", "offset_y", "scale", "mix", "rotation"]'), "可动名单里没有转角（或名单不是那五个数）");
+assert.ok(contracts.includes('"rotation": (-LAYER_ROTATION_MAX, LAYER_ROTATION_MAX)'), "针的转角值域不是静态那一条带");
+assert.ok(layerBranch.includes("label={LAYER_KEY_LABEL.rotation}"), "那颗旋钮没用唯一那张名字表");
+assert.ok(layerBranch.includes('dot("rotation", node.rotation ?? 0)'), "转角没有打点那颗按钮");
+assert.ok(layerBranch.includes("同一张窗表"), "卡片没说清转角与位置、大小、淡共用一张窗表");
+assert.ok(!layerBranch.includes("还不能打点"), "卡片还留着那句过时的「还不能打点」");
+// 逐窗那一份动画帧必须每一帧自己写 transform：少写一帧就回落到行内那一个静态转角，阶梯就不是窗表了。
+const framesBody = effects.slice(effects.indexOf("export function layerFrames"), effects.indexOf("LAYER_KEY_LABEL"));
+assert.ok(framesBody.includes("transform: `rotate(${point.rotation ?? 0}deg)`"), "层那一份动画帧没把转角写进每一帧");
 
 console.log(
   "desktop_layer_check: 第二路画面在界面只读引擎那份清单与那个数——层从清单来、URL 从 streams 来、方式与权重不改写，且 .preview-layer 隔离"

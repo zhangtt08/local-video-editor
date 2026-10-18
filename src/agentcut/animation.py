@@ -457,7 +457,7 @@ def sharpen_schedule(clip: Clip, quantum: int, limit: int | None = None) -> list
     return frame_windows(clip, quantum, SHARPEN_SCHEDULE_MAX if limit is None else limit, value_at)
 
 
-LAYER_KEY_PROPS = ("offset_x", "offset_y", "scale", "mix")
+LAYER_KEY_PROPS = ("offset_x", "offset_y", "scale", "mix", "rotation")
 
 
 def layer_nodes(clip: Clip) -> list:
@@ -484,9 +484,10 @@ def layer_value_at(node, prop: str, at_ticks: int) -> float:
 def layer_schedule(clip: Clip, quantum: int, limit: int | None = None) -> list[list[dict]]:
     """每一层一份窗表；没有针的那一层交回空表，走静态那一条老路，编译串一字不改。
 
-    三个数在**同一次** `frame_windows` 里换值，所以「挪到哪」与「多大一块」不会各自踩各自的
-    格子——与清晰那两颗旋钮共用一张表是同一个理由（`sharpen_schedule`）。导出为每一窗串一路
-    `crop` + 两段 `blend` + 一次 `overlay:enable`，浏览器把同一份窗表画成 `steps(1, end)` 的帧。
+    五个数（位置两个、大小、淡、转角）在**同一次** `frame_windows` 里换值，所以「挪到哪」「多大
+    一块」「转多少」不会各自踩各自的格子——与清晰那两颗旋钮共用一张表是同一个理由
+    （`sharpen_schedule`）。导出为每一窗串一路 `crop` + 两段 `blend` + 一次 `overlay:enable`
+    （转过的那一窗多一段 `rotate` 与一张 mask），浏览器把同一份窗表画成 `steps(1, end)` 的帧。
     """
     ceiling = LAYER_SCHEDULE_MAX if limit is None else max(1, limit)
     tables: list[list[dict]] = []
@@ -504,7 +505,7 @@ def layer_schedule(clip: Clip, quantum: int, limit: int | None = None) -> list[l
 
 
 def layer_curve(clip: Clip, table: list[dict]) -> list[dict]:
-    """浏览器那份：每窗一个点，四个数一起换，`steps(1, end)` 就是导出那批格子的边界。"""
+    """浏览器那份：每窗一个点，五个数一起换，`steps(1, end)` 就是导出那批格子的边界。"""
     span = clip.duration_ticks
     return [
         {
@@ -514,6 +515,8 @@ def layer_curve(clip: Clip, table: list[dict]) -> list[dict]:
             "offset_y": window["value"][1],
             "scale": window["value"][2],
             "mix": window["value"][3],
+            # 1.204：转角也是这一份窗表里的第五个数——上面那份名单的顺序就是这里的下标。
+            "rotation": window["value"][4],
         }
         for window in table
     ]
