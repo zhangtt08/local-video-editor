@@ -323,7 +323,8 @@ function OpFields({ node, idPrefix, limits, layerTick, layerOffset, onReplace, o
     const offsetMax = limits.layerOffsetMax ?? 0;
     const scaleMin = limits.layerScaleMin ?? 0;
     const scaleMax = limits.layerScaleMax ?? 0;
-    // 1.192：能动的那三个数、针的额度，全部听引擎下发；老引擎不回就是空表与 0，按钮一颗都不出现。
+    // 1.192：能动的那四个数（1.198 起加上这一层自己的淡）、针的额度，全部听引擎下发；
+    // 老引擎不回就是空表与 0，按钮一颗都不出现。
     const keyProps = limits.layerKeyProps ?? [];
     const keyLimit = limits.layerKeyLimit ?? 0;
     const keys = node.keys ?? [];
@@ -356,8 +357,9 @@ function OpFields({ node, idPrefix, limits, layerTick, layerOffset, onReplace, o
         min={scaleMin * 100} max={scaleMax * 100} step={5} unit="%"
         onCommit={(value) => onCommit({ ...node, scale: round(value / 100) })} />
       {dot("scale", node.scale)}
-      <Num id={`${idPrefix}-layer-mix`} label="这一层的权重" value={node.mix * 100} min={0} max={100} step={5} unit="%"
+      <Num id={`${idPrefix}-layer-mix`} label={LAYER_KEY_LABEL.mix} value={node.mix * 100} min={0} max={100} step={5} unit="%"
         onCommit={(value) => onCommit({ ...node, mix: round(value / 100) })} />
+      {dot("mix", node.mix)}
       <p className="hint">这一层读的是<b>工程里另一张图</b>：它叠在这段画面走完自己那条链之后——不被这一段的遮罩切、不被这一段的柔焦糊，但转场会把它一起压过去。0% 就是这一层什么都不做。</p>
       <p className="hint">监视器与导出读的是<b>同一份</b>方式与权重（引擎下发那八种，逐档量过）。它必须排在链尾：中间隔着会改画面的节点，两端就不是同一幅画，引擎按 LAYER_POSITION 点名拒。</p>
       {node.asset_id && !images.some((row) => row.id === node.asset_id) ? <p className="hint">这一层指的素材现在不在工程里（或没有验过的媒体），导出会按 LAYER_ASSET_UNAVAILABLE 拒：重新选一张。</p> : null}
@@ -369,7 +371,7 @@ function OpFields({ node, idPrefix, limits, layerTick, layerOffset, onReplace, o
           <button aria-label="删掉这一枚" onClick={() => onCommit({ ...node, keys: keys.filter((_, index) => index !== position) })}>×</button>
         </div>)}
       </div> : null}
-      {keys.length ? <p className="hint">这一层带了 {keys.length} 枚针（引擎的额度 {keyLimit}）。位置与大小<b>在同一次切段里一起换</b>：监视器画的就是导出那几次 `enable` 的同一批格子，一格一步，谁都不补中间态。针钉在这一段之外会被按 LAYER_KEY_RANGE 拒。</p> : null}
+      {keys.length ? <p className="hint">这一层带了 {keys.length} 枚针（引擎的额度 {keyLimit}）。位置、大小与淡<b>在同一次切段里一起换</b>：监视器画的就是导出那几次 `enable` 的同一批格子，一格一步，谁都不补中间态。针钉在这一段之外会被按 LAYER_KEY_RANGE 拒。</p> : null}
     </div>;
   }
   if (node.kind === "composite") {

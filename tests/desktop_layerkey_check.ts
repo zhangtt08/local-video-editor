@@ -46,6 +46,9 @@ assert.ok(layerBody.length > 40, "找不到 layerFrames 那一段函数体");
 assert.ok(layerBody.includes("easing: point.easing"), "层那一份动画帧的 easing 不是引擎给的那个串");
 assert.ok(!/steps\(/.test(layerBody), "层那一份动画帧里界面自己造了一个 steps 串");
 assert.ok(layerBody.includes("layerStyle(point.offset_x, point.offset_y, point.scale)"), "层那一份动画帧的位置不是那唯一的式子算的");
+// 1.198：这一层自己会淡——`opacity` 只能从窗表那一个数来，界面不许再读静态那一份。
+assert.ok(layerBody.includes("opacity: point.mix"), "层那一份动画帧的淡不是从窗表来的");
+assert.equal(count(layerBody, "opacity"), 1, "那一帧里 opacity 写了两遍（那就有了第二个主人）");
 assert.ok(preview.includes("layerFrames(row.windows)"), "监视器没在读清单里那份窗表");
 assert.ok(/if \(!windows\?\.length\) return null;/.test(layerBody), "没有窗的时候界面该走静态那一条，不该造一个点");
 
@@ -65,15 +68,30 @@ assert.ok(fields.includes("limits.layerKeyLimit ?? 0"), "卡片没在读 limits 
 assert.ok(fields.includes("if (!props.includes(property) || limit <= 0 || tick === null) return null;"), "打点那颗按钮没有只认引擎那份名单");
 assert.equal(count(effects, "这一层往左右"), 1, "那一行中文出现了两遍（名字表该只有一张）");
 assert.ok(fields.includes("LAYER_KEY_LABEL"), "检查器没在读那张唯一的名字表");
+// 1.198：权重那行的名字只许有一张表——层那一支读的是表里那一个数，不再自带字面量。
+// 断的是**层那一支**：合成那一级 1.144 起也有一句「这一层的权重」，那是另一个控件、不该被这一条误伤。
+const layerBranch = fields.slice(
+  fields.indexOf('if (node.kind === "layer")'),
+  fields.indexOf('if (node.kind === "composite")')
+);
+assert.ok(layerBranch.length > 200, "读不到层那一支的卡片（层与合成的先后换了？）");
+assert.equal(count(effects, "这一层的权重"), 1, "权重那行的中文名字在名字表里出现了两遍");
+assert.ok(!/label="这一层的权重"/.test(layerBranch), "层那一支自己写了一遍权重的名字（名字表该只有一张）");
+assert.ok(fields.includes("label={LAYER_KEY_LABEL.mix}"), "权重那一行的标签不是从名字表来的");
+assert.ok(fields.includes('dot("mix", node.mix)'), "检查器没给这一层的淡打点的入口（人能打的只有三个数）");
 
 // 5) 引擎这一头：Literal、两个常数、三份 capabilities，一个都不缺。
-assert.ok(contracts.includes('LayerProperty = Literal["offset_x", "offset_y", "scale"]'), "契约里那三个可动的数换了名单");
-const labelKeys = [...effects.matchAll(/^  (offset_x|offset_y|scale): "/gm)].map((row) => row[1]);
+assert.ok(
+  contracts.includes('LayerProperty = Literal["offset_x", "offset_y", "scale", "mix"]'),
+  "契约里那四个可动的数换了名单"
+);
+const labelKeys = [...effects.matchAll(/^  (offset_x|offset_y|scale|mix): "/gm)].map((row) => row[1]);
 const literal = contracts.match(/LayerProperty = Literal\[([^\]]+)\]/)![1];
-for (const prop of ["offset_x", "offset_y", "scale"]) {
+for (const prop of ["offset_x", "offset_y", "scale", "mix"]) {
   assert.ok(literal.includes(`"${prop}"`), `契约的 LayerProperty 少了 ${prop}`);
   assert.ok(labelKeys.includes(prop), `界面那张表少了 ${prop}`);
 }
+assert.ok(contracts.includes('"mix": (0.0, 1.0)'), "针的权重值域与静态那一个字段不是同一条带");
 assert.ok(contracts.includes("LAYER_KEY_LIMIT = "), "针的额度不是契约里那一个数");
 assert.ok(contracts.includes("LAYER_SCHEDULE_MAX = "), "段数上限不是契约里那一个数");
 assert.ok(contracts.includes('"layer_key_limit": LAYER_KEY_LIMIT'), "额度没随 capabilities 下发");

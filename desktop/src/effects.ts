@@ -447,22 +447,25 @@ export const layerStyle = (offsetX: number, offsetY: number, scale: number) => (
 });
 
 /** 引擎那份窗表换成浏览器动画帧：每一窗一格、`easing` 用的就是引擎给的那个串，
- *  三个数一个都不自己算。没有窗（一枚针都没有）就交回 null，那一行走上面那条静态式子。 */
+ *  四个数一个都不自己算。没有窗（一枚针都没有）就交回 null，那一行走上面那条静态式子。
+ *  1.198：`opacity` 也从窗表来——层自己会淡，静态那一个 `mix` 只在没有针的时候说话。 */
 export function layerFrames(windows: LayerWindow[] | null | undefined) {
   if (!windows?.length) return null;
   return windows.map((point) => ({
     ...layerStyle(point.offset_x, point.offset_y, point.scale),
+    opacity: point.mix,
     offset: point.offset,
     easing: point.easing,
   }));
 }
 
-/** 界面说到这一层能动的那三个数时念的是中文名：唯一的表，键与引擎下发的
+/** 界面说到这一层能动的那四个数时念的是中文名：唯一的表，键与引擎下发的
  *  `grade_limits.layer_key_props` 逐字对齐（`tests/desktop_layerkey_check.ts` 钉这一条）。 */
 export const LAYER_KEY_LABEL: Record<string, string> = {
   offset_x: "这一层往左右",
   offset_y: "这一层往上下",
   scale: "这一层多大一块",
+  mix: "这一层的权重",
 };
 
 /** 1.193：容器里那两层谁在下面——`normal` 要把「已调色」放上面。

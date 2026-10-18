@@ -39,7 +39,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.197.0"
+APP_VERSION = "1.198.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 
@@ -1616,7 +1616,7 @@ LAYER_SCALE_MAX = 4.0
 # 1.192：那一层自己也能动。可动的就是它自己那三个数（不是新属性名，也不是新单位），
 # 所以一根针的值域与静态那三个同一条带——否则「打点」与「填框」会给出两套合法区间。
 
-LayerProperty = Literal["offset_x", "offset_y", "scale"]
+LayerProperty = Literal["offset_x", "offset_y", "scale", "mix"]
 
 LAYER_KEY_LIMITS = {
 
@@ -1625,6 +1625,10 @@ LAYER_KEY_LIMITS = {
     "offset_y": (-LAYER_OFFSET_MAX, LAYER_OFFSET_MAX),
 
     "scale": (LAYER_SCALE_MIN, LAYER_SCALE_MAX),
+
+    # 1.198：这一层自己的淡。值域与静态那个字段 `GradeMix` 同一条带（0..1），所以「在检查器里
+    # 拧」与「打一枚针」不会给出两套合法区间。
+    "mix": (0.0, 1.0),
 
 }
 

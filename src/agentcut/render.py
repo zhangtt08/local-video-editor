@@ -1313,12 +1313,14 @@ def compile_render_plan(
             return None
         return want_w, want_h, left, top, x, y, width, height
 
-    def blend_layer(current: str, sized: str, stage: dict, rect, gate: str) -> str:
+    def blend_layer(current: str, sized: str, stage: dict, rect, gate: str, mix: float) -> str:
         """把裁出来的那一片按这一层的方式与权重相合回去（`crop` 与 `overlay` 都在那一片上）。
 
         插值的底必须用裁出来那一份，不然两路尺寸不一样，FFmpeg 在 configure 阶段就死。
         `gate` 在静态那一条腿上就是空串——那一行的串与 1.190 逐字节相同；`blend` 与 `overlay`
         都认 `enable`（1.123 为清晰那对量过 `blend`：关掉的那段原样交回第一个输入）。
+        `mix` 是当窗的那一个权重（1.198：这一层自己会淡）；没有针的那一层交回来的就是
+        `stage["mix"]`，所以静态那一条腿的串一字未改。
         """
         _, _, _, _, x, y, width, height = rect
         canvas = plan.tag("lcv")
@@ -1334,15 +1336,15 @@ def compile_render_plan(
         plan.filters.append(f"{first}{second}blend=all_mode={stage['mode']}{gate}{blended}")
         lerped = plan.tag("llerp")
         plan.filters.append(
-            f"{blended}{pair[1]}blend=all_mode=normal"
-            f":all_opacity={stage['mix']:.6g}{gate}{lerped}"
+            f"{blended}{pair[1]}blend=all_mode=normal" f":all_opacity={mix:.6g}{gate}{lerped}"
         )
         out = plan.tag("lout")
         plan.filters.append(f"{halves[1]}{lerped}overlay=x={x}:y={y}:format=gbrp{gate}{out}")
         return out
 
     def size_layer(
-        current: str, stage: dict, rect, layer_index: int | None, fan: str | None, gate: str
+        current: str, stage: dict, rect, layer_index: int | None, fan: str | None, gate: str,
+        mix: float,
     ) -> str:
         """缩好那一路、裁出相交那一片、相合回去——静态与逐窗共用的这一条腿。
 
@@ -1360,7 +1362,7 @@ def compile_render_plan(
         if (width, height) != (want_w, want_h):
             sized = plan.tag("lyr")
             plan.filters.append(f"{full}crop={width}:{height}:{x - left}:{y - top}{sized}")
-        return blend_layer(current, sized, stage, rect, gate)
+        return blend_layer(current, sized, stage, rect, gate, mix)
 
     def apply_layers(clip, pad: str) -> str:
         """1.189 的第二路画面：把链尾那几层外部图按顺序相合进来（`layer_stages` 是唯一说法）。
@@ -1396,13 +1398,18 @@ def compile_render_plan(
             alive: list[tuple[dict | None, tuple]] = []
             for window in tables[index] or [None]:
                 values = (
-                    (stage["offset_x"], stage["offset_y"], stage["scale"])
+                    (stage["offset_x"], stage["offset_y"], stage["scale"], stage["mix"])
                     if window is None
                     else tuple(window["value"])
                 )
-                rect = layer_rect(*values)
+                # 前三个数是矩形，第四个是这一窗的权重（1.198：那一层自己会淡）——矩形那一只不许
+                # 看见第四个数，所以这里切片；静态那一条腿交回的就是 `stage["mix"]`，串一字未改。
+                rect = layer_rect(*values[:3])
                 if rect is not None:
                     alive.append((window, rect))
+
+            def mix_of(window: dict | None, layer=stage) -> float:
+                return layer["mix"] if window is None else window["value"][3]
             if not alive:
                 # 整层都在交付帧外（或每一窗都在外面）：这一层什么都不画，也不许多开一路输入。
                 continue
@@ -1419,7 +1426,9 @@ def compile_render_plan(
             ]
             plan.owners[layer_index], plan.allocations = clip.id, plan.allocations + 1
             if len(alive) == 1:
-                current = size_layer(current, stage, alive[0][1], layer_index, None, "")
+                current = size_layer(
+                    current, stage, alive[0][1], layer_index, None, "", mix_of(alive[0][0])
+                )
                 continue
             # 多窗：一路解码，`split` 出每窗那一份，各自按自己那一窗的尺寸缩好。窗与窗之间时间不
             # 相交，所以那几次 `overlay` 串起来就是「到这一格换这一片」，不会叠出两层。
@@ -1430,7 +1439,7 @@ def compile_render_plan(
                     f":enable='between(t,{sec(window['from_ticks'])},"
                     f"{sec(window['to_ticks'])})'"
                 )
-                current = size_layer(current, stage, rect, None, fan, gate)
+                current = size_layer(current, stage, rect, None, fan, gate, mix_of(window))
         return current
 
 

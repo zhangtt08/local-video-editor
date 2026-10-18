@@ -457,7 +457,7 @@ def sharpen_schedule(clip: Clip, quantum: int, limit: int | None = None) -> list
     return frame_windows(clip, quantum, SHARPEN_SCHEDULE_MAX if limit is None else limit, value_at)
 
 
-LAYER_KEY_PROPS = ("offset_x", "offset_y", "scale")
+LAYER_KEY_PROPS = ("offset_x", "offset_y", "scale", "mix")
 
 
 def layer_nodes(clip: Clip) -> list:
@@ -504,7 +504,7 @@ def layer_schedule(clip: Clip, quantum: int, limit: int | None = None) -> list[l
 
 
 def layer_curve(clip: Clip, table: list[dict]) -> list[dict]:
-    """浏览器那份：每窗一个点，三个数一起换，`steps(1, end)` 就是导出那批格子的边界。"""
+    """浏览器那份：每窗一个点，四个数一起换，`steps(1, end)` 就是导出那批格子的边界。"""
     span = clip.duration_ticks
     return [
         {
@@ -513,6 +513,7 @@ def layer_curve(clip: Clip, table: list[dict]) -> list[dict]:
             "offset_x": window["value"][0],
             "offset_y": window["value"][1],
             "scale": window["value"][2],
+            "mix": window["value"][3],
         }
         for window in table
     ]

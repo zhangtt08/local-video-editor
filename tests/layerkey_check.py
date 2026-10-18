@@ -159,7 +159,8 @@ def main() -> None:  # noqa: C901 - 一档门禁按节读，比拆成十个互�
             assert caps["features"]["layer_keyframes"] is True
             assert caps["limits"]["layer_key_limit"] == LAYER_KEY_LIMIT
             assert caps["limits"]["layer_schedule_segments"] == LAYER_SCHEDULE_MAX
-            assert caps["grade_limits"]["layer_key_props"] == ["offset_x", "offset_y", "scale"]
+            props = caps["grade_limits"]["layer_key_props"]
+            assert props == ["offset_x", "offset_y", "scale", "mix"], props
 
             # 1) 端点：带子自己交付时左右两半各是几、底片自己是几
             band_path = seed("带", "bd", "lyk-band")
@@ -295,9 +296,85 @@ def main() -> None:  # noqa: C901 - 一档门禁按节读，比拆成十个互�
             assert manifest["windows"] == layer_curve(busy_clip, steps)
             print(f"   {len(crowd)} 枚针下发 {len(steps)} 窗（上限 {LAYER_SCHEDULE_MAX}）")
 
+            # 8) 1.198：这一层自己会淡——`mix` 是第四个能动的数。
+            #    位置与大小一字不动（offset 全 0、scale 1.0 铺满画面框），两格之间只换淡；
+            #    淡若不进画面，早格与晚格读回来就是同一个灰度——那还是「清单里有、画面没有」。
+            faded = [key("mix", 0, 1.0), key("mix", 15, 0.0)]
+            fade_path = seed("淡", "a", "lyk-fade")
+            answer = write(fade_path, [layer(faded, mode="multiply")], tag="lyk-fade-w")
+            assert answer.status_code == 200, answer.text
+            revision[fade_path] = answer.json()["project"]["revision"]
+            full_path = seed("满", "a", "lyk-full")
+            answer = write(full_path, [layer(None, mode="multiply")], tag="lyk-full-w")
+            assert answer.status_code == 200, answer.text
+            revision[full_path] = answer.json()["project"]["revision"]
+
+            fade_movie = render(fade_path, "lyk-fade-m")
+            full_movie = render(full_path, "lyk-full-m")
+            early = grey_at(fade_movie, 0.20, 0.12)
+            late = grey_at(fade_movie, 0.80, 0.12)
+            always = grey_at(full_movie, 0.40, 0.12)
+            assert near(late, base_seen), (late, base_seen)
+            assert near(early, always), (early, always)
+            assert early != late, "两格读到同一个灰度：mix 的针没进画面"
+
+            fade_live = Project(**client.get(fade_path).json()).clips["c"]
+            fade_table = layer_schedule(fade_live, T // 30)[0]
+            assert [w["value"][3] for w in fade_table] == [1.0, 0.0], fade_table
+            row = client.get(fade_path + "/preview-manifest").json()["clips"]["c"]["layer"][0]
+            assert row["windows"] == layer_curve(fade_live, fade_table), row["windows"]
+            fade_plan = Project(**client.get(fade_path).json())
+            joined = compile_render_plan(fade_plan, PRESET, fit="stretch").filters
+            fade_text = "\n".join(joined)
+            steps = re.findall(r"blend=all_mode=normal:all_opacity=([0-9.eE+-]+)", fade_text)
+            assert steps == ["1", "0"], (steps, fade_text[:400])
+
+            # 一枚「就钉在静态那一个数上」的针，与不钉那一份必须一字不差（去掉 :enable 再比）。
+            same_path = seed("同值", "a", "lyk-same")
+            same_grade = [layer([key("mix", 0, 1.0)], mode="multiply")]
+            answer = write(same_path, same_grade, tag="lyk-same-w")
+            assert answer.status_code == 200, answer.text
+            revision[same_path] = answer.json()["project"]["revision"]
+
+            def opacity(where: str) -> list[str]:
+                built = "\n".join(
+                    compile_render_plan(
+                        Project(**client.get(where).json()), PRESET, fit="stretch"
+                    ).filters
+                )
+                return [
+                    line.split("blend=all_mode=normal")[1].split(":enable")[0]
+                    for line in built.splitlines()
+                    if "blend=all_mode=normal" in line
+                ]
+
+            assert len(opacity(full_path)) == len(opacity(same_path)) == 1
+            assert opacity(same_path) == opacity(full_path), (
+                opacity(same_path), opacity(full_path)
+            )
+
+            # 淡与挪位在**同一次**采样里换值，所以两件事的格子边界必须是同一批。
+            both = [
+                key("mix", 0, 1.0), key("mix", 15, 0.0),
+                key("offset_x", 0, -0.5), key("offset_x", 15, 0.5),
+            ]
+            both_path = seed("同批", "a", "lyk-both")
+            answer = write(both_path, [layer(both, mode="multiply")], tag="lyk-both-w")
+            assert answer.status_code == 200, answer.text
+            revision[both_path] = answer.json()["project"]["revision"]
+            both_clip = Project(**client.get(both_path).json()).clips["c"]
+            both_table = layer_schedule(both_clip, T // 30)[0]
+            assert [w["value"][3] for w in both_table] == [1.0, 0.0], both_table
+            assert [w["value"][0] for w in both_table] == [-0.5, 0.5], both_table
+            assert [w["from_ticks"] for w in both_table] == [w["from_ticks"] for w in table]
             print(
-                "PASS: 那一层在两格里各盖了自己那一片、清单==窗表==编译串、"
-                "两腿同一组数、三条拒绝各点名两路都问、keys 缺席读回相同"
+                f"   自己会淡：早格 {early}、晚格 {late}（底片 {base_seen}、"
+                f"满的那份 {always}），编译串两次 all_opacity = {steps}"
+            )
+            print(
+                "PASS: 那一层在两格里各盖了自己那一片、清单==窗表==编译串、两腿同一组数、"
+                "三条拒绝各点名两路都问、keys 缺席读回相同、那一层自己会淡（早格满、晚格 0，"
+                "两格像素真的不一样，同值那枚针与静态一字不差）"
             )
 
 
