@@ -178,10 +178,10 @@ input, select, textarea { font: inherit; color: inherit; }
   height: 32px; padding: 0 13px; border-radius: var(--r-sm);
   border: 1px solid var(--line-strong); background: var(--panel);
   font-size: var(--fs-body); color: var(--ink); white-space: nowrap;
-  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease), transform var(--dur) var(--ease);
 }
 .btn:hover { background: #2b2e34; border-color: #4a505b; }
-.btn:active { background: #34383f; }
+.btn:active { background: #34383f; transform: scale(.97); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #102724; font-weight: 500; }
 .btn.primary:hover { background: var(--accent-deep); border-color: var(--accent-deep); }
 .btn.subtle { border-color: transparent; color: var(--ink-2); }
@@ -228,7 +228,7 @@ input, select, textarea { font: inherit; color: inherit; }
   width: 100%; border: 1px solid var(--line-strong); border-radius: var(--r-sm);
   padding: 8px 11px; background: var(--bg); font-size: var(--fs-body);
 }
-.input:focus { border-color: var(--accent); outline: none; }
+.input:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
 textarea.input { resize: vertical; line-height: 1.5; }
 
 /* ---------- 首页 ---------- */
@@ -429,8 +429,8 @@ select, input[type=range] { color-scheme: dark; }
 .panel-body { flex: 1; overflow-y: auto; min-height: 0; }
 .panel-scroll { flex: 1; overflow-y: auto; min-height: 0; }
 .rail-tabs { gap: 2px; }
-.rail-tabs button { flex: 1; height: 34px; font-size: var(--fs-body); color: var(--ink-2); display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-bottom: 2px solid transparent; }
-.rail-tabs button.active { color: var(--accent-deep); font-weight: 600; border-bottom-color: var(--accent); }
+.rail-tabs button { flex: 1; height: 34px; font-size: var(--fs-body); color: var(--ink-2); display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-bottom: 2px solid transparent; border-radius: var(--r-pill); transition: background var(--dur) var(--ease), color var(--dur) var(--ease); }
+.rail-tabs button.active { color: var(--accent-deep); font-weight: 600; background: var(--accent-soft); border-bottom-color: transparent; }
 
 .coach {
   display: flex; align-items: center; gap: 10px; flex: none;
@@ -464,7 +464,7 @@ select, input[type=range] { color-scheme: dark; }
 .lib-card:hover { border-color: #376864; box-shadow: var(--shadow-sm); }
 .lib-card:active { cursor: grabbing; }
 .lib-card.registered { border-color: #3f6350; }
-.lib-thumb { position: relative; aspect-ratio: 16 / 9; border-radius: var(--r-sm); overflow: hidden; background: #181b20; display: flex; align-items: center; justify-content: center; }
+.lib-thumb { position: relative; aspect-ratio: 16 / 9; border-radius: var(--r-md); overflow: hidden; background: #181b20; display: flex; align-items: center; justify-content: center; }
 .lib-thumb img, .wave-mini { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .wave-mini { background: #1c3027; }
 .lib-kind { position: absolute; left: 4px; bottom: 4px; font-size: var(--fs-micro); padding: 1px 5px; border-radius: var(--r-xs); background: rgba(28, 28, 33, .72); color: #fff; }
@@ -552,8 +552,8 @@ select, input[type=range] { color-scheme: dark; }
 
 /* 时间线 */
 .timeline { border-top: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; height: 296px; flex: none; min-height: 0; }
-.tl-toolbar { height: 38px; flex: none; display: flex; align-items: center; gap: 3px; padding: 0 8px; border-bottom: 1px solid var(--line); }
-.tl-toolbar .divider-v { width: 1px; height: 16px; background: var(--line); margin: 0 5px; }
+.tl-toolbar { height: 38px; flex: none; display: flex; align-items: center; gap: 6px; padding: 0 10px; border-bottom: 1px solid var(--line); }
+.tl-toolbar .divider-v { width: 1px; height: 18px; background: var(--line); border-radius: var(--r-pill); margin: 0 1px; }
 .tl-hint { display: inline-flex; align-items: center; }
 .zoom-ctrl { display: flex; align-items: center; gap: 4px; color: var(--ink-3); }
 .zoom-ctrl input[type=range] { -webkit-appearance: none; width: 108px; height: 3px; background: var(--line-strong); border-radius: var(--r-pill); }

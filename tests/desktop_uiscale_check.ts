@@ -134,6 +134,25 @@ const strays = swings.filter(
 assert.deepEqual(strays, [], `还有各写各毫秒的过渡：${strays.slice(0, 3).join(" | ")}`);
 assert.ok(swings.length >= 5, `读到 ${swings.length} 条过渡，量具没摆开`);
 
+// 6) 1.201：选中态是软底胶囊而不是那条 2px 下划线、聚焦有一圈软环、按下去有一下反馈、工具条不挤
+const tabOn = /\n\.rail-tabs button\.active \{([^}]*)\}/.exec(css);
+assert.ok(tabOn && /background: var\(--accent-soft\)/.test(tabOn[1]), "选中的页签没有那一层软底（还是只靠下划线说话）");
+assert.ok(tabOn && /border-bottom-color: transparent/.test(tabOn[1]), "选中的页签还在用那条 2px 下划线");
+const tabOff = /\n\.rail-tabs button \{([^}]*)\}/.exec(css);
+assert.ok(tabOff && /border-radius: var\(--r-pill\)/.test(tabOff[1]), "页签那一颗不是胶囊");
+assert.ok(/\.input:focus \{[^}]*box-shadow: 0 0 0 3px var\(--accent-soft\)/.test(css), "输入框聚焦没有那一圈软环");
+assert.ok(/\.btn:active \{[^}]*transform: scale\(\.97\)/.test(css), "按下去没有那一下反馈");
+const btnSwing = /\.btn \{[^}]*transition:([^;]*)/.exec(css);
+assert.ok(btnSwing && /transform var\(--dur\)/.test(btnSwing[1]), "那一下反馈不走刻度那条曲线");
+const gapOf = (selector: string) => {
+  const hit = new RegExp(selector + "[^}]*gap: *(\\d+)px").exec(css);
+  assert.ok(hit, `读不到 ${selector} 那一排`);
+  return Number(hit![1]);
+};
+assert.ok(gapOf("\\.tl-toolbar \\{") >= 5, `时间线工具条那一排只有 ${gapOf("\\.tl-toolbar \\{")}px 间隔，挤成一堆不算圆润`);
+assert.ok(/\.tl-toolbar \.divider-v \{[^}]*border-radius: var\(--r-pill\)/.test(css), "工具条里那道竖分隔不是圆的");
+assert.ok(/\.lib-thumb \{[^}]*border-radius: var\(--r-md\)/.test(css), "素材缩略图那一块不是 1.199 那一档圆角");
+
 // 5) 打进发布包的那份 CSS 带着同一套刻度——源码改了、包里没有，用户看到的还是旧的那一套
 const dir = [
   resolve(process.cwd(), "desktop/dist/renderer/assets"),
