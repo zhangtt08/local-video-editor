@@ -123,7 +123,7 @@
   层针 **3 → Alt 点 → 2 → Alt 拖 → 3**，revision **1 → 3**（一次抓取正好涨一次），片段自己那两枚 opacity 一字未动，
   悬停文案当场读到。跨屏形状扫描（`ui_prose_all_1210.cjs`，五屏 × 两档窗口）在补完 `.field > .hint` 与基尺那两条之后 `SUMMARY green`：两档各 21 条面板说明、最长 3 行、最窄 285px（导出那一行修之前是 68px 宽、画 5 行——同一类缺陷的 grid 那一半，见 1.211 补的那一笔）
 - **发布账**：71 档壳检全绿；`build_engine --verify` 过、自报 1.211.0；`npm run dist` 后根 exe 与便携版
-  逐字节相同（sha256 `c6262172f439909166e631cbe7fce64b30380ef3c346fdc22d4b69a1ba0d28dd`）；
+  逐字节相同（sha256 `c6262172f439909166e631cbe7fce64b30380ef3c346fdc22d4b69a1ba0d28dd`）；CSS 那两笔补完之后重出包，两份仍是同一份，当前这一份是 sha256 `881539e599d6cb801f4aaa8f77f956a2855fee7f8c750be8704ba2fb5e6ec8c6`——上一版这里只留了旧哈希，读起来会以为发布的就是那一份（说事实的表面要跟着事实走）；
   `released_package_check` 绿（asar 1.211.0、84 个文件、47 句中文）；typecheck / vite / ruff / stylewidth /
   docs_shape / docs_facts 干净；空闲机单跑 `tests/suite_check.py` **129/129**（`SUITE_EXIT=0`）。
 - **仍没有的那一只手（写下理由，不留悬念）**：在条上「加」一枚层针。要加就得给每条道铺一条透明命中带，
