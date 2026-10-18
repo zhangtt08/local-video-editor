@@ -206,6 +206,14 @@ assert.match(read("desktop/src/views/Home.tsx"), /<p className="hint">默认 108
 // 本轮装机量到 .grade-auto-row 里那条说明是 27px 宽、25 行高。字收短了而形状没修，用户看到的还是那堆竖排小字。
 assert.match(cssCode, /\.batch-actions \{[^}]*flex-wrap: wrap/, "那一行是 flex 却没有换行——说明会被挤成竖排");
 assert.match(cssCode, /\.batch-actions > \.hint \{[^}]*flex: 1 1 100%/, "面板说明没有被安排成自己占一整行");
+// 基尺那一条自己也要会占一行：1.211 的跨屏扫描在导出面板量到 68px/5 行，那一处不是 `.batch-actions`，
+// 补在一处不如写在基尺上——从此任何 flex 容器里的说明默认自己占一行。
+assert.match(hintRule![1], /flex: 0 0 100%/, "面板说明的基尺没有「自己占一整行」这一项");
+assert.match(hintRule![1], /min-width: 0/, "没写 min-width：flex 项会被内容撑破，长句仍可能溢出");
+assert.match(cssCode, /\.scope-body \.hint \{[^}]*flex: none/, "示波器旁那一行的例外必须是明写的例外，不能靠碰巧");
+// grid 那一半：`.field` 是 `68px | 1fr` 两列，说明作为第三个子元素会被排到**下一行的 68px 标签列**里
+// （1.211 扫描在导出面板量到的就是这一处：68px 宽、画 5 行）。
+assert.match(cssCode, /\.field > \.hint \{[^}]*grid-column: 1 \/ -1/, "字段格里的说明没有被排到整行");
 
 console.log(
   `desktop_prose_check: ${panelFiles.length} 个面板文件里 ${counted} 条说明最长 ${LIMIT} 字以内（含 hint 的切变体、含函数拼出来的那 ${spoken.length} 句），` +

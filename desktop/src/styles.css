@@ -521,6 +521,9 @@ select { color-scheme: dark; }
 .insp-section:last-child { border-bottom: none; }
 .row-title { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .field { display: grid; grid-template-columns: 68px minmax(0, 1fr); align-items: center; gap: 8px; margin-bottom: 7px; }
+/* 那一行说明是第三个子元素，不指认的话会被排到**下一行的 68px 标签列**里——1.211 的跨屏扫描量到
+   导出面板那句「选择成片的保存位置…」是 68px 宽、画 5 行。让它自己占满一行（`.fade-row .hint` 同一做法）。 */
+.field > .hint { grid-column: 1 / -1; margin-top: 0; }
 .field.column { grid-template-columns: 1fr; gap: 5px; align-items: start; }
 .field label { font-size: var(--fs-body); color: var(--ink-2); cursor: help; text-align: left; }
 .field .val {
@@ -562,7 +565,11 @@ select { color-scheme: dark; }
 .inline-error { display: flex; gap: 6px; align-items: flex-start; font-size: var(--fs-label); color: var(--danger); background: var(--danger-soft); border: 1px solid #754147; border-radius: var(--r-sm); padding: 7px 9px; margin-bottom: 8px; line-height: 1.5; }
 .inline-ok { display: flex; gap: 6px; align-items: center; font-size: var(--fs-label); color: #91d5af; background: var(--ok-soft); border: 1px solid #3f6350; border-radius: var(--r-sm); padding: 7px 9px; margin-bottom: 8px; }
 /* 1.209：面板上那一行说明走正文那一档、用最暗那一档的字色是不对的——它是要人读的字，不是脚注。字号进 --fs-body，颜色进 --ink-2。 */
-.hint { font-size: var(--fs-body); color: var(--ink-2); line-height: 1.6; margin-top: 8px; }
+/* 面板上那一行说明永远自己占一整行：1.210 在调色那一行量到 27px/25 行，1.211 的跨屏扫描又在
+   导出面板量到 68px/5 行——同一类：父级是 flex 而说明没有基准宽度，汉字能在任意位置折行，
+   于是被挤成竖排。写在基尺这一条上，比一处一处补更不容易漏。
+   `.scope-body .hint` 那处明写 `flex: none`：示波器旁边那一行是跟着画布排的读数，不是要占一行的说明。 */
+.hint { font-size: var(--fs-body); color: var(--ink-2); line-height: 1.6; margin-top: 8px; flex: 0 0 100%; min-width: 0; }
 
 /* 时间线 */
 .timeline { border-top: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; height: 296px; flex: none; min-height: 0; }
