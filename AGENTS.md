@@ -118,6 +118,19 @@
 - **量具的账（第三次踩同一类）**：驱动把两份**按刻度排序**的针表并排 zip 比较，一枚针走远了会换位置，
   于是「没动的那枚」被看成「动了两枚」——对账必须按集合。同一天里同类错误还有一次：`dx` 忘了插值，
   页面侧 ReferenceError，但 pointerdown/move/up 已经执行完，于是「探针没答话」与「拖确实生效了」同时为真。
+- **发布账（数字全部从这一轮的运行里读出来）**：`npm run typecheck` 与 `vite build` 干净；70 档壳检全绿；
+  `scripts/build_engine.py --verify` 通过、冻结引擎自报 1.208.0；`npm run dist` 后根 `AgentCut.exe` 与
+  `desktop/release/AgentCut-便携版.exe` **逐字节相同**（sha256 `c5cd076e1ba98c9b2948…`），
+  `released_package_check` 绿：app.asar 带 1.208.0、84 个文件、47 句人能读的中文、随包引擎与语音模型与暂存那份同名；
+  ruff / stylewidth / docs_shape（8 份文档 41 张表 461 行）/ docs_facts 绿；
+  空闲机单独跑 `tests/suite_check.py` **129/129**（`suite_1208b.log`，`SUITE_EXIT=0`）。
+  装机那一腿：`Start-Process .\AgentCut.exe`（便携版自解到新的 `%TEMP%` 目录）约 55 秒出窗，
+  Windows Graphics Capture 按窗口取到 1480×900 真帧，标题栏那枚徽标写 **引擎在线 v1.208.0**，
+  开的是用户自己的工程（监视器有画面、时间线三条轨、检查器有内容），`CloseMainWindow()` 之后
+  `Get-Process -Name AgentCut` 计数 0，无残留。
+  注：这一轮第一次跑全套时 `released_package_check` 是**红的**（128/129）——那时包里的 asar 还带着 1.207.0，
+  而源码已经 1.208.0。那条红是这条门禁该做的事，不是噪声：它只在「发布产物出自这棵源码树」这句话上把关。
+  重新 `npm run dist` 并把便携版抄到根目录之后，全套重跑才是 129/129。
 - **下一轮（1.209）的具体入口**：
   1. 检查器里工程设置／折叠曲线／工作空间那三段灰底长句仍是「用小字堆信息」——每段收成一行摘要（正文那一档），
      全文搬进帮助「区域说明」；`released_package_check` 那 47 句里被搬走的句子要跟着改口（它数的是打进包里的原话）。
