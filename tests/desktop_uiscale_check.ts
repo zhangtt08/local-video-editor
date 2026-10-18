@@ -128,11 +128,28 @@ assert.ok(
 assert.ok(/--dur: \.\d+s/.test(css), "动效没有那一条时长刻度");
 assert.ok(/--ease: cubic-bezier\(/.test(css), "动效没有那一条曲线刻度");
 const swings = [...css.matchAll(/transition:([^;]*);/g)].map((row) => row[1].trim());
+// ` .var(--dur)` 是作废的声明，不是「走了刻度」——1.207 之前 `.asset-actions` 就靠这个骗过了本档。
 const strays = swings.filter(
-  (text) => !text.includes("var(--dur)") && !text.startsWith("none") && !/^width \.3s$/.test(text)
+  (text) => !/(?:^|\s)var\(--dur\)(?:\s|$)/.test(text) && !text.startsWith("none") && !/^width \.3s$/.test(text)
 );
 assert.deepEqual(strays, [], `还有各写各毫秒的过渡：${strays.slice(0, 3).join(" | ")}`);
 assert.ok(swings.length >= 5, `读到 ${swings.length} 条过渡，量具没摆开`);
+
+// 5b) 最小的那一档只留给「画在图形里的字」。名单之外冒出一处 fs-micro，就是把信息压成小字堆叠。
+const GRAPHIC = [
+  ".tb-project-id", ".transition-badge", ".safe-caption", ".clip-keyframe", ".clip-keyframe-more",
+  ".key-readout", ".coach-n", ".lib-kind", ".lib-flag", ".monitor-badge", ".ruler-label",
+  ".clip .clip-label", ".clip .clip-dur", ".ghost-tag", ".fade-readout", ".playhead .ph-time",
+  ".curve-plot text", ".ruler-marker b", ".grade-graph .gg-io", ".gg-card .gg-drag",
+];
+const stacked: string[] = [];
+const bare = css.replace(/\/\*[\s\S]*?\*\//g, "");
+for (const rule of bare.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+  if (!/font-size:\s*var\(--fs-micro\)/.test(rule[2])) continue;
+  const selector = rule[1].trim().replace(/\s+/g, " ");
+  if (!GRAPHIC.includes(selector)) stacked.push(selector);
+}
+assert.deepEqual(stacked, [], `有 ${stacked.length} 处在名单之外用了最小的那一档：${stacked.slice(0, 6).join("；")}`);
 
 // 6) 1.201：选中态是软底胶囊而不是那条 2px 下划线、聚焦有一圈软环、按下去有一下反馈、工具条不挤
 const tabOn = /\n\.rail-tabs button\.active \{([^}]*)\}/.exec(css);
