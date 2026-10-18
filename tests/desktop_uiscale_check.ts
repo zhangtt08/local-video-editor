@@ -153,6 +153,27 @@ assert.ok(gapOf("\\.tl-toolbar \\{") >= 5, `时间线工具条那一排只有 ${
 assert.ok(/\.tl-toolbar \.divider-v \{[^}]*border-radius: var\(--r-pill\)/.test(css), "工具条里那道竖分隔不是圆的");
 assert.ok(/\.lib-thumb \{[^}]*border-radius: var\(--r-md\)/.test(css), "素材缩略图那一块不是 1.199 那一档圆角");
 
+// 7) 1.202：首页、工程表、交付面板与 Agent 页那一档也放宽——间距不许压回去
+const decl = (selector: string, prop: string) => {
+  const hit = new RegExp("\\n" + selector + " \\{[^}]*" + prop + ": ([^;]*)").exec(css);
+  assert.ok(hit, `读不到 ${selector} 的 ${prop}（这一档没法定数）`);
+  return hit![1];
+};
+const nums = (text: string) => (text.match(/[\d.]+/g) ?? []).map(Number);
+assert.ok(nums(decl("\\.preset-row", "padding"))[0] >= 10, "交付预设那一行上下没让开");
+assert.ok(/var\(--r-md\)/.test(decl("\\.preset-row", "border-radius")), "交付预设那一行不是 1.199 那一档圆角");
+assert.ok(nums(decl("\\.preset", "padding"))[0] >= 10, "对话框里那两张预设卡没让开");
+assert.ok(nums(decl("\\.tool-row", "padding"))[0] >= 7, "Agent 页那一行工具挤成一条线");
+assert.ok(nums(decl("\\.chip", "padding"))[0] >= 5, "标签那颗芯片的上下边太窄");
+assert.ok(/var\(--r-lg\)/.test(decl("\\.export-summary", "border-radius")), "交付摘要那块不是最大那一档圆角");
+assert.ok(nums(decl("\\.pt-item", "height"))[0] >= 52, "工程列表那一行只有 46px 上下的话，等于没放宽");
+assert.ok(nums(decl("\\.pt-row", "gap"))[0] >= 10, "工程表格里那一排还是挤着");
+assert.ok(nums(decl("\\.sc-rows", "gap"))[0] >= 8, "引擎状态那几行挤着");
+assert.ok(nums(decl("\\.es-grid", "gap")).slice(-1)[0] >= 12, "交付摘要的列间距没让开");
+assert.ok(nums(decl("\\.kv", "gap"))[0] >= 10, "属性表那两列挤着");
+assert.ok(nums(decl("\\.chip-cloud", "gap"))[0] >= 8, "标签堆之间的缝没让开");
+assert.ok(nums(decl("\\.card-actions", "gap"))[0] >= 8, "卡片下面那排按钮挤着");
+
 // 5) 打进发布包的那份 CSS 带着同一套刻度——源码改了、包里没有，用户看到的还是旧的那一套
 const dir = [
   resolve(process.cwd(), "desktop/dist/renderer/assets"),
