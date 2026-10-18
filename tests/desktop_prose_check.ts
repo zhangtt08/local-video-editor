@@ -43,7 +43,7 @@ assert.ok(counted >= 24, `只读到 ${counted} 条面板说明，量具没摆开
 assert.deepEqual(long, [], `有 ${long.length} 条面板说明超过 ${LIMIT} 个字：${long.join("；")}`);
 
 // 收下来的字必须还在——搬去帮助，不是删掉。名字对不上就红，谁搬空了谁负责。
-const MOVED_NAMES = ["检查器·那几行为什么只写一句", "调色·节点", "合成·第二路画面", "时间线·划动与滑移", "检查器·音画链接与组合", "合成·叠一层原图", "检查器·文字样式", "调色·执行顺序与并联"];
+const MOVED_NAMES = ["检查器·那几行为什么只写一句", "检查器·遮罩关键帧与角度", "调色·节点", "合成·第二路画面", "时间线·划动与滑移", "检查器·音画链接与组合", "合成·叠一层原图", "检查器·文字样式", "调色·执行顺序与并联"];
 const help = read("desktop/src/views/Help.tsx", "../../desktop/src/views/Help.tsx");
 for (const name of MOVED_NAMES) {
   assert.ok(help.includes(`{ name: "${name}"`), `帮助「区域说明」里没有「${name}」这一条——长段是被删了，不是被搬走的`);
