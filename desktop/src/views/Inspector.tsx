@@ -13,9 +13,10 @@ import {
   DISPLAY_PRIMARIES,
   foldChoices,
   foldDefault,
-  foldsForDisplay,
+  foldProvenance,
   foldWords,
   workingChoices,
+  workingProvenance,
   workingWords,
 } from "../workingSpace";
 import { setFoldTransfer, setWorkingPrimaries } from "../store";
@@ -797,10 +798,7 @@ function ProjectSettings() {
             ))}
           </select>
         </label>
-        <p className="hint">{workingWords(project.settings.working_primaries, app.caps?.working_primaries)}</p>
-        {foldsForDisplay(project.settings.working_primaries)
-          ? <p className="hint dim">预览里那一趟折叠是引擎算的九个系数（抬进线性光、乘一次、落回信号），监视器因此与宽色域成片同色；导出仍按交付声明的那个标记折。</p>
-          : null}
+        <p className="hint" title={workingProvenance(project.settings.working_primaries, app.caps?.working_primaries)}>{workingWords(project.settings.working_primaries, app.caps?.working_primaries)}</p>
       </div>
       <div className="ps-working">
         <label className="mask-shape">折叠曲线
@@ -816,7 +814,7 @@ function ProjectSettings() {
             ))}
           </select>
         </label>
-        <p className="hint">{foldWords(project.settings.fold_transfer, app.caps?.fold_transfers)}</p>
+        <p className="hint" title={foldProvenance(project.settings.fold_transfer, app.caps?.fold_transfers)}>{foldWords(project.settings.fold_transfer, app.caps?.fold_transfers)}</p>
       </div>
       <div className="ps-master">
         <span>母带音量 <b className="mono">{(project.settings.master_gain ?? 1).toFixed(3)}</b></span>

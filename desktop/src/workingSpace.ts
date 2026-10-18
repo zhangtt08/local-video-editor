@@ -29,7 +29,8 @@ export function foldsForDisplay(working: string | undefined): boolean {
   return (working ?? DISPLAY_PRIMARIES) !== DISPLAY_PRIMARIES;
 }
 
-/** 那一行下面说的话：声明的是什么、不替谁做决定、折的那一趟谁算。 */
+/** 面板上那一行：只说这一格现在会怎样，以及走不通时此刻走得通的那条路。
+ *  「这九个数由谁算、导出折到哪一档由谁决定」是来历，挂在同一格的悬停里（`workingProvenance`）。 */
 export function workingWords(
   working: string | undefined,
   published: string[] | undefined,
@@ -38,28 +39,52 @@ export function workingWords(
   const name = LABELS[chosen] ?? chosen;
   if (published === undefined) {
     return (
-      "这台引擎没有下发可选基色的那张表（capabilities.working_primaries），工程就按它唯一认得的 Rec.709 " +
-      "解释：预览与导出都不多折一级，这与 1.159 之前的做法逐字节相同。出路是把引擎升到会回这张表的那一份。"
+      "这台引擎没下发可选基色那张表，工程按 Rec.709 解释、不折；出路是把引擎升到会回这张表的那一份。"
     );
   }
   if (!published.includes(chosen)) {
     return (
-      `引擎下发的名单（capabilities.working_primaries）里没有 ${chosen}，所以这一档现在改不进去——` +
-      "写的时候引擎会拒收并把版本号留在原处，下拉菜单只列名单里的那些。出路是换一台认得这一档的引擎，" +
-      "或在这里选回名单里的一档。"
+      `名单里没有 ${chosen} 这一档，现在改不进去；出路是换一台认得它的引擎。`
     );
   }
   if (!foldsForDisplay(chosen)) {
     return (
-      "工程按 Rec.709 解释调色后的那幅图：预览与导出都不多折一级，这与 1.159 之前的唯一一种做法逐字节相同。" +
-      "素材自己从哪档来仍由那一段的色彩管理判断（那里管的是曲线，不是原色）。"
+      "工程按 Rec.709 解释调色后的那幅图：预览与导出都不多折一级。"
+    );
+  }
+  return `工程按 ${name} 解释调色后的那幅图；预览比导出多一趟折回，两端的数同一份。`;
+}
+
+/** 同一格的悬停：那一行不说的那些数的来历。
+ *
+ * 1.210 的分工：面板那一行说「会发生什么」，来历（九个数由谁算、与导出那张立方体是不是同一条形状、
+ * 导出折到哪一档由谁决定、表叫什么名字）挂在这一格的 `title` 上。这个界面本来就承诺「把鼠标停在控件上
+ * 都有解释」，所以来历有地方说，也不必摊成人眼前那四行灰字。两边各由门禁钉着各自的断言。 */
+export function workingProvenance(working: string | undefined, published: string[] | undefined): string {
+  const chosen = working ?? DISPLAY_PRIMARIES;
+  if (published === undefined) {
+    return (
+      "这一档的名单本该由 capabilities.working_primaries 下发；这台引擎没下发，"
+      + "所以下拉菜单是空的、这一格是灰的，工程按它唯一认得的 Rec.709 走。"
+    );
+  }
+  if (!published.includes(chosen)) {
+    return (
+      `${chosen} 不在 capabilities.working_primaries 那张表里，写进命令引擎会拒收；`
+      + "这一行念的还是工程里现存的那一档，界面不替引擎改一个。"
+    );
+  }
+  if (!foldsForDisplay(chosen)) {
+    return (
+      "这一档与监视器同色，不额外折，所以这里没有那九个数。"
+      + "素材那一段从哪儿读、往哪儿写，由每一段自己的色彩管理那一节回答，这一格不揽。"
     );
   }
   return (
-    `工程按 ${name} 解释调色后的那幅图。监视器是 sRGB，所以预览在链子最后多一趟 ${chosen}→Rec.709 的折叠：` +
-    "先按那条曲线抬进线性光、乘九个系数、再落回信号，与导出那张立方体同一条形状。九个系数由引擎算" +
-    "（gamut.primaries_matrix）随清单一起交下来，界面一份都不抄；导出折到哪一档由交付声明的那个色彩标记" +
-    "决定，同一张表。它不替你判断素材从哪档来——那是每一段自己的色彩管理。"
+    "那九个数由引擎算（gamut.primaries_matrix）随预览清单交下来，界面一份都不抄；"
+    + "折的是「抬进线性光—乘—落回」那三趟，与导出那张立方体同一条形状，所以两端是同一份数；"
+    + "导出折到哪一档由交付声明的那个色彩标记决定。"
+    + "素材那一段从哪儿读、往哪儿写，由每一段自己的色彩管理那一节回答，这一格不揽。"
   );
 }
 
@@ -75,35 +100,52 @@ export function foldDefault(published: FoldRow[] | undefined): string {
   return published?.[0]?.id ?? "";
 }
 
-/** 这一格下面说的话：三种情形各自说清自己的范围与出路，不许把「同名两条曲线」这件事藏起来。 */
+/** 这一格下面说的话：只说这一档现在管哪一步；走不通时点名此刻走得通的那条路。 */
 export function foldWords(chosen: string | undefined, published: FoldRow[] | undefined): string {
   if (published === undefined || published.length === 0) {
     return (
-      "这台引擎没有下发折叠曲线那张表（capabilities.fold_transfers），所以它按自己唯一认得的那一条折：" +
-      "预览那两级表与导出那张立方体都与 1.161 之前逐字节相同。出路是把引擎升到会回这张表的那一份。"
+      "这台引擎没下发折叠曲线那张表，它按自己唯一认得的那一条折；出路是把引擎升到会回这张表的那一份。"
     );
   }
   const names = published.map((row) => row.id);
   if (!names.includes(chosen ?? foldDefault(published))) {
     return (
-      `引擎下发的名单（capabilities.fold_transfers）里没有 ${chosen}，所以这一档现在改不进去——` +
-      "写的时候引擎会拒收并把版本号留在原处，下拉菜单只列名单里的那些。出路是在这里选回 " +
-      names.join("、") + " 中的一档。"
+      `名单里没有 ${chosen} 这一档；出路是在这里选回 ${names.join("、")} 中的一档。`
     );
   }
   if ((chosen ?? foldDefault(published)) === foldDefault(published)) {
     return (
-      "折那九个数之前，先把存储值按容器那一格本来的意思抬进线性光（BT.709 的分段曲线），" +
-      "折完再按同一条落回来；导出那张立方体也是这一条。这与 1.161 之前的做法逐字节相同。" +
-      "要留意调色链里那个「rec709」曲线节点用的是纯幂 2.4——同一个名字两条曲线，所以下面那一格" +
-      "把「按哪一条折」交给你声明，引擎不替这一幅像素猜它是谁编的。"
+      "折那九个数之前先按 BT.709 分段曲线抬进线性光，折完按同一条落回。"
     );
   }
   return (
-    "折那九个数之前，按你选的这一档把存储值抬进线性光，折完再按同一条落回信号；" +
-    "预览那两级表与导出那张立方体用的是同一档（由引擎算，界面一份都不抄）。这一档该选谁，" +
-    "问的是「画面上那些存储值实际是哪条曲线编出来的」：本机编码器把容器那一格写下去时，" +
-    "实际用的就是纯幂 2.4；按标准那一格的本意读它才是分段曲线。配对与配错差多少，本轮由 " +
-    "tests/foldcurve_check.py 在同一批格子上两个方向都量过，那两个数写在 README 那一行。"
+      "折那九个数之前，按你选的这一档把存储值抬进线性光再落回信号。"
+    );
+}
+
+/** 同一格的悬停：那一行不说的来历——曲线叫什么、与导出那趟是不是同一条、数在哪儿量过。 */
+export function foldProvenance(chosen: string | undefined, published: FoldRow[] | undefined): string {
+  const names = (published ?? []).map((row) => row.id);
+  if (names.length === 0) {
+    return (
+      "这一档的名单本该由 capabilities.fold_transfers 下发；这台引擎没下发，"
+      + "所以下拉菜单是空的、这一格是灰的，曲线由引擎那唯一一条说了算。"
+    );
+  }
+  if (!names.includes(chosen ?? names[0])) {
+    return (
+      `${chosen} 不在 capabilities.fold_transfers 那张表里，写进命令引擎会拒收；`
+      + "下拉菜单列的就是那张表，界面不替它添一档。"
+    );
+  }
+  if ((chosen ?? names[0]) === names[0]) {
+    return (
+      "链子里另有一条纯幂 2.4 的曲线，与这一档那条分段曲线不是一回事，别按名字挑。"
+      + "这一档与 1.161 之前的做法逐字节相同。"
+    );
+  }
+  return (
+    "这一格问的是按哪条曲线编出来的：预览折的那三趟与导出那张立方体同一条形状，"
+    + "两条曲线各自折过哪几档、量过哪两个数，见 tests/foldcurve_check。"
   );
 }

@@ -97,7 +97,7 @@ const ui = readFileSync(SRC + "desktop/src/ui.tsx", "utf8");
 assert.match(ui, /<label title=\{hint\}>/, "field-hint-is-only-a-tooltip");
 assert.match(
   panel,
-  /\{isSequence && \(\s*<p className="hint">[\s\S]{0,300}?声音不在里面[\s\S]{0,160}?起始时间码也进不去[\s\S]*?<\/p>\s*\)\}/,
+  /\{isSequence && \(\s*<p className="hint"[^>]*>[\s\S]{0,300}?声音不在里面[\s\S]{0,160}?起始时间码也进不去[\s\S]*?<\/p>\s*\)\}/,
   "sequence-note-is-visible",
 );
 assert.match(panel, /请再交一份 mp4／mov/, "visible-note-names-the-exit");

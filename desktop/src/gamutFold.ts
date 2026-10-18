@@ -146,10 +146,27 @@ function countMatricesInside(nodes: GradeNode[]): number {
 /** 折过之后那一行说什么。没折过就说不许说「已经」；折过就把换档与叠加这两件事分清楚。 */
 export function foldWords(row: GamutMatrixPreset | null): string {
   if (!row) {
-    return "这一段现在没按那张表折过基色。挑一档按「折进这一格」：九个数字是引擎算的，界面只搬过来。";
+    return (
+      "这一段现在没按那张表折过基色；挑一档按「折进这一格」。"
+    );
   }
   return (
-    `这一段已经按表折了「${row.label}」。再点同一档是换掉那一枚节点，不是叠第二枚；` +
-    "换一档也是换同一枚。要回到没折的样子，删掉那张卡片上的通道混合。"
+      `这一段已经按表折了「${row.label}」；再点同一档是换掉那一枚节点。`
+    );
+}
+
+/** 同一格的悬停：那一行不说的来历——那九个数谁算的、两端读的是不是同一枚节点。
+ *  1.210：这些话原来各占面板上一行灰字，与上面那句同属「这一格现在怎样」和「它的来历」两件事，
+ *  拆开之后一行留在眼前、来历挂在这格的 `title` 上（`desktop_prose_check` 钉着这里不许长出第二行灰字）。 */
+export function foldProvenance(row: GamutMatrixPreset | null): string {
+  if (!row) {
+    return (
+      "这一格里还没有通道混合。折进来那九个数字由引擎算（基色矩阵，随 capabilities.gamut_matrices 交下来），"
+      + "界面一份都不抄，也不在这里自己算矩阵。"
+    );
+  }
+  return (
+    `「${row.label}」那九个数字由引擎算（基色矩阵，随 capabilities.gamut_matrices 交下来），界面只搬过来；`
+    + "预览那张九宫格与导出那条链子读的是同一枚节点，所以「预览一个色、成片另一个色」在这一步上没有发生的余地。"
   );
 }

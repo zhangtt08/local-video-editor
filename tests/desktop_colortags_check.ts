@@ -194,7 +194,11 @@ assert.ok(grade.includes("readClipColorSpace(spaceProjectId, clipId)"), "这一�
 assert.ok(grade.includes("shouldReadColorSpace(manageAutoGate, manageAuto, assetKind === \"audio\")"), "问不问由那一处判断，含音频那条拒绝");
 assert.ok(grade.includes("autoSourceBlocker(manageAutoGate, manageAuto, spaceRead, spacePhase)"), "亮不亮读的是那份回执，不是标记");
 assert.ok(grade.includes("manageAutoBlock !== null"), "回执说走不通的时候，这条链子真的把按钮按住");
-assert.ok(grade.includes("{autoOn ? <p className=\"hint\">{spaceLine}</p> : null}"), "问到的那句话写在行上，不是只藏在悬停里");
+assert.ok(grade.includes("{autoOn ? <p className=\"hint\" title={tagTable ?? undefined}>{spaceLine}</p> : null}"), "问到的那句话写在行上，不是只藏在悬停里");
+// 1.210：引擎那张标记对照表是「这一格认得哪些曲线」的来历，与那份回执不是同一件事；
+// 它原来各占一行灰字（一格三行），现在挂在那一行的 title 上，眼前只留一行。
+assert.match(grade, /<p className="hint" title=\{tagTable \?\? undefined\}>\{spaceLine\}<\/p>/, "那张对照表挂在这一行的 title 上");
+assert.equal(grade.split("transferTagWords(").length - 1, 1, "念表只在面板一处调用，别在别处再念一遍");
 
 // ③′ 门禁的来源是 capabilities，而且那句「这一版引擎没有」看得见。
 assert.ok(grade.includes("autoSourceOffered(app.caps?.features)"), "有没有这一档只问 capabilities");

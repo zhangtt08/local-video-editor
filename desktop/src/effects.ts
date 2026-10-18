@@ -737,20 +737,31 @@ export function fadeBlocker(
   );
 }
 
-/** 1.107：检查器里那一行额度读数。它只做两件事——按 revision 决定能不能显示、把引擎给的字填进句子。
- *  「还放得下几张」是引擎除的（`room_cubes` / `room_tables`）；这里再除一次就是第二套规则。 */
-export function gradeCapacityLine(
+/** 1.107：检查器里那一行额度读数（`line`）与它的来历（`detail`，挂在这一行的 title 上）。
+ *  它只做两件事——按 revision 决定能不能显示、把引擎给的字填进句子；「还放得下几张」是引擎除的
+ *  （`room_cubes` / `room_tables`），这里再除一次就是第二套规则。
+ *  1.210：这一句原来把已用多少、每张要多少、明细列了几条全排在眼前，装机量到画上来四行；
+ *  眼前那一行只留「还放得下几张」这一件能决定下一步的事，其余数字是来历。 */
+export function gradeCapacity(
   cached: { value: GradeCapacity; revision: number } | null,
   revision: number | undefined,
-): string | null {
+): { line: string; detail: string } | null {
   if (!cached || revision === undefined || cached.revision !== revision) return null;
   const v = cached.value;
-  const used = v.samples
-    ? `本工程的查找表已用 ${v.samples} / ${v.limit} 个采样点，`
-    : `本工程的查找表额度是 ${v.limit} 个采样点，`;
   const listed = Object.keys(v.by_clip).length;
-  const detail = v.clips_with_tables > listed
-    ? `（带表的片段共 ${v.clips_with_tables} 条，明细列前 ${listed} 条，另有 ${v.other_clips} 条未列）`
-    : "";
-  return `${used}还放得下 ${v.room_cubes} 张满格 3D 立方（每张 ${v.cube_samples} 个采样点），或 ${v.room_tables} 张满格 1D 表（每张 ${v.table_samples} 个采样点）${detail}。`;
+  const detail = (
+    v.samples
+      ? `本工程的查找表已用 ${v.samples} / ${v.limit} 个采样点；`
+      : `本工程的查找表额度是 ${v.limit} 个采样点，还没用过；`
+  )
+    + `一张满格 3D 立方要 ${v.cube_samples} 个、一张满格 1D 表要 ${v.table_samples} 个采样点，`
+    + `所以还放得下 ${v.room_cubes} 张立方或 ${v.room_tables} 张 1D 表——这几个数都是引擎除的，界面不再除一遍`
+    + (v.clips_with_tables > listed
+      ? `；带表的片段共 ${v.clips_with_tables} 条，明细列前 ${listed} 条，另有 ${v.other_clips} 条未列`
+      : "")
+    + "。";
+  return {
+    line: `查找表还放得下 ${v.room_cubes} 张满格 3D 立方、${v.room_tables} 张满格 1D 表。`,
+    detail,
+  };
 }

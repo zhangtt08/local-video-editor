@@ -554,8 +554,11 @@ select { color-scheme: dark; }
 .json-box .k, .code-block .k { color: #8ab4ff; }
 .json-box .s { color: #9fd8a8; }
 .json-box .n { color: #f0c674; }
-.batch-actions { display: flex; gap: 6px; }
+.batch-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .batch-actions .btn { flex: 1; justify-content: center; }
+/* 那一行说明要自己占一整行：汉字能在任意位置折行，flex 不换行时它会被挤到只放得下一个字——
+   装机量到过 27px 宽、25 行高（本轮那一页的读数）。`.fade-row .hint` 用 grid-column 干的是同一件事。 */
+.batch-actions > .hint { flex: 1 1 100%; margin: 2px 0 0; }
 .inline-error { display: flex; gap: 6px; align-items: flex-start; font-size: var(--fs-label); color: var(--danger); background: var(--danger-soft); border: 1px solid #754147; border-radius: var(--r-sm); padding: 7px 9px; margin-bottom: 8px; line-height: 1.5; }
 .inline-ok { display: flex; gap: 6px; align-items: center; font-size: var(--fs-label); color: #91d5af; background: var(--ok-soft); border: 1px solid #3f6350; border-radius: var(--r-sm); padding: 7px 9px; margin-bottom: 8px; }
 /* 1.209：面板上那一行说明走正文那一档、用最暗那一档的字色是不对的——它是要人读的字，不是脚注。字号进 --fs-body，颜色进 --ink-2。 */
@@ -1040,7 +1043,7 @@ table.table tr.current td { background: var(--accent-soft); }
 .ps-limiter input { accent-color: #d9a441; }
 .ps-working { display: grid; gap: 4px; margin: 4px 0 6px; }
 .ps-working select { width: 100%; }
-.ps-working .hint { margin: 0; font-size: var(--fs-label); }
+.ps-working .hint { margin: 0; }
 .ps-master { display: flex; gap: 8px; align-items: center; justify-content: space-between; font-size: var(--fs-body); margin: 4px 0 6px; }
 .batch-row { display: flex; gap: 6px; align-items: center; font-size: var(--fs-body); color: var(--text, #e8e2d6); margin: 6px 0; }
 .batch-row input { accent-color: #d9a441; }

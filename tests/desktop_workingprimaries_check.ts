@@ -14,9 +14,11 @@ import {
   DISPLAY_PRIMARIES,
   foldChoices,
   foldDefault,
+  foldProvenance,
   foldsForDisplay,
   foldWords,
   workingChoices,
+  workingProvenance,
   workingWords,
 } from "../desktop/src/workingSpace";
 
@@ -51,27 +53,38 @@ for (const choice of fresh) {
   assert.ok(["rec709", "sstv-1"].includes(choice.value), "可选项只能是引擎下发的那些");
 }
 
-// 三句话各自守住各自的事实。
+// 三句话各自守住各自的事实。1.210 的分工：`workingWords` 是面板那一行（现在会怎样 + 走不通时的出路），
+// `workingProvenance` 是同一格的悬停（这些数谁算的、与导出是不是同一条形状、那张表叫什么）。两边各钉各的。
 const plain = workingWords("rec709", ["rec709", "p3-d65"]);
-assert.ok(plain.includes("逐字节相同"), `默认档要说清与旧版一致：${plain}`);
+assert.ok(plain.includes("不多折一级"), `默认档要说清预览与导出都不多折一级：${plain}`);
 assert.ok(!plain.includes("九个系数"), `默认档不许声称折了一级：${plain}`);
+assert.ok(!plain.includes("primaries_matrix"), `来历不许占面板那一行：${plain}`);
+// 「与 1.159 之前逐字节相同」是对代码历史的断言，它该在帮助与回归测试里，不许凭空消失。
+assert.ok(readFileSync(REPO_ROOT + "desktop/src/views/Help.tsx", "utf8").includes("逐字节相同"), "「与 1.159 之前逐字节相同」从包里消失了——那是搬丢了，不是收短了");
 const wide = workingWords("p3-d65", ["rec709", "p3-d65"]);
-assert.ok(wide.includes("primaries_matrix"), `那九个数要说是引擎算的：${wide}`);
-assert.ok(wide.includes("线性光"), `要说清折的是「抬进线性光—乘—落回」那三趟，不是一个矩阵：${wide}`);
-assert.ok(wide.includes("立方体"), `要说清这与导出那张立方体同一条形状：${wide}`);
-assert.ok(wide.includes("交付"), `导出折到哪一档要说清由谁决定：${wide}`);
-assert.ok(wide.includes("每一段自己的色彩管理"), `不许把素材那一档的判断揽过来：${wide}`);
+assert.ok(wide.includes("多一趟折回"), `宽档要说清预览比导出多折的那一趟：${wide}`);
+assert.ok(wide.includes("两端的数同一份"), `要说清两端读的是同一份数：${wide}`);
+assert.ok(!wide.includes("立方体"), `来历（与导出那张立方体同一条形状）已经挂在悬停里，不许再回到眼前这一行：${wide}`);
+const wideProvenance = workingProvenance("p3-d65", ["rec709", "p3-d65"]);
+assert.ok(wideProvenance.includes("primaries_matrix"), `那九个数要说是引擎算的：${wideProvenance}`);
+assert.ok(wideProvenance.includes("线性光"), `要说清折的是「抬进线性光—乘—落回」那三趟，不是一个矩阵：${wideProvenance}`);
+assert.ok(wideProvenance.includes("立方体"), `要说清这与导出那张立方体同一条形状：${wideProvenance}`);
+assert.ok(wideProvenance.includes("交付"), `导出折到哪一档要说清由谁决定：${wideProvenance}`);
+assert.ok(wideProvenance.includes("每一段自己的色彩管理"), `不许把素材那一档的判断揽过来：${wideProvenance}`);
 const stale = workingWords("display-p3", ["rec709", "p3-d65"]);
 assert.ok(stale.includes("改不进去"), `名单里没有就要说这一档改不进去：${stale}`);
-assert.ok(stale.includes("拒收"), `要说清引擎会拒收：${stale}`);
-assert.ok(stale.includes("working_primaries"), `要点名那张表：${stale}`);
+assert.ok(stale.includes("display-p3"), `拒绝要点名被拒的是哪一档：${stale}`);
 assert.ok(stale.includes("出路"), `拒绝必须给一条此刻真走得通的路：${stale}`);
-// 引擎整个没下发这张表：这一档既不存在也折不动，说的必须还是默认档那句。
+const staleProvenance = workingProvenance("display-p3", ["rec709", "p3-d65"]);
+assert.ok(staleProvenance.includes("拒收"), `要说清引擎会拒收：${staleProvenance}`);
+assert.ok(staleProvenance.includes("working_primaries"), `要点名那张表：${staleProvenance}`);
+// 引擎整个没下发这张表：这一档既不存在也折不动，说的必须还是默认档那句 + 走得通的那条路。
 const noTable = workingWords("rec709", undefined);
-assert.ok(noTable.includes("逐字节相同"), `老引擎也要说清按默认档走：${noTable}`);
 assert.ok(!noTable.includes("九个系数"), `没有那张表就不许声称折了一级：${noTable}`);
 assert.ok(noTable.includes("出路"), `这条路走不通时要点名走得通的那条：${noTable}`);
-assert.equal(workingWords(undefined, undefined).includes("逐字节相同"), true, "双缺省时也是默认档的话");
+const noTableProvenance = workingProvenance("rec709", undefined);
+assert.ok(noTableProvenance.includes("working_primaries"), `老引擎那句也要点名那张表：${noTableProvenance}`);
+assert.equal(workingWords(undefined, undefined).includes("Rec.709"), true, "双缺省时也是默认档的话");
 
 // 兜底值只许写在 workingSpace 一处：视图与 store 都读那个常量。
 assert.ok(
@@ -83,6 +96,9 @@ assert.ok(viewBlock.length > 0, "那一格要在工程面板里");
 assert.ok(!viewBlock.includes('?? "rec709"'), `视图不许自己抄默认值：${viewBlock.slice(0, 200)}`);
 assert.ok(viewBlock.includes("DISPLAY_PRIMARIES"), "视图读的是那个常量");
 assert.ok(viewBlock.includes("workingChoices(app.caps?.working_primaries)"), "下拉菜单读的是能力表");
+// 来历要有地方说，而且说的是这一格自己的来历：它挂在那一行的 title 上，不占眼前那一行。
+assert.ok(viewBlock.includes("title={workingProvenance("), `那一行的来历挂在它自己的 title 上：${viewBlock.slice(0, 240)}`);
+assert.equal(viewBlock.split("workingProvenance(").length - 1, 1, "来历只在 title 里出现一次，别再回到面板上");
 const setterBlock = store.slice(store.indexOf("setWorkingPrimaries"), store.indexOf("\n}", store.indexOf("setWorkingPrimaries")));
 assert.ok(!setterBlock.includes('?? "rec709"'), `store 不许自己抄默认值：${setterBlock}`);
 assert.ok(setterBlock.includes("DISPLAY_PRIMARIES"), "store 读的也是那个常量");
@@ -124,22 +140,31 @@ assert.equal(foldDefault(CURVE_ROWS), "bt709", "默认档必须是名单第一�
 assert.equal(foldDefault(undefined), "", "没有那张表就没有默认档，界面不许猜一条");
 
 const foldPlain = foldWords("bt709", CURVE_ROWS);
-assert.ok(foldPlain.includes("逐字节相同"), `默认档要说清与 1.161 之前一致：${foldPlain}`);
 assert.ok(foldPlain.includes("分段"), `要说清这一档是哪条曲线：${foldPlain}`);
-assert.ok(foldPlain.includes("纯幂 2.4"), `默认那句必须提醒链子里同名另一条：${foldPlain}`);
+assert.ok(foldPlain.includes("抬进线性光"), `那一行要说清这一格管的是哪一步：${foldPlain}`);
+assert.ok(!foldPlain.includes("纯幂"), `链子里同名另一条是来历，挂在悬停里：${foldPlain}`);
+assert.ok(!foldPlain.includes("逐字节相同"), `代码历史的断言不占面板那一行：${foldPlain}`);
+const foldPlainProv = foldProvenance("bt709", CURVE_ROWS);
+assert.ok(foldPlainProv.includes("纯幂 2.4"), `默认那句必须提醒链子里同名另一条：${foldPlainProv}`);
+assert.ok(foldPlainProv.includes("逐字节相同"), `「与 1.161 之前逐字节相同」不许消失，它现在在这一格的悬停里：${foldPlainProv}`);
 const foldOther = foldWords("gamma24", CURVE_ROWS);
 assert.ok(foldOther.includes("抬进线性光"), `要说清这一格管的是哪一步：${foldOther}`);
-assert.ok(foldOther.includes("立方体"), `要说清预览与导出同一条：${foldOther}`);
-assert.ok(foldOther.includes("foldcurve_check"), `量过的那两个数要有个出处：${foldOther}`);
-assert.ok(foldOther.includes("哪条曲线编出来的"), `要说清这一格问的是谁：${foldOther}`);
 assert.ok(!foldOther.includes("逐字节相同"), `非默认档不许声称与旧版逐字节相同：${foldOther}`);
+assert.ok(!foldOther.includes("立方体"), `预览与导出同一条是来历，挂在悬停里：${foldOther}`);
+const foldOtherProv = foldProvenance("gamma24", CURVE_ROWS);
+assert.ok(foldOtherProv.includes("立方体"), `要说清预览与导出同一条：${foldOtherProv}`);
+assert.ok(foldOtherProv.includes("foldcurve_check"), `量过的那两个数要有个出处：${foldOtherProv}`);
+assert.ok(foldOtherProv.includes("哪条曲线编出来的"), `要说清这一格问的是谁：${foldOtherProv}`);
 const foldStale = foldWords("srgb", CURVE_ROWS);
-assert.ok(foldStale.includes("改不进去") && foldStale.includes("拒收"), `名单里没有就要说改不进去：${foldStale}`);
-assert.ok(foldStale.includes("fold_transfers"), `要点名那张表：${foldStale}`);
 assert.ok(foldStale.includes("出路") && foldStale.includes("bt709、gamma24"), `拒绝要给此刻走得通的路：${foldStale}`);
+const foldStaleProv = foldProvenance("srgb", CURVE_ROWS);
+assert.ok(foldStaleProv.includes("改不进去") === false, "面板那一行说「在这里选回哪一档」，悬停说的是引擎那一头会怎样，两份话不许合成一份");
+assert.ok(foldStaleProv.includes("拒收"), `要说清引擎会拒收：${foldStaleProv}`);
+assert.ok(foldStaleProv.includes("fold_transfers"), `要点名那张表：${foldStaleProv}`);
 const foldNone = foldWords(undefined, undefined);
-assert.ok(foldNone.includes("fold_transfers") && foldNone.includes("出路"), `老引擎也要点名出路：${foldNone}`);
-assert.ok(foldNone.includes("逐字节相同"), `没有那张表就按它唯一认得的那一条：${foldNone}`);
+assert.ok(foldNone.includes("出路"), `老引擎也要点名出路：${foldNone}`);
+const foldNoneProv = foldProvenance(undefined, undefined);
+assert.ok(foldNoneProv.includes("fold_transfers"), `没下发那张表时也要点名它：${foldNoneProv}`);
 
 const foldBlock = view.slice(view.indexOf("折叠曲线"), view.indexOf("</div>", view.indexOf("折叠曲线")));
 assert.ok(foldBlock.length > 0 && foldBlock.includes('aria-label="折叠曲线"'), "那一格要在工程面板里且认得出来");
@@ -148,6 +173,8 @@ for (const literal of ['?? "bt709"', '?? "gamma24"', 'value="bt709"']) {
   assert.ok(!foldBlock.includes(literal), `视图不许自己抄曲线名：${literal}`);
 }
 assert.ok(foldBlock.includes("foldDefault(app.caps?.fold_transfers)"), "视图读的默认档是那张表的第一行");
+assert.ok(foldBlock.includes("title={foldProvenance("), "折叠曲线那一格的来历挂在它自己的 title 上");
+assert.equal(foldBlock.split("foldProvenance(").length - 1, 1, "折叠曲线的来历只出现一次");
 assert.ok(foldBlock.includes("disabled={Boolean(app.busy) || foldChoices(app.caps?.fold_transfers).length === 0}"), "没有那张表时这格是灰的，不是点了必被拒");
 const foldSetterBlock = store.slice(store.indexOf("setFoldTransfer"), store.indexOf("\n}", store.indexOf("setFoldTransfer")));
 assert.ok(foldSetterBlock.length > 0, "store 要有这一格的开关");

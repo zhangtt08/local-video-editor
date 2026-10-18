@@ -4,9 +4,9 @@ import { branchBlend, DEFAULT_COMPOSITE, DEFAULT_LAYER, branchTree, branchWeight
 import {blendLabel, DEFAULT_TRANSFER, COLOR_SPACES, DEFAULT_CURVE_POINTS, DEFAULT_WHEELS, type GradeBranch, type GradeCapacity, type GradeChannel, type GradeCurvePoint, type GradeNode, type GradeOperation, type GradeParallel, type ColorSpace, type ClipColorSpaceReport, BLEND_MODES, type BlendMode, type LayerKeyframe} from "../engine";
 import { applyGradeToTrack, editableProject, setClipColor, useApp, usePlay, applyLut, autoGradeClip, colorManageClip, fetchGradeCapacity, readClipColorSpace } from "../store";
 import { autoSourceBlocker, autoSourceOffered, colorSpaceWords, handPickLive, handPickWords, managedPair, managedWords, manageFits, manageSourceValue, manageSpaces, shouldReadColorSpace, taggedCount, transferTagWords, type ColorSpacePhase } from "../colorManage";
-import { autoGradeBlocker, gradeCapacityLine, LAYER_KEY_LABEL, layerKeyTick } from "../effects";
+import { autoGradeBlocker, gradeCapacity, LAYER_KEY_LABEL, layerKeyTick } from "../effects";
 import { TIMEBASE } from "../time";
-import { foldBlocker, foldedRow, foldIn, foldWords, usableRows } from "../gamutFold";
+import { foldBlocker, foldedRow, foldIn, foldProvenance, foldWords, usableRows } from "../gamutFold";
 
 const CHANNELS: [GradeChannel, string][] = [["rgb", "主色"], ["red", "红"], ["green", "绿"], ["blue", "蓝"]];
 const GREEN_MAGENTA = [0.70710678, -0.70710678, 0];
@@ -484,7 +484,7 @@ export function GradeFields({ clipId }: { clipId: string }) {
     });
     return () => { live = false; };
   }, [capacityProjectId, capacityRevision]);
-  const capacityLine = gradeCapacityLine(capacity, capacityRevision);
+  const capacityRead = gradeCapacity(capacity, capacityRevision);
   const clip = project?.clips[clipId];
   // 1.192：层的针存的是含 `animation_offset_ticks` 的时钟，折那一次只在 `layerKeyTick` 一处；
   //  这里只负责把「播放头现在在哪一格」交给卡片上的那颗打点按钮。
@@ -762,8 +762,7 @@ export function GradeFields({ clipId }: { clipId: string }) {
         <button className="btn tiny" disabled={!managedTagged || locked || Boolean(app.busy)}
           title={managedTagged ? "只删引擎自己盖过章的那两个转换节点，中间手工加的曲线、混频台都原样留下。" : "这一段没有引擎盖过章的转换节点，所以这里没有可取的东西。那两个转换节点若是手工加的，请在下面的链子里删。"}
           onClick={() => colorManageClip(clipId, null, manageDisplay)}>取下色彩管理</button>
-        {autoOn ? <p className="hint">{spaceLine}</p> : null}
-        {tagTable ? <p className="hint dim">{tagTable}</p> : null}
+        {autoOn ? <p className="hint" title={tagTable ?? undefined}>{spaceLine}</p> : null}
         <p className="hint">{managedWords(managed, managedTagged, spaceLabel)} 在线性光里调与按存储值调，中点是两个数。</p>
       </div>
       <div className="batch-actions grade-auto-row">
@@ -779,8 +778,7 @@ export function GradeFields({ clipId }: { clipId: string }) {
             const next = foldPicked ? foldIn(nodes, foldPicked, gamutRows) : null;
             if (next) write(next);
           }}>折进这一格</button>
-        <p className="hint">{foldWords(folded)}</p>
-        <p className="hint dim">这张表由引擎算（基色矩阵），界面只搬数字：预览那张九宫格与导出那条链子读的是同一枚节点，所以「预览一个色、成片另一个色」在这一步上没有发生的余地。</p>
+        <p className="hint" title={foldProvenance(folded)}>{foldWords(folded)}</p>
       </div>
 
       {nodes.length ? <div className="grade-graph" role="list" aria-label="调色节点链">
@@ -817,7 +815,7 @@ export function GradeFields({ clipId }: { clipId: string }) {
         <span className="gg-wire" aria-hidden="true" />
         <span className="gg-io">输出</span>
       </div> : <p className="hint">这些节点按顺序执行；只改每通道值的，预览与导出共用同一张表。</p>}
-      {capacityLine ? <p className="hint">{capacityLine}</p> : null}
+      {capacityRead ? <p className="hint" title={capacityRead.detail}>{capacityRead.line}</p> : null}
 
       {chainFields ? <OpFields node={chainFields} idPrefix="grade" limits={limits} layerTick={layerTick} layerOffset={clip?.animation_offset_ticks ?? 0} onReplace={chainFields.kind === "lut" || chainFields.kind === "lut3d" ? () => pickLut(active) : undefined} onCommit={(next) => replace(active, next)} /> : null}
 
