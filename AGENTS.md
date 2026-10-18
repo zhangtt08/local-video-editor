@@ -110,6 +110,20 @@
   按新句子换锚，四处突变逐条红在自己那条断言上。71 档壳检全绿。
 - **真页面**：1.209.0 两档窗口（1480×900 与 1040×660）五屏复测，尖角 0、被切 0、点不到 0、
   20 张预设卡对比度照旧。
+- **发布账（数字全部从这一轮的运行里读出来）**：71 档壳检全绿；`scripts/build_engine.py --verify` 通过、
+  冻结引擎自报 1.209.0；`npm run dist` 后根 `AgentCut.exe` 与便携版逐字节相同（sha256 `79cfc49f05d1087bd9a4…`），
+  `released_package_check` 绿（app.asar 带 1.209.0、84 个文件、47 句人能读的中文）；
+  typecheck / vite build / ruff / stylewidth / docs_shape（462 行）/ docs_facts 干净；
+  空闲机单跑 `tests/suite_check.py` **129/129**（`SUITE_EXIT=0`）。装机：约 58 秒出窗，
+  Windows Graphics Capture 取到 1480×900 真帧，标题栏「引擎在线 v1.209.0」，关窗后进程计数 0。
+- **装机那张图量出来的下一档**：截图里检查器那两格（工程基色、折叠曲线）还是四到六行的灰字——
+  因为那两段话不在视图里，是 `workingSpace.ts` 的 `workingWords()` 与 `foldWords()`、`gamutFold.ts` 的
+  `foldWords()` 拼出来的，而 1.209 那把尺只数了两个视图文件里的 `<p className="hint">`。
+  这是**量具的盲点，不是已经收干净了**：门禁数的是源码里写在哪，人看的是屏幕上占几行。
+  1.210 的判据要换成把那些函数**叫起来量**（esbuild 能把纯 TS 模块打进检查里），
+  量的是返回的那句话有多长，而不是它写在哪个文件；被搬走的话同样要落进帮助，
+  钉着这些句子的四档门禁（`desktop_workingprimaries_check`、`foldcurve_check`、`gamut_check`、
+  `docs_facts_check`）跟着换锚。
 - **下一轮（1.210）的具体入口**：
   1. 同样的尺子量剩下的屏：`AgentView.tsx`、`AttributeDialog.tsx`、`CurveEditor.tsx`、`ExportPanel.tsx`
      与 `Home.tsx` 里的 `.hint` 还没进 40 字那一档（本轮只把检查器与调色那两族收干净）。
