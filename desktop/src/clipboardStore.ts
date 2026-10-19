@@ -46,9 +46,12 @@ export function isClipClipboard(value: unknown): value is ClipClipboard {
     && (value.tracks as unknown[]).every((track) => record(track) && text(track.id) && text(track.kind));
 }
 
-/** 关键帧剪贴板：一条属性、一个基准 tick、一串针——`pasteKeys` 还会再判工程对不对。 */
+/** 关键帧剪贴板：一条属性、一个基准 tick、一串针——`pasteKeys` 还会再判工程对不对。
+ *  1.212 起那串针可能住在某一层的链里：带了 `layer` 就必须是个从 0 数过去的整数层序，缺了或半份
+ *  都不算（`pasteInto` 按它分流，认错了就会把层的针写进片段自己的曲线上）。 */
 export function isCopiedKeys(value: unknown): value is CopiedKeys {
   if (!record(value) || !text(value.projectId) || !text(value.property) || !count(value.base) || !list(value.keys)) return false;
+  if (value.layer !== undefined && !(count(value.layer) && Number.isInteger(value.layer) && (value.layer as number) >= 0)) return false;
   return (value.keys as unknown[]).every((key) => record(key) && text(key.property) && count(key.at_ticks));
 }
 

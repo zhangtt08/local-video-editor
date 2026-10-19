@@ -70,8 +70,13 @@ assert.match(timeline, /LAYER_KEY_LABEL\[k\.field\.key\] \?\? k\.field\.key/, "�
 assert.equal((timeline.match(/\$\{k\.property\} · |拖动\$\{k\.property\}关键帧|hidden\.join/g) ?? []).length, 0, "the raw-id spellings must be gone");
 
 const curve = read(["desktop/src/views/CurveEditor.tsx", "src/views/CurveEditor.tsx"]);
-assert.match(curve, /枚 \$\{FIELD_LABEL\[copy\.property\] \?\? copy\.property\} 关键帧/, "the copy toast names the property through the table");
-assert.match(curve, /枚 \$\{FIELD_LABEL\[copied\.property\] \?\? copied\.property\} 针/, "and so does the paste button's hint");
+// 1.212：念名字收口成一处主人（`copyName`），两张表都要认——层的针念层那一张（连着层序一起念），
+// 片段自己那六个数念 `FIELD_LABEL`。复制的回执与粘贴的悬停都从这里取，别处不许再自己挑表。
+assert.match(curve, /枚 \$\{copyName\(copy\)\} 关键帧/, "the copy toast names the property through that one owner");
+assert.match(curve, /\? FIELD_LABEL\[copy\.property\] \?\? copy\.property/, "the plain branch still reads the table, not the raw key");
+assert.match(curve, /: `第 \$\{copy\.layer \+ 1\} 层的「\$\{LAYER_KEY_LABEL\[copy\.property\] \?\? copy\.property\}」`/, "the layer branch reads the layer table and says which layer");
+assert.equal((curve.match(/FIELD_LABEL\[copy\.property\]/g) ?? []).length, 1, "and it is read in exactly that one place");
+assert.match(curve, /枚\$\{copyName\(copied\)\}针按播放头粘到当前片段/, "and so does the paste button's title, through the same owner");
 assert.equal((curve.match(/枚 \$\{cop(?:ied)?\.property\}/g) ?? []).length, 0, "no raw id in those two sentences");
 
 const inspector = read(["desktop/src/views/Inspector.tsx", "src/views/Inspector.tsx"]);

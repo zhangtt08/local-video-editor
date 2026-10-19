@@ -1,11 +1,11 @@
 import { useEffect, useId, useMemo, useRef, useState, type PointerEvent } from "react";
 
 import { type AnimationGraph, type Clip, type Keyframe, type LayerKeyframe, type Property, type Bezier } from "../engine";
-import { EFFECT_FIELDS, FIELD_LABEL, INTERPOLATIONS, curveBase, layerCurveBase, layerCurveFields, layerKeyCommand, layerKeysOf, layerStepAt, maskAnimFields, spatialAnimFields, type LayerCurveField } from "../effects";
+import { EFFECT_FIELDS, FIELD_LABEL, INTERPOLATIONS, LAYER_KEY_LABEL, curveBase, layerCurveBase, layerCurveFields, layerKeyCommand, layerKeysOf, layerStepAt, maskAnimFields, spatialAnimFields, type LayerCurveField } from "../effects";
 import { TIMEBASE, timecode } from "../time";
 import { keyframeTick } from "../keyframeSnap";
 import { applyShift, bandEdges, bandEntry, groupShift, quantizeToBand } from "../curveDrag";
-import { copyKeys, pasteKeys, rememberCopy, copiedKeys, type CopiedKeys } from "../keyframeClipboard";
+import { copyKeys, layerPasteDetail, pasteInto, rememberCopy, copiedKeys, copyMatches, type CopiedKeys } from "../keyframeClipboard";
 import { appInfo, clearBatch, commitBatch, editAtRevision, playhead, prefs, quantum, redoStep, selectClips, setGraphOpen, setMode, toast, undo, useApp, useEdit, usePlay } from "../store";
 
 const LEFT = 58, TOP = 12, WIDTH = 924, HEIGHT = 166;
@@ -241,12 +241,29 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
     setSelection([]); setSelectedAt(null);
   };
   const [copied, setCopied] = useState<CopiedKeys | null>(copiedKeys());
+  // 1.212：那一层的针数额度听引擎的（`capabilities.limits` 里的那个数）；没报这个数的引擎就少给这一只手，
+  // 与检查器那几颗 ◇ 同一个判法（`GradeFields` 那一处也是「不回这两个字段就是 0 个、不能打点」）。
+  const layerKeyLimit = app.caps?.limits?.layer_key_limit;
+  /** 那份复制念的是哪个数：层的针连着层序一起念（层的标签表与检查器同源），片段自己那六个数念
+   *  `FIELD_LABEL`。复制的回执、粘贴的悬停共用这一个读法，别处不再自己挑表。 */
+  const copyName = (copy: CopiedKeys) => copy.layer === undefined
+    ? FIELD_LABEL[copy.property] ?? copy.property
+    : `第 ${copy.layer + 1} 层的「${LAYER_KEY_LABEL[copy.property] ?? copy.property}」`;
+  /** 粘贴那颗说的只在此刻真会做的事；粘不动就得点名为什么粘不动、以及现在走得通的那两个下拉。 */
+  const pasteTitle = !copied
+    ? "先选中一条曲线上的针，按 Ctrl+C 或点上面的复制"
+    : !copyMatches(copied, field, layerKeyLimit)
+      ? `手上是 ${copied.keys.length} 枚${copyName(copied)}针，跟当前这一行不是同一条曲线：上方「曲线属性」换回那一条，或到「动画片段」换一段有这一层的`
+      : `把复制的 ${copied.keys.length} 枚${copyName(copied)}针按播放头粘到当前片段；${copied.layer === undefined
+        ? "落在片段之外或已有针那一格的会跳过"
+        : `落在片段之外、已有针那一格，或越过那一层 ${layerKeyLimit} 枚额度的逐枚跳过并数给你。那个数照搬、不重折——引擎那张带子只按属性分（grade_limits.layer_key_bands）`}`;
   // 粘贴只有一处实现：按钮和 Ctrl+V 走同一个函数，落点、跳过与回执都是同一条判断。
   const pasteNow = () => {
-    const paste = pasteKeys(clip, copied, alignTime(head, false), project.id);
+    const paste = pasteInto(clip, copied, alignTime(head, false), project.id, layerKeyLimit);
     if (!paste.commands.length) { toast("warn", "没有粘贴", paste.reason); return; }
     editAtRevision(paste.commands, project.id, project.revision, "粘贴动画关键帧", app.sequenceId);
-    toast(paste.dropped ? "warn" : "info", `粘贴了 ${paste.pasted} 枚关键帧`, paste.dropped ? paste.reason : "落在播放头起的整帧上。");
+    toast(paste.dropped ? "warn" : "info", `粘贴了 ${paste.pasted} 枚关键帧`, paste.dropped ? paste.reason
+      : copied?.layer === undefined ? "落在播放头起的整帧上。" : layerPasteDetail(copied.layer));
   };
   const atHead = () => {    // 播放头本身就落在格子上（标尺按同一份量子吸附），所以这里写的就是看到的那个位置：
     // 吸附不参与，否则相邻的针会把新针拽走，采到的值与落下的时间就对不上了。
@@ -282,7 +299,7 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
       <button className="btn tiny" disabled={!keys.length} onClick={() => jump(-1)}>上一关键帧</button><button className="btn tiny" disabled={!keys.length} onClick={() => jump(1)}>下一关键帧</button>
       <button className="btn tiny" disabled={disabled || (app.mode === "batch" && app.batch.length > 0)} onClick={atHead}>播放头添加</button>
       <button className="btn tiny" disabled={disabled || !selectedKeys.length} onClick={remove}>{selectedKeys.length > 1 ? `删除 ${selectedKeys.length} 点` : "删除关键帧"}</button>
-      <button className="btn tiny" disabled={disabled || !copied || copied.property !== field.property} title={copied ? `把复制的 ${copied.keys.length} 枚 ${FIELD_LABEL[copied.property] ?? copied.property} 针按播放头粘到当前片段；落在片段之外或已有针那一格的会跳过` : "先选中同一条属性上的针，按 Ctrl+C 或点上面的复制"} onClick={pasteNow}>粘贴 {copied ? copied.keys.length : 0} 枚</button>
+      <button className="btn tiny" disabled={disabled || !copyMatches(copied, field, layerKeyLimit)} title={pasteTitle} onClick={pasteNow}>粘贴 {copied ? copied.keys.length : 0} 枚</button>
       <label title="与时间线的磁吸是同一个开关（状态栏那颗吸铁石、快捷键 S）：关掉两处一起关。拖到的位置落在整帧上，并会找播放头与这条曲线上没被拖动的针；数值框与「播放头添加」照精确位置写。"><input type="checkbox" checked={snap} onChange={(e) => prefs.setSnap(e.target.checked)} />时间吸附</label>
       <span className="spacer" />
       <button className="btn tiny" disabled={zoom === 1} onClick={() => zoomTo(.5)}>缩小曲线</button><button className="btn tiny" disabled={zoom === 64} onClick={() => zoomTo(2)}>放大曲线</button>
@@ -306,16 +323,18 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
           if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") { e.preventDefault(); e.stopPropagation(); cancel(); chooseSelection(keys.map((k) => k.at_ticks), keys[0]?.at_ticks ?? null); return; }
           if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") {
             e.preventDefault(); e.stopPropagation();
-            if (layerField) {
-              // 复制/粘贴那条 clipboard 认的是片段自己的针；这条阶梯住在链里，硬搬会把两回事混成
-              // 一份数，所以这一档明说不做，并给一条现在就走得通的路（检查器逐枚钉）。
-              toast("warn", "这一层的针还不能跨片段搬", "这条阶梯住在调色链里，clipboard 认的是片段自己的针。要在另一段上也动它：选中那一层，按播放头逐枚钉。");
+            if (layerField && typeof layerKeyLimit !== "number") {
+              // 额度（`LAYER_KEY_LIMIT`）数的是那一层全部的针，缺了这个数就不知道第几枚该跳过——
+              // 宁可当场少给一只手，也不猜一个数写进链里（与检查器那几颗 ◇ 同一个判法）。
+              toast("warn", "这一层的针还不能复制", "引擎没报那一层的针数额度（capabilities.limits.layer_key_limit），粘过去就不知道第几枚该跳过：换一份会报这个数的引擎，或先用检查器那一层的「在这里打点」逐枚钉。");
               return;
             }
-            const copy = copyKeys(project.id, selectedKeys);
+            const copy = copyKeys(project.id, selectedKeys, layerField?.layer);
             rememberCopy(copy); setCopied(copy);
             svg.current?.focus();   // 针上还留着焦点时，紧跟的 Ctrl+V 会被 Chromium 当成页面粘贴吃掉：复制完把焦点交回画布
-            if (copy) toast("info", `已复制 ${copy.keys.length} 枚 ${FIELD_LABEL[copy.property] ?? copy.property} 关键帧`, "Ctrl+V 会按播放头粘到当前片段；换了属性或换了工程就失效。");
+            if (copy) toast("info", `已复制 ${copy.keys.length} 枚 ${copyName(copy)} 关键帧`,
+              copy.layer === undefined ? "Ctrl+V 会按播放头粘到当前片段；换了属性或换了工程就失效。"
+                : "Ctrl+V 会按播放头粘到当前片段的同一层同一条上；换了层、换了属性或换了工程就失效。");
             else toast("warn", "没有可复制的选区", "选中同一属性上的针再复制——一次只能搬一条属性。");
             return;
           }
