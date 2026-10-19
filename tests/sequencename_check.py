@@ -27,6 +27,7 @@ from agentcut.contracts import (
     capabilities,
 )
 from agentcut.projects import ProjectStore
+from agentcut.timeline import sequence_view
 
 FRAME = T // 30
 
@@ -137,8 +138,52 @@ def main() -> None:
         assert len(gone.details["known"]) == 3, gone.details
         assert {row["name"] for row in gone.details["known"]} == {"片头", "片尾"}
 
+        # ⑥ 1.214：读取侧同一扇门（`sequence_view`）。
+        #    断的是 id 优先、名字唯一才算数、撞名与找不到都不猜；
+        #    17 个读路由共用这一处主人，所以这里量一次就够。
+        #    撞名与找不到都不猜」，而且 17 个读路由共用这一处——所以这里量一次就够。
+        view_by_name = sequence_view(store.get(pid), "片尾")
+        view_by_id = sequence_view(store.get(pid), "s-tail")
+        assert [t.id for t in view_by_name.tracks] == [
+            t.id for t in view_by_id.tracks
+        ], "两条路读到的不是同一份"
+        assert [t.id for t in sequence_view(store.get(pid), "s-head").tracks] == ["t-by-id"]
+        clash_view = refused(lambda: sequence_view(store.get(pid), "片头"))
+        assert clash_view.code == "SEQUENCE_NAME_AMBIGUOUS", clash_view
+        assert sorted(clash_view.details["sequence_ids"]) == ["s-head", "s-head2"]
+        gone_view = refused(lambda: sequence_view(store.get(pid), "查无此名"))
+        assert gone_view.code == "NOT_FOUND", gone_view
+        assert len(gone_view.details["known"]) == 3, gone_view.details
+        assert gone_view.details["sequence_id"] == "查无此名", gone_view.details
+
+        # ⑦ id 优先：有一个合成的**名字**恰好等于别的合成的 id 时，认出来的必须是那个 id。
+        collision = store.mutate(
+            pid,
+            EditBatch.model_validate(
+                {
+                    "request_id": "add-collision",
+                    "expected_revision": store.get(pid).revision,
+                    "commands": [
+                        SequenceAdd(
+                            op="sequence.add",
+                            sequence=Sequence(
+                                id="s-shadow", name="s-tail", duration_ticks=FRAME * 12
+                            ),
+                        )
+                    ],
+                }
+            ),
+        ).project
+        assert sequence_view(collision, "s-tail").clips == collision.sequences["s-tail"].clips
+        assert [t.id for t in sequence_view(collision, "s-tail").tracks] == [
+            t.id for t in collision.sequences["s-tail"].tracks
+        ], "名字撞上了 id 的优先级——那个 id 指向的合成被名字顶掉了"
+        both_named = refused(lambda: sequence_view(collision, "片头"))
+        assert both_named.code == "SEQUENCE_NAME_AMBIGUOUS", both_named
+
         caps = capabilities()
         assert caps["features"]["sequence_lookup_by_name"] is True
+        assert caps["features"]["sequence_read_by_name"] is True
 
     owners = 0
     root = Path(__file__).resolve().parent.parent

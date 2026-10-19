@@ -4696,6 +4696,15 @@ MAX_COMMANDS_PER_BATCH = 2_500
 
 
 
+def sequences_named(project: "Project", name: str) -> list[str]:
+    """把「人看得到的那一行」折成候选 id：**全仓只有这一处这样找**。
+
+    返回的是列表而不是一个 id——唯一才算数，撞了就要拒。写入侧（`EditBatch.target_sequence`）
+    与读取侧（`timeline.sequence_view`）共用它，否则同一句「按名字找合成」会有两套答案。
+    """
+    return sorted(sid for sid, seq in project.sequences.items() if seq.name == name)
+
+
 class EditBatch(Contract):
 
     request_id: Identifier
@@ -4728,9 +4737,7 @@ class EditBatch(Contract):
             )
         if self.sequence_name is None:
             return self.sequence_id
-        named = sorted(
-            sid for sid, seq in project.sequences.items() if seq.name == self.sequence_name
-        )
+        named = sequences_named(project, self.sequence_name)
         if not named:
             raise EditorError(
                 "SEQUENCE_NAME_NOT_FOUND",
@@ -6924,6 +6931,8 @@ def capabilities(
             "clip_property_patches": True,
 
             "sequence_lookup_by_name": True,
+
+            "sequence_read_by_name": True,
 
             "nested_sequences": True,
 

@@ -37,6 +37,7 @@ from .contracts import (
     Transition,
     project_content_ticks,
     render_presets,
+    sequences_named,
 )
 from .masks import fit_box
 from .speed import base_source_ticks, consumed_source_ticks, scale_curve, slice_curve
@@ -101,13 +102,42 @@ def mask_track_capacity(
 
 
 def sequence_view(project: Project, sequence_id: str | None = None) -> Project:
-    """A read projection; assets/settings/revision always belong to the root project."""
+    """A read projection; assets/settings/revision always belong to the root project.
+
+    1.214：这个字段也接受**唯一的合成名**（id 先认，认不到才按名字找；与写入侧共用
+    `contracts.sequences_named` 那一处主人）。认不出来的时候不再只丢一句
+    "sequence does not exist"——正文把现有的一共几个、各叫什么、id 是什么一起交回去；
+    名字撞了按 SEQUENCE_NAME_AMBIGUOUS 拒，绝不取第一个。
+    """
     if sequence_id is None:
         return project
     sequence = project.sequences.get(sequence_id)
     if sequence is None:
-        raise EditorError("NOT_FOUND", "sequence does not exist", 404, sequence_id=sequence_id)
+        named = sequences_named(project, sequence_id)
+        if len(named) > 1:
+            raise EditorError(
+                "SEQUENCE_NAME_AMBIGUOUS",
+                f"{len(named)} compositions are named {sequence_id!r}; names are not unique "
+                "here, pass the sequence_id",
+                422,
+                sequence_name=sequence_id,
+                sequence_ids=named,
+            )
+        if len(named) == 1:
+            sequence = project.sequences[named[0]]
+        else:
+            raise EditorError(
+                "NOT_FOUND",
+                f"no composition has id or name {sequence_id!r}; {len(project.sequences)} exist",
+                404,
+                sequence_id=sequence_id,
+                known=[
+                    {"sequence_id": sid, "name": seq.name}
+                    for sid, seq in sorted(project.sequences.items())
+                ],
+            )
     return project.model_copy(update={"tracks": sequence.tracks, "clips": sequence.clips})
+
 
 
 def validate_timeline(project: Project) -> None:
