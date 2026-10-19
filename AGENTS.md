@@ -134,7 +134,9 @@
   （`grep -l styles.css tests/*.py` 为空），随包那一档在重出的 asar 上同样绿，asar 里量得到
   `.field > .hint` 的整行排法与基尺的 `flex:0 0 100%`（各 4 处与 1 处 `grid-column`）。
 - **下一轮（1.215）的具体入口**：
-  00. **1.214 已交付**（读取侧也认唯一的合成名：`sequences_named` 是名字折成 id 的唯一主人，
+  00. **1.214 已交付，但读门只开了一半**（端到端实测：那些路由的 `sequence_id` 是 `Identifier`，
+     中文名字在参数校验层就被拒成 422 `INVALID_REQUEST`，走不到解析器；`NOT_FOUND` 交出名单那一半是真的，
+     404 + `known=['片头','片尾','片头']`。**1.215 第一件**：把 `sequence_id` 换成 `SequenceRef`（`Annotated[str, Field(min_length=1, max_length=256)]`）别名，让解析器先看得到值，改的是参数类型而不是砍掉名字支持）。原来的说法：`sequences_named` 是名字折成 id 的唯一主人，
      17 个读调用点与 48 个 MCP 工具都不用改；`NOT_FOUND` 的正文交出「现有的一共几个、各叫什么」，
      收掉 `docs/api.md` 那笔旧账；130/130 空闲机单跑、M42~M45 四处变异逐条红、随包 1.214.0 与
      根 exe ≡ 便携版）。上一轮的 1.213（`EditBatch.sequence_name` 一处接缝）也一并交付。
