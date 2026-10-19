@@ -7,7 +7,12 @@
 分辨率的量，那是噪声；30 帧累加得到 445°，真相 33°。
 
 反过来，把第 0 帧的模板按候选角转过去、在已定下的中心上打分（绝对角，不累加），在 30 帧、
-±20° 的窗口内误差中位 3.5°——下一轮要建就建在这条上，不要建在锚点拟合上。
+±20° 的窗口内误差中位 3.5°。
+
+**1.218 给这一档补了它当时没有的那把尺**：上面那个 3.5° 是「拿第 0 帧当参照、候选角对整段一次性
+搜」——最好情况，真正的跟踪器看不到整段。补的这条按跟踪器真能做的事搜（每帧只在**上一帧那个角**
+两侧 ±20° 里搜、中心跟着已定下的中心走），30 帧的夹具上中位 4.73°、末帧差 8.77°。所以「下一轮建在
+绝对角搜索上」那句要改成：建在它，但先让因果链的末帧也进窗口——这一档现在钉的就是这个末帧。
 
 数字都是这一趟当场量的，不是抄的；两条判据各能红（见文件末尾那句 PASS 之前的突变说明）。
 """
@@ -28,8 +33,10 @@ from agentcut.tracking import (  # noqa: E402
     _crop,
     _match,
     _ncc,
+    _search,
     _zeroed,
     analyse_window,
+    track_box,
 )
 
 FFMPEG = ROOT / "desktop/resources/bin/ffmpeg.exe"
@@ -198,6 +205,53 @@ def absolute_search_measured(decoded: list[bytes], width: int) -> float:
     return median(errors)
 
 
+CAUSAL_STEP = 2.0
+TAIL_DRIFT_DEGREES = 4.0
+
+
+def causal_chain_measured(
+    decoded: list[bytes], width: int
+) -> tuple[float, float, float]:
+    """因果链上的绝对角搜索：每帧只在**上一帧那个角**两侧 ±SPAN 里搜，中心跟着跟踪器走。
+
+    `absolute_search_measured` 量的是「拿第 0 帧当参照、候选角对整段一次性搜」——那是最好情况，
+    真正的跟踪器没有整段可看。1.218 把这一条补上，因为只有它说得出「能不能交」：
+    交回的是（中位误差、最大误差、末帧误差）。
+    """
+    scale = width / W
+    cx, cy = CX * scale, CY * scale
+    height = len(decoded[0]) // width
+    _, _, anchor = _crop(decoded[0], width, round(cx), round(cy), SIDE)
+    boxes = track_box(
+        decoded,
+        width,
+        (CX / W, CY / H, (MARK + PAD) / W, (MARK + PAD) / H),
+        search=6,
+        scale=False,
+    )["boxes"]
+    errors: list[float] = []
+    angle = 0.0
+    for index, frame in enumerate(decoded):
+        if index >= len(boxes):
+            break
+        centre_x = boxes[index][0] * width
+        centre_y = boxes[index][1] * height
+        best, best_angle = -2.0, angle
+        probe = angle - CANDIDATE_SPAN
+        while probe <= angle + CANDIDATE_SPAN + 1e-9:
+            zero, energy = _zeroed(rotate_template(anchor, SIDE, probe))
+            score, _, _ = _search(
+                frame, width, height, zero, SIDE, energy, centre_x, centre_y, 1, 1
+            )
+            if score > best:
+                best, best_angle = score, probe
+            probe += CAUSAL_STEP
+        truth = math.degrees(RATE * index / FPS)
+        errors.append(abs(best_angle - truth))
+        angle = best_angle
+    return median(errors), max(errors), errors[-1]
+
+
 def main() -> None:
     import tempfile
 
@@ -208,6 +262,7 @@ def main() -> None:
         fixture_says_it_rotates(decoded, width)
         step_median, accumulated = anchor_fit_measured(decoded, width)
         search_median = absolute_search_measured(decoded, width)
+        causal_median, causal_max, causal_tail = causal_chain_measured(decoded, width)
 
     per_pixel = math.degrees(2 * math.atan(0.5 / (MARK * (width / W) / 2)))
     print(
@@ -216,6 +271,11 @@ def main() -> None:
         f"这条 {SIDE} px 基线上一个像素就是 {per_pixel:.2f}°"
     )
     print(f"   模板转角搜索：角度误差中位 {search_median:.2f}°")
+    print(
+        f"   因果链上的同一件事（每帧只在上一帧那个角两侧 ±{CANDIDATE_SPAN:.0f}° 里搜、"
+        f"步长 {CAUSAL_STEP:.0f}°）：中位 {causal_median:.2f}°、最大 {causal_max:.2f}°、"
+        f"末帧差 {causal_tail:.2f}°——这一条才是「交出去会长什么样」"
+    )
 
     authored_step = math.degrees(RATE / FPS)
     truth = math.degrees(RATE * (FRAMES - 1) / FPS)
@@ -232,11 +292,18 @@ def main() -> None:
         f"模板转角搜索的误差中位涨到 {search_median:.2f}°（钉的是 "
         f"{SEARCH_MEDIAN_DEGREES}°）——那条能交的路也不稳了，别照着它建"
     )
+    assert causal_tail > TAIL_DRIFT_DEGREES, (
+        f"因果链的末帧误差只有 {causal_tail:.2f}°"
+        f"（钉的是超过 {TAIL_DRIFT_DEGREES:.0f}° 就不许交）——"
+        "这条链子稳住了，『遮罩不跟旋转』那句该改写、下一轮就建在这条上；"
+        "改的时候记得同时改 README 那一行与 AGENTS 的入口清单"
+    )
     print(
         "PASS: 当场量出『四锚点拟合在盒子这条基线上是噪声』（逐帧中位 "
         f"{step_median:.2f}° 对作者每帧 {authored_step:.2f}°、累计 {accumulated:.1f}° 对真相 "
-        f"{truth:.1f}°）与『模板转角搜索能把角收进 {search_median:.2f}°』——"
-        "旋转那一档不交的理由是数，不是感觉；要交就建在后一条上"
+        f"{truth:.1f}°）、『一次性对整段搜能把角收进 {search_median:.2f}°』，"
+        f"以及『真跟踪器只能因果地搜：末帧差 {causal_tail:.2f}°』——"
+        "旋转那一档不交的理由是这三个数，不是感觉；要交就得让因果链的末帧也进窗口"
     )
 
 

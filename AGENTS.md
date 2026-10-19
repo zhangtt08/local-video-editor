@@ -140,7 +140,8 @@
   最小一档就是 12.5px）。
 - **发布账**（这一轮重出的那一份）：`build_engine --verify` 通过（冻结引擎自报 1.217.0、冷启动 788 ms）；`npm run dist` 后根 `AgentCut.exe` 与 `release/AgentCut-便携版.exe` `cmp` 逐字节相同（sha256 前缀 0cbe506ea4641db3530bb2c9f66c1313cf8a60ea）；`packed_engine_surface_check` 与`released_package_check` 都绿（asar 1.217.0、84 个文件、51 句人话）；空闲机单跑 `tests/suite_check.py` **131/131**（含新的 `ui_shape_check`）。
 - **下一轮（1.218）的具体入口**：
-  1. 多遮罩叠加（`Clip.mask` 复数化）与「往转过的框里跟点」（`mask_tracking_rotated_box`）。
+  1. 多遮罩叠加（`Clip.mask` 复数化）。「往转过的框里跟点」这一档 1.218 量过了、不交：把绝对角搜索接进 `track_box` 之后，30 帧夹具上中位 0.63~0.88°（看着能用），但尾部飘到 5~9°；换宽模板（44/56/64 px）与换补边颜色都只会把它推到 7~9°。`tests/rotationwall_check.py` 现在钉的是因果链的末帧（>4° 就不许交），产品代码一行没留（`git checkout` 回 HEAD）。要再试，先想清楚「NCC 在近平坦的角上选不动」这一条怎么破，而不是再调步长。
+  1b. 上面那条的量法本身也留了教训：一次性对整段搜出来的 3.46° 不是能不能交的证据。
   2. 浏览器侧的 3D 立方表（3D LUT 至今「预览不生效、导出生效」）。DCI-P3 那一半本轮查过不是欠账：`OUTPUT_COLOUR_TAGS` 已有四档（bt709 / bt601 / bt2020 / p3-d65），`colour_tag_check` 在钉它——文档里那句「DCI-P3 出片未做」是旧账，跟着这一条一起改掉。
   3. `agent/server.py` 那 27 条 E501（`stylewidth_check` 挂名的欠账，它不随包、也不在
      `ruff check src tests` 里）——要收就连「随包 / 开发用」这条界线一起说清。
