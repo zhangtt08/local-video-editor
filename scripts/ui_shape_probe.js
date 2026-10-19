@@ -66,6 +66,10 @@ function measureAgentCutUi() {
   var stacks = [];
   var unreachable = [];
   var scrollAway = [];
+  var scrimBehind = [];
+  // 有没有一层盖住整块视口的东西（帮助、导出确认那类遮罩）——只当事实报出来，
+  // 不用它去裁剪量测：遮罩自己那一棵里的字同样要量。
+  var scrim = null;
   var all = document.getElementsByTagName("*");
   var byTag = {};
   for (var index = 0; index < all.length; index += 1) {
@@ -98,7 +102,13 @@ function measureAgentCutUi() {
         var inner = el.getBoundingClientRect();
         var box = holder.getBoundingClientRect();
         if (inner.bottom > box.bottom + 1.5 || inner.top < box.top - 1.5) {
-          clipped.push({ why: "被容器切掉", size: size, text: text.slice(0, 48), cls: String(el.className).slice(0, 40) });
+          clipped.push({
+            why: "被容器切掉", size: size, text: text.slice(0, 48),
+            cls: String(el.className).slice(0, 40),
+            box: [Math.round(el.getBoundingClientRect().top), Math.round(el.getBoundingClientRect().bottom)],
+            clip_box: [Math.round(box.top), Math.round(box.bottom)],
+            clip_by: holder.tagName.toLowerCase() + "." + String(holder.className || "").split(/\s+/)[0],
+          });
         }
       }
     }
@@ -164,7 +174,28 @@ function measureAgentCutUi() {
             climb = climb.parentElement;
           }
         }
-        unreachable.push({
+        // 挡住它的东西（或它的祖先）盖住整块视口，而控件不在那一棵里——这就是「在模态后面」，
+        // 帮助那一层自己就是这样的：遮罩 + 一张浮在上头的面板，面板里的 li 也会先被命中。
+        var owner = hit;
+        var behindModal = false;
+        while (owner && owner !== document.body) {
+          var os = getComputedStyle(owner);
+          if (os.position === "fixed" || os.position === "absolute") {
+            var ob = owner.getBoundingClientRect();
+            if (ob.width * ob.height >= innerWidth * innerHeight * 0.85) {
+              behindModal = !owner.contains(el);
+              if (!scrim && behindModal) {
+                scrim = owner.tagName.toLowerCase() + "." + String(owner.className || "").split(/\s+/)[0];
+              }
+              break;
+            }
+          }
+          owner = owner.parentElement;
+        }
+        if (behindModal) {
+          // 不是缺陷，但要留名：哪天某一屏不该有模态却有了，这一行会说出来。
+          scrimBehind.push((text || el.getAttribute("aria-label") || tag).slice(0, 24));
+        } else unreachable.push({
           why: "被别的元素挡住", tag: tag, text: (text || el.getAttribute("aria-label") || "").slice(0, 40),
           over: hit.tagName.toLowerCase() + "." + String(hit.className || "").slice(0, 30),
           box: [Math.round(rect.left), Math.round(rect.top), Math.round(rect.width), Math.round(rect.height)],
@@ -206,6 +237,8 @@ function measureAgentCutUi() {
   }
   return {
     href: location.href,
+    scrim: scrim,
+    behind_scrim_count: scrimBehind.length,
     layout_boxes: boxes,
     viewport: { width: innerWidth, height: innerHeight },
     nodes: all.length,

@@ -49,6 +49,8 @@ SIZES = ("1456x808", "1040x660")
 # 右侧那一列的三页里挑两页扫（检查器 / 交付面板）——交付面板是 1.202 那轮欠的、也是这一档
 # 第一次能失败的那一处；示波器那一页画的是图，量的还是那几行字。
 PANELS = ("inspect", "export")
+# 浮层那一档：真点开才画布，所以量之前要先点。1.205 那轮就是「点了没开起来」被当成量不到。
+OVERLAYS = ("动画曲线", "示波器", "快捷键")
 # 圆润化那一条曲线的下限与字号下限，都从 styles.css 里读；这里的两个数是**判断**：
 # 字号地板不许低于 12.5px（1.216 之前量到的是 11.5px），曲线上不许出现 1~5px 的尖角。
 FONT_FLOOR = 12.5
@@ -149,7 +151,7 @@ def run_engine(data_dir: Path) -> subprocess.Popen:
     raise SystemExit(1)
 
 
-def sweep(pid: str, folder: Path, panel: str) -> list[dict]:
+def sweep(pid: str, folder: Path, panel: str, extras: tuple[str, ...] = ()) -> list[dict]:
     out = folder / f"ui_shape_sweep-{panel}.json"
     shots = os.environ.get("AGENTCUT_SHAPE_SHOTS", "")
     node = subprocess.run(
@@ -163,6 +165,7 @@ def sweep(pid: str, folder: Path, panel: str) -> list[dict]:
             "--panel", panel,
             "--sizes", ",".join(SIZES),
             "--out", str(out),
+            *(sum([["--extra", label] for label in extras], [])),
             *(["--shots", shots] if shots else []),
         ],
         capture_output=True,
@@ -196,7 +199,11 @@ def main() -> None:
         engine = run_engine(folder)
         try:
             pid = seed_project(TOKEN)
-            rows = [row for panel in PANELS for row in sweep(pid, folder, panel)]
+            rows = [
+                row
+                for panel in PANELS
+                for row in sweep(pid, folder, panel, OVERLAYS if panel == "inspect" else ())
+            ]
         finally:
             engine.terminate()
             try:
@@ -205,8 +212,9 @@ def main() -> None:
                 engine.kill()
 
     screens = [row for row in rows if row.get("data")]
-    if len(screens) < len(PANELS) * len(SIZES):
-        fail(f"只量到 {len(screens)} 屏（至少该有 {len(PANELS) * len(SIZES)} 屏）：" + json.dumps(
+    needed = (len(PANELS) * 4 + len(OVERLAYS)) * len(SIZES)
+    if len(screens) < needed:
+        fail(f"只量到 {len(screens)} 屏（至少该有 {needed} 屏）：" + json.dumps(
             [
                 {"screen": row.get("screen"), "panel": row.get("panel"),
                  "size": row.get("size"), "error": row.get("error")}
@@ -258,7 +266,8 @@ def main() -> None:
         raise SystemExit(1)
     print(
         f"SUMMARY green screens={len(screens)} 地板={css_floor}px "
-        f"叠行合计={sum(row['data']['hint_stack_count'] for row in screens)}"
+        f"叠行合计={sum(row['data']['hint_stack_count'] for row in screens)} "
+        f"遮罩后={sum(row['data'].get('behind_scrim_count', 0) for row in screens)}"
     )
 
 

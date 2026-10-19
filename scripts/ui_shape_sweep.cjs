@@ -13,7 +13,7 @@
  * 自己要的 URL 逐字相同；探针独立成文件并在启动前 `node --check` 一次，语法错在启动时炸出来，
  * 不许冒充成「界面没画」。
  */
-const { spawn, execFileSync } = require("node:child_process");
+const { spawn, execFileSync, execSync } = require("node:child_process");
 const fs = require("node:fs");
 const http = require("node:http");
 const net = require("node:net");
@@ -33,6 +33,7 @@ const SIZES = (flag("sizes", "1456x808") || "").split(",");
 const OUT = path.resolve(flag("out", "ui_shape_sweep.json"));
 const EDGE = flag("edge", "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe");
 const SHOTS = flag("shots", "");
+const EXTRAS = args.reduce((acc, item, index) => (item === "--extra" ? acc.concat(args[index + 1]) : acc), []);
 const PROBE = path.resolve(flag("probe", path.join(__dirname, "ui_shape_probe.js")));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -229,13 +230,41 @@ async function sweepOne(size, hostPort, probeSource) {
       const lit = await evaluate(tabsExpression);
       const now = (lit || []).find((row) => row.i === t) || {};
       if (!now.selected) {
-        rows.push({ screen: String(tabs[t].text || tabs[t].label), size, data: null, error: "clicked but the tab never lit" });
+        rows.push({ screen: String(tabs[t].text || tabs[t].label), panel: flag("panel", ""), size, data: null, error: "clicked but the tab never lit" });
         continue;
       }
       await run(String(now.text || now.label));
     }
+    // 浮层那一档：先回到编辑器（示波器与动画曲线都住在右侧那一列与编辑器里），
+    // 再按名字真点那一颗；点开了才量，点不开就记一条「没开起来」——不许当成跳过。
+    const back = (await evaluate(tabsExpression) || []).find((row) => /剪辑|编辑/.test(row.text));
+    if (back && EXTRAS.length) {
+      await click(back.x, back.y);
+      await sleep(600);
+    }
+    for (const label of EXTRAS) {
+      const finder = "(() => { const want = " + JSON.stringify(label) + ";" +
+        "const nodes = Array.from(document.querySelectorAll('button, [role=tab]'));" +
+        "const hit = nodes.find((n) => (n.textContent || '').trim().indexOf(want) >= 0);" +
+        "if (!hit) return null; const r = hit.getBoundingClientRect();" +
+        "return {x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2)}; })()";
+      const spot = await evaluate(finder);
+      if (!spot) {
+        rows.push({ screen: label, panel: flag("panel", ""), size, data: null, error: "那颗按钮不在这一屏上" });
+        continue;
+      }
+      await click(spot.x, spot.y);
+      await sleep(800);
+      await run(label);
+      await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }, 20000);
+      await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }, 20000);
+      await sleep(300);
+    }
     cdp.close();
   } finally {
+    // Windows 上 SIGTERM 打不穿 msedge 那一棵树：留着它，下一档扫描就会撞上同一个 profile
+    // 与同一批占着的端口。taskkill /T 才是「这一棵真的没了」。
+    try { execSync(`taskkill /pid ${edge.pid} /T /F`, { stdio: "ignore" }); } catch {}
     try { edge.kill("SIGTERM"); } catch {}
     try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 3 }); } catch {}
   }
@@ -250,12 +279,15 @@ async function main() {
   try {
     for (const size of SIZES) all.push(...(await sweepOne(size, hostPort, probeSource)));
   } finally {
+    // 浏览器留下的 keep-alive 连接会让这个 node 进程永远不退出（900 秒就是这么烧掉的）。
+    if (typeof host.closeAllConnections === "function") host.closeAllConnections();
     host.close();
   }
   fs.writeFileSync(OUT, JSON.stringify(all, null, 1), "utf8");
   const screens = all.filter((row) => row.data).length;
   console.log("screens measured: " + screens + " of " + all.length + " -> " + OUT);
   if (!screens) process.exit(1);
+  process.exit(0);
 }
 
 main().catch((error) => { console.error("sweep failed: " + String(error && error.message ? error.message : error)); process.exit(1); });

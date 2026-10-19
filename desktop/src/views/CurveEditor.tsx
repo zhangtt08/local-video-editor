@@ -394,7 +394,7 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
         <select className="input" aria-label="选中关键帧插值" value={selectedKeys.every((k) => k.interpolation === selected.interpolation) ? selected.interpolation : ""} onChange={(e) => commitPoints(selectedKeys, selectedKeys.map((k) => interpolationPoint(k, e.target.value as Keyframe["interpolation"])))}><option value="" disabled>混合插值</option>{Object.entries(INTERPOLATIONS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
       </fieldset> : <select className="input" aria-label="曲线新关键帧插值" value={newInterpolation} onChange={(e) => setNewInterpolation(e.target.value as Keyframe["interpolation"])}>{Object.entries(INTERPOLATIONS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>}
       {zoom > 1 ? <input type="range" aria-label="曲线横向位置" min={0} max={clip.duration_ticks - span} step={1} value={start} onChange={(e) => { cancel(); setPan(Number(e.target.value)); }} /> : null}
-      <span className="spacer" /><span className="hint">{collision ? "时间已被占用，松开不会覆盖" : disabled ? "锁轨或提交中，当前不可编辑" : draft ? "候选选区 · 松开保存，Esc 取消" : "框选/Shift 多选 · 方向键微调 · Shift 锁轴/10 倍步长 · Ctrl+C 复制、Ctrl+V 按播放头粘贴"}</span>
+      <span className="spacer" /><span className="hint hint-clip" title="框选 / Shift 多选 · 方向键微调 · Shift 锁轴或 10 倍步长 · Ctrl+C 复制、Ctrl+V 按播放头粘贴；Alt 拖复制、Alt 点点掉">{collision ? "时间已被占用，松开不会覆盖" : disabled ? "锁轨或提交中，当前不可编辑" : draft ? "候选选区 · 松开保存，Esc 取消" : "框选/Shift 多选 · 方向键微调 · Shift 锁轴/10 倍步长 · Ctrl+C 复制、Ctrl+V 按播放头粘贴"}</span>
     </div>
   </>;
 }
