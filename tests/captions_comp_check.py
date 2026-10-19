@@ -367,7 +367,11 @@ def main() -> None:
                 client, project_id, revision, request_id="cc-ghost", clip_id="c", sequence_id="nope"
             )
             assert ghost.status_code == 404, ghost.text
-            assert ghost.json()["error"]["details"] == {"sequence_id": "nope"}, ghost.json()
+            # 1.214：不存在的合成现在除了点名是哪个 id，还交出现有的一共几个、各叫什么。
+            # 正文加宽是这一轮要收的那笔旧账——钉形状的断言跟着走，不是把名单删掉。
+            ghost_details = ghost.json()["error"]["details"]
+            assert ghost_details["sequence_id"] == "nope", ghost.json()
+            assert [row["name"] for row in ghost_details["known"]], ghost.json()
             print(
                 f"   nested (revision {revision}): the root names the clip it cannot find "
                 "instead of answering about an empty track"
