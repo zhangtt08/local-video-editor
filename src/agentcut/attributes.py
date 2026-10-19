@@ -34,7 +34,7 @@ from .contracts import (
     SpatialProperty,
     TextStyle,
 )
-from .timeline import FADE_PROPERTIES, apply_commands, sequence_view
+from .timeline import FADE_PROPERTIES, apply_commands, resolve_sequence
 
 # 关键帧分两堆：遮罩那四条跟着「遮罩」这一类走，其余跟着「关键帧动画」这一类走。名单不写第二份，
 # 从契约那三条 Literal 现算，引擎多一条属性这里就自动认得它。
@@ -375,8 +375,8 @@ def attribute_plan(
             targets=len(targets),
             limit=ATTRIBUTE_PASTE_TARGET_LIMIT,
         )
-    if sequence_id is not None:
-        sequence_view(project, sequence_id)
+    # 1.216：名字进来的那一步就折成身份——回执写的与真被写的那一份共用同一处判断。
+    resolved = resolve_sequence(project, sequence_id)
     root = project
     accepted: list[dict] = []
     written: list[dict] = []
@@ -460,7 +460,7 @@ def attribute_plan(
                 written.append({"clip_id": clip_id, "categories": landed})
     return {
         "source_clip_id": source_id,
-        "sequence_id": sequence_id,
+        "sequence_id": resolved,
         "categories": [row for row in category_content(source) if row["category"] in wanted],
         "all_categories": category_content(source),
         "requested": len(requested),

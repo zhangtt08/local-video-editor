@@ -17,6 +17,8 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+from fastapi.testclient import TestClient
+
 from agentcut.contracts import TIMEBASE as T
 from agentcut.contracts import (
     CreateProject,
@@ -26,10 +28,74 @@ from agentcut.contracts import (
     SequenceAdd,
     capabilities,
 )
+from agentcut.http_api import create_app
 from agentcut.projects import ProjectStore
-from agentcut.timeline import sequence_view
+from agentcut.timeline import resolve_sequence, sequence_view
 
 FRAME = T // 30
+
+# 名字折 id 的主人只许有一处，扫描范围要盖住所有可能再写一遍的模块。
+_SCANNED = (
+    "contracts.py",
+    "timeline.py",
+    "projects.py",
+    "http_api.py",
+    "animation.py",
+    "attributes.py",
+)
+
+
+def tail_clips(store: ProjectStore, pid: str) -> None:
+    """往 `片尾` 那一个合成里放一条轨与两段带针的片段——回执那几扇门要读的真东西。"""
+    revision = store.get(pid).revision
+    store.mutate(
+        pid,
+        EditBatch.model_validate(
+            {
+                "request_id": "tail-seed",
+                "expected_revision": revision,
+                "sequence_id": "s-tail",
+                "commands": [
+                    {"op": "track.add", "track": {"id": "t-tail", "kind": "video", "name": "tail"}},
+                    {
+                        "op": "asset.register",
+                        "asset": {
+                            "id": "still",
+                            "kind": "image",
+                            "label": "still",
+                            "reference": "untrusted",
+                        },
+                    },
+                ],
+            }
+        ),
+    )
+    for index, clip_id in enumerate(("cx", "cy")):
+        store.mutate(
+            pid,
+            EditBatch.model_validate(
+                {
+                    "request_id": f"tail-{clip_id}",
+                    "expected_revision": store.get(pid).revision,
+                    "sequence_id": "s-tail",
+                    "commands": [
+                        {
+                            "op": "clip.add",
+                            "clip": {
+                                "id": clip_id,
+                                "asset_id": "still",
+                                "track_id": "t-tail",
+                                "position_ticks": index * 2 * FRAME,
+                                "duration_ticks": 2 * FRAME,
+                                "keyframes": [
+                                    {"property": "x", "at_ticks": 0, "value": 0.1 + index / 10}
+                                ],
+                            },
+                        }
+                    ],
+                }
+            ),
+        )
 
 
 def add_sequence(store, pid: str, sid: str, name: str) -> int:
@@ -181,6 +247,151 @@ def main() -> None:
         both_named = refused(lambda: sequence_view(collision, "片头"))
         assert both_named.code == "SEQUENCE_NAME_AMBIGUOUS", both_named
 
+        # ⑨ 1.216：回执交回的是**解析后的 id**，不是调用方发进来的那一行。
+        #    名字发进去、回给名字，调用方要往下链就得自己再算一次——而它手里没有主人。
+        #    只读的那几扇 POST 门（attribute-plan / color-space）与 GET 同一规矩认名字；
+        #    写的那一侧（EditBatch.sequence_id）仍只认 id，身份没放宽。
+        tail_clips(store, pid)
+        token = "sequencename-" + "a" * 34
+        with TestClient(
+            create_app(store.path, token),
+            base_url="http://127.0.0.1",
+            headers={"Authorization": f"Bearer {token}"},
+        ) as client:
+            path = f"/v1/projects/{pid}/clips"
+            by_name = client.get(path, params=[("clips", "cx"), ("sequence_id", "片尾")])
+            by_id = client.get(path, params=[("clips", "cx"), ("sequence_id", "s-tail")])
+            assert by_name.status_code == 200, by_name.text[:300]
+            assert by_name.json() == by_id.json(), "名字与 id 两路读到的不是同一份回执"
+            assert by_name.json()["sequence_id"] == "s-tail", by_name.json()["sequence_id"]
+
+            manifest = client.get(
+                f"/v1/projects/{pid}/preview-manifest", params=[("sequence_id", "片尾")]
+            )
+            assert manifest.status_code == 200, manifest.text[:200]
+            assert manifest.json()["sequence_id"] == "s-tail", manifest.json()["sequence_id"]
+
+            revision = store.get(pid).revision
+            plan = client.post(
+                f"/v1/projects/{pid}/clips/cx/attribute-plan",
+                json={
+                    "request_id": "plan-name",
+                    "expected_revision": revision,
+                    "source_clip_id": "cx",
+                    "target_clip_ids": ["cy"],
+                    "categories": ["animation"],
+                    "sequence_id": "片尾",
+                },
+            )
+            assert plan.status_code == 200, plan.text[:300]
+            body = plan.json()["attribute_plan"]
+            assert body["sequence_id"] == "s-tail", body["sequence_id"]
+
+            shade = client.post(
+                f"/v1/projects/{pid}/clips/cx/color-space", json={"sequence_id": "片尾"}
+            )
+            assert shade.status_code == 200, shade.text[:300]
+
+            # 交付计划是这一族里最容易「静悄悄分叉」的一处：那一条 GET 认名字，而计划里
+            # 「这一条合成交付多久」以前只在 id 认得到时才填。用一条**空合成**量它——
+            # 没有片段就没有素材要验，两路交回的整数应当一字不差。
+            store.mutate(
+                pid,
+                EditBatch.model_validate(
+                    {
+                        "request_id": "empty-seq",
+                        "expected_revision": store.get(pid).revision,
+                        "commands": [
+                            SequenceAdd(
+                                op="sequence.add",
+                                sequence=Sequence(
+                                    id="s-empty", name="空场", duration_ticks=3 * FRAME
+                                ),
+                            )
+                        ],
+                    }
+                ),
+            ).project
+            plan_query = [("preset_id", "h264-1080p")]
+            named_plan = client.get(
+                f"/v1/projects/{pid}/render-plan", params=plan_query + [("sequence_id", "空场")]
+            )
+            id_plan = client.get(
+                f"/v1/projects/{pid}/render-plan", params=plan_query + [("sequence_id", "s-empty")]
+            )
+            assert named_plan.status_code == 200, named_plan.text[:300]
+            assert named_plan.json() == id_plan.json(), (
+                "同一条合成，按名字与按 id 交出的不是同一份计划"
+            )
+            assert named_plan.json()["plan"]["duration_ticks"] == 3 * FRAME, (
+                named_plan.json()["plan"]["duration_ticks"]
+            )
+            print(
+                f"1.216 交付计划：空合成「空场」按名字与按 id 交回同一份，"
+                f"时长 {named_plan.json()['plan']['duration_ticks']} ticks"
+            )
+
+            # 撞名在 HTTP 上仍是那句点名两个 id 的拒绝，回执里没有「猜第一个」。
+            clash = client.get(path, params=[("clips", "a"), ("sequence_id", "片头")])
+            assert clash.status_code == 422, clash.text[:200]
+            assert clash.json()["error"]["code"] == "SEQUENCE_NAME_AMBIGUOUS", clash.json()
+            assert sorted(clash.json()["error"]["details"]["sequence_ids"]) == [
+                "s-head",
+                "s-head2",
+            ], clash.json()
+
+            # 反面：写的一扇门不许因为名字进来就少涨一次 revision，也不许悄悄写到别的合成。
+            write = client.post(
+                f"/v1/projects/{pid}/edits",
+                json={
+                    "request_id": "write-by-name",
+                    "expected_revision": store.get(pid).revision,
+                    "sequence_id": "片尾",
+                    "commands": [
+                        {"op": "track.add", "track": {"id": "t-no", "kind": "video", "name": "no"}}
+                    ],
+                },
+            )
+            assert write.status_code == 422, write.text[:200]
+            after = store.get(pid)
+            assert after.revision == revision, "一次被拒的写入涨了 revision"
+            assert all("t-no" not in [t.id for t in seq.tracks] for seq in after.sequences.values())
+            assert all(t.id != "t-no" for t in after.tracks)
+
+        # 主人在哪：回执不许再自己回显调用方那一行（出现即红），也不许多一处名字折 id。
+        src = Path(__file__).resolve().parent.parent / "src/agentcut"
+        for name in ("http_api.py", "animation.py", "attributes.py"):
+            assert '"sequence_id": sequence_id' not in (src / name).read_text(
+                encoding="utf-8"
+            ), f"{name} 还在原样回显调用方发进来的那一行"
+        # 接线：认名字这一步在「读视图」「写回那一条合成」「交付时长」三处都必须过主人。
+        for name, needle in (
+            ("timeline.py", "target = resolve_sequence(root, sequence_id)"),
+            ("timeline.py", "root.sequences[target].tracks = candidate.tracks"),
+            ("render.py", "resolved = resolve_sequence(project, sequence_id)"),
+            ("render.py", "project.sequences[resolved].duration_ticks"),
+        ):
+            assert needle in (src / name).read_text(encoding="utf-8"), (name, needle)
+        assert "if sequence_id in project.sequences" not in (src / "render.py").read_text(
+            encoding="utf-8"
+        ), "render 又在认不出的时候当作没有时长（静悄悄那种分叉）"
+        texts = {name: (src / name).read_text(encoding="utf-8") for name in _SCANNED}
+        owners = sum(text.count("seq.name ==") for text in texts.values())
+        assert owners == 1, f"名字折 id 的地方不止一处：{owners}"
+        for model, field in (
+            ("AttributePlanRequest", "SequenceRef"),
+            ("ClipColorSpaceRead", "SequenceRef"),
+            ("EditBatch", "Identifier"),
+        ):
+            block = texts["contracts.py"].split(f"class {model}(")[1].split("\nclass ")[0]
+            assert f"sequence_id: {field} | None = None" in block, (model, field)
+
+        # 幂等：把已经解析出来的 id 再交给主人，答案不变（回执链下一跳因此不会漂）。
+        root = store.get(pid)
+        once = resolve_sequence(root, "片尾")
+        assert once == "s-tail" and resolve_sequence(root, once) == once
+        assert resolve_sequence(root, None) is None
+
         caps = capabilities()
         assert caps["features"]["sequence_lookup_by_name"] is True
         assert caps["features"]["sequence_read_by_name"] is True
@@ -192,15 +403,10 @@ def main() -> None:
                 encoding="utf-8")
             assert "sequence_id: Identifier" not in text, name
             assert "sequence_id: SequenceRef" in text, name
-    owners = 0
-    root = Path(__file__).resolve().parent.parent
-    for name in ("contracts.py", "timeline.py", "projects.py", "http_api.py"):
-        text = (root / "src/agentcut" / name).read_text(encoding="utf-8")
-        owners += text.count("seq.name ==")
-    assert owners == 1, f"名字折 id 的地方不止一处：{owners}"
     print(
         "PASS: 名字只是入口——唯一的名字与 id 同一扇门、撞名逐条交回绝不取第一个、"
-        "找不到就点名现有名单、两个都给就拒、拒了不涨 revision"
+        "找不到就点名现有名单、两个都给就拒、拒了不涨 revision；"
+        "1.216 的回执交回解析后的 id，只读的 POST 门也认名字，写的那一侧仍只认 id"
     )
 
 

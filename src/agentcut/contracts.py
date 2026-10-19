@@ -39,7 +39,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.215.0"
+APP_VERSION = "1.216.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -3862,7 +3862,7 @@ class ClipColorSpaceRead(Contract):
 
 
 
-    sequence_id: Identifier | None = None
+    sequence_id: SequenceRef | None = None
 
 
 
@@ -5295,7 +5295,7 @@ class AttributePlanRequest(Contract):
 
     categories: list[str]
 
-    sequence_id: Identifier | None = None
+    sequence_id: SequenceRef | None = None
 
 
 

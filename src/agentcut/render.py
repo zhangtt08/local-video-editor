@@ -66,7 +66,7 @@ from .masks import (
     unit_path,
 )
 from .speed import base_source_ticks, consumed_source_ticks, segments
-from .timeline import sequence_view, validate_timeline
+from .timeline import resolve_sequence, sequence_view, validate_timeline
 from .transitions import curve_expression, envelopes, wipe_expression
 
 
@@ -1022,12 +1022,14 @@ def compile_render_plan(
     # 两者在这一个名字下合流，图上就不存在「按不透明算的那半条链」。
     alpha_out = transparent or _transparent
     if sequence_id is not None:
+        # 1.216：名字先过 `resolve_sequence` 这一个主人，再问「这一条合成交付多久」。
+        # 原来那句 `if sequence_id in project.sequences` 把认不出的都算「没有时长」，
+        # 于是同一条合成按 id 问与按名字问，交出的计划不是同一份——静悄悄的那种分叉。
+        resolved = resolve_sequence(project, sequence_id)
         _duration_ticks = (
-            project.sequences[sequence_id].duration_ticks
-            if sequence_id in project.sequences
-            else None
+            project.sequences[resolved].duration_ticks if resolved is not None else None
         )
-        project = sequence_view(project, sequence_id)
+        project = sequence_view(project, resolved)
     preset = preset_by_id(preset_id)
     settings = project.settings
     # 1.138：交付率可以不同于时间线自己的率，先把它判过——时间码要用**这条交付的**帧率判，

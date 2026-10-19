@@ -835,10 +835,12 @@ def preview_manifest(
     project-level keys stay whole. An absent list means the whole project, which is what the
     desktop compositor still asks for.
     """
-    from .timeline import sequence_view
+    from .timeline import resolve_sequence, sequence_view
 
     root = project
-    project = sequence_view(project, sequence_id)
+    # 1.216：回执里那一个 `sequence_id` 是**解析后的 id**，不是调用方发来的那一行。
+    resolved = resolve_sequence(root, sequence_id)
+    project = sequence_view(root, resolved)
     clips = {}
     tracks = {track.id: track for track in project.tracks}
     # A narrowed envelope set has to stay the same answer per kept clip, so the skip happens
@@ -1024,7 +1026,7 @@ def preview_manifest(
         }
     return {
         "revision": project.revision,
-        "sequence_id": sequence_id,
+        "sequence_id": resolved,
         "sequences": {
             key: preview_manifest(root, key, clip_ids=clip_ids, _include_sequences=False)
             for key in root.sequences

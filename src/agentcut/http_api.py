@@ -2022,9 +2022,11 @@ def create_app(
         a caller that wants everything should use the project route, and saying so beats returning
         a 12 MB answer nobody asked for.
         """
-        from .timeline import sequence_view
+        from .timeline import resolve_sequence, sequence_view
 
-        project = sequence_view(projects.get(project_id, revision), sequence_id)
+        root = projects.get(project_id, revision)
+        resolved = resolve_sequence(root, sequence_id)
+        project = sequence_view(root, resolved)
         if not clips:
             raise EditorError(
                 "INVALID_REQUEST",
@@ -2054,7 +2056,7 @@ def create_app(
         return {
             "project_id": project.id,
             "revision": project.revision,
-            "sequence_id": sequence_id,
+            "sequence_id": resolved,
             "clips": {
                 clip_id: project.clips[clip_id].model_dump(mode="json") for clip_id in wanted
             },

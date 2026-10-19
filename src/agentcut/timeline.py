@@ -101,41 +101,53 @@ def mask_track_capacity(
     return frames
 
 
+def resolve_sequence(project: Project, sequence_id: str | None) -> str | None:
+    """1.216：把「人看得到的那一行」折成身份，回执交回的就是这一处的答案。
+
+    id 先认——有一个合成的**名字**恰好等于别的合成的 id 时，认出来的必须是那个 id。
+    名字唯一才算数；撞名按 SEQUENCE_NAME_AMBIGUOUS 拒并逐条交回 id，查无按 NOT_FOUND 拒
+    并点名现有名单，两处都不猜第一个。
+    """
+    if sequence_id is None:
+        return None
+    if sequence_id in project.sequences:
+        return sequence_id
+    named = sequences_named(project, sequence_id)
+    if len(named) > 1:
+        raise EditorError(
+            "SEQUENCE_NAME_AMBIGUOUS",
+            f"{len(named)} compositions are named {sequence_id!r}; names are not unique "
+            "here, pass the sequence_id",
+            422,
+            sequence_name=sequence_id,
+            sequence_ids=named,
+        )
+    if len(named) == 1:
+        return named[0]
+    raise EditorError(
+        "NOT_FOUND",
+        f"no composition has id or name {sequence_id!r}; {len(project.sequences)} exist",
+        404,
+        sequence_id=sequence_id,
+        known=[
+            {"sequence_id": sid, "name": seq.name}
+            for sid, seq in sorted(project.sequences.items())
+        ],
+    )
+
+
 def sequence_view(project: Project, sequence_id: str | None = None) -> Project:
     """A read projection; assets/settings/revision always belong to the root project.
 
     1.214：这个字段也接受**唯一的合成名**（id 先认，认不到才按名字找；与写入侧共用
-    `contracts.sequences_named` 那一处主人）。认不出来的时候不再只丢一句
-    "sequence does not exist"——正文把现有的一共几个、各叫什么、id 是什么一起交回去；
-    名字撞了按 SEQUENCE_NAME_AMBIGUOUS 拒，绝不取第一个。
+    `contracts.sequences_named` 那一处主人）。
+    1.216：认名字这一步交回 `resolve_sequence`——读哪一份画面与回执写哪个 id 共用一处判断，
+    否则「发名字进来、回给名字」与「回给 id」会是两回事。
     """
-    if sequence_id is None:
+    resolved = resolve_sequence(project, sequence_id)
+    if resolved is None:
         return project
-    sequence = project.sequences.get(sequence_id)
-    if sequence is None:
-        named = sequences_named(project, sequence_id)
-        if len(named) > 1:
-            raise EditorError(
-                "SEQUENCE_NAME_AMBIGUOUS",
-                f"{len(named)} compositions are named {sequence_id!r}; names are not unique "
-                "here, pass the sequence_id",
-                422,
-                sequence_name=sequence_id,
-                sequence_ids=named,
-            )
-        if len(named) == 1:
-            sequence = project.sequences[named[0]]
-        else:
-            raise EditorError(
-                "NOT_FOUND",
-                f"no composition has id or name {sequence_id!r}; {len(project.sequences)} exist",
-                404,
-                sequence_id=sequence_id,
-                known=[
-                    {"sequence_id": sid, "name": seq.name}
-                    for sid, seq in sorted(project.sequences.items())
-                ],
-            )
+    sequence = project.sequences[resolved]
     return project.model_copy(update={"tracks": sequence.tracks, "clips": sequence.clips})
 
 
@@ -598,7 +610,10 @@ def apply_commands(
 ) -> Project:
     root = project.model_copy(deep=True)
     root.schema_version = SCHEMA_VERSION
-    candidate = sequence_view(root, sequence_id)
+    # 1.216：写回那一步看的是**解析后的 id**。原来这里直接 `root.sequences[sequence_id]`，
+    # 名字一路走到这就是一个 KeyError（HTTP 那边是 500），而读的那一半早已认名字。
+    target = resolve_sequence(root, sequence_id)
+    candidate = sequence_view(root, target)
     inline_before = grade_inline_samples(candidate)
     explicit_transitions = set()
     for index, command in enumerate(commands):
@@ -1331,11 +1346,11 @@ def apply_commands(
     _repair_transitions(candidate, explicit_transitions)
     _repair_associations(candidate)
     try:
-        if sequence_id is None:
+        if target is None:
             root = candidate
         else:
-            root.sequences[sequence_id].tracks = candidate.tracks
-            root.sequences[sequence_id].clips = candidate.clips
+            root.sequences[target].tracks = candidate.tracks
+            root.sequences[target].clips = candidate.clips
         candidate = Project.model_validate(root.model_dump())
     except ValidationError as error:
         raise EditorError(
