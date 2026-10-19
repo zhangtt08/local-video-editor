@@ -133,7 +133,12 @@
   空闲机单跑 `tests/suite_check.py` **129/129（`SUITE_EXIT=0`）**；没有 python 档读 `styles.css`
   （`grep -l styles.css tests/*.py` 为空），随包那一档在重出的 asar 上同样绿，asar 里量得到
   `.field > .hint` 的整行排法与基尺的 `flex:0 0 100%`（各 4 处与 1 处 `grid-column`）。
-- **下一轮（1.213）的具体入口**：
+- **下一轮（1.214）的具体入口**：
+  00. **1.213 已交付**（Agent 也能用可见名点进子合成：`EditBatch.sequence_name` 一处接缝、
+     三条拒绝都不猜、`_fingerprint` 的 era strip 连同 `link_check`/`transition_check` 两份镜像一起补，
+     130/130 单跑、随包二进制两扇门都量过、六处变异 M36~M41 逐条红）。**下一轮先答的判断**：
+     其余 15 个只读路由要不要也认名字——认就要在每个路由前加同一处解析（`sequence_target` 已是唯一主人），
+     不认就把「名字只写在写入侧」这条明说进 `docs/api.md`，别让 Agent 去猜。
   0. **1.212 已交付并全链复验**（层针跨片段复制粘贴：判断定成「值照搬、不重折」，身份是（层序, 属性），
      落库仍只 `layerKeyCommand`；71 档壳检、M26~M35 十处变异、`released_package_check` 随包 51 句、
      空闲机单跑 **129/129**、真页面量到 c1 三枚 → c2 同间距同值、revision 只涨一次、发布包取帧
