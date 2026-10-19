@@ -240,7 +240,7 @@ def main():
     # v3 insert/overwrite fingerprints included expanded Clip defaults. Preserve them exactly.
     for op in ("clip.insert", "clip.overwrite"):
         request = edit([{"op": op, "clip": original.clips["left"].model_dump()}])
-        legacy = request.model_dump(exclude={"dry_run", "sequence_id"})
+        legacy = request.model_dump(exclude={"dry_run", "sequence_id", "sequence_name"})
         del legacy["commands"][0]["clip"]["transition_in"]
         del legacy["commands"][0]["clip"]["color"]["grade"]
         for field in (

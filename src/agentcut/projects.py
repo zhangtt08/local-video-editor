@@ -214,6 +214,8 @@ class ProjectStore:
         strip_bezier_defaults(payload)
         if payload.get("sequence_id") is None:
             payload.pop("sequence_id", None)
+            if payload.get("sequence_name") is None:
+                payload.pop("sequence_name", None)
         # v3 additive defaults must not change fingerprints of v1/v2 receipts.
         from .contracts import TextStyle
 
@@ -529,7 +531,7 @@ class ProjectStore:
             if operation == "edit":
                 self._authorize_probes(request.commands)
             candidate = (
-                apply_commands(current, request.commands, request.sequence_id)
+                apply_commands(current, request.commands, request.target_sequence(current))
                 if operation == "edit"
                 else self._load(db, project_id, request.target_revision)
             )

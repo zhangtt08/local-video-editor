@@ -195,7 +195,7 @@ def main():
             clip = store.get(p.id, 1).clips["picture"].model_dump()
             command = {"op": op, "clips": [clip]} if op == "clips.add" else {"op": op, "clip": clip}
             request = batch([command])
-            legacy = request.model_dump(exclude={"dry_run", "sequence_id"})
+            legacy = request.model_dump(exclude={"dry_run", "sequence_id", "sequence_name"})
             old_clip = legacy["commands"][0].get(
                 "clip", legacy["commands"][0].get("clips", [None])[0]
             )

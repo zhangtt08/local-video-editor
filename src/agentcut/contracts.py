@@ -39,7 +39,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.212.0"
+APP_VERSION = "1.213.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 
@@ -4708,6 +4708,52 @@ class EditBatch(Contract):
 
     sequence_id: Identifier | None = None
 
+    sequence_name: Annotated[str | None, Field(min_length=1, max_length=256)] = None
+
+    def target_sequence(self, project: "Project") -> str | None:
+        """Which timeline this batch means, as an id.
+
+        名字是入口，不是身份：这里只把「人看得到的那一行」折成工程里已经存着的那个 id，
+        下游（`apply_commands`、`sequence_view`）拿到的仍是 id，不新增第二套语义。
+        三条拒绝都不猜：两个都给就是没决定听哪个；名字撞了就把撞的那几个 id 逐条交回
+        （`Sequence.name` 只限长度、没有唯一约束）；名字找不到就点名现有的一共几个、各叫什么。
+        """
+        if self.sequence_id is not None and self.sequence_name is not None:
+            raise EditorError(
+                "SEQUENCE_TARGET_BOTH",
+                "sequence_id and sequence_name both point at one timeline; give exactly one",
+                422,
+                sequence_id=self.sequence_id,
+                sequence_name=self.sequence_name,
+            )
+        if self.sequence_name is None:
+            return self.sequence_id
+        named = sorted(
+            sid for sid, seq in project.sequences.items() if seq.name == self.sequence_name
+        )
+        if not named:
+            raise EditorError(
+                "SEQUENCE_NAME_NOT_FOUND",
+                f"no composition in this project is named {self.sequence_name!r}; "
+                f"{len(project.sequences)} exist",
+                404,
+                sequence_name=self.sequence_name,
+                known=[
+                    {"sequence_id": sid, "name": seq.name}
+                    for sid, seq in sorted(project.sequences.items())
+                ],
+            )
+        if len(named) > 1:
+            raise EditorError(
+                "SEQUENCE_NAME_AMBIGUOUS",
+                f"{len(named)} compositions are named {self.sequence_name!r}; names are not "
+                "unique here, pass sequence_id",
+                422,
+                sequence_name=self.sequence_name,
+                sequence_ids=named,
+            )
+        return named[0]
+
 
 
 
@@ -6876,6 +6922,8 @@ def capabilities(
             "clip_effects": True,
 
             "clip_property_patches": True,
+
+            "sequence_lookup_by_name": True,
 
             "nested_sequences": True,
 

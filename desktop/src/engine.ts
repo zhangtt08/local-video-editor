@@ -758,6 +758,9 @@ export type MaskTrackReceipt = {
  *  界面念的仍是这同一份中文——同一句拒绝不许有两个说法。 */
 export function errorHints(): Record<string, string> {
     const hints: Record<string, string> = {
+      SEQUENCE_TARGET_BOTH: "两个字段指的是同一块时间线：只给一个，先查工程里那份合成名单。",
+      SEQUENCE_NAME_NOT_FOUND: "工程里没有叫这个名字的合成：正文列出现有几个各叫什么、id 是什么。",
+      SEQUENCE_NAME_AMBIGUOUS: "同名合成不止一个，名字不能当身份：正文交回它们的 id，改用 sequence_id。",
       UNAUTHORIZED: "引擎密钥不匹配，请重启软件或在 Agent 面板重新复制配置。",
       REVISION_CONFLICT: "时间线刚被 Agent 或另一次操作改过。界面已自动读取最新版本，请重做这一步。",
       IDEMPOTENCY_CONFLICT: "同一个请求号被用于不同内容，属于程序保护，不影响你的剪辑。",
