@@ -1023,8 +1023,8 @@ def compile_render_plan(
     alpha_out = transparent or _transparent
     if sequence_id is not None:
         # 1.216：名字先过 `resolve_sequence` 这一个主人，再问「这一条合成交付多久」。
-        # 原来那句 `if sequence_id in project.sequences` 把认不出的都算「没有时长」，
-        # 于是同一条合成按 id 问与按名字问，交出的计划不是同一份——静悄悄的那种分叉。
+        # 原来那句「认不出就当没有时长」的兜底，让同一条合成按 id 问与按名字问交出
+        # 两种计划——静悄悄的那种分叉。
         resolved = resolve_sequence(project, sequence_id)
         _duration_ticks = (
             project.sequences[resolved].duration_ticks if resolved is not None else None

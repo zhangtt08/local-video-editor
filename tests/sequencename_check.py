@@ -341,11 +341,13 @@ def main() -> None:
             ], clash.json()
 
             # 反面：写的一扇门不许因为名字进来就少涨一次 revision，也不许悄悄写到别的合成。
+            # 数是在这最后一次写入之前取的——上面那一节自己就涨过几次 revision。
+            before = store.get(pid).revision
             write = client.post(
                 f"/v1/projects/{pid}/edits",
                 json={
                     "request_id": "write-by-name",
-                    "expected_revision": store.get(pid).revision,
+                    "expected_revision": before,
                     "sequence_id": "片尾",
                     "commands": [
                         {"op": "track.add", "track": {"id": "t-no", "kind": "video", "name": "no"}}
@@ -354,7 +356,7 @@ def main() -> None:
             )
             assert write.status_code == 422, write.text[:200]
             after = store.get(pid)
-            assert after.revision == revision, "一次被拒的写入涨了 revision"
+            assert after.revision == before, "一次被拒的写入涨了 revision"
             assert all("t-no" not in [t.id for t in seq.tracks] for seq in after.sequences.values())
             assert all(t.id != "t-no" for t in after.tracks)
 
