@@ -119,7 +119,7 @@ export function Assets() {
               lines={
                 <>
                   素材库还是空的
-                  <div className="dim">点右上角 ＋ 选择视频 / 音频 / 图片；文件会被复制进本地素材库，原文件不动。</div>
+                  <div className="dim" title="文件会被复制进本地素材库，原文件不动。">点右上角 ＋ 加入视频 / 音频 / 图片</div>
                 </>
               }
             />
@@ -161,15 +161,13 @@ export function Assets() {
 
       <div className="asset-foot">
         {tab === "library" ? (
-          <>
-            拖到时间线即可上轨；探测只读元数据与缩略图，<b>不修改原文件</b>。
-            <div className="mono dim">共 {app.library.length} 个素材 · 内容指纹去重后展示</div>
-          </>
+          <div className="mono dim" title="拖到时间线即可上轨；探测只读元数据与缩略图，不修改原文件。">
+            共 {app.library.length} 个素材 · 悬停看不改原文件
+          </div>
         ) : (
-          <>
-            工程素材记录的是「服务端验证过的文件」，Agent 无法伪造它。
-            <div className="mono dim">verified 记录由 /v1/media/import 产生</div>
-          </>
+          <div className="mono dim" title="工程素材记录的是「服务端验证过的文件」，Agent 无法伪造它；verified 记录由 /v1/media/import 产生。">
+            verified 记录由 /v1/media/import 产生
+          </div>
         )}
       </div>
     </aside>

@@ -43,14 +43,16 @@
   --mono: "Cascadia Code", "JetBrains Mono", "SF Mono", Consolas, ui-monospace, monospace;
   --sans: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
   /* 字号只从这套刻度里取，最小的一档 11.5px 是给「画在图形里」的字（时间线刻度、针牌）；
-     正文与控件一律 13.5px 起——不再用小字堆两层来塞信息。 */
-  --fs-micro: 11.5px;
-  --fs-label: 12.5px;
-  --fs-body: 13.5px;
-  --fs-strong: 15px;
-  --fs-title: 19px;
-  --fs-hero: 24px;
-  --fs-glyph: 21px;
+     正文与控件一律 14px 起——不再用小字堆两层来塞信息。
+  1.217：地板从 11.5px 抬到 12.5px（装机量到最小的字就是尺子上那排时间码），
+  整条阶梯一起放宽一档；跨屏形状扫描 tests/ui_shape_check.py 按这一档判红。 */
+  --fs-micro: 12.5px;
+  --fs-label: 13px;
+  --fs-body: 14px;
+  --fs-strong: 16px;
+  --fs-title: 21px;
+  --fs-hero: 26px;
+  --fs-glyph: 24px;
   --r-xs: 8px;
   --r-sm: 10px;
   --r-md: 14px;
@@ -637,7 +639,7 @@ select { color-scheme: dark; }
 .clip.image .strip { background: var(--clip-image-stripe); }
 .clip.ghost { background: var(--ghost-bg); border: 1.5px dashed var(--ghost-edge); color: #90c8c2; box-shadow: none; }
 .clip.ghost .strip { background: repeating-linear-gradient(-45deg, var(--ghost-edge) 0 3px, transparent 3px 6px); }
-.ghost-tag { position: absolute; top: 3px; right: 5px; font-size: var(--fs-micro); padding: 2px 6px; border-radius: var(--r-pill); background: var(--ghost-bg); border: 1px solid var(--ghost-edge); color: #d8f5f0; pointer-events: none; z-index: 3; }
+.ghost-tag { position: absolute; top: 3px; right: 5px; font-size: var(--fs-micro); padding: 2px 6px; border-radius: var(--r-pill); background: var(--ghost-bg); border: 1px solid var(--ghost-edge); color: #d8f5f0; pointer-events: none; z-index: 3; max-width: calc(100% - 10px); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .ghost-tag.unverified { border-color: #754147; color: var(--danger); background: var(--danger-soft); }
 .trim-handle { position: absolute; top: 0; bottom: 0; width: 7px; cursor: ew-resize; z-index: 4; }
 .trim-handle.left { left: 0; }
