@@ -39,9 +39,13 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.214.0"
+APP_VERSION = "1.215.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
+# 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
+# 写命令里的 `sequence_id` 仍是 `Identifier`——身份不动；名字只在读的门上折成 id，
+# 折的那一处主人是 `sequences_named`，参数类型放宽只是让值能走到它面前。
+SequenceRef = Annotated[str, Field(min_length=1, max_length=256)]
 
 Ticks = Annotated[int, Field(ge=0, le=MAX_TICKS)]
 

@@ -48,6 +48,7 @@ from .contracts import (
     RenderRequest,
     RestoreProject,
     Revision,
+    SequenceRef,
     SilenceRequest,
     SpeechCaptionsRequest,
     Ticks,
@@ -171,7 +172,7 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         project_id: Identifier,
         clips: list[str],
         revision: Revision | None = None,
-        sequence_id: Identifier | None = None,
+        sequence_id: SequenceRef | None = None,
     ) -> dict:
         """Read the records of just the named clips, without carrying the whole project document.
 
@@ -191,7 +192,7 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
     async def preview_manifest(
         project_id: Identifier,
         revision: Revision | None = None,
-        sequence_id: Identifier | None = None,
+        sequence_id: SequenceRef | None = None,
         clips: list[str] | None = None,
         no_clips: bool = False,
     ) -> dict:
@@ -251,7 +252,7 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
 
     @server.tool(annotations=read)
     async def preview_candidate(
-        project: Project, sequence_id: Identifier | None = None
+        project: Project, sequence_id: SequenceRef | None = None
     ) -> dict[str, Any]:
         """Compile the native preview for a timeline_edit dry-run project, without writes."""
         query = f"?sequence_id={sequence_id}" if sequence_id else ""
@@ -262,7 +263,7 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         project_id: Identifier,
         track_id: Identifier,
         revision: Revision | None = None,
-        sequence_id: Identifier | None = None,
+        sequence_id: SequenceRef | None = None,
     ) -> dict:
         """Export timed text clips from one track as plain SubRip subtitles."""
         query = f"?sequence_id={sequence_id}" if sequence_id else "?"
@@ -275,7 +276,7 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         project_id: Identifier,
         at_ticks: Ticks,
         revision: Revision | None = None,
-        sequence_id: Identifier | None = None,
+        sequence_id: SequenceRef | None = None,
     ) -> dict[str, Any]:
         """Look at the composited picture at one integer tick -- the frame the export will contain.
 
@@ -318,7 +319,7 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         clip_id: Identifier,
         at_ticks: Ticks,
         revision: Revision | None = None,
-        sequence_id: Identifier | None = None,
+        sequence_id: SequenceRef | None = None,
     ) -> dict:
         """Sample animated properties at a clip-relative integer tick, using the render clock."""
         query = f"?at_ticks={at_ticks}" + ("" if revision is None else f"&revision={revision}")
@@ -757,7 +758,7 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         project_id: Identifier,
         preset_id: Identifier,
         revision: Revision | None = None,
-        sequence_id: Identifier | None = None,
+        sequence_id: SequenceRef | None = None,
         fit: RenderFit = "contain",
         range: RenderRange = "full",
         transparent: bool = False,

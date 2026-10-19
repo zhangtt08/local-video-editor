@@ -185,6 +185,13 @@ def main() -> None:
         assert caps["features"]["sequence_lookup_by_name"] is True
         assert caps["features"]["sequence_read_by_name"] is True
 
+        # ⑧ 1.215：读的那一侧不再把名字挡在参数校验层。这里钉形状：任何一处再把
+        #    sequence_id 声明回 Identifier，中文名就又被 422 拦在门外（那是回归）。
+        for name in ("http_api.py", "mcp_server.py"):
+            text = (Path(__file__).resolve().parent.parent / "src/agentcut" / name).read_text(
+                encoding="utf-8")
+            assert "sequence_id: Identifier" not in text, name
+            assert "sequence_id: SequenceRef" in text, name
     owners = 0
     root = Path(__file__).resolve().parent.parent
     for name in ("contracts.py", "timeline.py", "projects.py", "http_api.py"):

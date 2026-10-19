@@ -77,6 +77,7 @@ from .contracts import (
     RenderRequest,
     RestoreProject,
     Revision,
+    SequenceRef,
     ShapeMask,
     SilenceRequest,
     SpeechCaptionsRequest,
@@ -358,7 +359,7 @@ def create_app(
         track_id: Identifier,
         projects: Store,
         revision: Revision | None = None,
-        sequence_id: Identifier | None = None,
+        sequence_id: SequenceRef | None = None,
     ):
         project = sequence_view(projects.get(project_id, revision), sequence_id)
         return {"revision": project.revision, "srt": export_srt(project, track_id)}
@@ -2011,7 +2012,7 @@ def create_app(
         projects: Store,
         clips: list[Identifier] | None = Query(default=None),
         revision: Revision | None = None,
-        sequence_id: Identifier | None = None,
+        sequence_id: SequenceRef | None = None,
     ):
         """Read just the named clips' records, instead of the whole project document.
 
@@ -2064,7 +2065,7 @@ def create_app(
         project_id: Identifier,
         projects: Store,
         revision: Revision | None = None,
-        sequence_id: Identifier | None = None,
+        sequence_id: SequenceRef | None = None,
         clips: list[Identifier] | None = Query(default=None),
         no_clips: bool = Query(default=False),
     ):
@@ -2108,7 +2109,7 @@ def create_app(
         return preview_manifest(project, sequence_id, clip_ids=wanted)
 
     @app.post("/v1/preview-manifest", dependencies=auth)
-    def preview_candidate(project: Project, sequence_id: Identifier | None = None):
+    def preview_candidate(project: Project, sequence_id: SequenceRef | None = None):
         """Compile a validated dry-run snapshot without opening media or writing state."""
         validate_timeline(project)
         return preview_manifest(project, sequence_id)
@@ -2183,7 +2184,7 @@ def create_app(
         at_ticks: Ticks,
         projects: Store,
         revision: Revision | None = None,
-        sequence_id: Identifier | None = None,
+        sequence_id: SequenceRef | None = None,
     ):
         project = projects.get(project_id, revision)
         data, at = require_media().render_frame(project, at_ticks, sequence_id)
@@ -2204,7 +2205,7 @@ def create_app(
         at_ticks: Ticks,
         projects: Store,
         revision: Revision | None = None,
-        sequence_id: Identifier | None = None,
+        sequence_id: SequenceRef | None = None,
     ):
         project = sequence_view(projects.get(project_id, revision), sequence_id)
         clip = project.clips.get(clip_id)
@@ -2223,7 +2224,7 @@ def create_app(
         preset_id: Identifier,
         projects: Store,
         revision: Revision | None = None,
-        sequence_id: Identifier | None = None,
+        sequence_id: SequenceRef | None = None,
         fit: RenderFit = "contain",
         range: RenderRange = "full",
         transparent: bool = False,
