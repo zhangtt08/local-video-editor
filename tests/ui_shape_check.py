@@ -83,8 +83,13 @@ def request(path: str, token: str, payload=None, method="GET"):
         method=method,
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=60) as response:
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=60) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        # 拒绝必须把自己说的那句话带回来，不然排查只能靠猜。
+        detail = error.read().decode("utf-8", errors="replace")[:600]
+        raise AssertionError(f"{method} {path} -> {error.code}: {detail}") from None
 
 
 def seed_project(token: str) -> str:
@@ -114,6 +119,41 @@ def seed_project(token: str) -> str:
         token,
         {"request_id": "shape-seed", "expected_revision": made["project"]["revision"],
          "commands": commands},
+        "POST",
+    )
+    # 检查器最挤的那几格不能空着量：遮罩与调色链装满之后，
+    # 「22 屏 green」才说的是同一件事。（文字层要一条文字素材；
+    # 转场量出来的那两处重叠记在 AGENTS 的 1.219 入口里。）
+    # 22 屏 green 说的必须是「装满东西时也 green」，否则这一档只是在量一张白屏。
+    dense = [
+        {
+            "op": "clip.mask",
+            "clip_id": "k2",
+            "mask": {
+                "shape": "rectangle",
+                "center_x": 0.5,
+                "center_y": 0.45,
+                "width": 0.42,
+                "height": 0.5,
+                "rotation": 12.5,
+                "feather": 0.08,
+            },
+        },
+        {
+            "op": "clip.grade",
+            "clip_id": "k2",
+            "grade": [
+                {"kind": "levels", "channel": "rgb", "black": 0.02, "white": 0.98, "gamma": 1.12},
+                {"kind": "matrix", "coefficients": [0.95, 0.03, 0.02, 0.04, 0.94, 0.02,
+                                                     0.04, 0.03, 0.93]},
+            ],
+        },
+    ]
+    request(
+        f"/v1/projects/{pid}/edits",
+        token,
+        {"request_id": "shape-dense", "expected_revision": made["project"]["revision"] + 1,
+         "commands": dense},
         "POST",
     )
     return pid
@@ -175,8 +215,13 @@ def sweep(pid: str, folder: Path, panel: str, extras: tuple[str, ...] = ()) -> l
         timeout=900,
         cwd=str(ROOT),
     )
+    # 上一轮被超时打断时留下的 msedge 会占住 profile 与端口——那是量具的抖动，不是界面的缺陷。
     if node.returncode != 0 or not out.is_file():
-        fail("扫描没跑完：" + (node.stderr or node.stdout)[-400:])
+        time.sleep(6)
+        node = subprocess.run(node.args, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=900, cwd=str(ROOT))
+        if node.returncode != 0 or not out.is_file():
+            fail("扫描没跑完（重试一次还是）：" + (node.stderr or node.stdout)[-400:])
     return json.loads(out.read_text(encoding="utf-8"))
 
 
