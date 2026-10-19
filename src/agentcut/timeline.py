@@ -612,8 +612,8 @@ def apply_commands(
     root.schema_version = SCHEMA_VERSION
     # 1.216：写回那一步看的是**解析后的 id**。原来这里直接 `root.sequences[sequence_id]`，
     # 名字一路走到这就是一个 KeyError（HTTP 那边是 500），而读的那一半早已认名字。
-    target = resolve_sequence(root, sequence_id)
-    candidate = sequence_view(root, target)
+    sequence_ref = resolve_sequence(root, sequence_id)
+    candidate = sequence_view(root, sequence_ref)
     inline_before = grade_inline_samples(candidate)
     explicit_transitions = set()
     for index, command in enumerate(commands):
@@ -1346,11 +1346,11 @@ def apply_commands(
     _repair_transitions(candidate, explicit_transitions)
     _repair_associations(candidate)
     try:
-        if target is None:
+        if sequence_ref is None:
             root = candidate
         else:
-            root.sequences[target].tracks = candidate.tracks
-            root.sequences[target].clips = candidate.clips
+            root.sequences[sequence_ref].tracks = candidate.tracks
+            root.sequences[sequence_ref].clips = candidate.clips
         candidate = Project.model_validate(root.model_dump())
     except ValidationError as error:
         raise EditorError(

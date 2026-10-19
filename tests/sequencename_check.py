@@ -30,7 +30,7 @@ from agentcut.contracts import (
 )
 from agentcut.http_api import create_app
 from agentcut.projects import ProjectStore
-from agentcut.timeline import resolve_sequence, sequence_view
+from agentcut.timeline import apply_commands, resolve_sequence, sequence_view
 
 FRAME = T // 30
 
@@ -368,8 +368,8 @@ def main() -> None:
             ), f"{name} 还在原样回显调用方发进来的那一行"
         # 接线：认名字这一步在「读视图」「写回那一条合成」「交付时长」三处都必须过主人。
         for name, needle in (
-            ("timeline.py", "target = resolve_sequence(root, sequence_id)"),
-            ("timeline.py", "root.sequences[target].tracks = candidate.tracks"),
+            ("timeline.py", "sequence_ref = resolve_sequence(root, sequence_id)"),
+            ("timeline.py", "root.sequences[sequence_ref].tracks = candidate.tracks"),
             ("render.py", "resolved = resolve_sequence(project, sequence_id)"),
             ("render.py", "project.sequences[resolved].duration_ticks"),
         ):
@@ -393,6 +393,35 @@ def main() -> None:
         once = resolve_sequence(root, "片尾")
         assert once == "s-tail" and resolve_sequence(root, once) == once
         assert resolve_sequence(root, None) is None
+
+        # ⑩ 名字一路走到 reducer 也要**真写得进去**。1.216 第一版把解析结果存进了一个与
+        #    循环里查轨道用的局部量同名的变量，于是每一次带 `clip.add` 的写入都拿 Track 去
+        #    当字典键——全套假红了一整轮才被空闲机跑出来。这一条就是那条路的守门：
+        #    交回的必须是真写进那一条合成的那份，而不是异常、也不是写到主时间线。
+        written = apply_commands(
+            store.get(pid),
+            EditBatch.model_validate(
+                {
+                    "request_id": "direct-by-name",
+                    "expected_revision": store.get(pid).revision,
+                    "commands": [
+                        {
+                            "op": "clip.add",
+                            "clip": {
+                                "id": "kx",
+                                "asset_id": "still",
+                                "track_id": "t-tail",
+                                "position_ticks": 4 * FRAME,
+                                "duration_ticks": FRAME,
+                            },
+                        }
+                    ],
+                }
+            ).commands,
+            "片尾",
+        )
+        assert "kx" in written.sequences["s-tail"].clips, "按名字写回没落进那一条合成"
+        assert all(clip.id != "kx" for clip in written.clips.values()), "写到了主时间线上"
 
         caps = capabilities()
         assert caps["features"]["sequence_lookup_by_name"] is True
