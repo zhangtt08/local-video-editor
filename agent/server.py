@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Agent API server（标准实现，Python 项目用，本机守卫版）。项目只需在同目录提供 tools.py 并导出 TOOLS / PROJECT。
+"""Agent API server（标准实现，Python 项目用，本机守卫版）。
+
+项目只需在同目录提供 tools.py 并导出 TOOLS / PROJECT。
 
 契约见 personal-agent-hub/docs/AGENT_API_STANDARD.md。只用标准库，只监听 127.0.0.1。
 
@@ -94,7 +96,10 @@ def ensure_agent_token(project_id: str) -> tuple[str, str | None]:
             return adopted, str(path)
         _write_existing(path, secret)
     except OSError as e:
-        raise SystemExit(f"本机令牌写不进 {path}：{e}。可指定 AGENT_API_TOKEN 或把 AGENT_API_DATA_DIR 指到可写目录") from e
+        raise SystemExit(
+            f"本机令牌写不进 {path}：{e}。"
+            "可指定 AGENT_API_TOKEN 或把 AGENT_API_DATA_DIR 指到可写目录"
+        ) from e
     if os.name == "posix":
         try:
             path.chmod(stat.S_IRUSR | stat.S_IWUSR)
@@ -172,7 +177,8 @@ def load_tools() -> tuple[dict[str, Any], list[dict[str, Any]]]:
     spec = importlib.util.spec_from_file_location("agent_tools", p)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    return getattr(mod, "PROJECT", {"name": "agent", "version": "0.0.0"}), list(getattr(mod, "TOOLS"))
+    project = getattr(mod, "PROJECT", {"name": "agent", "version": "0.0.0"})
+    return project, list(getattr(mod, "TOOLS"))
 
 
 def validate(schema: dict[str, Any] | None, data: Any) -> None:
@@ -186,52 +192,101 @@ def validate(schema: dict[str, Any] | None, data: Any) -> None:
         props = schema.get("properties", {})
         unknown = [k for k in obj if k not in props]
         if unknown:
-            raise AgentError("bad_input", f"未知参数：{', '.join(unknown)}；可用：{', '.join(props) or '无'}")
+            raise AgentError(
+                "bad_input",
+                f"未知参数：{', '.join(unknown)}；可用：{', '.join(props) or '无'}",
+            )
 
 
 def guard_denied_body(verdict: dict[str, Any], token_header: str) -> dict[str, Any]:
     return {
         "ok": False,
         "error": {"code": verdict["code"], "message": verdict["message"]},
-        "guard": {"host": "127.0.0.1 only", "origin": "loopback only", "token_header": token_header, "mutating_methods_need_token": True},
+        "guard": {
+            "host": "127.0.0.1 only",
+            "origin": "loopback only",
+            "token_header": token_header,
+            "mutating_methods_need_token": True,
+        },
     }
 
 
-def check_guard(handler: BaseHTTPRequestHandler, port: int, token: str, token_header: str) -> dict[str, Any] | None:
+def check_guard(
+    handler: BaseHTTPRequestHandler,
+    port: int,
+    token: str,
+    token_header: str,
+) -> dict[str, Any] | None:
     """返回 None = 放行；返回 dict = 拒绝理由（调用方必须先回它再 return）。"""
     if not host_allowed(handler.headers.get("Host"), port):
-        return {"status": 403, "code": "HOST_NOT_ALLOWED",
-                "message": f"Host 头不被允许：本机服务只接受 127.0.0.1:{port} / localhost:{port} / [::1]:{port}（挡 DNS rebinding）"}
+        return {
+            "status": 403,
+            "code": "HOST_NOT_ALLOWED",
+            "message": (
+                f"Host 头不被允许：本机服务只接受 127.0.0.1:{port} / "
+                f"localhost:{port} / [::1]:{port}（挡 DNS rebinding）"
+            ),
+        }
     for name in ("Origin", "Referer"):
         value = handler.headers.get(name)
         if value and not origin_allowed(value):
-            return {"status": 403, "code": f"{name.upper()}_NOT_ALLOWED",
-                    "message": f"{name} 不是本机来源：{value[:160]}。本接口只服务本机回环请求，不从网页里直接调用"}
+            return {
+                "status": 403,
+                "code": f"{name.upper()}_NOT_ALLOWED",
+                "message": (
+                    f"{name} 不是本机来源：{value[:160]}。"
+                    "本接口只服务本机回环请求，不从网页里直接调用"
+                ),
+            }
     method = (handler.command or "").upper()
     if method in ("GET", "HEAD"):
         return None
     if not token:
-        return {"status": 500, "code": "TOKEN_UNAVAILABLE",
-                "message": "服务端没能取到本机令牌，写接口按 fail-closed 拒绝。检查 AGENT_API_TOKEN 或令牌落盘目录"}
+        return {
+            "status": 500,
+            "code": "TOKEN_UNAVAILABLE",
+            "message": (
+                "服务端没能取到本机令牌，写接口按 fail-closed 拒绝。"
+                "检查 AGENT_API_TOKEN 或令牌落盘目录"
+            ),
+        }
     provided = handler.headers.get(token_header, "").strip()
     if not provided:
         auth = handler.headers.get("Authorization", "")
         if auth.lower().startswith("bearer "):
             provided = auth[7:].strip()
     if not token_matches(provided, token):
-        return {"status": 401, "code": "TOKEN_REQUIRED",
-                "message": f"缺少或错误的本机令牌：请带请求头 {token_header}: <令牌>（见 manifest api.token_file）"}
+        return {
+            "status": 401,
+            "code": "TOKEN_REQUIRED",
+            "message": (
+                f"缺少或错误的本机令牌：请带请求头 {token_header}: <令牌>"
+                "（见 manifest api.token_file）"
+            ),
+        }
     return None
 
 
-def serve(project: dict[str, Any], tools: list[dict[str, Any]], port: int = 8790, host: str = "127.0.0.1") -> None:
+def serve(
+    project: dict[str, Any],
+    tools: list[dict[str, Any]],
+    port: int = 8790,
+    host: str = "127.0.0.1",
+) -> None:
     if host not in LOOPBACK_HOSTS:
         raise SystemExit(f"只允许监听本机回环（127.0.0.1），拒绝绑定到 {host or '(空)'}")
     project_id = str(project.get("id") or project.get("projectId") or "agent")
     token_header = f"x-{project_id}-token"
     token, token_path = ensure_agent_token(project_id)
     by_name = {t["name"]: t for t in tools}
-    descriptor = lambda t: {"name": t["name"], "description": t["description"], "input_schema": t.get("input_schema", {}), "risk": t.get("risk", "read")}
+
+    def descriptor(tool: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "name": tool["name"],
+            "description": tool["description"],
+            "input_schema": tool.get("input_schema", {}),
+            "risk": tool.get("risk", "read"),
+        }
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -259,27 +314,78 @@ def serve(project: dict[str, Any], tools: list[dict[str, Any]], port: int = 8790
                 return
             # 能走到这里说明带了合法令牌且来源是本机回环；仍回 405 且不发任何 Access-Control-*：
             # 本服务不做跨源放行，跨源页面连预检都过不了。
-            self._send(405, {"ok": False, "error": {"code": "no_cors", "message": "本机服务不做跨源放行；请从本机回环地址带令牌直接调用"}})
+            self._send(405, {
+                "ok": False,
+                "error": {
+                    "code": "no_cors",
+                    "message": "本机服务不做跨源放行；请从本机回环地址带令牌直接调用",
+                },
+            })
 
         def do_GET(self) -> None:  # noqa: N802
             if not self._guard_or_send():
                 return
             route = self.path.split("?")[0].rstrip("/") or "/"
             if route == "/api/health":
-                self._send(200, {"ok": True, "data": {"project": project["name"], "version": project.get("version", "0.0.0"), "agent_api": 1, "tools": len(tools), "uptime_ms": int((time.time() - START) * 1000), "guard": {"host": f"127.0.0.1:{port} / localhost:{port} / [::1]:{port}", "origin": "loopback only", "token_required_for": "非 GET/HEAD", "token_file": token_path or "env", "wildcard_cors": False}}})
+                self._send(200, {
+                    "ok": True,
+                    "data": {
+                        "project": project["name"],
+                        "version": project.get("version", "0.0.0"),
+                        "agent_api": 1,
+                        "tools": len(tools),
+                        "uptime_ms": int((time.time() - START) * 1000),
+                        "guard": {
+                            "host": f"127.0.0.1:{port} / localhost:{port} / [::1]:{port}",
+                            "origin": "loopback only",
+                            "token_required_for": "非 GET/HEAD",
+                            "token_file": token_path or "env",
+                            "wildcard_cors": False,
+                        },
+                    },
+                })
             elif route == "/api/agent/tools":
                 self._send(200, {"ok": True, "data": [descriptor(t) for t in tools]})
             elif route == "/api/agent/manifest":
-                self._send(200, {"ok": True, "data": {"project": project["name"], "version": project.get("version", "0.0.0"), "description": project.get("summary", ""), "base_url": f"http://{host}:{self.server.server_address[1]}", "tools": [descriptor(t) for t in tools], "api": {"token_header": token_header, "token_env": "AGENT_API_TOKEN", "token_file": token_path}}})
+                self._send(200, {
+                    "ok": True,
+                    "data": {
+                        "project": project["name"],
+                        "version": project.get("version", "0.0.0"),
+                        "description": project.get("summary", ""),
+                        "base_url": f"http://{host}:{self.server.server_address[1]}",
+                        "tools": [descriptor(t) for t in tools],
+                        "api": {
+                            "token_header": token_header,
+                            "token_env": "AGENT_API_TOKEN",
+                            "token_file": token_path,
+                        },
+                    },
+                })
             else:
-                self._send(404, {"ok": False, "error": {"code": "not_found", "message": f"未知路径 {route}", "endpoints": ["/api/health", "/api/agent/tools", "/api/agent/manifest", "POST /api/agent/tool"]}})
+                self._send(404, {
+                    "ok": False,
+                    "error": {
+                        "code": "not_found",
+                        "message": f"未知路径 {route}",
+                        "endpoints": [
+                            "/api/health",
+                            "/api/agent/tools",
+                            "/api/agent/manifest",
+                            "POST /api/agent/tool",
+                        ],
+                    },
+                })
 
         def do_POST(self) -> None:  # noqa: N802
             if not self._guard_or_send():
                 return
             route = self.path.split("?")[0].rstrip("/") or "/"
             if route != "/api/agent/tool":
-                self._send(404, {"ok": False, "error": {"code": "not_found", "message": f"未知路径 {route}"}})
+                self._send(404, {
+                    "ok": False,
+                    "error": {"code": "not_found", "message": f"未知路径 {route}"},
+                })
                 return
             try:
                 length = int(self.headers.get("content-length") or 0)
@@ -288,20 +394,44 @@ def serve(project: dict[str, Any], tools: list[dict[str, Any]], port: int = 8790
                 body = json.loads(self.rfile.read(length) or b"{}")
                 tool = by_name.get(body.get("tool"))
                 if tool is None:
-                    self._send(400, {"ok": False, "error": {"code": "unknown_tool", "message": f"未注册的工具：{body.get('tool')}", "available": list(by_name)}})
+                    self._send(400, {
+                        "ok": False,
+                        "error": {
+                            "code": "unknown_tool",
+                            "message": f"未注册的工具：{body.get('tool')}",
+                            "available": list(by_name),
+                        },
+                    })
                     return
                 t0 = time.time()
                 validate(tool.get("input_schema"), body.get("input"))
                 fn: Callable[..., Any] = tool["handler"]
                 data = fn(body.get("input") or {})
-                self._send(200, {"ok": True, "tool": tool["name"], "ms": int((time.time() - t0) * 1000), "data": data})
+                self._send(200, {
+                    "ok": True,
+                    "tool": tool["name"],
+                    "ms": int((time.time() - t0) * 1000),
+                    "data": data,
+                })
             except AgentError as e:
                 status = 400 if e.code in CALLER_FIXABLE else 500
-                self._send(status, {"ok": False, "error": {"code": e.code, "message": str(e)}})
+                self._send(status, {
+                    "ok": False,
+                    "error": {"code": e.code, "message": str(e)},
+                })
             except json.JSONDecodeError:
-                self._send(400, {"ok": False, "error": {"code": "bad_json", "message": "请求体不是合法 JSON"}})
+                self._send(400, {
+                    "ok": False,
+                    "error": {"code": "bad_json", "message": "请求体不是合法 JSON"},
+                })
             except Exception as e:  # noqa: BLE001
-                self._send(500, {"ok": False, "error": {"code": "handler_failed", "message": f"{type(e).__name__}: {e}"}})
+                self._send(500, {
+                    "ok": False,
+                    "error": {
+                        "code": "handler_failed",
+                        "message": f"{type(e).__name__}: {e}",
+                    },
+                })
 
         def log_message(self, *_a: Any) -> None:
             pass
@@ -318,8 +448,17 @@ def serve(project: dict[str, Any], tools: list[dict[str, Any]], port: int = 8790
         raise SystemExit(f"端口 {port}~{port+11} 全部被占用")
     (HERE / ".endpoint").write_text(f"http://{host}:{bound}\n", encoding="utf-8")
     # 控制台可能是 GBK，中文会乱码甚至抛 UnicodeEncodeError，因此启动行只用 ASCII。
-    print(f"[agent] {project['name']} v{project.get('version','0.0.0')} -> http://{host}:{bound} ({len(tools)} tools)", flush=True)
-    print(f"[agent] local guard: Host 127.0.0.1/localhost/[::1]:{bound} only, non-GET needs {token_header}" + (f" (token file {token_path})" if token_path else " (token from env)"), flush=True)
+    print(
+        f"[agent] {project['name']} v{project.get('version', '0.0.0')} "
+        f"-> http://{host}:{bound} ({len(tools)} tools)",
+        flush=True,
+    )
+    print(
+        f"[agent] local guard: Host 127.0.0.1/localhost/[::1]:{bound} only, "
+        f"non-GET needs {token_header}"
+        + (f" (token file {token_path})" if token_path else " (token from env)"),
+        flush=True,
+    )
     httpd.serve_forever()
 
 

@@ -17,3 +17,6 @@ __pycache__/
 /build/
 
 *.exe
+
+# agent/server.py 每次启动都重写的那一行：运行态，不是源
+agent/.endpoint

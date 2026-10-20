@@ -9,7 +9,7 @@
 内容）、行尾是 URL、行尾带 `# type:` / `# fmt:` / `# noqa` 这类 pragma。1.157 当场拿
 `ruff check --select E501` 的 JSON 逐行比对过这个判定：src/tests/examples/scripts/agent 上
 零漏报（`only_ruff=0`），多出的只有随包 vosk 的三方文件——那本来就不在第一方目录里。
-照这把尺量，`src/agentcut/**` 是零违规的，`agent/server.py` 才是欠账的那一处。
+照这把尺量，`src/agentcut/**` 与 `agent/**` 现在都是零违规（1.219 收的账）。
 
 两处额度：
 - `src/agentcut/**` 是随包引擎，零违规；
@@ -26,9 +26,9 @@ ROOT = Path(__file__).resolve().parent.parent
 LIMIT = tomllib.loads((ROOT / "pyproject.toml").read_bytes().decode("utf-8"))["tool"]["ruff"][
     "line-length"
 ]
-# 历史欠账的上限：只许往下走。这一轮把 tests 的六行收干净了，现在量到 tests 0、agent 27、
-# scripts+examples 0（见本档打印的那行）。
-CEILINGS = {"tests": 0, "agent": 27, "scripts": 0}
+# 历史欠账的上限：只许往下走。1.219 把 `agent/` 最后那 27 行收干净了（同时把
+# `agent/tools.py` 接回真的引擎接口，见 `tests/agentapi_check.py`），现在四处都是 0。
+CEILINGS = {"tests": 0, "agent": 0, "scripts": 0}
 # ruff 对超长行不出警的三种情形，逐字对齐：整行只有一个 token、行尾是 URL、行尾是 pragma。
 PRAGMA = re.compile(r"#\s*(type|noqa|fmt|ruff|isort)\b")
 # 被粘成一行的注释签名：一个全角标点后面跟着三个以上空格，又出现 `#`。正常的续行注释是
