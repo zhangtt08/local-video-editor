@@ -42,6 +42,8 @@ const MATRICES = flag("matrices", "") === "" ? null : Number(flag("matrices", ""
 const TABLE_VALUES = flag("table-values", "") === "" ? null : Number(flag("table-values", ""));
 // `--webgl`：这一趟拍的是立方表那块画布（1.234）。它必须真的在、内部尺寸>0、源被藏起来。
 const WEBGL = args.includes("--webgl");
+// `--play 1200`：拍之前让播放头真走一段，再从画布缓冲里读一格（播放中那一帧还在不在画）。
+const PLAY = Number(flag("play", "0") || 0);
 // `--strip 8,20,34` 给一串平色：这一趟不拍画面，拍「产品自己那张滤镜作用在平色上」的一排格子。
 const STRIP = (flag("strip", "") || "").split(",").filter((v) => v !== "").map(Number);
 const EDGE = flag("edge", "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe");
@@ -340,6 +342,39 @@ async function main() {
         throw new Error("源元素还看得见——画布与源会叠两次");
       }
     }
+    if (PLAY > 0) {
+      // 播放中读画布缓冲：画布在不在、这一帧是不是真画了（全黑就是画布没跟上播放）。
+      const started = await evaluate(`(function(){
+        var b = document.querySelector('.play-btn');
+        if (!b || b.disabled) return false;
+        b.click();
+        return true;
+      })()`);
+      if (!started) throw new Error("播放按钮按不下去");
+      await sleep(PLAY);
+      seen.play = await evaluate(`(function(){
+        var c = document.querySelector('.grade-canvas');
+        var b = document.querySelector('.play-btn');
+        if (b) b.click();
+        if (!c) return {canvas: false};
+        var gl = c.getContext('webgl2');
+        var px = new Uint8Array(4);
+        var checksum = null;
+        if (gl) {
+          gl.readPixels(Math.floor(c.width / 2), Math.floor(c.height / 2), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+          var all = new Uint8Array(c.width * c.height * 4);
+          gl.readPixels(0, 0, c.width, c.height, gl.RGBA, gl.UNSIGNED_BYTE, all);
+          var sum = 0;
+          for (var i = 0; i < all.length; i += 61) sum = (sum + all[i] * ((i % 13) + 1)) % 1000003;
+          checksum = sum;
+        }
+        return {canvas: true, width: c.width, height: c.height,
+          pixel: [px[0], px[1], px[2], px[3]], checksum: checksum};
+      })()`);
+      if (!seen.play || !seen.play.canvas) {
+        throw new Error("播放中画布不见了：" + JSON.stringify(seen.play));
+      }
+    }
     if (STRIP.length) {
       // 平色那一趟：不拍 `.masked-picture`，拍刚铺出来的那一排格子。
       const built = await evaluate(STRIP_BUILD(STRIP));
@@ -367,7 +402,7 @@ async function main() {
       console.log(JSON.stringify({
         out: OUT, rect: seen.rect, mask_layers: seen.mask_layers,
         mask_composite: seen.mask_composite, media: seen.media,
-        natural: seen.natural, webgl: seen.webgl,
+        natural: seen.natural, webgl: seen.webgl, play: seen.play,
         logs: WEBGL ? cdp.logs.slice(-20) : undefined,
         png_bytes: fs.statSync(OUT).size,
       }));

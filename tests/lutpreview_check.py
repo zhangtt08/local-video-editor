@@ -276,7 +276,8 @@ def export_frame(pid: str, revision: int, key: str) -> Path:
     return frames[0]
 
 
-def preview_shot(pid: str, folder: Path, key: str, webgl: bool) -> tuple[Path, dict]:
+def preview_shot(pid: str, folder: Path, key: str, webgl: bool,
+                 play_ms: int = 0) -> tuple[Path, dict]:
     png = folder / f"preview-{key}.png"
     argv = [
         "node", str(SHOT),
@@ -291,6 +292,8 @@ def preview_shot(pid: str, folder: Path, key: str, webgl: bool) -> tuple[Path, d
     ]
     if webgl:
         argv.append("--webgl")
+    if play_ms:
+        argv += ["--play", str(play_ms)]
     retries = 0
     while True:
         answer = subprocess.run(
@@ -310,6 +313,59 @@ def preview_shot(pid: str, folder: Path, key: str, webgl: bool) -> tuple[Path, d
     if retries:
         print(f"   照片腿重试了 {retries} 次才拍到「{key}」那一格")
     return png, info
+
+
+def video_suite(folder: Path) -> dict:
+    """播放中的那一帧也要在画布上：静止图那一趟证明不了「每一帧都重画」。
+
+    每趟都从 tick 0 起播，播 0.7 秒与 1.5 秒各读一次画布中心：两次都对得上（不是黑的），
+    而且**不是同一格**——画布若停在第一帧，这两个数会一模一样。
+    """
+    source = folder / "moving.mp4"
+    run([str(FFMPEG), "-v", "error", "-y", "-f", "lavfi",
+         "-i", f"testsrc2=s={WIDTH}x{HEIGHT}:r=30:d=3",
+         "-c:v", "libx264", "-pix_fmt", "yuv420p", str(source)])
+    made = request(
+        "/v1/projects",
+        {"request_id": "lp-video", "name": "立方表预览·视频",
+         "settings": {"width": WIDTH, "height": HEIGHT,
+                      "frame_rate": {"numerator": 30, "denominator": 1}}},
+        "POST",
+    )
+    pid = made["project"]["id"]
+    probe = request("/v1/media/import", {"path": str(source)}, "POST")
+    parsed = request("/v1/lut/parse", {"content": cube_text()}, "POST")
+    node = {key: value for key, value in parsed.items() if key != "kind"}
+    request(
+        f"/v1/projects/{pid}/edits",
+        {"request_id": "lp-video-seed", "expected_revision": made["project"]["revision"],
+         "commands": [
+             {"op": "track.add", "track": {"id": "v", "kind": "video", "name": "画面"}},
+             {"op": "asset.import", "asset_id": "w", "label": "动图",
+              "probe_id": probe["id"], "verified": probe["verified"]},
+             {"op": "clip.add", "clip": {
+                 "id": "c", "asset_id": "w", "track_id": "v",
+                 "position_ticks": 0, "duration_ticks": 2 * SECOND}},
+             {"op": "clip.mask", "clip_id": "c", "mask": MASK},
+             {"op": "clip.color", "clip_id": "c", "color": {
+                 "exposure": 0.3, "contrast": 1.05, "saturation": 1.1,
+                 "grade": [{"kind": "lut3d", **node}]}},
+         ]},
+        "POST",
+    )
+    early = preview_shot(pid, folder, "video-early", webgl=True, play_ms=700)[1]
+    late = preview_shot(pid, folder, "video-late", webgl=True, play_ms=1500)[1]
+    first, second = early.get("play") or {}, late.get("play") or {}
+    for label, answer in (("0.7 秒", first), ("1.5 秒", second)):
+        assert answer.get("canvas") and answer.get("width", 0) > 2, (label, answer)
+        assert max(answer["pixel"][:3]) > 20, (label, "播放中画布是黑的", answer)
+    shift = max(abs(a - b) for a, b in zip(first["pixel"][:3], second["pixel"][:3]))
+    same_frame = (
+        first.get("checksum") is not None
+        and first.get("checksum") == second.get("checksum")
+    )
+    assert not same_frame, ("画布停在第一帧没跟着播", first, second)
+    return {"early": first, "late": second, "shift": shift}
 
 
 def main() -> None:
@@ -405,12 +461,15 @@ def main() -> None:
                 f"预览里只有 {preview_changed}/12 块换了颜色（最大 {preview_shift:.1f}）——"
                 "预览根本没用那张表"
             )
+            moving = video_suite(folder)
             info = graded_info.get("webgl") or {}
             print(
                 "PASS: 立方表两端同一幅画——预览画布 "
                 f"{info.get('width')}×{info.get('height')}（源已藏起），"
                 f"12 块板两端最差 {worst:.1f} 级（容差 {TOLERANCE}），"
-                f"成片与预览各换了 {export_changed}/12 与 {preview_changed}/12 块"
+                f"成片与预览各换了 {export_changed}/12 与 {preview_changed}/12 块；"
+                f"播放中画布 0.7s 与 1.5s 两整帧不同（校验 {moving['early'].get('checksum')} / "
+                f"{moving['late'].get('checksum')}，中心像素差 {moving['shift']} 级）"
             )
         finally:
             process.kill()

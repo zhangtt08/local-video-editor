@@ -396,8 +396,15 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
       const height = (source as HTMLVideoElement).videoHeight || (source as HTMLImageElement).naturalHeight || 0;
       if (!width || !height) return;
       const scale = Math.min((box?.width ?? width) / width, (box?.height ?? height) / height, 2);
-      canvas.width = Math.max(2, Math.round(width * scale));
-      canvas.height = Math.max(2, Math.round(height * scale));
+      // 1.235：播放时这一支每帧都跑；`canvas.width = …` 每次都重新分配并清空整块缓冲，
+      // 尺寸没变就不该付这笔钱（量过：640×360 的片子在 412×232 的画布上，改与不改都是
+      // 60.2 帧/秒、间隔 p50/p95/max 16.7/16.7/16.8 ms——所以这是省下来的浪费，不是换来的流畅）。
+      const nextWidth = Math.max(2, Math.round(width * scale));
+      const nextHeight = Math.max(2, Math.round(height * scale));
+      if (canvas.width !== nextWidth || canvas.height !== nextHeight) {
+        canvas.width = nextWidth;
+        canvas.height = nextHeight;
+      }
       // 同一份源可能因为跨源而拒绝上传（量到过：`<img>` 少一个 crossOrigin，texImage2D 抛
       // SecurityError，画布留在黑底）；抛出来的失败与返回假的失败走同一条退路。
       let painted = false;

@@ -66,6 +66,13 @@ assert.match(
 assert.match(editor, /painted = paintGrade\(canvas, source, canvasGrade, plan\?\.color_basics \?\? \[1, 1, 1\]\)/, "画布没拿到引擎那三个基础调色数");
 assert.match(editor, /try \{[\s\S]{0,140}painted = paintGrade\([\s\S]{0,140}catch \{[\s\S]{0,60}painted = false;/, "抛出来的上传失败没接住");
 assert.match(editor, /if \(!painted\) setCanvasFailed\(true\);/, "画布画不出来时没人接着说");
+// 1.235：播放时这一支每帧都跑。`canvas.width = …` 每次重新分配并清空整块缓冲，尺寸没变就不该付。
+assert.equal(count(editor, /canvas\.width = nextWidth;/g), 1, "画布尺寸在不止一处被重设");
+assert.match(
+  editor,
+  /const nextWidth = [\s\S]{0,120}if \(canvas\.width !== nextWidth \|\| canvas\.height !== nextHeight\) \{[\s\S]{0,120}canvas\.width = nextWidth;/,
+  "尺寸没变也重新分配画布——播放时每秒白扔几十次整块缓冲",
+);
 // 2026-10-20 量到的真缺陷：图片少了 crossOrigin，texImage2D 抛 SecurityError，整块画布是黑的。
 assert.match(editor, /crossOrigin="anonymous" src=\{url\} alt=\{asset\?\.label\}/, "图片没有按 CORS 取——上传到画布会被判成跨源");
 assert.match(editor, /className="layer-error grade-fallback"/, "失败那一句不在屏幕上");
