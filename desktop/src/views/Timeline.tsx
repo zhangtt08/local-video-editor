@@ -231,7 +231,9 @@ export function Timeline() {
       window.removeEventListener("resize", measure);
     };
   }, [project?.id, app.monitorMode]);
-  const clamped = room && room.wanted - room.got > 1 ? room : null;
+  // 只有**有人真要过**那个数，这一句才是对用户说的：应用自己那一档默认数装不下时，
+  // 该让位的是布局，不是让用户听一句解释（1.225 在最小窗里量到的就是这一条）。
+  const clamped = room && room.wanted - room.got > 1 && app.splitterTouched ? room : null;
 
 
   useEffect(() => {

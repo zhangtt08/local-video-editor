@@ -37,8 +37,11 @@ for (const forbidden of ["180", "300", "calc(", "100dvh", "--preview-reserve"]) 
   assert.ok(!block.includes(forbidden), `那段测量里出现了「${forbidden}」——公式的第二份常数或第二条公式`);
 }
 
-// ② 只在夹住时出现，且判据是「要的」减「得到的」。
-assert.match(timeline, /const clamped = room && room\.wanted - room\.got > 1 \? room : null;/, "夹住的那一个判断被改写了");
+// ② 只在夹住时出现，且判据是「要的」减「得到的」；1.225 起还有第三个条件——
+//    那个「要的数」必须是**用户自己**要的（拖过或键过那条边）。应用自己那一档默认数
+//    在最小窗里装不下，说话的对象不该是用户（`desktop_layoutreset_check.ts` 钉的是另一半）。
+assert.match(timeline, /const clamped = room && room\.wanted - room\.got > 1 && app\.splitterTouched \? room : null;/,
+  "夹住的那一个判断被改写了（三个条件都要在：量到了、真的差、且那一档是用户要的）");
 assert.equal(count(timeline, 'className="timeline-clamped"'), 1, "那一行出现了两遍");
 assert.match(timeline, /\{clamped \? <p className="timeline-clamped" role="status">/, "那一行没有条件、或不是一条 status");
 
@@ -59,5 +62,5 @@ assert.ok(count(editor, '"--timeline-height"') === 1, "写 `--timeline-height` �
 
 console.log(
   "desktop_clamphint_check: 夹住了就说——两个数都来自量（同一个 CSS 变量 + 真的盒子），" +
-  "TS 里没有 180/300/第二条 calc，那一行只在 wanted-got>1 时出现，两条出路都点名真走得通的"
+  "TS 里没有 180/300/第二条 calc，那一行只在「真的差、且那一档是用户自己要的」时出现，两条出路都点名真走得通的"
 );

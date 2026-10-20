@@ -141,6 +141,10 @@ export type AppState = {
   editorPanel: (typeof EDITOR_PANELS)[number];
   graphOpen: boolean;
   maskEditing: boolean;
+  /** 这一屏那条时间线的高度是不是**用户自己**拖/键出来的。
+   *  「窗口太矮」那一句只在有人真要过那个数时才是实话；应用自己那个默认数装不下，
+   *  是应用该让位，不是该抱怨（1.225 在 1040×660 量到的就是这一条）。 */
+  splitterTouched: boolean;
   monitorMode: "timeline" | "source";
   sourceCursorTicks: number;
   sourcePlaying: boolean;
@@ -195,6 +199,7 @@ let state: AppState = {
   editorPanel: "inspect",
   graphOpen: false,
   maskEditing: false,
+  splitterTouched: false,
   monitorMode: "timeline",
   sourceCursorTicks: 0,
   sourcePlaying: false,
@@ -1439,6 +1444,10 @@ export function selectedSource() {
 
 export function setMonitorMode(monitorMode: AppState["monitorMode"]) {
   playhead.pause(); set({ monitorMode, sourcePlaying: false });
+}
+/** 用户亲手拖过/键过那条边——从这一刻起「窗口太矮」那一句才是对用户说的。 */
+export function markSplitterTouched() {
+  if (!state.splitterTouched) set({ splitterTouched: true });
 }
 export function setSourceCursor(value: number) {
   const source = selectedSource(); if (!source) return;

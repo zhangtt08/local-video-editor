@@ -36,6 +36,10 @@ const CLIP = flag("clip", "");
 const OUT = path.resolve(flag("out", "two_end_preview.png"));
 const SIZE = (flag("size", "1456x808") || "").split("x").map(Number);
 const LAYERS = Number(flag("layers", "1"));
+// 清单交了几段表、几段矩阵、每张表几项——传进来就判，不传就不判（平色那一趟不判）。
+const TABLES = flag("tables", "") === "" ? null : Number(flag("tables", ""));
+const MATRICES = flag("matrices", "") === "" ? null : Number(flag("matrices", ""));
+const TABLE_VALUES = flag("table-values", "") === "" ? null : Number(flag("table-values", ""));
 // `--strip 8,20,34` 给一串平色：这一趟不拍画面，拍「产品自己那张滤镜作用在平色上」的一排格子。
 const STRIP = (flag("strip", "") || "").split(",").filter((v) => v !== "").map(Number);
 const EDGE = flag("edge", "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe");
@@ -181,9 +185,25 @@ const WAIT = `(function(){
   var fill = natural[0] > 0 && r.width > 0 &&
     Math.abs(m.width - r.width) <= 1.5 && Math.abs(m.height - r.height) <= 1.5 &&
     Math.abs(aspect(natural[0], natural[1]) - aspect(r.width, r.height)) <= 0.01;
+  // 预览那几张表**只从清单来**：数一数量到的滤镜里有几段表、几段矩阵、每张表几项。
+  // 像素那一判比的是数值，看不见「多了一段/少了一段但数值恰好没变」；这一判看得见。
+  var grade = Array.prototype.filter.call(document.querySelectorAll('filter'), function (f) {
+    return f.getElementsByTagName('feComponentTransfer').length
+      + f.getElementsByTagName('feColorMatrix').length > 0;
+  });
+  var tables = 0, matrices = 0, sizes = [];
+  grade.forEach(function (f) {
+    tables += f.getElementsByTagName('feComponentTransfer').length;
+    matrices += f.getElementsByTagName('feColorMatrix').length;
+    Array.prototype.forEach.call(f.getElementsByTagName('feFuncR'), function (el) {
+      sizes.push((el.getAttribute('tableValues') || '').trim().split(/\\s+/).filter(Boolean).length);
+    });
+  });
   return {state: 'seen',
     rect: {x: r.x, y: r.y, width: r.width, height: r.height},
     mask_layers: layers,
+    grade_ids: grade.map(function (f) { return f.id; }),
+    tables: tables, matrices: matrices, table_sizes: sizes,
     mask_composite: cs.maskComposite || cs.webkitMaskComposite || '',
     media: media ? media.tagName.toLowerCase() : 'none',
     natural: natural, loaded: loaded, fill: fill,
@@ -258,6 +278,19 @@ async function main() {
     if (!seen) throw new Error("那一格没有画到位：" + JSON.stringify(last).slice(0, 400));
     if (seen.mask_layers !== LAYERS) {
       throw new Error("遮罩层数是 " + seen.mask_layers + "，引擎交的是 " + LAYERS + " 张图");
+    }
+    // 预览那几张表只从清单来：段数、类型、每张表的项数，一条一条对。
+    if (TABLES !== null && seen.tables !== TABLES) {
+      throw new Error("预览画了 " + seen.tables + " 段表，清单交的是 " + TABLES
+        + " 段（滤镜 id：" + JSON.stringify(seen.grade_ids) + "）");
+    }
+    if (MATRICES !== null && seen.matrices !== MATRICES) {
+      throw new Error("预览画了 " + seen.matrices + " 段矩阵，清单交的是 " + MATRICES
+        + " 段（滤镜 id：" + JSON.stringify(seen.grade_ids) + "）");
+    }
+    if (TABLE_VALUES !== null && seen.table_sizes.some((n) => n !== TABLE_VALUES)) {
+      throw new Error("有表的 tableValues 不是 " + TABLE_VALUES + " 项，实测 "
+        + JSON.stringify(seen.table_sizes));
     }
     if (STRIP.length) {
       // 平色那一趟：不拍 `.masked-picture`，拍刚铺出来的那一排格子。

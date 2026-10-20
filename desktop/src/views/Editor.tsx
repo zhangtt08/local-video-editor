@@ -8,7 +8,8 @@ import { Preview, PreviewFooter } from "./Preview";
 import { ScopePanel } from "./ScopePanel";
 import { Timeline } from "./Timeline";
 import { CurveEditor } from "./CurveEditor";
-import { dismissRemote, openProject, openSequence, setView, setEditorPanel, setGraphOpen, toggleHelp, useApp } from "../store";
+import { DEFAULT_TIMELINE, resetLayout } from "../layoutReset";
+import { dismissRemote, openProject, openSequence, setView, setEditorPanel, setGraphOpen, markSplitterTouched, toggleHelp, useApp } from "../store";
 
 const COACH_KEY = "agentcut.coach.dismissed";
 
@@ -19,14 +20,14 @@ export function Editor() {
     try { const saved = JSON.parse(localStorage.getItem("agentcut.layout") ?? "null");
       if (Array.isArray(saved) && saved.length === 3 && saved.every((n: unknown) => typeof n === "number" && Number.isFinite(n))) return saved as number[];
     } catch { /* Use the standard workbench layout. */ }
-    return [280, 320, 300];
+    return [280, 320, DEFAULT_TIMELINE];
   });
   const drag = useRef<{ axis: number; x: number; y: number; origin: number[] } | null>(null);
   useEffect(() => { try { localStorage.setItem("agentcut.layout", JSON.stringify(layout)); } catch { /* Layout still works. */ } }, [layout]);
   const splitter = (axis: number) => <div className={`splitter ${axis === 2 ? "horizontal" : "vertical"}`}
     role="separator" tabIndex={0} aria-label={axis === 2 ? "调整时间线高度" : axis === 0 ? "调整素材面板宽度" : "调整属性面板宽度"}
     aria-orientation={axis === 2 ? "horizontal" : "vertical"}
-    onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); drag.current = { axis, x: event.clientX, y: event.clientY, origin: layout }; }}
+    onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); if (axis === 2) markSplitterTouched(); drag.current = { axis, x: event.clientX, y: event.clientY, origin: layout }; }}
     onPointerMove={(event) => { if (!drag.current || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
       const d = drag.current; const next = [...d.origin];
       const delta = axis === 2 ? d.y - event.clientY : axis === 0 ? event.clientX - d.x : d.x - event.clientX;
@@ -34,7 +35,7 @@ export function Editor() {
     }}
     onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}
     onKeyDown={(event) => { const direction = ["ArrowLeft", "ArrowUp"].includes(event.key) ? -1 : ["ArrowRight", "ArrowDown"].includes(event.key) ? 1 : 0;
-      if (direction) { event.preventDefault(); const next = [...layout]; next[axis] = Math.max(axis === 2 ? 180 : axis === 0 ? 220 : 280, Math.min(axis === 2 ? window.innerHeight - 320 : 460, next[axis] + direction * 16)); setLayout(next); } }} />;
+      if (direction) { event.preventDefault(); if (axis === 2) markSplitterTouched(); const next = [...layout]; next[axis] = Math.max(axis === 2 ? 180 : axis === 0 ? 220 : 280, Math.min(axis === 2 ? window.innerHeight - 320 : 460, next[axis] + direction * 16)); setLayout(next); } }} />;
   const [coach, setCoach] = useState(() => {
     try {
       return localStorage.getItem(COACH_KEY) !== "1";
@@ -52,7 +53,7 @@ export function Editor() {
     <div className={`editor${app.monitorMode === "source" ? " source-open" : ""}`} style={{ "--timeline-height": `${layout[2]}px` } as CSSProperties}>
       <div className="workbench-bar"><Icon name="film" size={14} /><nav className="sequence-path" aria-label="合成导航"><button className="btn tiny subtle" disabled={Boolean(app.busy || app.batch.length || !app.sequenceId)} onClick={() => openSequence(null)}>主时间线</button>{app.sequencePath.map((id) => <span key={id}>› <button className="btn tiny subtle" aria-current={id === app.sequenceId ? "page" : undefined} disabled={Boolean(app.busy || app.batch.length)} onClick={() => openSequence(id)}>{app.project?.sequences?.[id]?.name ?? "合成"}</button></span>)}</nav><span className="spacer" />
         <div className="seg mini"><button aria-pressed={!app.graphOpen} className={!app.graphOpen ? "active" : ""} onClick={() => setGraphOpen(false)}>时间线</button><button aria-pressed={app.graphOpen} className={app.graphOpen ? "active" : ""} onClick={() => setGraphOpen(true)}>动画曲线</button></div>
-        <button className="btn tiny subtle" onClick={() => setLayout([280, 320, 300])}>重置布局</button>
+        <button className="btn tiny subtle" onClick={() => setLayout(resetLayout(document.querySelector<HTMLElement>(".timeline")?.getBoundingClientRect().height ?? 0))}>重置布局</button>
         <button className="btn tiny subtle" onClick={() => toggleHelp(true)}><Icon name="keyboard" size={12} />快捷键</button>
       </div>
       {app.remoteAhead && app.project && app.remoteAhead > app.project.revision ? (

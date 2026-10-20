@@ -226,7 +226,8 @@ async function sweepOne(size, hostPort, probeSource) {
       await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
       await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left" });
     };
-    const MARKERS = [".curve-plot", ".scope-panel", ".help", ".mask-guide", ".clip", ".masked-picture"];
+    const MARKERS = [".curve-plot", ".scope-panel", ".help", ".mask-guide", ".clip", ".masked-picture",
+      ".timeline-clamped"];
     const run = async (screen) => {
       const data = await evaluate("(function(){ " + probeSource + " return measureAgentCutUi(); })()");
       // 「点了才画」那一档必须能证明**真的画了东西**：只数文字节点的话，
@@ -383,6 +384,26 @@ async function sweepOne(size, hostPort, probeSource) {
       await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }, 20000);
       await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }, 20000);
       await sleep(300);
+    }
+    // 反方向那一判（`--drag-splitter`）：用户**自己**把那条边往上拖，时间线让不动了，
+    // 那句「窗口太矮」必须出现。只判「开机不许说」会把它写成「永远不说」——两只手都要钉。
+    if (flag("drag-splitter", "") !== "") {
+      const grip = await evaluate("(() => { const el = document.querySelector('.splitter.horizontal');"
+        + "if (!el) return null; const r = el.getBoundingClientRect();"
+        + "return {x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2)}; })()");
+      if (!grip) {
+        rows.push({ screen: "拖高时间线", panel: flag("panel", ""), size, data: null,
+          error: "找不到那条边 .splitter.horizontal——反方向那一判没量到" });
+      } else {
+        await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: grip.x, y: grip.y, button: "left", clickCount: 1 });
+        for (let step = 1; step <= 4; step += 1) {
+          await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: grip.x, y: grip.y - step * 40, button: "left" });
+          await sleep(60);
+        }
+        await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: grip.x, y: grip.y - 160, button: "left" });
+        await sleep(700);
+        await run("拖高时间线");
+      }
     }
     cdp.close();
   } finally {

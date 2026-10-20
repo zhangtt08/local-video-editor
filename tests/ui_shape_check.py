@@ -62,7 +62,13 @@ PAINTED = {
     "快捷键": ".help",
     "画面中编辑": ".mask-guide",
     "重置布局": ".clip",
+    # 反方向：用户自己把那条边往上拖，时间线让不动了——这一句**必须**出现。
+    "拖高时间线": ".timeline-clamped",
 }
+# 反过来：某一屏**不许**出现的那一行。「重置布局」按下去之后还挂着「窗口太矮」，
+# 说的是应用自己要了一个这一屏装不下的数，再回头抱怨用户——那一行在别的屏上是诚实
+# （用户把那条边拖高过），在重置之后就不是。
+QUIET = {"剪辑": ".timeline-clamped", "重置布局": ".timeline-clamped"}
 # 圆润化那一条曲线的下限与字号下限，都从 styles.css 里读；这里的两个数是**判断**：
 # 字号地板不许低于 12.5px（1.216 之前量到的是 11.5px），曲线上不许出现 1~5px 的尖角。
 FONT_FLOOR = 12.5
@@ -220,7 +226,8 @@ def run_engine(data_dir: Path) -> subprocess.Popen:
     raise SystemExit(1)
 
 
-def sweep(pid: str, folder: Path, panel: str, extras: tuple[str, ...] = ()) -> list[dict]:
+def sweep(pid: str, folder: Path, panel: str, extras: tuple[str, ...] = (),
+          drag: bool = False) -> list[dict]:
     out = folder / f"ui_shape_sweep-{panel}.json"
     shots = os.environ.get("AGENTCUT_SHAPE_SHOTS", "")
     node = subprocess.run(
@@ -236,6 +243,7 @@ def sweep(pid: str, folder: Path, panel: str, extras: tuple[str, ...] = ()) -> l
             "--sizes", ",".join(SIZES),
             "--out", str(out),
             *(sum([["--extra", label] for label in extras], [])),
+            *(["--drag-splitter", "1"] if drag else []),
             *(["--shots", shots] if shots else []),
         ],
         capture_output=True,
@@ -277,7 +285,9 @@ def main() -> None:
             rows = [
                 row
                 for panel in PANELS
-                for row in sweep(pid, folder, panel, OVERLAYS if panel == "inspect" else ())
+                for row in sweep(pid, folder, panel,
+                                 OVERLAYS if panel == "inspect" else (),
+                                 drag=panel == "inspect")
             ]
         finally:
             engine.terminate()
@@ -299,7 +309,8 @@ def main() -> None:
     if missed:
         fail(f"{len(missed)} 行没量到（每一屏都得量到，不许用别的屏抵数）："
              + json.dumps(missed, ensure_ascii=False)[:600])
-    needed = (len(PANELS) * 4 + len(OVERLAYS)) * len(SIZES)
+    # 每屏四档（启动那一屏 + 展开 + 其余三颗页签）+ 浮层那几颗 + 反方向那一拖（只在 inspect 那趟）
+    needed = (len(PANELS) * 4 + len(OVERLAYS) + 1) * len(SIZES)
     if len(screens) < needed:
         fail(f"只量到 {len(screens)} 屏（至少该有 {needed} 屏）")
 
@@ -313,6 +324,16 @@ def main() -> None:
             [{"screen": row["screen"], "size": row["size"], "markers": row.get("markers"),
               "state": row.get("state")} for row in blank],
             ensure_ascii=False)[:900] + "（那颗按钮点开了别的东西，或者根本没生效）")
+
+    noisy = sorted({f"{row['screen']}@{row['size']}="
+                    f"{(row.get('markers') or {}).get(QUIET[row['screen']])}"
+                    for row in screens
+                    if row.get("screen") in QUIET
+                    and (row.get("markers") or {}).get(QUIET[row["screen"]], 0)})
+    if noisy:
+        fail("这些屏上挂着不该挂的那一行：" + json.dumps(noisy, ensure_ascii=False)
+             + "（「窗口太矮」说的是这一屏要了一个装不下的数——重置之后还挂着，"
+               "就是应用自己要的那一个数，不是用户拖出来的）")
 
     problems: list[str] = []
     named = 0

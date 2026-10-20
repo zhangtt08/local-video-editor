@@ -235,12 +235,16 @@ def export_frame(pid: str, revision: int, preset_id: str, folder: Path) -> Path:
     return frames[0]
 
 
-def preview_shot(pid: str, folder: Path) -> Path:
+def preview_shot(pid: str, folder: Path, stages) -> Path:
+    """拍预览那一腿，并且当场对一遍「画出来的段数 == 清单交的段数」。"""
     png = folder / "preview-levels.png"
     argv = [
         "node", str(SHOT), "--renderer", str(RENDERER),
         "--engine", f"http://127.0.0.1:{PORT}", "--token", TOKEN,
         "--project", pid, "--clip", "c", "--out", str(png), "--layers", "0",
+        "--tables", str(sum(1 for stage in stages if stage["type"] == "lut")),
+        "--matrices", str(sum(1 for stage in stages if stage["type"] == "matrix")),
+        "--table-values", "256",
         "--edge", str(EDGE),
     ]
     retries = 0
@@ -406,10 +410,10 @@ def main() -> None:
             assert entry.get("grade"), f"清单里没有调色阶段：{sorted(entry)}"
             kinds = [stage["type"] for stage in entry["grade"]["stages"]]
             assert "lut" in kinds and "matrix" in kinds, kinds
-
-            png = preview_shot(pid, folder)
-            preview_frame = first_frame(png)
             stages = entry["grade"]["stages"]
+
+            png = preview_shot(pid, folder, stages)
+            preview_frame = first_frame(png)
             readings = {}
             for preset, exact in PRESETS:
                 path = export_frame(pid, revision, preset, folder)
