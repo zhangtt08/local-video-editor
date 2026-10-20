@@ -1071,7 +1071,18 @@ table.table tr.current td { background: var(--accent-soft); }
 /* 1.221：再叠的那几块。一格一行、行里只放这一件事要说的那句话，圆角与卡片同一档。 */
 .mask-stack { display: grid; gap: 5px; margin-top: 9px; }
 .mask-stack-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: var(--fs-label); }
-.mask-stack-row { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 5px 9px; font-size: var(--fs-body); }
+/* 1.229：一块遮罩一张卡——上面一行说这是第几块、什么形状，下面两列摆它自己的五个数。
+   一列塞进 342px 的画布会把「中心 X」和输入框挤成两行，所以两列就够，羽化与反转各占整行。 */
+.mask-stack-row { display: grid; gap: 7px; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 7px 9px; font-size: var(--fs-body); }
+.mask-stack-title { display: flex; align-items: center; gap: 7px; }
+.mask-stack-n { flex: 1 1 auto; min-width: 0; font-weight: 600; }
+.mask-stack-title .input { flex: none; width: 82px; }
+.mask-stack-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; align-items: center; }
+.mask-stack-cell { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.mask-stack-cell > span:first-child { flex: none; color: var(--ink-3); font-size: var(--fs-label); }
+.mask-stack-cell .input { flex: 1 1 40px; min-width: 0; width: auto; }
+.mask-stack-cell > .dim { flex: none; font-size: var(--fs-label); }
+.mask-stack-invert { grid-column: 1 / -1; gap: 6px; color: var(--ink-2); }
 
 /* 标尺上的标记：一条竖线 + 名字，点击即跳转，× 删除。颜色只是给眼睛用的分组。 */
 .ruler-marker { position: absolute; top: 0; height: 100%; display: flex; align-items: flex-start; transform: translateX(-1px); }

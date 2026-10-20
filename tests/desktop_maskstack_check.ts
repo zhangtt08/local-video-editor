@@ -57,4 +57,18 @@ assert.match(row[0], /border-radius: var\(--r-sm\)/, "那一行不用刻度里�
 assert.match(row[0], /font-size: var\(--fs-body\)/, "那一行不用刻度里的字号");
 assert.match(css, /\.mask-stack-head\s*\{[^}]*font-size: var\(--fs-label\)/, "标题那一行不用刻度里的字号");
 
-console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、做不到的那件事写在格子里、浏览器叠的是引擎那几张图并取交集、样式仍走刻度");
+// ⑥ 1.229：每一块的五个数与羽化/反转都在这一格里改——1.221 只给了一个默认矩形，人改不动
+assert.match(inspector, /MASK_ROWS\.map\(\(\[field, label, min, max\]\)/,
+  "叠加那几块的中心/大小行不是从同一张 MASK_ROWS 折出来的（第二张标签表迟早对不上）");
+assert.match(inspector, /id=\{`stack-\$\{index\}-\$\{field\}`\}/, "每一块的输入框没有按块编号");
+assert.match(inspector, /value=\{item\.rotation \?\? 0\}/, "叠加的块改不了角度");
+assert.match(inspector, /value=\{item\.feather \* 100\}/, "叠加的块改不了羽化");
+assert.match(inspector, /inverted: event\.target\.checked/, "叠加的块改不了反转");
+assert.match(inspector, /const patch = \(index: number, part: Partial<ShapeMask>\)/,
+  "改一个数要经一处 patch——四处各拼一遍整串，早晚有一处只改了主遮罩");
+assert.match(inspector, /write\(stack\.map\(\(item, position\) => \(position === index \? \{ \.\.\.item, \.\.\.part \} : item\)\)\)/,
+  "patch 没有走那唯一的一处写入口");
+assert.match(css, /\.mask-stack-grid\s*\{[^}]*grid-template-columns: 1fr 1fr/, "两列那一格没排成两列");
+assert.match(css, /\.mask-stack-invert\s*\{[^}]*grid-column: 1 \/ -1/, "反转那一行占整行，不跟别的挤一格");
+
+console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的五个数与羽化/反转都在格子里改、浏览器叠的是引擎那几张图并取交集、样式仍走刻度");

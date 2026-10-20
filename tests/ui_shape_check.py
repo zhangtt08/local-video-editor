@@ -191,6 +191,18 @@ def seed_project(token: str) -> str:
                 "feather": 0.08,
             },
         },
+        # 1.229：再叠的那几块自己有五个数与羽化/反转——这一格里一张卡两列，装满两块才量得出
+        # 「输入框被挤成两行」或「勾选框压到下一列」这类只有画出来才看得见的形状。
+        {
+            "op": "clip.mask_stack",
+            "clip_id": "k2",
+            "masks": [
+                {"shape": "rectangle", "center_x": 0.62, "center_y": 0.5, "width": 0.3,
+                 "height": 0.34, "rotation": 0, "feather": 0.05, "inverted": False},
+                {"shape": "ellipse", "center_x": 0.38, "center_y": 0.5, "width": 0.22,
+                 "height": 0.28, "rotation": 18, "feather": 0.02, "inverted": True},
+            ],
+        },
         {
             "op": "clip.grade",
             "clip_id": "k2",

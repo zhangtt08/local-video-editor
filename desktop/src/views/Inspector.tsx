@@ -566,19 +566,50 @@ function MaskFields({ clip }: { clip: Clip }) {
 
 /** 1.118：路径遮罩的轮廓帧。界面只列引擎记下的那几帧，改的是其中一枚的形状或插值——「两帧之间怎么过渡」
  * 由引擎算，导出与预览读同一份窗表，所以这里既不数时间也不插值。额度、名字都从 capabilities 出去。 */
-/** 1.221：主遮罩之外那几块。这一版只切不动——要让它跟着画面走，把这段复制一层。 */
+/** 1.221：主遮罩之外那几块，与主遮罩取交集。
+ *  1.229：每一块自己的五个数（中心、大小、角度）与羽化、反转都在这一格调——1.221 只给了一个
+ *  默认矩形：Agent 写得出、人改不动，那不叫两边共用。写仍然只走 `clip.mask_stack` 一整串
+ *  （那一处主人），这一格既不碰主遮罩，也不自己算合成。 */
 function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
   const app = useApp();
   const limit = app.caps?.limits?.extra_masks ?? 0;
+  const rotationLimit = app.caps?.limits?.mask_rotation_limit;
   const stack = clip.extra_masks ?? [];
   const full = stack.length >= limit;
   const write = (masks: ShapeMask[]) => setClipMaskStack(clip.id, masks);
+  const patch = (index: number, part: Partial<ShapeMask>) =>
+    write(stack.map((item, position) => (position === index ? { ...item, ...part } : item)));
   return <div className="mask-stack">
     <div className="mask-stack-head"><span>再叠的遮罩</span><span className="dim">{stack.length} / {limit} 块 · 与主遮罩取交集</span></div>
     {stack.map((item, index) => <div className="mask-stack-row" key={`stack-${index}`}>
-      <span>{item.shape === "rectangle" ? "矩形" : "椭圆"}</span>
-      <span className="dim">中心 {Math.round(item.center_x * 100)}，{Math.round(item.center_y * 100)} · {Math.round(item.width * 100)}×{Math.round(item.height * 100)}%</span>
-      <button type="button" className="btn tiny subtle" disabled={disabled} aria-label={`删掉第 ${index + 1} 块叠加遮罩`} onClick={() => write(stack.filter((_, position) => position !== index))}>删掉</button>
+      <div className="mask-stack-title">
+        <span className="mask-stack-n">第 {index + 1} 块</span>
+        <select className="input tiny" aria-label={`第 ${index + 1} 块叠加遮罩的形状`} value={item.shape} disabled={disabled}
+          onChange={(event) => patch(index, { shape: event.target.value as ShapeMask["shape"] })}>
+          <option value="rectangle">矩形</option><option value="ellipse">椭圆</option>
+        </select>
+        <button type="button" className="btn tiny subtle" disabled={disabled} aria-label={`删掉第 ${index + 1} 块叠加遮罩`} onClick={() => write(stack.filter((_, position) => position !== index))}>删掉</button>
+      </div>
+      <div className="mask-stack-grid">
+        {MASK_ROWS.map(([field, label, min, max]) => <label className="mask-stack-cell" key={field}>
+          <span>{label}</span>
+          <EffectInput id={`stack-${index}-${field}`} value={item[field] * 100} min={min} max={max} step={1}
+            onCommit={(value) => patch(index, { [field]: value / 100 })} />
+          <span className="dim">%</span>
+        </label>)}
+        {rotationLimit === undefined ? null : <label className="mask-stack-cell"><span>角度</span>
+          <EffectInput id={`stack-${index}-rotation`} value={item.rotation ?? 0} min={-rotationLimit} max={rotationLimit} step={1}
+            onCommit={(value) => patch(index, { rotation: value })} />
+          <span className="dim">°</span>
+        </label>}
+        <label className="mask-stack-cell"><span>羽化</span>
+          <EffectInput id={`stack-${index}-feather`} value={item.feather * 100} min={0} max={100} step={1}
+            onCommit={(value) => patch(index, { feather: value / 100 })} />
+          <span className="dim">%</span>
+        </label>
+        <label className="mask-stack-cell mask-stack-invert"><input type="checkbox" checked={item.inverted} disabled={disabled}
+          onChange={(event) => patch(index, { inverted: event.target.checked })} />反转这一块</label>
+      </div>
     </div>)}
     <div className="insp-actions"><button className="btn tiny" disabled={disabled || full || limit === 0} title={full ? `最多 ${limit} 块；要再加，先删掉一块` : "这一版引擎不认识「再叠的遮罩」这一格，出路是换一台会回的引擎"} onClick={() => write([...stack, { ...DEFAULT_MASK, shape: "rectangle", feather: 0, vertices: null }])}>再抠一块</button></div>
     {stack.length ? <p className="hint" title="再叠的这几块写的是静态的洞：那五条关键帧说的都是主遮罩">再叠的这几块只切不动；要让它跟着画面走，把这段复制一层，在那一层上画。</p> : null}
