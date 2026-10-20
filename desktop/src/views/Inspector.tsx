@@ -792,9 +792,10 @@ function ProjectSettings() {
             value={project.settings.working_primaries ?? DISPLAY_PRIMARIES}
             disabled={Boolean(app.busy) || workingChoices(app.caps?.working_primaries).length === 0}
             onChange={(event) => setWorkingPrimaries(event.target.value)}
+            title={workingChoices(app.caps?.working_primaries).find((choice) => choice.value === (project.settings.working_primaries ?? DISPLAY_PRIMARIES))?.label ?? ""}
           >
             {workingChoices(app.caps?.working_primaries).map((choice) => (
-              <option key={choice.value} value={choice.value}>{choice.label}</option>
+              <option key={choice.value} value={choice.value} title={choice.label}>{choice.short}</option>
             ))}
           </select>
         </label>
@@ -808,9 +809,10 @@ function ProjectSettings() {
             value={project.settings.fold_transfer ?? foldDefault(app.caps?.fold_transfers)}
             disabled={Boolean(app.busy) || foldChoices(app.caps?.fold_transfers).length === 0}
             onChange={(event) => setFoldTransfer(event.target.value)}
+            title={foldChoices(app.caps?.fold_transfers).find((choice) => choice.value === (project.settings.fold_transfer ?? foldDefault(app.caps?.fold_transfers)))?.label ?? ""}
           >
             {foldChoices(app.caps?.fold_transfers).map((choice) => (
-              <option key={choice.value} value={choice.value}>{choice.label}</option>
+              <option key={choice.value} value={choice.value} title={choice.label}>{choice.short}</option>
             ))}
           </select>
         </label>

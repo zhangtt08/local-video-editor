@@ -32,8 +32,12 @@ function measureAgentCutUi() {
       // 摸不着，拿它判「点不到」是把量具的错觉记在产品账上（与「合上的 details 也有矩形」同一类）。
       if (node !== el && /auto|scroll|hidden|clip/.test(style.overflowY + " " + style.overflowX)) {
         var box = node.getBoundingClientRect();
-        if (rect.bottom <= box.top + 2 || rect.top >= box.bottom - 2 ||
-            rect.right <= box.left + 2 || rect.left >= box.right - 2) return false;
+        // 判「在不在屏幕上」要看**中心点**，不能看矩形：滚动线以下的那一枚，矩形还有一半在框里，
+        // `elementFromPoint(中心)` 却摸到隔壁那一条toolbar——1.220 展开检查器那九段时，
+        // 「整片对齐 -14 LUFS」这颗按钮就被这样记成了「点不到」，而它只是需要往下滚一段。
+        var cx = rect.left + rect.width / 2;
+        var cy = rect.top + rect.height / 2;
+        if (cy <= box.top + 2 || cy >= box.bottom - 2 || cx <= box.left + 2 || cx >= box.right - 2) return false;
       }
       node = node.parentElement;
     }
@@ -70,6 +74,18 @@ function measureAgentCutUi() {
   // 「+N」那一格：画不下的针必须有个名字。这里只收真正在屏上的那几枚牌子与它写的数目，
   // 门禁据此判「少画了却没人说」——静悄悄少画一枚针，与点不到的那枚一样是缺陷。
   var chips = [];
+  // 下拉里那一行被切：`<select>` 不会自己报「被切」（它的 overflow 算出来是 visible），
+  // 1.220 就是靠眼睛看发布包才发现「Rec.709（电视与浏览器…」被竖切在括号前。
+  // 这一档把这件事变成量得出来的：按选中的那一行实际要多宽、那一格有多少宽。
+  var truncatedSelects = [];
+  var measureCanvas = null;
+  function textWidth(el, value) {
+    if (!measureCanvas) measureCanvas = document.createElement("canvas");
+    var ctx = measureCanvas.getContext("2d");
+    var font = getComputedStyle(el).font;
+    ctx.font = font || "13px sans-serif";
+    return ctx.measureText(value).width;
+  }
   // 有没有一层盖住整块视口的东西（帮助、导出确认那类遮罩）——只当事实报出来，
   // 不用它去裁剪量测：遮罩自己那一棵里的字同样要量。
   var scrim = null;
@@ -79,6 +95,21 @@ function measureAgentCutUi() {
     var el = all[index];
     if (!visible(el)) continue;
     byTag[el.tagName.toLowerCase()] = (byTag[el.tagName.toLowerCase()] || 0) + 1;
+    if (el.tagName.toLowerCase() === "select") {
+      var chosen = el.options ? el.options[el.selectedIndex] : null;
+      var words = chosen ? String(chosen.textContent || "").trim() : "";
+      // 24 px 是那一格右边箭头与内边距要占的：只比文字宽度会低估，量出来「放得下」而画出来切。
+      var needs = words ? Math.round(textWidth(el, words)) + 24 : 0;
+      if (needs && needs > el.clientWidth) {
+        truncatedSelects.push({
+          label: el.getAttribute("aria-label") || el.name || "",
+          text: words.slice(0, 40),
+          needs_px: needs,
+          box_px: el.clientWidth,
+          has_title: Boolean(el.title),
+        });
+      }
+    }
     if (String(el.className).indexOf("clip-keyframe-more") >= 0) {
       var chipBox = el.getBoundingClientRect();
       chips.push({
@@ -268,5 +299,7 @@ function measureAgentCutUi() {
     scroll_away_count: scrollAway.length,
     chips: chips.slice(0, 8),
     chip_count: chips.length,
+    truncated_selects: truncatedSelects.slice(0, 8),
+    truncated_select_count: truncatedSelects.length,
   };
 }

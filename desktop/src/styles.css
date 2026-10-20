@@ -350,7 +350,7 @@ canvas.composite-raw { width: 100%; height: 100%; object-fit: contain; display: 
 .fullscreen-exit { display: none; position: absolute; top: 12px; right: 12px; z-index: 5; background: var(--panel); }
 .monitor-wrap:fullscreen .fullscreen-exit { display: inline-flex; }
 .monitor-head { font-size: var(--fs-body); }
-.proxy-ctl { display: inline-flex; align-items: center; gap: 4px; }
+.proxy-ctl { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .proxy-ctl .input { height: 26px; min-width: 64px; padding: 0 4px; font-size: var(--fs-label); }
 .effects-fields { border: 0; min-width: 0; }
 .effect-row { display: grid; grid-template-columns: 76px minmax(64px,1fr) 20px 26px; gap: 5px; align-items: center; margin-bottom: 11px; font-size: var(--fs-body); }
@@ -1064,7 +1064,9 @@ table.table tr.current td { background: var(--accent-soft); }
 .ps-limiter { display: inline-flex; gap: 4px; align-items: center; font-size: var(--fs-body); }
 .ps-limiter input { accent-color: #d9a441; }
 .ps-working { display: grid; gap: 4px; margin: 4px 0 6px; }
-.ps-working select { width: 100%; }
+/* 1.220：那一格放不下引擎给的整句时，让**省略号**出场而不是把字竖切在括号前（发布包像素上量到的），
+   整句挂在这同一颗控件的悬停上——来历不藏到别处去。 */
+.ps-working select { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ps-working .hint { margin: 0; }
 .ps-master { display: flex; gap: 8px; align-items: center; justify-content: space-between; font-size: var(--fs-body); margin: 4px 0 6px; }
 .batch-row { display: flex; gap: 6px; align-items: center; font-size: var(--fs-body); color: var(--text, #e8e2d6); margin: 6px 0; }

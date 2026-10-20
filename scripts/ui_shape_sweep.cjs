@@ -223,6 +223,15 @@ async function sweepOne(size, hostPort, probeSource) {
     // 那一行挂错名字，读表的人就会以为「项目」那一屏长这个样子。
     const lit = tabs.find((row) => row.selected) || tabs[0];
     await run(String(lit.text || lit.label || "boot"));
+    // 检查器里那几段是 `<details>`：合着的时候那一行根本没画到屏幕上（矩形会撒谎），
+    // 所以「下拉那一行被切」「灰字叠行」在合着的屏上量不到。--open-details 把每一段真展开再量一次，
+    // 1.220 就是这张屏发现「折叠曲线」那一档被竖切在括号前。
+    if (flag("open-details", "") !== "") {
+      const opened = await evaluate("(function(){var d=document.querySelectorAll('details');"
+        + "for(var i=0;i<d.length;i+=1){d[i].open=true;}return d.length;})()");
+      await sleep(600);
+      await run("展开" + opened + "段");
+    }
     for (let t = 0; t < tabs.length; t += 1) {
       if (tabs[t].selected || !tabs[t].x || !tabs[t].y) continue;
       await click(tabs[t].x, tabs[t].y);

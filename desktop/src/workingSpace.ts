@@ -16,12 +16,20 @@ const LABELS: Record<string, string> = {
   rec601: "SMPTE-C（Rec.601 标带）",
 };
 
+/** 那一格放不下整句时的办法：括号前那一段就是名字，整句挂在同一颗控件的悬停上。
+ *  1.220 在 1480×900 的发布包里量到的：「Rec.709（电视与浏览器的默认）」要 201 px、
+ *  「BT.709 分段曲线（容器那一格本来的意思）」要 268 px，而那一格只有 215 px——
+ *  字被竖切在括号前，正是「小字堆叠」那一类。括号里那些话下面那一行灰字本来就在说。 */
+export function shortLabel(label: string): string {
+  return label.split("（")[0];
+}
+
 /** 下拉菜单列的就是引擎这份名单；认不得的名字照原样念，不悄悄丢掉。 */
-export function workingChoices(published: string[] | undefined): { value: string; label: string }[] {
-  return (published ?? []).map((value) => ({
-    value,
-    label: LABELS[value] ?? `（引擎新认得的 ${value}，这里还没有中文名）`,
-  }));
+export function workingChoices(published: string[] | undefined): { value: string; label: string; short: string }[] {
+  return (published ?? []).map((value) => {
+    const label = LABELS[value] ?? `（引擎新认得的 ${value}，这里还没有中文名）`;
+    return { value, label, short: shortLabel(label) };
+  });
 }
 
 /** 工程那一档与监视器那一档不同，预览才会多出一级折叠。默认档一个字节都不动。 */
@@ -92,8 +100,8 @@ export function workingProvenance(working: string | undefined, published: string
 export type FoldRow = { id: string; label: string };
 
 /** 名单第一行就是引擎的默认档（`tests/foldcurve_check.py` 钉着这一句），所以界面不自己抄名字。 */
-export function foldChoices(published: FoldRow[] | undefined): { value: string; label: string }[] {
-  return (published ?? []).map((row) => ({ value: row.id, label: row.label }));
+export function foldChoices(published: FoldRow[] | undefined): { value: string; label: string; short: string }[] {
+  return (published ?? []).map((row) => ({ value: row.id, label: row.label, short: shortLabel(row.label) }));
 }
 
 export function foldDefault(published: FoldRow[] | undefined): string {

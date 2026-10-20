@@ -220,6 +220,7 @@ def sweep(pid: str, folder: Path, panel: str, extras: tuple[str, ...] = ()) -> l
             "--project", pid,
             "--clip", "k2",
             "--panel", panel,
+            "--open-details", "1",
             "--sizes", ",".join(SIZES),
             "--out", str(out),
             *(sum([["--extra", label] for label in extras], [])),
@@ -288,6 +289,7 @@ def main() -> None:
 
     problems: list[str] = []
     named = 0
+    cuts = 0
     print(f"{'那一屏':<26}{'视口':>12}{'字节点':>8}{'最小字':>8}{'圆角档':>18}"
           f"{'尖角':>6}{'被切':>6}{'点不到':>8}{'叠行':>6}")
     for row in screens:
@@ -320,6 +322,16 @@ def main() -> None:
                             + json.dumps(data.get("layout_boxes", {}), ensure_ascii=False)[:600])
             problems.append(f"{label}: 第一处点到的祖先链 "
                             + json.dumps(data["unreachable"][0], ensure_ascii=False)[:1200])
+        # 下拉那一行被切：`<select>` 不会自己报被切（它的 overflow 算出来是 visible），
+        # 1.220 是靠眼睛看发布包才发现「Rec.709（电视与浏览器…」被竖切在括号前。
+        # 现在这一判常驻：切了就必须把整句挂在同一颗控件的悬停上，否则算缺陷。
+        for cut_row in data.get("truncated_selects", []):
+            cuts += 1
+            if not cut_row.get("has_title"):
+                problems.append(
+                    f"{label}: 下拉那一行被切又没有悬停可看整句 "
+                    + json.dumps(cut_row, ensure_ascii=False)[:220]
+                )
         if row["screen"] == "剪辑":
             # 夹具里那条带转场的片段，头一枚针让给了牌子那一格。少画的那一枚**必须有名字**：
             # 「静悄悄少画一枚针」和「留一枚点不到的针」是同一类缺陷，所以这一判也进门禁。
@@ -341,7 +353,7 @@ def main() -> None:
         f"SUMMARY green screens={len(screens)} 地板={css_floor}px "
         f"叠行合计={sum(row['data']['hint_stack_count'] for row in screens)} "
         f"遮罩后={sum(row['data'].get('behind_scrim_count', 0) for row in screens)} "
-        f"缺口有名={named}"
+        f"缺口有名={named} 下拉被切={cuts}"
     )
 
 
