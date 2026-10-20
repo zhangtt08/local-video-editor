@@ -626,13 +626,22 @@ select { color-scheme: dark; }
 .tl-marquee { position: absolute; border: 1px solid var(--accent); background: #50c9c426; z-index: 26; pointer-events: none; }
 .clip.dragging { opacity: .85; z-index: 8; }
 .clip .strip { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
-.clip .clip-label {
-  position: absolute; top: 3px; left: 7px; right: 8px;
-  font-size: var(--fs-micro); font-weight: 600;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; z-index: 2;
-  padding: 1px 7px; border-radius: var(--r-pill); background: rgba(14, 24, 31, .82); max-width: calc(100% - 10px);
+/* 1.228：卡片里分成上下两条带——**上面一行说这一段是什么，下面 37px 是针道**。
+   以前名字在顶、时长在底、针从底往上叠，三道针排满时时长与名字都压在针上（扫描量到的
+   `clip-dur|clip-keyframe`、`clip-keyframe|clip-label`）。现在四样东西在同一个 flex 行里
+   依次让位：名字可以省略，标签、关联符与时长不许折行，整行超出就裁，谁也不许压谁。 */
+.clip .clip-top {
+  position: absolute; top: 4px; left: 9px; right: 9px;
+  display: flex; align-items: center; gap: 5px; overflow: hidden;
+  pointer-events: none; z-index: 2;
 }
-.clip .clip-dur { position: absolute; bottom: 2px; left: 7px; font-size: var(--fs-micro); opacity: .9; pointer-events: none; z-index: 2; padding: 0 6px; border-radius: var(--r-pill); background: rgba(14, 24, 31, .7); }
+.clip .clip-label {
+  flex: 1 1 auto; min-width: 0;
+  font-size: var(--fs-micro); font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  padding: 1px 7px; border-radius: var(--r-pill); background: rgba(14, 24, 31, .82);
+}
+.clip .clip-dur { flex: none; font-size: var(--fs-micro); opacity: .9; padding: 1px 6px; border-radius: var(--r-pill); background: rgba(14, 24, 31, .7); white-space: nowrap; }
 .clip svg.wave { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .filmstrip { position: absolute; inset: 0; display: flex; overflow: hidden; pointer-events: none; }
 .filmstrip img { height: 100%; flex: 1 0 auto; object-fit: cover; min-width: 26px; opacity: .82; }
@@ -644,7 +653,7 @@ select { color-scheme: dark; }
 .clip.image .strip { background: var(--clip-image-stripe); }
 .clip.ghost { background: var(--ghost-bg); border: 1.5px dashed var(--ghost-edge); color: #90c8c2; box-shadow: none; }
 .clip.ghost .strip { background: repeating-linear-gradient(-45deg, var(--ghost-edge) 0 3px, transparent 3px 6px); }
-.ghost-tag { position: absolute; top: 3px; right: 5px; font-size: var(--fs-micro); padding: 2px 6px; border-radius: var(--r-pill); background: var(--ghost-bg); border: 1px solid var(--ghost-edge); color: #d8f5f0; pointer-events: none; z-index: 3; max-width: calc(100% - 10px); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ghost-tag { flex: none; font-size: var(--fs-micro); padding: 1px 6px; border-radius: var(--r-pill); background: var(--ghost-bg); border: 1px solid var(--ghost-edge); color: #d8f5f0; pointer-events: none; max-width: 96px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .ghost-tag.unverified { border-color: #754147; color: var(--danger); background: var(--danger-soft); }
 .trim-handle { position: absolute; top: 0; bottom: 0; width: 7px; cursor: ew-resize; z-index: 4; }
 .trim-handle.left { left: 0; }
@@ -941,7 +950,7 @@ table.table tr.current td { background: var(--accent-soft); }
 .caption-editor { width: 100%; resize: vertical; line-height: 1.5; }
 .clip.text { background: #684982; border-color: #ad84c9; }
 
-.clip-association { position: absolute; right: 5px; top: 4px; font-size: var(--fs-body); color: #c7e9df; pointer-events: none; }
+.clip-association { flex: none; font-size: var(--fs-label); line-height: 1; color: #c7e9df; pointer-events: none; }
 .mask-shape { display: flex; align-items: center; gap: 12px; white-space: nowrap; }
 .mask-shape select { flex: 1; min-width: 0; }
 .mask-guide { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; touch-action: none; pointer-events: none; }

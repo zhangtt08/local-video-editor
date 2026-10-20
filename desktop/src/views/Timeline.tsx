@@ -74,7 +74,13 @@ import { EMPTY_TRACK_HINT, FIELD_LABEL, LAYER_KEY_LABEL, layerNeedles, trackTool
 import { selectionQuantum, timelineTracks } from "../selection";
 
 const HEAD = 112;
-const ROW = 56;
+// 1.228：56 → 68。卡片里那两件事要各占一条带：上面一行说「这一段是什么」（名字与时长），
+// 下面 37px 是针道。46px 高的卡片放不下两条带——三道针排满时最上面那道就压进名字那一行
+// （扫描量到的 `clip-keyframe|clip-label`）。让步的是行高，不是针道也不是字号。
+const ROW = 68;
+/** 卡片窄过这个宽度就不画时长那一格（名字比数字要紧）。12.5px 的字、`12.34s` 六格约 46px，
+ *  再给名字留出三四个字的余量——这是判断，不是量出来的边界。 */
+const CLIP_DURATION_MIN_PIXELS = 96;
 
 type DragMode = "move" | "trim-l" | "trim-r" | "roll-l" | "roll-r";
 
@@ -403,7 +409,7 @@ export function Timeline() {
                 window.addEventListener("pointercancel", stop);
               }}
             >
-              {rulerMarks(contentTicks, px, project, paintRange)}
+              {rulerMarks(contentTicks, px, project, paintRange, play.ticks)}
               <RangeHandles project={project} px={px} />
               {(project.markers ?? []).map((mark) => {
                 const at = markerDrag?.id === mark.id ? markerDrag.ticks : mark.at_ticks;
@@ -531,7 +537,7 @@ export function Timeline() {
   }
 }
 
-function rulerMarks(total: number, px: number, project: Project, window: TickRange) {
+function rulerMarks(total: number, px: number, project: Project, window: TickRange, playTicks: number) {
   const secondsTotal = total / TIMEBASE;
   const overHour = secondsTotal >= 3600;
   const items: JSX.Element[] = [];
@@ -539,15 +545,25 @@ function rulerMarks(total: number, px: number, project: Project, window: TickRan
   // 1.133：窗口是必填的。这里原来还留着一份「没有窗口就从 0 数到结尾」的分支，连带抄了第二张
   // 间隔表；间隔的唯一主人是 `timelineWindow.rulerStep`，那条分支一删，这张表也就没人重抄了。
   const marks = rulerSeconds(window, total, px);
+  // 播放头那颗时间泡压在刻度读数上（1.228 量到的第一处字压字：`00:00` 被
+  // `00:00:00:00` 盖掉 26.6×14px）。让位的应该是刻度——泡里写的是同一件事，而且更精确。
+  // 宽度按等宽字 0.6em 估（12.5px → 7.6px/字）再各留 4px 余量；估准没有不由这里说了算，
+  // 扫描那一档量的是**墨**（Range 矩形），叠着没让开就会红。
+  const mono = 7.6;
+  const bubbleLeft = (playTicks / TIMEBASE) * px + 7 - 4;
+  const bubbleRight = bubbleLeft + 11 * mono + 12 + 8;
   for (const s of marks) {
     const x = s * px;
     items.push(<span key={`m${s}`} className="ruler-tick big" style={{ left: x }} />);
+    // 超过 1 小时后保留时位，否则 01:00:00 会和 00:00 显示成一样
+    const label = overHour
+      ? timecode(s * TIMEBASE, project.settings.frame_rate, false)
+      : timecode(s * TIMEBASE, project.settings.frame_rate, false).slice(3);
+    const labelLeft = x + 3;
+    if (labelLeft + label.length * mono > bubbleLeft && labelLeft < bubbleRight) continue;
     items.push(
-      <span key={`l${s}`} className="ruler-label mono" style={{ left: x + 3 }}>
-        {/* 超过 1 小时后保留时位，否则 01:00:00 会和 00:00 显示成一样 */}
-        {overHour
-          ? timecode(s * TIMEBASE, project.settings.frame_rate, false)
-          : timecode(s * TIMEBASE, project.settings.frame_rate, false).slice(3)}
+      <span key={`l${s}`} className="ruler-label mono" style={{ left: labelLeft }}>
+        {label}
       </span>
     );
   }
@@ -711,8 +727,7 @@ function TrackRow({
             style={{ left: (clip.position_ticks / TIMEBASE) * px, width: Math.max(10, (clip.duration_ticks / TIMEBASE) * px) }}
             title="Agent 预演候选片段：还没提交，只是给你看一眼效果"
           >
-            <span className="ghost-tag">提案</span>
-            <span className="clip-label">{project.assets[clip.asset_id]?.label ?? clip.asset_id}</span>
+            <div className="clip-top"><span className="clip-label">{project.assets[clip.asset_id]?.label ?? clip.asset_id}</span><span className="ghost-tag">提案</span></div>
           </div>
         ))}
         {painted.filter((clip) => clip.transition_in).map((clip) => <button key={`transition-${clip.id}`} type="button" className="transition-badge"
@@ -1098,6 +1113,12 @@ function ClipBlock({
     window.addEventListener("pointercancel", stop);
   };
 
+  // 转场那块牌子占住左下角多宽——**唯一的出处**：牌子自己与让位的那枚针都读这一个数。
+  // 1.228：名字与时长不再读它——它们搬到了卡片上面那一行，牌子在下、字在上，两条带不重叠。
+  const seamWidth = clip.transition_in
+    ? Math.min(width, Math.max(SEAM_BADGE_MIN_WIDTH_PIXELS, (clip.transition_in.duration_ticks / TIMEBASE) * px))
+    : 0;
+
   return (
     <div
       ref={box}
@@ -1128,10 +1149,14 @@ function ClipBlock({
         </span>
       ) : null}
       {kind === "audio" && thumb?.wave.length ? <WaveBars values={thumb.wave} width={width} /> : null}
-      <span className="clip-label">{clip.text?.body ?? asset?.label ?? clip.asset_id}</span>
-      {clip.group_id || clip.link_id ? <span className="clip-association" title={`${clip.group_id ? "持久组合" : ""}${clip.link_id ? " · 音画链接" : ""}`}>{clip.group_id ? "▣" : ""}{clip.link_id ? "↔" : ""}</span> : null}
-      <span className="clip-dur mono">{(duration / TIMEBASE).toFixed(2)}s</span>
-      {asset?.sequence_id ? <span className="ghost-tag" title="双击进入合成编辑内部图层">合成</span> : asset && !asset.verified && asset.kind !== "text" ? <span className="ghost-tag unverified" title="只有元数据、没有真实文件，无法预览和导出">未导入</span> : null}
+      <div className="clip-top">
+        <span className="clip-label">{clip.text?.body ?? asset?.label ?? clip.asset_id}</span>
+        {asset?.sequence_id ? <span className="ghost-tag" title="双击进入合成编辑内部图层">合成</span> : asset && !asset.verified && asset.kind !== "text" ? <span className="ghost-tag unverified" title="只有元数据、没有真实文件，无法预览和导出">未导入</span> : null}
+        {clip.group_id || clip.link_id ? <span className="clip-association" title={`${clip.group_id ? "持久组合" : ""}${clip.link_id ? " · 音画链接" : ""}`}>{clip.group_id ? "▣" : ""}{clip.link_id ? "↔" : ""}</span> : null}
+        {/* 时长只在卡片放得下时出现：窄片上它会把名字挤没，而名字是这一段唯一的身份。
+            时间码在悬停、检查器与工具条里都还有，少这一格不是少一处信息。 */}
+        {width >= CLIP_DURATION_MIN_PIXELS ? <span className="clip-dur mono">{(duration / TIMEBASE).toFixed(2)}s</span> : null}
+      </div>
       {(() => {
         // 一条属性一道：同一秒上的两枚针画在同一堆像素里，其中一枚就点不到（实测过）。
         // 画不下的属性宁可不画，也不许叠回去——改成一枚 +N 的牌子把人带回动画曲线。
@@ -1143,14 +1168,13 @@ function ClipBlock({
         const { rowOf, hidden } = needleRows(laned, laneCapacity(NEEDLE_AREA_PIXELS));
         // 转场牌子占住片段左下角那一条带（那几个数在 keyframeLanes，界面画与这一判读同一份）：
         // 抓取盒落进那块矩形的那枚针不画——「宁可少画，也不留一枚点不到的针」那条规矩的横向版本。
-        const seam = clip.transition_in
-          ? Math.min(width, Math.max(SEAM_BADGE_MIN_WIDTH_PIXELS, (clip.transition_in.duration_ticks / TIMEBASE) * px))
-          : 0;
+        // 那块带多宽读上面同一个 `seamWidth`：牌子、针、片段名与时长用的是一个数，
+        // 以前只有针读它，于是时长那格与牌子叠在一起。
         // 一枚针不拖的时候站在哪：层的针按自己那份刻度，片段自己的针要减掉动画窗的偏移。
         // 这一句是唯一的出处——画的时候、判牌子压没压的时候，都问它，不许两处各算一遍。
         const rest = (k: (typeof laned)[number]) => ("field" in k ? k.at_ticks : k.at_ticks - (clip.animation_offset_ticks ?? 0));
-        const underBadge = (k: (typeof laned)[number]) => seam > 0
-          && underSeamBadge(rowOf.get(k.property) ?? 0, Math.min(width - NEEDLE_HALF_PIXELS, Math.max(NEEDLE_HALF_PIXELS, (rest(k) / clip.duration_ticks) * width)), seam);
+        const underBadge = (k: (typeof laned)[number]) => seamWidth > 0
+          && underSeamBadge(rowOf.get(k.property) ?? 0, Math.min(width - NEEDLE_HALF_PIXELS, Math.max(NEEDLE_HALF_PIXELS, (rest(k) / clip.duration_ticks) * width)), seamWidth);
         const painted = laned.filter((k) => rowOf.has(k.property) && !underBadge(k));
         const starved = laned.filter((k) => !painted.includes(k));
         const clipPainted = painted.filter((k): k is Keyframe => !("field" in k));

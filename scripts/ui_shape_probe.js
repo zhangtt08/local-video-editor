@@ -56,6 +56,44 @@ function measureAgentCutUi() {
     }
     return null;
   };
+  // 一块字真正画得出来的矩形：从 Range 报的那一块起，把自己与祖先里每一处会裁剪的框
+  // （overflow hidden/clip/auto/scroll）逐层取交。折叠线以外的文本、被省略号截掉的尾巴，
+  // 都在这一步消失——它们在 DOM 里排着，在屏幕上读不到。
+  var clipInk = function (el, rect) {
+    var out = {left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom};
+    var node = el;
+    while (node && node !== document.body) {
+      var style = getComputedStyle(node);
+      var overflow = style.overflowX + " " + style.overflowY;
+      if (/hidden|clip|auto|scroll/.test(overflow)) {
+        var box = node.getBoundingClientRect();
+        out.left = Math.max(out.left, box.left);
+        out.top = Math.max(out.top, box.top);
+        out.right = Math.min(out.right, box.right);
+        out.bottom = Math.min(out.bottom, box.bottom);
+      }
+      node = node.parentElement;
+    }
+    return out;
+  };
+  // 只比**同一层**里的两块字。弹层起来之后底下那一整片是故意不让读的（那一类由
+  // `遮罩后` 那个数说一声），拿它来判「字压字」是把弹层的账记在底下那层上。
+  // 这里不能用命中测试：被压住的那一块，命中点本来就不是它——那样判据会
+  // 把自己要看的东西全部滤掉（试过一次，76 条一起消失）。
+  // 「层」认的是那一个盖住 ≥85% 视口的 fixed/absolute 容器：两边各找一个，
+  // 只有同一个（或两边都没有）才放在一起比。
+  var layerOf = function (node) {
+    var walk = node;
+    while (walk && walk !== document.body) {
+      var ws = getComputedStyle(walk);
+      if (ws.position === "fixed" || ws.position === "absolute") {
+        var wb = walk.getBoundingClientRect();
+        if (wb.width * wb.height >= innerWidth * innerHeight * 0.85) return walk;
+      }
+      walk = walk.parentElement;
+    }
+    return null;
+  };
   var textOf = function (el) {
     var out = "";
     for (var i = 0; i < el.childNodes.length; i += 1) {
@@ -65,6 +103,8 @@ function measureAgentCutUi() {
     return out.replace(/\s+/g, " ").trim();
   };
   var fontSizes = [];
+  // 「字压字」那一判的原料：每一块**自己写着字**的节点与它的矩形。
+  var textRects = [];
   var radii = {};
   var clipped = [];
   var stacks = [];
@@ -141,6 +181,37 @@ function measureAgentCutUi() {
     if (text && !inFrame) {
       var size = Math.round(parseFloat(style.fontSize) * 10) / 10;
       fontSizes.push({ size: size, text: text.slice(0, 48), tag: el.tagName.toLowerCase(), cls: String(el.className).slice(0, 40) });
+      if (textRects.length < 600) {
+        // 量的是**墨**，不是盒子：`.clip-label` 那一颗的框是整条片段宽（左对齐 + 省略号），
+        // 拿它的矩形去判「字压字」，右边那颗 `未导入` 牌子永远算撞——那是容器的账，
+        // 不是读不到的账。所以按直接文本节点各取一份 Range 矩形，再并起来。
+        var ink = null;
+        for (var ci = 0; ci < el.childNodes.length; ci += 1) {
+          var cn = el.childNodes[ci];
+          if (cn.nodeType !== 3 || !String(cn.nodeValue || "").trim()) continue;
+          var cr = document.createRange();
+          cr.selectNodeContents(cn);
+          var cb = cr.getBoundingClientRect();
+          if (!cb.width && !cb.height) continue;
+          if (!ink) {
+            ink = {left: cb.left, top: cb.top, right: cb.right, bottom: cb.bottom};
+          } else {
+            ink.left = Math.min(ink.left, cb.left);
+            ink.top = Math.min(ink.top, cb.top);
+            ink.right = Math.max(ink.right, cb.right);
+            ink.bottom = Math.max(ink.bottom, cb.bottom);
+          }
+        }
+        if (ink) {
+          // Range 报的是**排出来的**文本，不是**看得见的**那一段：被省略号截断的那一句，
+          // 它的矩形照样伸到整句话的宽度（1.228 第一版就这么把 `第一行标题…` 与右边那颗
+          // `4.00s` 判成一对了，而屏幕上它们隔着 5px 的空隙）。所以先按自己的裁剪链
+          // 把墨裁到真正画得出来的那一块，裁空了就是没画。
+          ink = clipInk(el, ink);
+          if (ink && ink.right - ink.left > 0 && ink.bottom - ink.top > 0) textRects.push({el: el, r: ink, layer: layerOf(el),
+            text: text.slice(0, 26), cls: String(el.className).slice(0, 30)});
+        }
+      }
       var lineHeight = parseFloat(style.lineHeight) || size * 1.2;
       var lines = Math.max(1, Math.round(el.getBoundingClientRect().height / lineHeight));
       if (size < SMALL && lines >= 2) {
@@ -288,6 +359,36 @@ function measureAgentCutUi() {
     }
   }
   var minSize = null;
+  // 「字压字」：两块各自写着字、彼此不包含、矩形横竖都叠进去 ≥3px。
+  // 1.227 那张文字层截图就是这么看出来的：转场那块牌子（z-index 6、不透明底）压在
+  // 右边那一格的片段名与时长的牌子上，`图板` 只剩 `板` 看得见——几何上「两块都在屏上」，
+  // 读起来却少一个字。两块都不透明的字叠在一起，总有一块是读不到的，所以这一判不许例外。
+  // 数的是**全部**对：判据是「一处都不许有」，把总数截在 6 就等于给第 7 处发了免罪符。
+  // 明细只留前 6 条（读的人只需要知道压的是谁），总数照实交。
+  var overlaps = [];
+  var overlapCount = 0;
+  for (var oa = 0; oa < textRects.length; oa += 1) {
+    var ra = textRects[oa].r;
+    var ea = textRects[oa].el;
+    for (var ob = oa + 1; ob < textRects.length; ob += 1) {
+      var rb = textRects[ob].r;
+      var eb = textRects[ob].el;
+      if (textRects[oa].layer !== textRects[ob].layer) continue;
+      if (ea === eb || ea.contains(eb) || eb.contains(ea)) continue;
+      var ow = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
+      var oh = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
+      if (ow < 3 || oh < 3) continue;
+      overlapCount += 1;
+      if (overlaps.length >= 6) continue;
+      overlaps.push({
+        a: textRects[oa].text, a_cls: textRects[oa].cls,
+        b: textRects[ob].text, b_cls: textRects[ob].cls,
+        over: [Math.round(ow * 10) / 10, Math.round(oh * 10) / 10],
+        boxes: [Math.round(ra.left), Math.round(ra.top), Math.round(ra.right), Math.round(ra.bottom),
+          Math.round(rb.left), Math.round(rb.top), Math.round(rb.right), Math.round(rb.bottom)],
+      });
+    }
+  }
   for (var f = 0; f < fontSizes.length; f += 1) {
     if (minSize === null || fontSizes[f].size < minSize) minSize = fontSizes[f].size;
   }
@@ -327,6 +428,8 @@ function measureAgentCutUi() {
     text_nodes: fontSizes.length,
     // 画面里那一层数到的字节点：不参与判断，但必须看得见它被跳过了。
     frame_text_nodes: frameText,
+    text_overlaps: overlaps,
+    text_overlap_count: overlapCount,
     min_font: minSize,
     smallest_sample: smallest,
     radius_steps: Object.keys(radii).sort(function (a, b) { return String(a).localeCompare(String(b), "en", { numeric: true }); }),

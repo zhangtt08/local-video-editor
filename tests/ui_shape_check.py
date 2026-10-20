@@ -75,6 +75,9 @@ PAINTED = {
 # 说的是应用自己要了一个这一屏装不下的数，再回头抱怨用户——那一行在别的屏上是诚实
 # （用户把那条边拖高过），在重置之后就不是。
 QUIET = {"剪辑": ".timeline-clamped", "重置布局": ".timeline-clamped"}
+# 1.228：卡片里的字与针道分成上下两条带之后，「字压字」一处都不许有——不是一笔可以慢慢还的
+# 账。两块不透明的字叠在一起，总有一块是读不到的（1.227 那张截图里 `图板` 只剩 `板`）。
+# 读的人只需要前六条明细，但**总数照实要求为零**。
 # 圆润化那一条曲线的下限与字号下限，都从 styles.css 里读；这里的两个数是**判断**：
 # 字号地板不许低于 12.5px（1.216 之前量到的是 11.5px），曲线上不许出现 1~5px 的尖角。
 FONT_FLOOR = 12.5
@@ -365,8 +368,9 @@ def main() -> None:
     problems: list[str] = []
     named = 0
     cuts = 0
+    piles = 0
     print(f"{'那一屏':<26}{'视口':>12}{'字节点':>8}{'最小字':>8}{'圆角档':>18}"
-          f"{'尖角':>6}{'被切':>6}{'点不到':>8}{'叠行':>6}")
+          f"{'尖角':>6}{'被切':>6}{'点不到':>8}{'叠行':>6}{'字压字':>8}")
     for row in screens:
         data = row["data"]
         label = f"{row['panel'][:3]}/{row['screen']}@{row['size'].split('x')[1]}"
@@ -376,6 +380,7 @@ def main() -> None:
             f"{data['text_nodes']:>8}{str(data['min_font']):>8}{steps:>18}"
             f"{len(data['sharp_corners']):>6}{data['clipped_count']:>6}"
             f"{data['unreachable_count']:>8}{data['hint_stack_count']:>6}"
+            f"{data['text_overlap_count']:>8}"
         )
         if not data["painted_tags"] or data["min_font"] is None:
             problems.append(f"{label}: 一个字都没画")
@@ -390,6 +395,10 @@ def main() -> None:
         if data["clipped_count"]:
             problems.append(f"{label}: 有 {data['clipped_count']} 处文字被切 "
                             + json.dumps(data["clipped"][:6], ensure_ascii=False)[:300])
+        piles += int(data["text_overlap_count"])
+        if data["text_overlaps"]:
+            problems.append(f"{label}: 有 {data['text_overlap_count']} 处字压字 "
+                            + json.dumps(data["text_overlaps"][:6], ensure_ascii=False)[:900])
         if data["unreachable_count"]:
             problems.append(f"{label}: 有 {data['unreachable_count']} 个控件点不到 "
                             + json.dumps(data["unreachable"][:8], ensure_ascii=False)[:900])
@@ -428,7 +437,7 @@ def main() -> None:
         f"SUMMARY green screens={len(screens)} 地板={css_floor}px "
         f"叠行合计={sum(row['data']['hint_stack_count'] for row in screens)} "
         f"遮罩后={sum(row['data'].get('behind_scrim_count', 0) for row in screens)} "
-        f"缺口有名={named} 下拉被切={cuts}"
+        f"缺口有名={named} 下拉被切={cuts} 字压字合计={piles}"
     )
 
 

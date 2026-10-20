@@ -39,7 +39,7 @@ const harness = SRC + "scripts/renderer_scale.cjs";
 
 const T = 70_560_000; // 一秒的刻度，与契约同一个数
 const HEAD = 112;
-const ROW = 56;
+const ROW = 68;
 
 type Shape = { id: string; position_ticks: number; duration_ticks: number };
 const clip = (index: number, seconds: number, length = 1): Shape => ({
@@ -158,8 +158,18 @@ assert.ok(!timeline.includes("useState<{ left: number; width: number } | null>")
 assert.ok(timeline.includes("paint: TickRange;"), "轨道行收的是必填的窗口——留着 null 就是留着那条不裁的路");
 assert.ok(timeline.includes("{outside ? <span className=\"tl-window-note\""), "那句话在有差时才出现，判断只在这一处");
 assert.ok(timeline.includes("paint={paintRange}"), "整条时间线用的是同一个窗口");
-assert.ok(timeline.includes("rulerMarks(contentTicks, px, project, paintRange)"), "尺子跟着同一个窗口走");
+// 认的是「第四个参数还是那个窗口」，不是整行字面：1.228 给尺子加了第五个参数
+// （播放头那一格要让位给时间泡），旧 needle 会把这种「仍然传 paintRange」的改法误伤。
+assert.ok(/rulerMarks\(\s*contentTicks,\s*px,\s*project,\s*paintRange[,)]/.test(timeline),
+  "尺子跟着同一个窗口走");
 assert.ok(timeline.includes("const marks = rulerSeconds(window, total, px);"), "尺子的刻度只由那一处算");
+// 1.228：播放头那颗时间泡与刻度读数会压在同一块像素上（`00:00` 被 `00:00:00:00` 盖掉），
+// 让位的是刻度——泡里写的是同一件事，而且更精确。这一条钉的是「让位真的发生」：
+// 按等宽字宽估出泡的横向范围，落进去的那一格标签直接不画。
+assert.match(timeline, /const bubbleLeft = \(playTicks \/ TIMEBASE\) \* px \+ 7 - 4;/,
+  "播放头泡的左界要按播放头自己的刻度算，不许写死");
+assert.match(timeline, /if \(labelLeft \+ label\.length \* mono > bubbleLeft && labelLeft < bubbleRight\) continue;/,
+  "落在泡里的刻度标签必须让位——两块字叠在一起，读的人只会看到乱码");
 assert.ok(!timeline.includes("px >= 150 ? 1"), "间隔表不许在视图里再抄一份（1.133 删掉的是「没有窗口就从 0 数到底」那条分支顺带抄的那张）");
 assert.ok(timeline.includes("setMarqueeSpan(null)"), "松手之后窗口要收回来，不然一次框选就把整条时间线画满了");
 assert.ok(timeline.includes("{painted.map((clip) => ("), "卡片按窗口里的那一份建");
@@ -169,7 +179,7 @@ assert.ok(timeline.includes("countHidden(Object.values(project.clips), paintRang
 assert.equal(timeline.split("countHidden(").length - 1, 1, "视图里不许出现第二处数法");
 assert.ok(timeline.includes('className="tl-window-note"') && timeline.includes('role="status"'), "没画的那些要说出来，不是悄悄少画");
 assert.ok(existsSync(harness), "这个缺陷要有一个能量出来的尺：scripts/renderer_scale.cjs");
-assert.ok(timeline.includes("const HEAD = 112;") && timeline.includes("const ROW = 56;"),
+assert.ok(timeline.includes("const HEAD = 112;") && timeline.includes("const ROW = 68;"),
   "视图那两个几何常量动了，这里的窗口换算就要跟着动，不能各自数一遍");
 
 console.log(`PASS: 窗口算术四处边界都对，两万段只建 ${paintedMany.shown.length} 张卡片（筛 ${Math.round(cost)}ms）`);
