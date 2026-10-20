@@ -74,6 +74,10 @@ function measureAgentCutUi() {
   // 「+N」那一格：画不下的针必须有个名字。这里只收真正在屏上的那几枚牌子与它写的数目，
   // 门禁据此判「少画了却没人说」——静悄悄少画一枚针，与点不到的那枚一样是缺陷。
   var chips = [];
+  // 画面里那一层（字幕 / 标题）画的是**用户自己的内容**：字号按帧高的百分比来，
+  // 应用不该替用户决定它多大。这一层不参与「字号地板 / 不许叠行」那两判，但单独计数，
+  // 让读表的人看得见「量具看见了，并且故意没判」。
+  var frameText = 0;
   // 下拉里那一行被切：`<select>` 不会自己报「被切」（它的 overflow 算出来是 visible），
   // 1.220 就是靠眼睛看发布包才发现「Rec.709（电视与浏览器…」被竖切在括号前。
   // 这一档把这件事变成量得出来的：按选中的那一行实际要多宽、那一格有多少宽。
@@ -130,7 +134,11 @@ function measureAgentCutUi() {
         });
     }
     var text = textOf(el);
-    if (text) {
+    // 画面里那一层（`.caption-layer`）是用户自己的内容：字号与换行由用户定的百分比来，
+    // 应用的字号地板管不着它——拿地板去判它，等于应用替用户决定标题多大。
+    var inFrame = typeof el.closest === "function" && el.closest(".caption-layer") !== null;
+    if (inFrame) frameText += 1;
+    if (text && !inFrame) {
       var size = Math.round(parseFloat(style.fontSize) * 10) / 10;
       fontSizes.push({ size: size, text: text.slice(0, 48), tag: el.tagName.toLowerCase(), cls: String(el.className).slice(0, 40) });
       var lineHeight = parseFloat(style.lineHeight) || size * 1.2;
@@ -164,6 +172,18 @@ function measureAgentCutUi() {
       }
     }
     var tag = el.tagName.toLowerCase();
+    // 「圆润化 / 苹果化」的一条硬判据：控件不许交给操作系统代画。
+    // 原生 color 色块与 file 框的 appearance 不是 none，画出来就是系统那套白框方块——
+    // 配色、圆角、尺寸全脱离设计刻度，深色界面里唯一还在用浅色控件画的那一格。
+    // 只量**看得见**的：藏起来的 file 框（点按钮才开选择器）是正确答案，不算违规。
+    var nativeType = tag === "input" ? String(el.getAttribute("type") || "") : "";
+    if ((nativeType === "color" || nativeType === "file") && style.appearance !== "none") {
+      clipped.push({
+        why: "操作系统代画的控件", type: nativeType, appearance: style.appearance || "auto",
+        text: String(el.getAttribute("aria-label") || el.id || nativeType).slice(0, 40),
+        cls: String(el.className).slice(0, 40),
+      });
+    }
     // 这一行原来写的是 /[role=(tab|button|checkbox|slider)]/：方括号在正则里是**字符集**，
     // 不是选择器——任何 role 里含 r/o/e/… 的都算命中，于是画面层里那一行说明
     // （role="group"，且整条画面链是 pointer-events:none）被当成「一个点不到的控件」。
@@ -196,6 +216,21 @@ function measureAgentCutUi() {
       // 只有「命中的就是它自己或它的孩子」才算摸得到。命中它的**祖先**说明有一层
       // （常常是伪元素那张透明遮罩）盖在它上面——那一下点到的是遮罩，不是这个控件。
       if (hit && hit !== el && !el.contains(hit)) {
+        // 命中它的**祖先滚动容器**，而它的矩形确实出了那一格的可视边：这一格被滚到边缘
+        // 以下，中心点落在了横向滚动条那一条上。滚一滚就摸得着——与上面「视口外但能滚到」
+        // 同一条答案（1.197 定的），所以记进名单说一声，不算点不到。
+        // 判据收得很紧：命中的必须是它自己的祖先、那一层真的能滚、矩形确实出边。
+        // 1.224 那一类「遮罩盖住按钮」命中的是**兄弟**遮罩，进不了这一支，照样算红。
+        if (hit.contains(el)) {
+          var hs = getComputedStyle(hit);
+          var hb = hit.getBoundingClientRect();
+          if (/auto|scroll/.test(hs.overflowX + " " + hs.overflowY) &&
+              (rect.bottom > hb.bottom + 1 || rect.top < hb.top - 1 ||
+               rect.right > hb.right + 1 || rect.left < hb.left - 1)) {
+            scrollAway.push((text || el.getAttribute("aria-label") || tag).slice(0, 24));
+            continue;
+          }
+        }
         var trail = [];
         var walk = el.parentElement;
         while (walk && walk !== document.body && trail.length < 5) {
@@ -290,6 +325,8 @@ function measureAgentCutUi() {
     nodes: all.length,
     painted_tags: byTag,
     text_nodes: fontSizes.length,
+    // 画面里那一层数到的字节点：不参与判断，但必须看得见它被跳过了。
+    frame_text_nodes: frameText,
     min_font: minSize,
     smallest_sample: smallest,
     radius_steps: Object.keys(radii).sort(function (a, b) { return String(a).localeCompare(String(b), "en", { numeric: true }); }),

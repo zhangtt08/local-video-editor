@@ -30,6 +30,9 @@ const ENGINE = flag("engine", "");
 const TOKEN = flag("token", "");
 const PROJECT = flag("project", "");
 const CLIP = flag("clip", "");
+// 文字层那一屏（1.227）：检查器里那四颗色块、三个下拉与字号那几格，只有选中一条
+// **文字**片段才会画出来。以前夹具里没有文字素材，这一整片从来没进过任何一屏的取样。
+const TEXTCLIP = flag("text-clip", "");
 const SIZES = (flag("sizes", "1456x808") || "").split(",");
 const OUT = path.resolve(flag("out", "ui_shape_sweep.json"));
 const EDGE = flag("edge", "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe");
@@ -227,7 +230,11 @@ async function sweepOne(size, hostPort, probeSource) {
       await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left" });
     };
     const MARKERS = [".curve-plot", ".scope-panel", ".help", ".mask-guide", ".clip", ".masked-picture",
-      ".timeline-clamped"];
+      ".timeline-clamped",
+      // 那两扇弹层各自认自己的标题：只数 `.dialog` 的话，点开一扇错的也算过。
+      'div.dialog[aria-label="预合成选中片段"]', 'div.dialog[aria-label="导入 SRT 字幕"]',
+      // 文字层那一屏认的是那四颗色块：字在别的屏上一样有，只有色块是这一屏独有的。
+      "input[type=color]"];
     const run = async (screen) => {
       const data = await evaluate("(function(){ " + probeSource + " return measureAgentCutUi(); })()");
       // 「点了才画」那一档必须能证明**真的画了东西**：只数文字节点的话，
@@ -384,6 +391,41 @@ async function sweepOne(size, hostPort, probeSource) {
       await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }, 20000);
       await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }, 20000);
       await sleep(300);
+    }
+    // 文字层那一屏：先回到同一个起点，再把选中换到夹具里那条文字片段上。
+    // 特意放在「拖高时间线」**之前**——那一拖会把布局改成一个非默认高度，
+    // 量出来的就不是所有人开机看到的那一屏。
+    if (TEXTCLIP) {
+      const trouble = await baseState();
+      const rowOf = (error) => rows.push({
+        screen: "文字层", panel: flag("panel", ""), size, data: null, error,
+      });
+      if (trouble) rowOf(trouble);
+      else {
+        const spot = await evaluate("(() => { const el = document.querySelector('.clip[data-id=" +
+          JSON.stringify(TEXTCLIP) + "]'); if (!el) return null;" +
+          "const r = el.getBoundingClientRect(); return {x: Math.round(r.left + r.width / 2)," +
+          " y: Math.round(r.top + r.height / 2)}; })()");
+        if (!spot) rowOf("时间线上找不到文字片段卡 .clip[data-id=" + TEXTCLIP +
+          "]——夹具里那条文字片段没画出来");
+        else {
+          await click(spot.x, spot.y);
+          await sleep(600);
+          await openDetails();
+          // 那四颗色块在检查器那一列的折线以下：矩形照样给得出，但探针的 `visible()`
+          // 会把「中心点出了滚动格」的那一层判成没画（那是 1.220 定的诚实判据）。
+          // 所以先把那一格真滚进视野——不滚的话，这一屏量到 0 颗色块，判据就成了空话。
+          const swatch = await evaluate("(function(){var c=document.querySelector('input[type=color]');"
+            + "if(!c)return false;c.scrollIntoView({block:'center',inline:'nearest'});return true;})()");
+          await sleep(400);
+          if (!swatch) {
+            rowOf("选中文字片段之后检查器里没有 input[type=color]——那一屏没画出文字层");
+          } else if (!(await evaluate("Boolean(document.querySelector('.clip.selected[data-id=" +
+            JSON.stringify(TEXTCLIP) + "]'))"))) {
+            rowOf("点了文字片段卡之后 .clip.selected 不是它——那一屏量的是错的状态");
+          } else await run("文字层");
+        }
+      }
     }
     // 反方向那一判（`--drag-splitter`）：用户**自己**把那条边往上拖，时间线让不动了，
     // 那句「窗口太矮」必须出现。只判「开机不许说」会把它写成「永远不说」——两只手都要钉。

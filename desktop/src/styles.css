@@ -1143,3 +1143,13 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px;
 input[type=range]:hover::-webkit-slider-thumb { border-color: var(--accent); }
 input[type=range]:focus-visible { outline: none; }
 input[type=range]:focus-visible::-webkit-slider-thumb { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+
+/* ---------- 1.227：颜色那一颗也不能交给操作系统画 ----------
+   原生 <input type=color> 画的是系统那颗白框方块：配色、圆角、尺寸全脱离设计刻度，
+   是深色界面里唯一还在用浅色控件画的一格。appearance 关掉之后外框走 .input 同一套
+   （细边 + --r-sm），里面那一层才是真颜色，聚焦仍然是同一圈软环。 */
+input[type=color] { -webkit-appearance: none; appearance: none; width: 32px; height: 32px; padding: 3px; background: var(--sunk); border: 1px solid var(--line-strong); border-radius: var(--r-sm); cursor: pointer; }
+input[type=color]::-webkit-color-swatch-wrapper { padding: 0; }
+input[type=color]::-webkit-color-swatch { border: none; border-radius: calc(var(--r-sm) - 3px); }
+input[type=color]:hover { border-color: var(--accent); }
+input[type=color]:focus-visible { outline: none; box-shadow: 0 0 0 4px var(--accent-soft); }

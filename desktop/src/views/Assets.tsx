@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Empty, Icon, IconBtn, Modal } from "../ui";
 import { humanDuration, prettyBytes, rateLabel, seconds } from "../time";
@@ -29,6 +29,9 @@ export function Assets() {
   const [filter, setFilter] = useState<"all" | "video" | "image" | "audio">("all");
   const [query, setQuery] = useState("");
   const [subtitle, setSubtitle] = useState<string | null>(null);
+  // 选文件那一颗走应用自己的按钮：整个界面只有这里原来是浏览器默认的「选择文件 / 未选择文件」，
+  // 一个没被刻度管过的原生控件夹在弹层里（另外两处 import 都是 hidden input + 样式按钮）。
+  const captionFile = useRef<HTMLInputElement | null>(null);
   const project = app.project;
   const mediaReady = Boolean(app.caps?.features.media_probe);
 
@@ -53,7 +56,8 @@ export function Assets() {
   return (
     <aside className="panel">
       {subtitle !== null ? <Modal title="导入 SRT 字幕" sub="时间从工程起点计算；每条字幕进入独立文字片段，支持修改和动画。" onClose={() => setSubtitle(null)} footer={<><button className="btn" onClick={() => setSubtitle(null)}>取消</button><button className="btn primary" disabled={!subtitle.trim()} onClick={() => { importCaptions(subtitle); setSubtitle(null); }}>导入字幕</button></>}>
-        <input type="file" accept=".srt" aria-label="选择 SRT 文件" onChange={(e) => { const file = e.target.files?.[0]; if (file) void file.text().then(setSubtitle); }} />
+        <input ref={captionFile} type="file" accept=".srt" aria-label="选择 SRT 文件" hidden onChange={(e) => { const file = e.target.files?.[0]; if (file) void file.text().then(setSubtitle); }} />
+        <button className="btn" onClick={() => captionFile.current?.click()}>选择字幕文件</button>
         <textarea autoFocus className="input caption-editor" aria-label="SRT 字幕内容" rows={10} maxLength={500000} placeholder="粘贴 SRT 内容，或选择字幕文件" value={subtitle} onChange={(e) => setSubtitle(e.target.value)} />
       </Modal> : null}
       <div className="panel-head">

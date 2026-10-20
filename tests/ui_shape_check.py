@@ -53,7 +53,7 @@ PANELS = ("inspect", "export")
 # 「画面中编辑」与「重置布局」是 1.223 补进来的两屏：前者把遮罩参考线与其上的三颗顶点操作
 # 画进画面（点了才画的那类），后者把布局恢复默认之后再量一屏——两处的控件与文字以前都不在
 # 任何一屏的取样里。
-OVERLAYS = ("动画曲线", "示波器", "快捷键", "画面中编辑", "重置布局")
+OVERLAYS = ("动画曲线", "示波器", "快捷键", "画面中编辑", "重置布局", "预合成选中片段", "字幕")
 # 每一颗浮层该**画出**的那处东西（类名，构建后仍在）。判据写在这里而不是只数几何：
 # 「点了才画」那一档，一颗换页的按钮和一颗什么都没干的按钮，字数能量出一样的数。
 PAINTED = {
@@ -64,6 +64,12 @@ PAINTED = {
     "重置布局": ".clip",
     # 反方向：用户自己把那条边往上拖，时间线让不动了——这一句**必须**出现。
     "拖高时间线": ".timeline-clamped",
+    # 那两扇弹层以前从没进过任何一屏的取样（1.227）：各认自己的标题，点开一扇错的也算不过。
+    "预合成选中片段": 'div.dialog[aria-label="预合成选中片段"]',
+    "字幕": 'div.dialog[aria-label="导入 SRT 字幕"]',
+    # 文字层那一屏（1.227）：只有选中一条文字片段才画得出那四颗色块。
+    # 认色块而不是认「有字」——字在别的屏上一样有。
+    "文字层": "input[type=color]",
 }
 # 反过来：某一屏**不许**出现的那一行。「重置布局」按下去之后还挂着「窗口太矮」，
 # 说的是应用自己要了一个这一屏装不下的数，再回头抱怨用户——那一行在别的屏上是诚实
@@ -140,6 +146,24 @@ def seed_project(token: str) -> str:
                 "effects": {"blur": 0.04, "sharpen": 0.3},
             },
         })
+    # 1.227：把上面那句账还掉——文字层那一片（四颗色块、三个下拉、字号与描边那几格）
+    # 只有选中一条**文字**片段才会画出来，以前夹具里没有，所以整片从来没被任何一屏量过。
+    commands += [
+        {"op": "track.add", "track": {"id": "vt", "kind": "video", "name": "文字"}},
+        {"op": "asset.register", "asset": {
+            "id": "txt", "kind": "text", "label": "文字", "reference": "generated:text"}},
+        {"op": "clip.add", "clip": {
+            "id": "t1", "asset_id": "txt", "track_id": "vt",
+            "position_ticks": 0, "duration_ticks": 4 * second,
+            "text": {
+                "body": "第一行标题，字数按人真会打的那一句来", "font_size": 0.06,
+                "color": "#F2C66D", "align": "center", "outline_width": 0.04,
+                "outline_color": "#101010", "shadow_x": 0.01, "shadow_y": -0.02,
+                "shadow_color": "#0B0B0B", "box_color": "#1D2530", "box_opacity": 0.45},
+            "effects": {"x": 0, "y": 0.35, "scale": 1, "rotation": 0, "opacity": 1,
+                        "gain": 1, "blur": 0, "sharpen": 0, "sharpen_radius": 0.004,
+                        "denoise": 0}}},
+    ]
     request(
         f"/v1/projects/{pid}/edits",
         token,
@@ -148,7 +172,7 @@ def seed_project(token: str) -> str:
         "POST",
     )
     # 检查器最挤的那几格不能空着量：遮罩、调色链与转场装满之后，
-    # 「22 屏 green」才说的是同一件事。（文字层要一条文字素材，仍不在这一档里。）
+    # 「22 屏 green」才说的是同一件事。
     # 22 屏 green 说的必须是「装满东西时也 green」，否则这一档只是在量一张白屏。
     dense = [
         {
@@ -227,7 +251,7 @@ def run_engine(data_dir: Path) -> subprocess.Popen:
 
 
 def sweep(pid: str, folder: Path, panel: str, extras: tuple[str, ...] = (),
-          drag: bool = False) -> list[dict]:
+          drag: bool = False, text_clip: str = "") -> list[dict]:
     out = folder / f"ui_shape_sweep-{panel}.json"
     shots = os.environ.get("AGENTCUT_SHAPE_SHOTS", "")
     node = subprocess.run(
@@ -244,6 +268,7 @@ def sweep(pid: str, folder: Path, panel: str, extras: tuple[str, ...] = (),
             "--out", str(out),
             *(sum([["--extra", label] for label in extras], [])),
             *(["--drag-splitter", "1"] if drag else []),
+            *(["--text-clip", text_clip] if text_clip else []),
             *(["--shots", shots] if shots else []),
         ],
         capture_output=True,
@@ -287,7 +312,8 @@ def main() -> None:
                 for panel in PANELS
                 for row in sweep(pid, folder, panel,
                                  OVERLAYS if panel == "inspect" else (),
-                                 drag=panel == "inspect")
+                                 drag=panel == "inspect",
+                                 text_clip="t1" if panel == "inspect" else "")
             ]
         finally:
             engine.terminate()
@@ -309,8 +335,9 @@ def main() -> None:
     if missed:
         fail(f"{len(missed)} 行没量到（每一屏都得量到，不许用别的屏抵数）："
              + json.dumps(missed, ensure_ascii=False)[:600])
-    # 每屏四档（启动那一屏 + 展开 + 其余三颗页签）+ 浮层那几颗 + 反方向那一拖（只在 inspect 那趟）
-    needed = (len(PANELS) * 4 + len(OVERLAYS) + 1) * len(SIZES)
+    # 每屏四档（启动那一屏 + 展开 + 其余三颗页签）+ 浮层那几颗 + 文字层那一屏
+    # + 反方向那一拖（后两档都只在 inspect 那趟）
+    needed = (len(PANELS) * 4 + len(OVERLAYS) + 1 + 2) * len(SIZES)
     if len(screens) < needed:
         fail(f"只量到 {len(screens)} 屏（至少该有 {needed} 屏）")
 
