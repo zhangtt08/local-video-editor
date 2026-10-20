@@ -6199,3 +6199,32 @@ schema 仍是 21：存的形状没变，只是校验放宽，旧工程照读；�
   控制台壳——实时杀软下新写的 `.exe` 启动子进程会卡在进程创建里。
 - **实测**：71 档壳检全绿；`ruff check src tests scripts agent` 与 `stylewidth_check` 同一轮全绿，欠账上限三档全 0；空闲机单跑 `tests/suite_check.py` **132/132**（这一轮新增 `tests/agentapi_check.py`，31 条断言）；`tests/ui_shape_check.py` 22 屏 `SUMMARY green`——地板 12.5px、0 处尖角、0 处文字被切、0 处控件点不到、0 处同一格叠行、4 屏的「+N」有名（画不下的针都有名字，静悄悄少画也算红）。突变复测两处：把旧名字 `fade_black` 塞回 `handle_capabilities`，「与引擎那张表逐字相同」与「抄错的旧名已绝迹」各自红在自家断言上；把 `timeout=KILL_TIMEOUT_SECONDS` 从 `_kill` 摘掉，`media_check` 那一行先红，不用等四百秒。两轮都还原后绿。
 - **发布账**：`build_engine --verify` 通过（这一轮走 `--no-uv`：venv 里的 PyInstaller 6.22.3；`uv run --with pyinstaller` 在这台机器上不出声地钉死，两份实测见 `scripts/build_engine.py` 顶上那段）——冻结引擎自报 1.219.0，冷启动 879 ms、裸启动 705 ms（main.ts 预算 15000 ms），随包 ffmpeg 6.1.1 79.0 MB / ffprobe 4.0.2 60.1 MB / vosk 中文模型 65.1 MB，staged 合计 298.8 MB；`npm run dist` 后根 `AgentCut.exe` 与 `release/AgentCut-便携版.exe` `cmp` 逐字节相同（185,132,959 B，sha256 前缀 929c19bef137f778），安装版 185,293,670 B（前缀 0d00b16693640154）；`released_package_check` 绿（asar 1.219.0、84 个文件、51 句人话、随包引擎就是刚构建那一份）；`packed_engine_surface_check` 绿（包里那支引擎真 HTTP 交回 1.219.0，拒绝那一手不写状态）。
+
+## 1.220（2026-10-20）：检查器展开的那一屏进了门禁，下拉那一行不再被竖切
+
+- **两处小字缺陷是从发布包的真实像素里量出来的**，不是从代码里推出来的：
+  ① 走带那一行的「代理」标签在 1480×900 下折成「代 / 理」两行（`.proxy-ctl` 是 inline-flex，
+  中文哪里都能断行，于是标签被挤到一个字一行）；② 检查器「工程基色」「折叠曲线」两个下拉把引擎给的
+  整句**切在括号中间**——实测 `Rec.709（电视与浏览器的默认）` 要 201 px、
+  `BT.709 分段曲线（容器那一格本来的意思）` 要 292 px，而那一格只有 215 px。
+- **改法是同一条规矩**（1.217 立的那条）：一格只许一行；画的是**名字**（括号前那一段），
+  整句挂在这同一颗控件的悬停上；那一格放不下时学着自己用省略号让位，而不是把字竖切。
+  短名只有一处算法：`desktop/src/workingSpace.ts` 的 `shortLabel()`，两只下拉都问它
+  （`{value, label, short}`），界面不再各切一遍。括号里那些话下面那行灰字本来就在说，一句都没丢。
+- **量具补了它自己看不见的三件事**（这一轮真正多出来的能力，不是产品改动）：
+  ① `scripts/ui_shape_probe.js` 以前看不见下拉被切：`<select>` 的 `overflow` 算出来是 `visible`，
+  「被切」那一判从来轮不到它。现在按选中的那一行实测要多宽（canvas 量字 + 24 px 箭头与内边距）
+  与那一格自己的宽度比，交回 `{label, text, needs_px, box_px, has_title}`；
+  门禁的判据是**切了又没有整句悬停 = 缺陷**。
+  ② 检查器那九段是 `<details>`，合着的时候那一行根本没画到屏幕上，所以旧 22 屏量不到下拉那一行。
+  扫描加了 `--open-details`（把每一段真展开再量一屏），门禁要这一屏：22 屏 → **26 屏**。
+  ③ 展开那一屏当场照出第三个谎：「整片对齐 -14 LUFS」那颗按钮被记成「点不到」，而它只是**滚到线
+  下面去了**——矩形会撒谎，`elementFromPoint(中心)` 摸到的是隔壁的时间线工具条。判可见现在看
+  **中心点**在不在滚动容器那个框里，而不是整块矩形沾边就算；要往下滚一段才点得着的控件，
+  本来就不是「被挡住」，这一条不是放宽判据，是把量具读错的东西还给量具。
+- **突变复测三处**（各自红在自家断言上，还原后绿）：整句画回 option 且摘掉悬停 → 两档视口各红一条，
+  数字就是 292 对 215；只把整句画回去、悬停留着 → `下拉被切=2` 而门禁仍绿（切了但有人说得清），
+  这一条同时证明收紧可见性判据之后量具**仍然看得见**那一行；新档 `tests/desktop_tierlabel_check.ts`
+  数的是整对出现的次数（option 2 处、select 悬停 2 处），只改一只下拉就红在数目上。
+- **实测**：72 档壳检全绿（新增 `tests/desktop_tierlabel_check.ts` 那一档，15 条断言数的是整对出现的次数）；`ruff check src tests scripts agent` 与 `stylewidth_check` 仍全绿、欠账三档 0；`tsc --noEmit` 干净（54 份源）；`tests/ui_shape_check.py` **26 屏** `SUMMARY green`——地板 12.5px、0 尖角、0 被切、0 点不到、0 叠行、4 屏的「+N」有名、**下拉被切 0**；空闲机单跑 `tests/suite_check.py` **132/132**。突变三处各自红在自家断言上、还原后绿：整句画回 option 且摘掉悬停 → 两档视口各红一条（数字就是 292 对 215）；只画整句、悬停留着 → `下拉被切=2` 而门禁仍绿（这条同时证明收紧可见性判据之后量具仍看得见那一行）；新壳检数整对次数，只改一只下拉就红在数目上。
+- **发布账**：`build_engine --verify`（`--no-uv`，venv 的 PyInstaller 6.22.3）通过：冻结引擎自报 **1.220.0**，冷启动 **814 ms**、裸启动 705 ms（预算 15000 ms），随包 ffmpeg 6.1.1 79.0 MB / ffprobe 4.0.2 60.1 MB / vosk 中文模型 65.1 MB，staged 合计 298.8 MB；`npm run dist` 后根 `AgentCut.exe` 与 `release/AgentCut-便携版.exe` `cmp` 逐字节相同（**185,132,688 B，sha256 前缀 a7d32323ee3fc1a4**），安装版 185,293,395 B（前缀 a6aabd823065fb00）；`released_package_check` 绿（asar 1.220.0、84 个文件、51 句人话、随包引擎就是刚构建那一份）；`packed_engine_surface_check` 绿（包里那支引擎真 HTTP 交回 1.220.0，拒绝那一手不写状态）。
