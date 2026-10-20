@@ -6228,3 +6228,37 @@ schema 仍是 21：存的形状没变，只是校验放宽，旧工程照读；�
   数的是整对出现的次数（option 2 处、select 悬停 2 处），只改一只下拉就红在数目上。
 - **实测**：72 档壳检全绿（新增 `tests/desktop_tierlabel_check.ts` 那一档，15 条断言数的是整对出现的次数）；`ruff check src tests scripts agent` 与 `stylewidth_check` 仍全绿、欠账三档 0；`tsc --noEmit` 干净（54 份源）；`tests/ui_shape_check.py` **26 屏** `SUMMARY green`——地板 12.5px、0 尖角、0 被切、0 点不到、0 叠行、4 屏的「+N」有名、**下拉被切 0**；空闲机单跑 `tests/suite_check.py` **132/132**。突变三处各自红在自家断言上、还原后绿：整句画回 option 且摘掉悬停 → 两档视口各红一条（数字就是 292 对 215）；只画整句、悬停留着 → `下拉被切=2` 而门禁仍绿（这条同时证明收紧可见性判据之后量具仍看得见那一行）；新壳检数整对次数，只改一只下拉就红在数目上。
 - **发布账**：`build_engine --verify`（`--no-uv`，venv 的 PyInstaller 6.22.3）通过：冻结引擎自报 **1.220.0**，冷启动 **814 ms**、裸启动 705 ms（预算 15000 ms），随包 ffmpeg 6.1.1 79.0 MB / ffprobe 4.0.2 60.1 MB / vosk 中文模型 65.1 MB，staged 合计 298.8 MB；`npm run dist` 后根 `AgentCut.exe` 与 `release/AgentCut-便携版.exe` `cmp` 逐字节相同（**185,132,688 B，sha256 前缀 a7d32323ee3fc1a4**），安装版 185,293,395 B（前缀 a6aabd823065fb00）；`released_package_check` 绿（asar 1.220.0、84 个文件、51 句人话、随包引擎就是刚构建那一份）；`packed_engine_surface_check` 绿（包里那支引擎真 HTTP 交回 1.220.0，拒绝那一手不写状态）。
+
+## 1.221（2026-10-20）：一条片段可以再叠几块遮罩，两端的洞出自同一张图
+
+- **合成工作流剩下的最大一块补上了**：`Clip.extra_masks` —— 主遮罩之外再叠最多
+  `capabilities.limits.extra_masks`（4）块矩形/椭圆，与主遮罩**取交集**。之前一条片段只有一个洞；
+  AE 的 mask intersect、达芬奇那套 garbage matte 叠加，之前在这里做不到。
+- **一处写入口**：`clip.mask_stack` 一次交回整串（与 `clip.mask`、`clip.grade` 同一个规矩）。
+  不在服务端猜「第几块要换成什么」，也不给同一份状态留第二个主人；Agent 走同一条命令、同一处校验。
+- **两端的洞出自同一张图**：导出那条 alpha 本来就是 `alpha(X,Y)*A*B` 乘起来的，多一块就是多一个括号；
+  预览清单为每一块各出一张 `mask_image`，浏览器叠成 `mask-image: 图1, 图2; mask-composite: intersect`。
+  界面一份都不自己算，也不在浏览器里再乘一次 alpha——那是第二次换算。
+- **做不到的两件事写在格子里**：再叠的块不带动画（那五条 `mask_*` 关键帧说的都是主遮罩；
+  要它跟着画面走就把这段复制一层，在那一层上画）；不收自由形状（`INVALID_MASK` 点名拒绝并把
+  同一句出路带回正文）。两条都有断言钉着。
+- **schema 24 → 25**：新增一个带默认值的字段是一次**指纹事件**，不是一次模型事件——
+  `projects._fingerprint` 的年份剥离，加上三处各自镜像「这一年认得哪些字段」的夹具
+  （`link_check` / `transition_check` / `text_receipt_check`），四处要一起动；
+  只改引擎那一处会把红挪到镜像上去。另有三档门禁把 schema 数钉成字面量（`foldcurve`、
+  `workingprimaries`、`maskrot`），跟着一起搬到 25。
+- **新门禁 `tests/maskstack_check.py`**：量的不是「字段存进去了」，而是那块多出来的洞**真的把画面切掉了**。
+  白底板 + 主遮罩留中间 + 再叠一块留右边，逐点取样：`x=0.65`（两块都留）必须白，
+  `x=0.30`（主遮罩里、再叠那块外）**由白转黑**——这一条就是对照，没有它任何「遮罩没生效」的回归
+  都会绿着过去。另外钉住：清空回到只有主遮罩、清单里 `extra_mask_images` 的张数与存的一致、
+  同一 `request_id` 同一份载荷重发不涨版本、超限与自由形状都点名拒绝且不写状态、
+  旧行读回就是没有、提空列表与没提是同一份指纹而真多了一块就必须变。
+- **壳检 `tests/desktop_maskstack_check.ts`**：写入口只有一处、额度听引擎的、做不到的那件事写在格子里、
+  浏览器叠的是引擎那几张图（不自己乘 alpha）、那一行的圆角与字号仍走刻度。
+- **证据的边界（记成欠账，不藏着）**：浏览器那一腿证到的是「两层图 + `mask-composite: intersect`
+  被 Chromium 认下来」——computed style 读出 `intersect, intersect`、`CSS.supports` 为 true、
+  两张图都来自引擎。**没有**做像素级的两端对比：`msedge --headless --screenshot` 在这台机器上
+  不出图（两种写法各实测一次，退 0 但不落文件），而 `get_window_state` 只能拍发布包自己打开的
+  那份工程，拍不到临时种子工程。1.222 第 1 项就是先把这个取帧路子补上，再回来钉这一格。
+- **实测**：73 档壳检全绿（新增 `tests/desktop_maskstack_check.ts`，钉的是写入口只有一处、额度听 `capabilities.limits.extra_masks`、文案留在格子里、浏览器叠的就是引擎那几张图、`mask-composite: intersect` 与样式刻度）；`ruff check src tests scripts agent` 全绿、`stylewidth_check` 欠账三档 0；`tsc --noEmit` 干净（54 份源）；`tests/ui_shape_check.py` **26 屏** `SUMMARY green`——地板 12.5px、0 尖角、0 被切、0 点不到、0 叠行、4 屏的「+N」有名、下拉被切 0、遮罩后取样 108 个点。突变四手，改的都是**产品**不是断言，各自红在自家那一条、还原后重跑绿：① `render.py` 里再叠那块不再乘进 alpha → 红在像素那条，`x=0.30` 回成白 `(254, 252, 253)`，正是「成片没切」的样子；② `contracts.py` 把那条命令的名字换掉 → 红在写的那一手，`INVALID_REQUEST` 把认得的 op 名单整个念出来；③ `animation.py` 的清单不再交第二张图 → 红在 `maskstack_check.py:206` 那条张数断言；④ `MaskPicture.tsx` 把交集叠成并集（`intersect`→`add`）→ 红在壳检那句「浏览器不再取交集，预览就会比成片露得多」。四手前后每支文件都比对 sha256，全部逐字节还原；空闲机单跑 `tests/suite_check.py` **133/133 checks passed**、`suite_rc=0`——132 变 133 多出来的那一档就是 `maskstack_check.py`（新的壳检 `desktop_maskstack_check.ts` 由 `desktop_ts_check.py` 带着跑，所以那一头的数是 72 变 73）。
+- **发布账**：`build_engine --verify`（`--no-uv`，venv 的 PyInstaller 6.22.3，冻结 18.9 s）通过：冻结引擎自报 **1.221.0 / schema 25**，冷启动 **827 ms**、裸启动 711 ms（预算 15000 ms），随包 ffmpeg 6.1.1 79.0 MB / ffprobe 4.0.2 60.1 MB / vosk 中文模型 65.1 MB，staged 合计 298.8 MB（`agentcut/` 159.7 MB、216 项）；`npm run dist` 后根 `AgentCut.exe` 与 `desktop/release/AgentCut-便携版.exe` `cmp` 逐字节相同（**185,134,233 B，sha256 前缀 a70ac94322a8fb22**），安装版 185,294,935 B（前缀 985664a6439709aa）；`released_package_check` 绿（asar 1.221.0、84 个文件、51 句人话、随包引擎就是刚构建那一份）；`packed_engine_surface_check` 绿（包里那支引擎真 HTTP 交回 1.221.0 与 schema 25，拒绝那一手不写状态）。
