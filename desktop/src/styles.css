@@ -633,6 +633,10 @@ select { color-scheme: dark; }
    以前名字在顶、时长在底、针从底往上叠，三道针排满时时长与名字都压在针上（扫描量到的
    `clip-dur|clip-keyframe`、`clip-keyframe|clip-label`）。现在四样东西在同一个 flex 行里
    依次让位：名字可以省略，标签、关联符与时长不许折行，整行超出就裁，谁也不许压谁。 */
+/* 1.232：文字样式预设是一排会换行的胶囊——五个名字都看得见，不折成两行小字。 */
+.text-presets { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 4px; }
+.text-presets .btn { padding: 3px 10px; }
+
 .clip .clip-top {
   position: absolute; top: 4px; left: 9px; right: 9px;
   display: flex; align-items: center; gap: 5px; overflow: hidden;

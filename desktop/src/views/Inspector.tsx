@@ -21,6 +21,7 @@ import {
 } from "../workingSpace";
 import { setFoldTransfer, setWorkingPrimaries } from "../store";
 import { linkOffsetSentence } from "../linkOffset";
+import { TEXT_PRESETS } from "../textStyle";
 import { MOTION_PRESETS, motionCommands, motionWords, type MotionPresetId, type MotionSide } from "../motionPresets";
 import {
   adoptFade,
@@ -723,6 +724,9 @@ function TextFields({ clip }: { clip: Clip }) {
   const locked = Boolean(app.busy || !project || project.tracks.find((t) => t.id === clip.track_id)?.locked);
   return <section className="insp-section"><span className="panel-label">文字内容</span><fieldset className="effects-fields" disabled={locked}>
     <textarea className="input caption-editor" aria-label="文字内容" rows={3} maxLength={4000} value={body} onChange={(e) => setBody(e.target.value)} onBlur={() => { if (body.trim() && body !== text.body) setClipText(clip.id, { body }); else if (!body.trim()) setBody(text.body); }} />
+    <div className="text-presets" role="group" aria-label="文字样式预设">
+      {TEXT_PRESETS.map((preset) => <button key={preset.id} type="button" className="btn tiny subtle" title={preset.hint} disabled={locked} onClick={() => setClipText(clip.id, preset.style)}>{preset.label}</button>)}
+    </div>
     <div className="effect-row"><label htmlFor="text-size">字号</label><EffectInput id="text-size" min={1} max={20} step={.1} value={text.font_size * 100} onCommit={(value) => setClipText(clip.id, { font_size: value / 100 })} /><span className="dim">% 高</span></div>
     <div className="effect-row"><label htmlFor="text-color">颜色</label><input id="text-color" type="color" value={text.color} onChange={(e) => setClipText(clip.id, { color: e.target.value })} /></div>
     <div className="effect-row"><label htmlFor="text-align">位置</label><select id="text-align" className="input" value={text.align ?? "center"} onChange={(e) => setClipText(clip.id, { align: e.target.value as typeof text.align })}><option value="top">靠上</option><option value="center">居中</option><option value="bottom">靠下</option></select></div>

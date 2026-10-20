@@ -34,6 +34,31 @@ export const TEXT_DEFAULTS = {
   line_spacing: 0.2,
 } as const;
 
+/** 1.232：五档文字样式。预设只给「长什么样」的那几格——字号、颜色、上下位置、描边、
+ *  阴影与垫子；`body` / `font` / `text_align` / `line_spacing` 是这个人自己的排版，一概不覆盖。
+ *  每一格都在契约的量程里（0.01..0.2 的字号与描边、±1 的阴影、0..1 的垫子浓度）。 */
+export type TextPreset = { id: string; label: string; hint: string; style: Partial<TextStyle> };
+
+export const TEXT_PRESETS: TextPreset[] = [
+  { id: "title", label: "标题", hint: "字号 7.5% 高、米白、细描边、深色垫子", style: {
+    font_size: 0.075, color: "#F7F1E3", align: "center", box: true, box_color: "#101418",
+    box_opacity: 0.3, outline_width: 0.022, outline_color: "#0B0D10",
+    shadow_x: 0.012, shadow_y: -0.02, shadow_color: "#000000" } },
+  { id: "subtitle", label: "副标题", hint: "字号 4.2%、浅米、细描边，不垫底", style: {
+    font_size: 0.042, color: "#EFE7D8", align: "center", box: false, outline_width: 0.018,
+    outline_color: "#0B0D10", shadow_x: 0.008, shadow_y: -0.012, shadow_color: "#000000" } },
+  { id: "caption", label: "字幕条", hint: "字号 3.4%、靠下、白字黑描边、半透明黑底", style: {
+    font_size: 0.034, color: "#FFFFFF", align: "bottom", box: true, box_color: "#000000",
+    box_opacity: 0.55, outline_width: 0.012, outline_color: "#000000",
+    shadow_x: 0, shadow_y: 0, shadow_color: "#000000" } },
+  { id: "quote", label: "引语", hint: "字号 5%、居中、不描边、轻阴影", style: {
+    font_size: 0.05, color: "#F0E6D2", align: "center", box: false, outline_width: 0,
+    outline_color: "#0B0D10", shadow_x: 0.01, shadow_y: -0.015, shadow_color: "#000000" } },
+  { id: "accent", label: "强调", hint: "字号 8.5%、暖黄、粗描边与硬阴影", style: {
+    font_size: 0.085, color: "#FFE08A", align: "center", box: false, outline_width: 0.03,
+    outline_color: "#201200", shadow_x: 0.015, shadow_y: -0.025, shadow_color: "#000000" } },
+];
+
 export function hexToRgba(color: string, opacity: number): string {
   const value = color.replace("#", "");
   const channels = [0, 2, 4].map((at) => parseInt(value.slice(at, at + 2), 16));
