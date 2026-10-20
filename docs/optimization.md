@@ -6262,3 +6262,42 @@ schema 仍是 21：存的形状没变，只是校验放宽，旧工程照读；�
   那份工程，拍不到临时种子工程。1.222 第 1 项就是先把这个取帧路子补上，再回来钉这一格。
 - **实测**：73 档壳检全绿（新增 `tests/desktop_maskstack_check.ts`，钉的是写入口只有一处、额度听 `capabilities.limits.extra_masks`、文案留在格子里、浏览器叠的就是引擎那几张图、`mask-composite: intersect` 与样式刻度）；`ruff check src tests scripts agent` 全绿、`stylewidth_check` 欠账三档 0；`tsc --noEmit` 干净（54 份源）；`tests/ui_shape_check.py` **26 屏** `SUMMARY green`——地板 12.5px、0 尖角、0 被切、0 点不到、0 叠行、4 屏的「+N」有名、下拉被切 0、遮罩后取样 108 个点。突变四手，改的都是**产品**不是断言，各自红在自家那一条、还原后重跑绿：① `render.py` 里再叠那块不再乘进 alpha → 红在像素那条，`x=0.30` 回成白 `(254, 252, 253)`，正是「成片没切」的样子；② `contracts.py` 把那条命令的名字换掉 → 红在写的那一手，`INVALID_REQUEST` 把认得的 op 名单整个念出来；③ `animation.py` 的清单不再交第二张图 → 红在 `maskstack_check.py:206` 那条张数断言；④ `MaskPicture.tsx` 把交集叠成并集（`intersect`→`add`）→ 红在壳检那句「浏览器不再取交集，预览就会比成片露得多」。四手前后每支文件都比对 sha256，全部逐字节还原；空闲机单跑 `tests/suite_check.py` **133/133 checks passed**、`suite_rc=0`——132 变 133 多出来的那一档就是 `maskstack_check.py`（新的壳检 `desktop_maskstack_check.ts` 由 `desktop_ts_check.py` 带着跑，所以那一头的数是 72 变 73）。
 - **发布账**：`build_engine --verify`（`--no-uv`，venv 的 PyInstaller 6.22.3，冻结 18.9 s）通过：冻结引擎自报 **1.221.0 / schema 25**，冷启动 **827 ms**、裸启动 711 ms（预算 15000 ms），随包 ffmpeg 6.1.1 79.0 MB / ffprobe 4.0.2 60.1 MB / vosk 中文模型 65.1 MB，staged 合计 298.8 MB（`agentcut/` 159.7 MB、216 项）；`npm run dist` 后根 `AgentCut.exe` 与 `desktop/release/AgentCut-便携版.exe` `cmp` 逐字节相同（**185,134,233 B，sha256 前缀 a70ac94322a8fb22**），安装版 185,294,935 B（前缀 985664a6439709aa）；`released_package_check` 绿（asar 1.221.0、84 个文件、51 句人话、随包引擎就是刚构建那一份）；`packed_engine_surface_check` 绿（包里那支引擎真 HTTP 交回 1.221.0 与 schema 25，拒绝那一手不写状态）。
+
+## 1.222（2026-10-20）：预览那个洞与成片那个洞，第一次被逐点对过像素
+
+- **这一轮补的是 1.221 自己记下的欠账**：那一轮浏览器那一腿只证到 computed style 认下
+  `mask-composite: intersect`。式子被解析不等于画出来的东西一样——所以这一轮把两端都落成像素。
+- **照片腿找到了**：`scripts/two_end_shot.cjs` 伺服渲染层（同源代理 `/v1` 到引擎）、深链进那个工程，
+  用 `--headless=new` 的 Edge 经 CDP `Page.captureScreenshot` 只截 `.masked-picture` 那块矩形。
+  这台机器上 `msedge --headless --screenshot` 那个命令行写法退 0 但不落文件（1.221 实测两次），
+  而 CDP 这条腿出图——`ui_shape_sweep.cjs` 的 `--shots` 早就在用，只是以前留着给人眼复核，
+  没拿来当判据。
+- **导出那一片是真跑一次渲染任务**：`POST /v1/projects/{id}/renders` → 轮询 `/v1/jobs/{id}` →
+  拿回 `output_path`，再用随包 ffmpeg 取第一帧。两端都解成 rgb24，同一把尺。
+- **判据是四件事一起成立**（`tests/twoband_check.py`）：① 两端一个格点都不许分歧；
+  ② 每一格还要按几何**该亮就亮、该暗就暗**——四类点（两块都留、只主遮罩留、只再叠那块留、
+  两块都外）的期望只由两块矩形的坐标算，不看像素，所以「两端一致地全黑」通不过；
+  ③ 对照那一趟（只有主遮罩）里「只主遮罩留」那一批点必须亮；④ 再叠之后同一批点必须在两端
+  **同时**由亮转暗。③+④ 才是「量具看得见那块多出来的洞」。
+- **量具自己先被验过一遍**：拍照之前先证明那一格值得拍——矩形面积 >0（1.218 量到过 0×0 的遮罩层）、
+  图解码完、遮罩层数等于引擎交下来的张数、画面**铺满**格子（`object-fit: contain` 上下出黑边时
+  「画面坐标」与「遮罩坐标」会错开一截，那种照片两端比不得），而且不许有遮罩编辑的参考线混进来
+  （参考线是界面给人看的，导出里没有它）。离任何一条遮罩边不足 3 px 的点按两端各自的分辨率剔除。
+- **抖动重试一次，而且要说出口**：上一趟的浏览器还没退干净时附着会断（实测一次红在
+  `[object ErrorEvent]`，那是我自己把 WebSocket 的错误事件原样抛了出来）。改法是把那句换成
+  「CDP socket error for <那一页的地址>」，并给照片腿加一次重试——重试了几次必须印出来，
+  真缺陷会连着抖两次，静悄悄重试只会拿门禁自己的抖动把它喂饱。
+- **实测**：`tests/twoband_check.py` 自己那一趟：两端尺寸 **导出 320×180 / 预览 414×232**，**276 个格点零分歧**，四类点（两块都留 24、只主遮罩留 166、只再叠那块留 4、两块都外 82）每一格都按几何该亮该暗；再叠那块把「只主遮罩留」那 166 个点由亮按成暗，预览与导出同时翻。空闲机单跑 `tests/suite_check.py` **134/134 checks passed**、`suite_rc=0`（133 变 134 多出来的那一档就是 `twoband_check.py`，它在那一整套里只用 8.0 s）；`ruff check` 全绿、`stylewidth_check` 欠账三档 0、`tsc --noEmit` 干净（54 份源）、73 档壳检全绿。
+- **突变四手**（每一手都改产品；改浏览器的三手每次都重建渲染层并核对产物哈希真的变了，
+  还原后再重建核对回到起手那一份）：① `render.py` 里再叠那块不再乘进 alpha → 红在**像素那一条**：`primary_only` 那 166 个格点两端分歧（导出亮、预览暗）；② `MaskPicture.tsx` 把交集改成并集 `add` → 红在 `mask_composite` 那句（读回 `add, add`）；③ `Preview.tsx` 不再把第二张图交给预览 → 红在照片腿那句「那一格没有画到位」（`mask_layers` 只有 1），重试一次还是这样，报的是「重试过一次还是这样」；④ 最刁的一手：`MaskPicture.tsx` 让第二层重复主遮罩那张图——**层数仍是 2、`intersect` 仍在**，名字与式子都骗过去了，红仍然落在像素那条（同一批 166 个点导出暗、预览亮）。四手前后每支文件都比 sha256 逐字节还原；改浏览器那两手每次都重跑 `npm run build:renderer` 并核对产物哈希真的变了（起手 `e19436aa…`，三手各变一份），还原后再重建、核对产物回到起手那一份。
+- **发布账**：`build_engine --verify`（`--no-uv`，venv 的 PyInstaller 6.22.3，冻结 19.4 s）通过：冻结引擎自报 **1.222.0 / schema 25**，冷启动 **847 ms**、裸启动 739 ms（预算 15000 ms），随包 ffmpeg 6.1.1 79.0 MB / ffprobe 4.0.2 60.1 MB / vosk 中文模型 65.1 MB，staged 合计 298.8 MB；`npm run dist` 后根 `AgentCut.exe` 与 `desktop/release/AgentCut-便携版.exe` `cmp` 逐字节相同（**185,134,526 B，sha256 前缀 5365d4e0af2e5fa0**），安装版 185,295,225 B（前缀 b5f658ac0060b9db）；`released_package_check` 绿（asar 1.222.0、84 个文件、51 句人话、随包引擎就是刚构建那一份）；`packed_engine_surface_check` 绿（包里那支引擎真 HTTP 交回 1.222.0 与 schema 25）；`ui_shape_check` 仍 **26 屏 green**（地板 12.5px、0 尖角、0 被切、0 点不到、0 叠行、4 屏「+N」有名、下拉被切 0、遮罩后取样 108 个点）。
+- **下一轮（1.223）的具体入口**：
+  1. 浏览器侧的 3D 立方表（`lut3d_preview` 仍为 false）——新量具正好能钉它：先把
+     「预览与导出读同一张表」钉成逐点比对，再把那张表在浏览器里落成真图。
+  2. 把两端比对从**亮暗**升级成**数值**（同一处两端各差多少级）——调色链与转场的预览
+     保真度就有一条能量化的账了。
+  3. 再叠的块跟着画面走：给 `mask_*` 那五条曲线一个「哪一块」的寻址（契约级改动，
+     先把「一条片段一条遮罩路径」这句话印在哪些地方列全）。
+  4. 扫描还差的两屏：导出确认弹层第二页、「重置布局」之后那一屏；以及「画面中编辑」的
+     参考线、调色链卡片菜单这类「点了才画」的。
+  5. 遮罩跟踪仍不估计旋转：要交得出去得先破「NCC 在近平坦的角上选不动」，不是再调步长。
