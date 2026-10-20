@@ -190,6 +190,53 @@ def media_identity(banner: dict) -> list[str]:
     return hits
 
 
+def builder_preflight() -> list[str]:
+    """构建器把「要输入」放在「清目录」之前——媒体那两支之外，工具链也得先要。
+
+    1.228 的发布链自己量到的：`--no-uv` 当时只看 PATH 上有没有 `pyinstaller`（而解释器自己
+    装着 6.22.3），于是构建器先清空 `desktop/resources/bin`、再报「没找到工具链」——随包那
+    三样不在 git 里，一次失败的构建把装机用的媒体丢掉了。两件事分开判：
+
+    ① 源码顺序：`main` 里解析工具链那一句必须在 `rmtree(DEST)` 之前；
+    ② 行为：两条路都没有 PyInstaller 时它必须当场拒绝（而不是回一个空命令继续往下走），
+       两条都要放得进同一份报告。
+    """
+    import runpy
+
+    hits: list[str] = []
+    source = (ROOT / "scripts" / "build_engine.py").read_text(encoding="utf-8")
+    body = source[source.index("def main()"):]
+    call = "command = pyinstaller_command(not args.no_uv)"
+    if call not in body:
+        hits.append("main 没有在动目录之前解析工具链")
+        return hits
+    clear = body.find("shutil.rmtree(DEST)")
+    if clear != -1 and body.index(call) > clear:
+        hits.append("工具链是在清空 resources/bin 之后才要的：它一失败，随包媒体就跟着没了")
+    module = runpy.run_path(str(ROOT / "scripts" / "build_engine.py"), run_name="build_probe")
+    resolve = module["pyinstaller_command"]
+    if not resolve(False):
+        hits.append("这台机器上有工具链时 `pyinstaller_command(False)` 却交回空命令")
+
+    # 行为那一半：把两条路都堵上（解释器里 import 不到、PATH 上也没有），它必须拒绝。
+    import types
+
+    globals_ = resolve.__globals__
+    real_subprocess, real_shutil = globals_["subprocess"], globals_["shutil"]
+    globals_["subprocess"] = types.SimpleNamespace(
+        run=lambda *a, **k: types.SimpleNamespace(returncode=1)
+    )
+    globals_["shutil"] = types.SimpleNamespace(which=lambda name: None)
+    try:
+        resolve(False)
+        hits.append("两条路都没有 PyInstaller 时它没有拒绝——空命令会一路走到子进程")
+    except SystemExit:
+        pass
+    finally:
+        globals_["subprocess"], globals_["shutil"] = real_subprocess, real_shutil
+    return hits
+
+
 def main() -> None:
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
@@ -204,6 +251,7 @@ def main() -> None:
         ("随包目录之外的 FFmpeg", second_ffmpeg(checks)),
         ("随包目录之外的媒体程序路径", stray_media_paths(checks)),
         ("随包媒体程序与那张身份戳", media_identity(banner)),
+        ("构建器要输入的顺序与工具链拒绝", builder_preflight()),
     ):
         assert not hits, f"{label}没被拦住：\n  " + "\n  ".join(hits)
     print(

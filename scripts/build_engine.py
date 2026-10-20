@@ -91,7 +91,44 @@ def find_uv() -> str:
 
 
 # --------------------------------------------------------------------------- engine build
-def build_engine(layout: str, use_uv: bool) -> Path:
+def pyinstaller_command(use_uv: bool) -> list[str]:
+    """怎么调 PyInstaller——**在动任何目录之前**就把这件事定下来。
+
+    1.228 的发布链量到：`--no-uv` 只看 PATH 上有没有 `pyinstaller`，而解释器自己明明装着
+    6.22.3；`main` 又在发现这一点之前先清空了 `desktop/resources/bin`，于是「工具链不在」
+    变成了「随包那三样也没了」（它们不在 git 里，只有 `node_modules` 那两份源）。
+    要输入的东西先要齐，再清目录——1.158 对媒体那两支立过同一条规矩，这次补上工具链这一半。
+    """
+    if use_uv:
+        uv = find_uv()
+        if uv:
+            # Ephemeral tool env layered on the project venv: the frozen app analyses the *project*
+            # dependencies while pyinstaller itself stays out of pyproject.toml / uv.lock.
+            return [uv, "run", "--with", "pyinstaller", "--no-sync", "pyinstaller"]
+    # 当前解释器自己那一份优先：这台机器上有实时杀软，刚写出来的控制台壳启动子进程会卡在
+    # 进程创建里（1.219 实测 13 分钟零 CPU）；`-m PyInstaller` 走的是已经加载的解释器。
+    module = (
+        subprocess.run(
+            [sys.executable, "-c", "import PyInstaller.__main__"],
+            capture_output=True,
+            cwd=ROOT,
+            shell=False,
+        ).returncode
+        == 0
+    )
+    if module:
+        return [sys.executable, "-m", "PyInstaller"]
+    found = shutil.which("pyinstaller")
+    if found:
+        return [found]
+    fail(
+        "neither `uv`, a PyInstaller importable by this interpreter (`--no-uv`), nor a "
+        "`pyinstaller` on PATH was found; install uv (https://docs.astral.sh/uv/) or "
+        "`pip install pyinstaller` into the venv you run this script with"
+    )
+
+
+def build_engine(layout: str, command: list[str]) -> Path:
     """Run PyInstaller and return the directory that holds `agentcut(.exe)`."""
     work = BUILD_DIR / "work"
     dist = BUILD_DIR / "dist"
@@ -123,42 +160,9 @@ def build_engine(layout: str, use_uv: bool) -> Path:
         str(BUILD_DIR),
         str(SCRIPTS / "engine_entry.py"),
     ]
-    uv = find_uv() if use_uv else ""
-    if uv:
-        # Ephemeral tool env layered on the project venv: the frozen app analyses the *project*
-        # dependencies while pyinstaller itself stays out of pyproject.toml / uv.lock.
-        command = [
-            uv,
-            "run",
-            "--with",
-            "pyinstaller",
-            "--no-sync",
-            "pyinstaller",
-            *argv,
-        ]
-    elif shutil.which("pyinstaller"):
-        # 1.219: `--no-uv` 优先用**当前解释器自己**那一份 PyInstaller，而不是 PATH 上那个刚写出来的
-        # 控制台壳（这台机器上装有实时杀软：新写的 `.exe` 启动子进程会卡在进程创建里，实测 13 分钟
-        # 零 CPU、连 `build/engine/` 都没建起来）。`-m PyInstaller` 走的是已经加载的解释器，
-        # 分析的仍是工程那份依赖，与壳同版本（6.22.3）。
-        module = subprocess.run(
-            [sys.executable, "-c", "import PyInstaller.__main__"],
-            capture_output=True,
-            cwd=ROOT,
-            shell=False,
-        ).returncode == 0
-        if module:
-            command = [sys.executable, "-m", "PyInstaller", *argv]
-        else:
-            command = [shutil.which("pyinstaller"), *argv]
-    else:
-        fail(
-            "neither `uv` nor a `pyinstaller` on PATH was found; install uv "
-            "(https://docs.astral.sh/uv/) or `pip install pyinstaller` in a tool venv"
-        )
-    step("running: " + " ".join(command))
+    step("running: " + " ".join(command + argv))
     started = time.perf_counter()
-    proc = subprocess.run(command, cwd=ROOT, shell=False)
+    proc = subprocess.run(command + argv, cwd=ROOT, shell=False)
     if proc.returncode != 0:
         fail(f"PyInstaller exited with code {proc.returncode}")
     step(f"PyInstaller finished in {time.perf_counter() - started:.1f}s")
@@ -536,12 +540,31 @@ def check_shutdown(run: dict, layout: str) -> None:
     fail(f"--{layout} engine survived the kill on port {run['port']}")
 
 
+def run_or_retry(argv: list[str], **kwargs) -> tuple[subprocess.CompletedProcess, int]:
+    """跑一次；空输出或非零退出就再跑一次，两次都红才把原文交回去。
+
+    1.228 的发布链量到：刚写出来的冻结 exe 偶尔会在这一刻什么都不说（这台机器上有实时
+    杀软，`tools` 那一路在两次服务端变体都正常之后单独空手退出），而原来的代码直接
+    `json.loads(proc.stdout)`——报上来的是一条 JSON 解析的栈，看不出是哪一半坏了。
+    重试一次是量具的抖动，不是判据放宽：两次都失败时下面那句把两次的退出码与 stderr 都带上。
+    """
+    tries: list[subprocess.CompletedProcess] = []
+    for attempt in range(2):
+        proc = subprocess.run(argv, **kwargs)
+        tries.append(proc)
+        if proc.returncode == 0 and (proc.stdout or "").strip():
+            return proc, attempt + 1
+        if attempt == 0:
+            time.sleep(1.5)
+    return tries[-1], len(tries)
+
+
 def check_cli_variants(exe: Path, run_dir: Path, media_flags: list[str]) -> None:
     """The packaged exe has to answer the whole `python -m agentcut` surface, not just `desktop`."""
     engine_dir = run_dir / "engine"
     common = ["--data-dir", str(engine_dir), "--token-file", str(engine_dir / "agentcut.token")]
 
-    proc = subprocess.run(
+    proc, tries = run_or_retry(
         [str(exe), "tools", *common, *media_flags],
         capture_output=True,
         text=True,
@@ -550,6 +573,11 @@ def check_cli_variants(exe: Path, run_dir: Path, media_flags: list[str]) -> None
         cwd=str(engine_dir),
         check=False,
     )
+    if proc.returncode or not (proc.stdout or "").strip():
+        fail(
+            f"`tools` mode exited {proc.returncode} with no JSON after {tries} attempt(s): "
+            f"{(proc.stderr or '')[-600:]}"
+        )
     payload = json.loads(proc.stdout)
     step(f"`tools` mode -> exit {proc.returncode} {json.dumps(payload, ensure_ascii=False)[:220]}")
     if proc.returncode or not {"ffmpeg", "ffprobe", "data_dir"} <= payload.keys():
@@ -696,6 +724,11 @@ def main() -> None:
     # 装机用的 ffmpeg / ffprobe / media-stamp（三名都不在 git 里）才报「没有可随包的 ffmpeg.exe」。
     # 缺输入应当一步都不毁；真要换一支，用 AGENTCUT_FFMPEG_BIN / AGENTCUT_FFPROBE_BIN 交进来。
     sources = {kind: find_source(kind) for kind in ("ffmpeg", "ffprobe")}
+    # 工具链与媒体源在同一步里要齐：`pyinstaller_command` 找不到东西会当场退出，
+    # 而这一步必须发生在下面那次 rmtree 之前（1.228 的发布链就是在这里丢过 resources/bin）。
+    command: list[str] = []
+    if not args.skip_engine:
+        command = pyinstaller_command(not args.no_uv)
 
     if DEST.exists() and not args.keep:
         kill_staged_engines()
@@ -705,7 +738,7 @@ def main() -> None:
 
     exe = None
     if not args.skip_engine:
-        exe = build_engine(args.layout, use_uv=not args.no_uv)
+        exe = build_engine(args.layout, command)
         exe = stage_engine(exe, args.layout)
         step(f"staged engine executable {exe} ({human(exe.stat().st_size)})")
 
