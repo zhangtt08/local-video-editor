@@ -607,6 +607,9 @@ select { color-scheme: dark; }
 .tl-lane { position: relative; flex: none; border-bottom: 1px solid var(--line); background: var(--panel); }
 .tl-lane.audio-track { background: var(--sunk); }
 .tl-window-note { color: var(--ink-3); font-size: var(--fs-label); }
+/* 1.230：纵向放不下的那几条轨要有名字——一块可以点的胶囊，不是一句只能看的灰字。 */
+.tl-more-tracks { align-self: flex-start; width: auto; border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--elev); color: var(--ink-2); padding: 2px 10px; margin: 2px 0 2px 10px; cursor: pointer; }
+.tl-more-tracks:hover { background: var(--float); }
 .lane-hint { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: var(--fs-label); color: #808897; pointer-events: none; }
 .row-count { display: none; }
 

@@ -201,10 +201,26 @@ export function Timeline() {
   // 所以 null 那一帧就是首帧——两万段那份工程把它读成「不裁」，于是两万张卡片在首帧建完。
   const [view, setView] = useState<View>(firstView);
   const [marqueeSpan, setMarqueeSpan] = useState<TickRange | null>(null);
+  // 1.230：还有几条轨落在折线以下。卡片加高到 68px 之后，四条轨在默认高度里放不下，
+  // 而滚动条是覆盖式的——不说一声，人只会以为那条音轨没了（演示里就是这么被量到的）。
+  const [below, setBelow] = useState(0);
+  const [above, setAbove] = useState(0);
   useEffect(() => {
     const scroll = scrollRef.current;
     if (!scroll) return;
-    const measure = () => setView({ left: scroll.scrollLeft, width: scroll.clientWidth });
+    const measure = () => {
+      setView({ left: scroll.scrollLeft, width: scroll.clientWidth });
+      const box = scroll.getBoundingClientRect();
+      let lower = 0;
+      let upper = 0;
+      scroll.querySelectorAll<HTMLElement>(".tl-row:not(.ruler-row)").forEach((row) => {
+        const rect = row.getBoundingClientRect();
+        if (rect.bottom > box.bottom + 1) lower += 1;
+        if (rect.top < box.top - 1) upper += 1;
+      });
+      setBelow(lower);
+      setAbove(upper);
+    };
     measure();
     scroll.addEventListener("scroll", measure, { passive: true });
     window.addEventListener("resize", measure);
@@ -212,7 +228,7 @@ export function Timeline() {
       scroll.removeEventListener("scroll", measure);
       window.removeEventListener("resize", measure);
     };
-  }, [project?.id]);
+  }, [project?.id, project?.tracks.length]);
 
   // 1.194：窗口矮下去时让步的是这条时间线（`.editor .timeline` 那条 clamp），可夹到下限以后
   // 往上拖那条边就不再起作用——这句得说出来，不然用户以为拖坏了。要的那一个数读的是同一个
@@ -240,6 +256,34 @@ export function Timeline() {
   // 只有**有人真要过**那个数，这一句才是对用户说的：应用自己那一档默认数装不下时，
   // 该让位的是布局，不是让用户听一句解释（1.225 在最小窗里量到的就是这一条）。
   const clamped = room && room.wanted - room.got > 1 && app.splitterTouched ? room : null;
+
+  // 1.230：选中哪一段，就把它所在的那一行带进视野。横向一个像素都不许变——横向是「看时间」
+  // 的那一维，为了露出整行而滚到别处，会把播放头那一格甩出屏幕（所以先记下、滚完放回去）。
+  useEffect(() => {
+    const scroll = scrollRef.current;
+    const clip = project && app.selectedClips.length ? project.clips[app.selectedClips[0]] : null;
+    if (!scroll || !clip) return;
+    const row = project!.tracks.findIndex((track) => track.id === clip.track_id);
+    const target = row < 0 ? undefined : scroll.querySelectorAll<HTMLElement>(".tl-row:not(.ruler-row)")[row];
+    if (!target) return;
+    const left = scroll.scrollLeft;
+    target.scrollIntoView({ block: "nearest", inline: "nearest" });
+    scroll.scrollLeft = left;
+  }, [app.selectedClips, project?.id]);
+
+  // 加了一条轨就把它露出来：人点了「＋ 画面轨」却没看见新行，只会再点一次。
+  const trackCount = useRef(project?.tracks.length ?? 0);
+  useEffect(() => {
+    const count = project?.tracks.length ?? 0;
+    const scroll = scrollRef.current;
+    if (scroll && count > trackCount.current) {
+      const rows = scroll.querySelectorAll<HTMLElement>(".tl-row:not(.ruler-row)");
+      const left = scroll.scrollLeft;
+      rows[rows.length - 1]?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      scroll.scrollLeft = left;
+    }
+    trackCount.current = count;
+  }, [project?.tracks.length]);
 
 
   useEffect(() => {
@@ -365,6 +409,8 @@ export function Timeline() {
         </span>
       </div>
         {outside ? <span className="tl-window-note" role="status">{WINDOW_NOTE(outside)}</span> : null}
+        {above ? <button type="button" className="tl-window-note tl-more-tracks" title="上面还有几条轨在折线以外：点一下滚回最上面那条（滚动条也能拖）。选中任意片段时，它所在的那一行会自动滚进来" onClick={() => scrollRef.current?.scrollTo({ top: 0 })}>上面还有 {above} 条轨</button> : null}
+        {below ? <button type="button" className="tl-window-note tl-more-tracks" title="这条时间线比这几条轨矮：点一下滚到最下面那条（滚动条也能拖）。选中任意片段时，它所在的那一行会自动滚进来" onClick={() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })}>下面还有 {below} 条轨</button> : null}
       <div className="tl-scroll" ref={scrollRef}>
         <div className="tl-inner" style={{ width: width + HEAD, height: (ordered.length + 1) * ROW + 8 }} onPointerDown={(event) => {
           if (event.button !== 0 || edit.tool !== "select" || (event.target as HTMLElement).closest('.clip, .tl-head, .tl-ruler, .transition-badge')) return;
