@@ -3,10 +3,10 @@ subject in the middle of the frame — and the pixels have to prove it, includin
 covers the picture instead of sliding a black edge in."""
 
 import subprocess
-import tempfile
 import time
 from pathlib import Path
 
+import scratch
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -770,7 +770,7 @@ def http_suite(folder: Path) -> None:
 
 
 def main() -> None:
-    folder = Path(tempfile.mkdtemp(prefix="agentcut-reframe-"))
+    folder = scratch.make("agentcut-reframe-")
     plan_suite()
     http_suite(folder)
     print("PASS: a tracked subject path becomes pan-and-zoom the pixels confirm holds it centred")

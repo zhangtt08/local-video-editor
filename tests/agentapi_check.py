@@ -16,11 +16,12 @@ import os
 import socket
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+import scratch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
@@ -154,7 +155,7 @@ def wait_ready(base: str, proc) -> bool:
 
 
 def main() -> None:
-    work = Path(tempfile.mkdtemp(prefix="agentcut-agentapi-"))
+    work = scratch.make("agentcut-agentapi-")
     data_dir = work / "data"
     token = "0123456789abcdef0123456789abcdef"
     port = free_port()

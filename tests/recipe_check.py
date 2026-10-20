@@ -3,10 +3,10 @@ undoable, and — the part that matters — the stored items must be what the ba
 
 import json
 import subprocess
-import tempfile
 import time
 from pathlib import Path
 
+import scratch
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -473,7 +473,7 @@ def http_suite(folder: Path) -> None:
 
 
 def main() -> None:
-    folder = Path(tempfile.mkdtemp(prefix="agentcut-recipes-"))
+    folder = scratch.make("agentcut-recipes-")
     contract_suite()
     http_suite(folder)
     print("PASS: delivery recipes are project state — validated, replayable, undoable, shipped")

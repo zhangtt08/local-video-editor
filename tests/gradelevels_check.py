@@ -13,8 +13,9 @@ merely available.
 """
 
 import subprocess
-import tempfile
 from pathlib import Path
+
+import scratch
 
 from agentcut.contracts import Clip, ClipColor, Project, SequenceSettings, Track, VerifiedMedia
 from agentcut.grade import grade_filter, grade_tables
@@ -271,7 +272,7 @@ def sweep(rows: dict, tables: dict, label: str) -> list:
 
 
 def main() -> None:
-    folder = Path(tempfile.mkdtemp(prefix="agentcut-levels-"))
+    folder = scratch.make("agentcut-levels-")
     clip_source = source(folder)
     color = ClipColor(grade=chain())
     compiled = grade_tables(color)

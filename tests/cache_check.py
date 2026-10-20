@@ -6,9 +6,9 @@ import json
 import os
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
 
+import scratch
 from fastapi.testclient import TestClient
 
 from agentcut.contracts import APP_VERSION
@@ -107,7 +107,7 @@ def find_url(payload: dict, needle: str) -> str:
 
 
 def main() -> None:
-    folder = Path(tempfile.mkdtemp(prefix="agentcut-cache-"))
+    folder = scratch.make("agentcut-cache-")
     # Sources and cache in separate trees: the prune guard refuses to touch anything inside a
     # registered media root, so sharing one folder would hide the behaviour under test.
     sources = folder / "sources"

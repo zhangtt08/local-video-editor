@@ -17,9 +17,9 @@ from __future__ import annotations
 import copy
 import re
 import subprocess
-import tempfile
 from pathlib import Path
 
+import scratch
 from fastapi.testclient import TestClient
 
 from agentcut.animation import MASK_ROTATION_SCHEDULE_MAX, mask_box_schedule
@@ -66,7 +66,7 @@ def main() -> None:
     assert windows == [2.0, 1.0, None], windows
     print("   切块：每路输入拿到的就是它自己那一格的 -t，没有 -t 的那路是 None")
 
-    work = Path(tempfile.mkdtemp(prefix="planinput-"))
+    work = scratch.make("planinput-")
     media_dir = work / "media"
     media_dir.mkdir(parents=True)
     paths = make_media(media_dir)

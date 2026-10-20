@@ -16,8 +16,9 @@
 
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
+
+import scratch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -33,7 +34,7 @@ from agentcut.render import compile_render_plan  # noqa: E402
 REPO = Path(__file__).resolve().parent.parent
 FFMPEG = REPO / "desktop" / "resources" / "bin" / "ffmpeg.exe"
 W, H, FPS = 160, 90, 25
-ROOT = Path(tempfile.mkdtemp(prefix="agentcut-maskbox-"))
+ROOT = scratch.make("agentcut-maskbox-")
 
 
 def plate(name: str) -> Path:

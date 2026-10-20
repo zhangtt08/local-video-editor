@@ -2,9 +2,9 @@
 come from the engine, and turning them on has to change nothing about the delivered file."""
 
 import subprocess
-import tempfile
 from pathlib import Path
 
+import scratch
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -272,7 +272,7 @@ def http_suite(folder: Path) -> None:
 
 
 def main() -> None:
-    folder = Path(tempfile.mkdtemp(prefix="agentcut-guides-"))
+    folder = scratch.make("agentcut-guides-")
     contract_suite()
     http_suite(folder)
     print("PASS: safe-area guides are project state, engine-numbered, invisible to the render")

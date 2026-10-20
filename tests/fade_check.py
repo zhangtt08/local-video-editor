@@ -21,6 +21,7 @@ import tempfile
 from math import sqrt
 from pathlib import Path
 
+import scratch
 from fastapi.testclient import TestClient
 
 from agentcut.animation import (
@@ -697,7 +698,7 @@ def main() -> None:
     reducer_suite()
     envelope_suite()
     http_suite()
-    folder = Path(tempfile.mkdtemp(prefix="agentcut-fade-media-"))
+    folder = scratch.make("agentcut-fade-media-")
     media_suite(folder)
     print(
         "PASS: 淡在片段的两条边上——两头共存、与曲线相乘、跟着修剪与分割走，成片逐窗逐像素对得住权威"

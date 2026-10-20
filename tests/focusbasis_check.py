@@ -16,8 +16,9 @@
 import re
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
+
+import scratch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -38,7 +39,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 WIDTH, HEIGHT, FPS = 160, 90, 25
 FFMPEG = Path(__file__).resolve().parent.parent / "desktop" / "resources" / "bin" / "ffmpeg.exe"
-ROOT = Path(tempfile.mkdtemp(prefix="agentcut-focusbasis-"))
+ROOT = scratch.make("agentcut-focusbasis-")
 
 
 def board(name: str, block: int) -> Path:

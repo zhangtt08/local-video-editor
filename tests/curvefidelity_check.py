@@ -11,10 +11,10 @@ moves: position, scale, opacity, and the mask centre.
 """
 
 import subprocess
-import tempfile
 import time
 from pathlib import Path
 
+import scratch
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -536,7 +536,7 @@ def guard_suite() -> None:
 
 
 def main() -> None:
-    folder = Path(tempfile.mkdtemp(prefix="agentcut-curves-"))
+    folder = scratch.make("agentcut-curves-")
     guard_suite()
     errors = pixel_suite(folder)
     assert not errors, "the export disagrees with the animation authority:\n" + "\n".join(errors)

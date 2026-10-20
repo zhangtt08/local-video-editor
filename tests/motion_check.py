@@ -15,9 +15,7 @@
 推移永远朝相反方向走、两层不相交，所以它天生安全；滑动要先有一条画面空间的互补 alpha。
 """
 
-import tempfile
-from pathlib import Path
-
+import scratch
 from wipe_check import (
     BLUE,
     RED,
@@ -156,8 +154,7 @@ def manifest_suite(folder):
 
 
 def main() -> None:
-    scratch = tempfile.mkdtemp(prefix="agentcut-motion-")
-    folder = Path(scratch)
+    folder = scratch.make("agentcut-motion-")
     envelope_suite(folder)
     media_suite(folder)
     manifest_suite(folder)

@@ -13,9 +13,10 @@ render with no curve on it, so the encoder, the resampler and the tone's own env
 
 import array
 import subprocess
-import tempfile
 from math import sqrt
 from pathlib import Path
+
+import scratch
 
 from agentcut.animation import expression, sample
 from agentcut.contracts import (
@@ -303,7 +304,7 @@ def clock_suite() -> None:
 
 
 def main() -> None:
-    folder = Path(tempfile.mkdtemp(prefix="agentcut-audio-"))
+    folder = scratch.make("agentcut-audio-")
     clip_source = source(folder)
     clock_suite()
     misses: list[str] = []

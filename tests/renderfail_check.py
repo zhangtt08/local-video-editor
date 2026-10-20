@@ -9,6 +9,7 @@ intact.
 import time
 from pathlib import Path
 
+import scratch
 from fastapi.testclient import TestClient
 
 from agentcut.contracts import TIMEBASE as T
@@ -153,10 +154,8 @@ def live_suite(folder: Path) -> None:
 
 
 def main() -> None:
-    import tempfile
-
     pure_suite()
-    live_suite(Path(tempfile.mkdtemp(prefix="agentcut-renderfail-")))
+    live_suite(scratch.make("agentcut-renderfail-"))
     print(
         "PASS: a failed render names the code, keeps whatever FFmpeg said, and admits the silence"
     )
