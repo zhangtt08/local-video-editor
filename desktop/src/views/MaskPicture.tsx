@@ -394,7 +394,10 @@ export function MaskPicture({ clip, image, extra, children, editable = true, ani
         }} />)}
       </>}
     </svg> : null}
-    {visible && rotated ? <div className="mask-vertex-panel" role="group" aria-label="旋转遮罩的说明"><span className="dim">{spun ? `这一格的角度是 ${spun.angle.toFixed(1)}°（引擎把曲线切成 ${rotation?.length ?? 0} 段窗，导出走同一份阶梯）；` : ""}画面上这框就是转过角度的遮罩盒：拖它只搬中心；宽/高也打针时引擎每窗重烘一张图（角度与两条边在同一些帧边界上换），检查器那两格照样能改大小</span></div> : null}
+    {visible && rotated ? <div className="mask-vertex-panel note" role="group" aria-label="旋转遮罩的说明"
+      title={"画面上这框就是转过角度的遮罩盒：拖它只搬中心；宽/高也打针时引擎每窗重烘一张图"
+        + "（角度与两条边在同一些帧边界上换），检查器那两格照样能改大小；导出走同一份阶梯。"}
+      ><span className="dim">{spun ? `这一格的角度是 ${spun.angle.toFixed(1)}°（${rotation?.length ?? 0} 段窗）` : "转过角度的遮罩盒"} · 拖框只搬中心</span></div> : null}
     {visible && mask?.shape === "path" ? <div className="mask-vertex-panel" role="group" aria-label="顶点操作">
       {atCap ? <span className="dim">顶点 {vertices.length}/{vertexLimit}，已到上限，双击不再加点</span> : null}
       {morphArmed(clip) ? <>

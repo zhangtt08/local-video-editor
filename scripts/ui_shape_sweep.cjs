@@ -29,6 +29,7 @@ const RENDERER = path.resolve(flag("renderer", "desktop/dist/renderer"));
 const ENGINE = flag("engine", "");
 const TOKEN = flag("token", "");
 const PROJECT = flag("project", "");
+const CLIP = flag("clip", "");
 const SIZES = (flag("sizes", "1456x808") || "").split(",");
 const OUT = path.resolve(flag("out", "ui_shape_sweep.json"));
 const EDGE = flag("edge", "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe");
@@ -225,9 +226,30 @@ async function sweepOne(size, hostPort, probeSource) {
       await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
       await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left" });
     };
+    const MARKERS = [".curve-plot", ".scope-panel", ".help", ".mask-guide", ".clip", ".masked-picture"];
     const run = async (screen) => {
       const data = await evaluate("(function(){ " + probeSource + " return measureAgentCutUi(); })()");
-      rows.push({ screen, panel: flag("panel", ""), size, data });
+      // 「点了才画」那一档必须能证明**真的画了东西**：只数文字节点的话，
+      // 一颗把页换掉的按钮和一颗什么都没干的按钮量出来一样（92 个节点对 92 个节点），
+      // 红绿都不说明问题。这里按类名报每一处浮层的节点数，判据在门禁那边写。
+      const markers = await evaluate("(() => { const out = {};" +
+        "for (const sel of " + JSON.stringify(MARKERS) + ") {" +
+        "out[sel] = document.querySelectorAll(sel).length;} return out; })()");
+      // 红的时候要能自查：参考线画不出来有五个条件（有没有画面层、播放头在不在选中的那一段里、
+      // 选中是不是恰好一条、那颗按钮按没按下）。把这几条一起带回来，不用再来一趟。
+      const state = await evaluate("(() => { const head = document.querySelector('.playhead');" +
+        "const sel = document.querySelector('.clip.selected');" +
+        "const btn = Array.from(document.querySelectorAll('button'))" +
+        ".find((n) => (n.textContent || '').trim() === " + JSON.stringify("画面中编辑") + ");" +
+        "let inside = null;" +
+        "if (head && sel) { const h = head.getBoundingClientRect(), s = sel.getBoundingClientRect();" +
+        " inside = h.left >= s.left - 1 && h.left <= s.right + 1; }" +
+        "return { headLeft: head ? Math.round(head.getBoundingClientRect().left) : null," +
+        " clipBox: sel ? [Math.round(sel.getBoundingClientRect().left)," +
+        " Math.round(sel.getBoundingClientRect().right)] : null, headInsideClip: inside," +
+        " selected: document.querySelectorAll('.clip.selected').length," +
+        " maskPressed: btn ? btn.getAttribute('aria-pressed') : null }; })()");
+      rows.push({ screen, panel: flag("panel", ""), size, data, markers, state });
       if (SHOTS) {
         // 证据要能给人眼复核：判据是量出来的，但「挡住」还是「量具看错」值得留一张图。
         const shot = await cdp.send("Page.captureScreenshot", { format: "png" }, 30000);
@@ -263,22 +285,96 @@ async function sweepOne(size, hostPort, probeSource) {
       }
       await run(String(now.text || now.label));
     }
-    // 浮层那一档：先回到编辑器（示波器与动画曲线都住在右侧那一列与编辑器里），
-    // 再按名字真点那一颗；点开了才量，点不开就记一条「没开起来」——不许当成跳过。
-    const back = (await evaluate(tabsExpression) || []).find((row) => /剪辑|编辑/.test(row.text));
-    if (back && EXTRAS.length) {
-      await click(back.x, back.y);
+    // 浮层那一档：每一颗都从**同一个可复现的起点**出发——编辑页 + 检查器那一列 +
+    // 真选中 `--clip` 那条片段 + 检查器里那几段 `<details>` 真展开。
+    // 为什么要每颗之前都回一次：上面那几颗里有的是**换页**（动画曲线换编辑页、示波器换右列），
+    // Escape 不把页换回来；点顶部标签页还会把选中丢掉。1.223 补「画面中编辑」时被前一颗吃掉、
+    // 1.224 补「选中」那一步又被换页吃掉，都是这一条没做到。
+    const clickByText = async (name) => {
+      const spot = await evaluate("(() => { const want = " + JSON.stringify(name) + ";"
+        + "const hit = Array.from(document.querySelectorAll('button, [role=tab]'))"
+        + ".find((n) => (n.textContent || '').trim() === want);"
+        + "if (!hit) return null; const r = hit.getBoundingClientRect();"
+        + "return {x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2)}; })()");
+      if (!spot) return false;
+      await click(spot.x, spot.y);
+      await sleep(500);
+      return true;
+    };
+    const openDetails = async () => {
+      await evaluate("(function(){var d=document.querySelectorAll('details');"
+        + "for(var i=0;i<d.length;i+=1){d[i].open=true;}return d.length;})()");
+      await sleep(400);
+    };
+    const baseState = async () => {
+      // 「动画曲线」那一颗换的是**中间那一页**：换过去之后时间线整个不画了，
+      // `.clip` 那些卡片就不在 DOM 里——所以先按那页自己的「返回时间线」回来（没有这颗就跳过）。
+      await clickByText("返回时间线");
+      if (!(await clickByText("剪辑"))) return "找不到「剪辑」那一页的标签，浮层没有可复现的起点";
+      if (!(await clickByText("检查器"))) return "点不到「检查器」那一列，浮层量的是别的右列";
+      // 要点「点了才画」的那几颗，先得有选中：检查器里那一堆控件只在选中一条片段时存在。
+      if (!CLIP) return "没有 --clip，浮层那一档不能确定选中状态";
+      const spot = await evaluate("(() => { const el = document.querySelector('.clip[data-id=" +
+        JSON.stringify(CLIP) + "]'); if (!el) return null;" +
+        "const r = el.getBoundingClientRect(); return {x: Math.round(r.left + r.width / 2)," +
+        " y: Math.round(r.top + r.height / 2)}; })()");
+      if (!spot) return "时间线上找不到片段卡 .clip[data-id=" + CLIP + "]，「点了才画」那一档没有选中可依赖";
+      // 遮罩参考线的条件是「选中这一块 + 画面正放着这一块」：深链把播放头停在 0 秒，
+      // 那一格是第一条片段，所以光选中不够——按片段的横向位置在标尺上真点一下，把播放头挪进去。
+      const ruler = await evaluate("(() => { const el = document.querySelector('.tl-ruler');" +
+        "if (!el) return null; const r = el.getBoundingClientRect();" +
+        "if (!r.width || !r.height) return null;" +
+        "return {y: Math.round(r.top + r.height / 2)," +
+        " left: Math.round(r.left + 2), right: Math.round(r.right - 2)}; })()");
+      if (!ruler) return "找不到标尺 .tl-ruler，播放头挪不进那一段，浮层量的是没画面的状态";
+      const seekX = Math.min(Math.max(spot.x, ruler.left), ruler.right);
+      await click(seekX, ruler.y);
       await sleep(600);
-    }
+      await click(spot.x, spot.y);
+      await sleep(600);
+      const selected = await evaluate("Boolean(document.querySelector('.clip.selected[data-id=" +
+        JSON.stringify(CLIP) + "]'))");
+      if (!selected) return "点了片段卡但没有 .clip.selected——选中没落上，浮层量的是错的状态";
+      // 检查器随选中重挂载（`key={project.id + "/" + clip.id}`），那几段 `<details>` 又合上了，
+      // 而「画面中编辑」那颗就藏在合着的段落里——合着的时候它的矩形照样撒谎，所以先开再量。
+      await openDetails();
+      return null;
+    };
     for (const label of EXTRAS) {
+      const trouble = await baseState();
+      if (trouble) {
+        rows.push({ screen: label, panel: flag("panel", ""), size, data: null, error: trouble });
+        continue;
+      }
       const finder = "(() => { const want = " + JSON.stringify(label) + ";" +
         "const nodes = Array.from(document.querySelectorAll('button, [role=tab]'));" +
         "const hit = nodes.find((n) => (n.textContent || '').trim().indexOf(want) >= 0);" +
-        "if (!hit) return null; const r = hit.getBoundingClientRect();" +
-        "return {x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2)}; })()";
+        "if (!hit) return null;" +
+        // 检查器那一列是要滚的：合着/展开之后那颗按钮常在折线以下，矩形照样给得出（矩形会撒谎），
+        // 而按那个点打下去吃的是**盖在它上面的那一层**——1.224 的「画面中编辑」就这么点了个空。
+        // 所以先滚进视野，再按滚完的位置打，并且打完先验一遍那一点真的落在这颗上。
+        "hit.scrollIntoView({block: 'center', inline: 'nearest'});" +
+        "const r = hit.getBoundingClientRect();" +
+        "const x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);" +
+        "const top = document.elementFromPoint(x, y);" +
+        "return {x, y, covered: !(hit === top || hit.contains(top) || (top && top.contains(hit)))," +
+        " over: top ? top.tagName + '/' + String(top.className || '').slice(0, 24) : 'null'}; })()";
       const spot = await evaluate(finder);
       if (!spot) {
-        rows.push({ screen: label, panel: flag("panel", ""), size, data: null, error: "那颗按钮不在这一屏上" });
+        // 「那颗按钮不在这一屏上」要能自查：把这一屏真有的按钮名字带回来，
+        // 读的人不必再猜是状态不对、名字不对，还是这颗本来就不该在这儿。
+        const here = await evaluate("(() => Array.from(document.querySelectorAll(" +
+          "'button, [role=tab]')).map((n) => (n.textContent || '').trim().slice(0, 14))" +
+          ".filter(Boolean).slice(0, 40))()");
+        rows.push({ screen: label, panel: flag("panel", ""), size, data: null,
+          error: "那颗按钮不在这一屏上；这一屏有的：" + JSON.stringify(here) });
+        continue;
+      }
+      if (spot.covered) {
+        // 不许「点了就算开了」：那一层盖着的时候，点下去的是别人，量到的还是这一屏——
+        // 这一行必须记成没量到，而不是记成量到了。
+        rows.push({ screen: label, panel: flag("panel", ""), size, data: null,
+          error: "那颗按钮在 " + spot.x + "," + spot.y + " 被 " + spot.over + " 盖着，点不到" });
         continue;
       }
       await click(spot.x, spot.y);

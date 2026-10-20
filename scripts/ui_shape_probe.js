@@ -164,8 +164,13 @@ function measureAgentCutUi() {
       }
     }
     var tag = el.tagName.toLowerCase();
+    // 这一行原来写的是 /[role=(tab|button|checkbox|slider)]/：方括号在正则里是**字符集**，
+    // 不是选择器——任何 role 里含 r/o/e/… 的都算命中，于是画面层里那一行说明
+    // （role="group"，且整条画面链是 pointer-events:none）被当成「一个点不到的控件」。
+    // 尺要量的是「该点到的点不到」，所以这里只认可操作的角色。
+    var actionable = /^(tab|button|checkbox|radio|slider|switch|combobox|listbox|option|menuitem|textbox|spinbutton|link)$/.test(el.getAttribute("role") || "");
     var interactive = tag === "button" || tag === "input" || tag === "select" || tag === "textarea" ||
-      /^a$/.test(tag) || /[role=(tab|button|checkbox|slider)]/.test(el.getAttribute("role") || "");
+      /^a$/.test(tag) || actionable;
     if (interactive && !el.disabled && el.type !== "hidden" && el.getAttribute("aria-hidden") !== "true") {
       var rect = el.getBoundingClientRect();
       var cx = Math.round(rect.left + rect.width / 2);

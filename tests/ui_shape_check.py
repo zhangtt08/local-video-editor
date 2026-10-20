@@ -50,7 +50,19 @@ SIZES = ("1456x808", "1040x660")
 # 第一次能失败的那一处；示波器那一页画的是图，量的还是那几行字。
 PANELS = ("inspect", "export")
 # 浮层那一档：真点开才画布，所以量之前要先点。1.205 那轮就是「点了没开起来」被当成量不到。
-OVERLAYS = ("动画曲线", "示波器", "快捷键")
+# 「画面中编辑」与「重置布局」是 1.223 补进来的两屏：前者把遮罩参考线与其上的三颗顶点操作
+# 画进画面（点了才画的那类），后者把布局恢复默认之后再量一屏——两处的控件与文字以前都不在
+# 任何一屏的取样里。
+OVERLAYS = ("动画曲线", "示波器", "快捷键", "画面中编辑", "重置布局")
+# 每一颗浮层该**画出**的那处东西（类名，构建后仍在）。判据写在这里而不是只数几何：
+# 「点了才画」那一档，一颗换页的按钮和一颗什么都没干的按钮，字数能量出一样的数。
+PAINTED = {
+    "动画曲线": ".curve-plot",
+    "示波器": ".scope-panel",
+    "快捷键": ".help",
+    "画面中编辑": ".mask-guide",
+    "重置布局": ".clip",
+}
 # 圆润化那一条曲线的下限与字号下限，都从 styles.css 里读；这里的两个数是**判断**：
 # 字号地板不许低于 12.5px（1.216 之前量到的是 11.5px），曲线上不许出现 1~5px 的尖角。
 FONT_FLOOR = 12.5
@@ -275,17 +287,32 @@ def main() -> None:
                 engine.kill()
 
     screens = [row for row in rows if row.get("data")]
+    # 「至少该有 N 屏」那一判数的是**总数**，多出来的余量会把「某一屏根本没量到」吃掉：
+    # 1.223 补进「画面中编辑」时，那一屏两档都没量到，总数仍然够，门禁照样绿。
+    # 现在改成**每一行都必须量到**——量不到就点名，不许被别的屏抵掉。
+    missed = [
+        {"screen": row.get("screen"), "panel": row.get("panel"),
+         "size": row.get("size"), "error": row.get("error")}
+        for row in rows
+        if not row.get("data")
+    ]
+    if missed:
+        fail(f"{len(missed)} 行没量到（每一屏都得量到，不许用别的屏抵数）："
+             + json.dumps(missed, ensure_ascii=False)[:600])
     needed = (len(PANELS) * 4 + len(OVERLAYS)) * len(SIZES)
     if len(screens) < needed:
-        fail(f"只量到 {len(screens)} 屏（至少该有 {needed} 屏）：" + json.dumps(
-            [
-                {"screen": row.get("screen"), "panel": row.get("panel"),
-                 "size": row.get("size"), "error": row.get("error")}
-                for row in rows
-                if not row.get("data")
-            ],
-            ensure_ascii=False,
-        )[:400])
+        fail(f"只量到 {len(screens)} 屏（至少该有 {needed} 屏）")
+
+    # 「点了才画」那一档要证明**真的画了**：1.224 补「画面中编辑」时那一屏量到 92 个字节点，
+    # 与「剪辑」那一屏的 93 只差一个——只看几何，说不清遮罩参考线到底画没画。
+    blank = [row for row in screens
+             if row.get("screen") in PAINTED
+             and not (row.get("markers") or {}).get(PAINTED[row["screen"]], 0)]
+    if blank:
+        fail("这些浮层屏没画出该画的东西：" + json.dumps(
+            [{"screen": row["screen"], "size": row["size"], "markers": row.get("markers"),
+              "state": row.get("state")} for row in blank],
+            ensure_ascii=False)[:900] + "（那颗按钮点开了别的东西，或者根本没生效）")
 
     problems: list[str] = []
     named = 0
