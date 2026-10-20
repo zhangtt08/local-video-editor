@@ -16,7 +16,7 @@
  * 会把「画面坐标」与「遮罩坐标」错开一截，那种照片两端比不得），而且不许有遮罩编辑的
  * 参考线混进来（参考线是界面给人在看的，导出里没有它）。
  */
-const { spawn } = require("node:child_process");
+const { spawn, execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const http = require("node:http");
 const net = require("node:net");
@@ -50,6 +50,21 @@ if (!fs.existsSync(path.join(RENDERER, "index.html"))) {
 if (!fs.existsSync(EDGE)) {
   console.error("no browser to shoot with: " + EDGE + " (set --edge)");
   process.exit(2);
+}
+
+// 杀干净那一棵浏览器树：`taskkill /T` 打不穿它（Edge 的 crashpad/renderer 会改亲），
+// 所以按这一份 profile 的名字点名杀；只比对目录名，因为主进程是长路径、子进程是 `ADMINI~1`
+// 那种 8.3 短名。名字是本脚本自己用 Date.now().toString(36) 造的，只有字母数字与短横。
+function killByProfile(profileDir) {
+  const needle = path.basename(profileDir);
+  const script = "$ErrorActionPreference='SilentlyContinue';" +
+    "Get-CimInstance Win32_Process -Filter \"Name='msedge.exe'\" |" +
+    " Where-Object { $_.CommandLine -like '*" + needle + "*' } |" +
+    " ForEach-Object { Stop-Process -Id $_.ProcessId -Force }";
+  try {
+    execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+      { stdio: "ignore", timeout: 90000 });
+  } catch {}
 }
 
 function listenable(port) {
@@ -237,9 +252,26 @@ async function main() {
     console.error(String(error && error.message ? error.message : error));
     code = 1;
   } finally {
-    try { edge.kill(); } catch {}
+    // `edge.kill()` 只打死父进程：crashpad / renderer / utility 全成孤儿（1.222 在这台机器上
+    // 量到一次门禁跑完留着 880 个 msedge 进程）。taskkill /T 走进程树，杀完还要**验**——
+    // profile 目录删得掉，才说明那棵树真的没了（进程活着会锁着它）。
+    try {
+      execFileSync("taskkill", ["/PID", String(edge.pid), "/T", "/F"], { stdio: "ignore" });
+    } catch {
+      try { edge.kill(); } catch {}
+    }
+    killByProfile(profile);
+    let cleaned = false;
+    for (let attempt = 0; attempt < 12 && !cleaned; attempt += 1) {
+      try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 3 }); } catch {}
+      cleaned = !fs.existsSync(profile);
+      if (!cleaned) await sleep(250);
+    }
+    if (!cleaned) {
+      console.error("LEAKED profile still held: " + profile);
+      code = 1;
+    }
     host.close();
-    try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 3, retryDelay: 300 }); } catch {}
   }
   process.exit(code);
 }

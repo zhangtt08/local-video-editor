@@ -13,7 +13,7 @@
  * 自己要的 URL 逐字相同；探针独立成文件并在启动前 `node --check` 一次，语法错在启动时炸出来，
  * 不许冒充成「界面没画」。
  */
-const { spawn, execFileSync, execSync } = require("node:child_process");
+const { spawn, execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const http = require("node:http");
 const net = require("node:net");
@@ -35,6 +35,9 @@ const EDGE = flag("edge", "C:\\Program Files (x86)\\Microsoft\\Edge\\Application
 const SHOTS = flag("shots", "");
 const EXTRAS = args.reduce((acc, item, index) => (item === "--extra" ? acc.concat(args[index + 1]) : acc), []);
 const PROBE = path.resolve(flag("probe", path.join(__dirname, "ui_shape_probe.js")));
+// 每一档扫描收尾时若那棵浏览器树还锁着 profile，就把路径记在这儿——量具自己没打扫干净，
+// 与「有一屏量不到」是同一类红。
+const leaked = [];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 if (!ENGINE || !TOKEN || !PROJECT) {
@@ -54,6 +57,22 @@ try {
 if (!fs.existsSync(path.join(RENDERER, "index.html"))) {
   console.error("renderer missing (build it first: cd desktop && npm run build:renderer): " + RENDERER);
   process.exit(2);
+}
+
+// 杀干净那一棵浏览器树：`taskkill /T` 打不穿它（Edge 的 crashpad/renderer 会改亲，父进程一没
+// 就查不到子树），所以按**这一份 profile 的名字**去点名杀。路径两端的写法不一致
+// （主进程是长路径、子进程是 `ADMINI~1` 那种 8.3 短名），故只比对目录名——名字是本脚本自己
+// 用 `Date.now().toString(36)` 造的，只有字母数字与短横。
+function killByProfile(profileDir) {
+  const needle = path.basename(profileDir);
+  const script = "$ErrorActionPreference='SilentlyContinue';" +
+    "Get-CimInstance Win32_Process -Filter \"Name='msedge.exe'\" |" +
+    " Where-Object { $_.CommandLine -like '*" + needle + "*' } |" +
+    " ForEach-Object { Stop-Process -Id $_.ProcessId -Force }";
+  try {
+    execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+      { stdio: "ignore", timeout: 90000 });
+  } catch {}
 }
 
 function listenable(port) {
@@ -273,9 +292,27 @@ async function sweepOne(size, hostPort, probeSource) {
   } finally {
     // Windows 上 SIGTERM 打不穿 msedge 那一棵树：留着它，下一档扫描就会撞上同一个 profile
     // 与同一批占着的端口。taskkill /T 才是「这一棵真的没了」。
-    try { execSync(`taskkill /pid ${edge.pid} /T /F`, { stdio: "ignore" }); } catch {}
-    try { edge.kill("SIGTERM"); } catch {}
-    try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 3 }); } catch {}
+    // 但**说了杀掉不等于杀掉了**：1.222 在这台机器上量到一次门禁跑完留着 880 个 msedge 进程、
+    // 146 份 profile，而上面那行 taskkill 早就在这儿了——事后按 profile 名去查，那一棵还有 8 个
+    // 进程活着（父进程已没、子进程改亲，`/T` 查不到；至于是哪一种走漏的没量，也不影响这一判）。
+    // 所以杀完要**验**：profile 目录还删得掉，才说明那棵树真的没了（进程活着会锁着它）。
+    // 删不掉就报出来，让退出码红。
+    try {
+      execFileSync("taskkill", ["/PID", String(edge.pid), "/T", "/F"], { stdio: "ignore" });
+    } catch {
+      try { edge.kill("SIGTERM"); } catch {}
+    }
+    killByProfile(profile);
+    let cleaned = false;
+    for (let attempt = 0; attempt < 12 && !cleaned; attempt += 1) {
+      try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 3 }); } catch {}
+      cleaned = !fs.existsSync(profile);
+      if (!cleaned) await sleep(250);
+    }
+    if (!cleaned) {
+      console.error("LEAKED profile still held: " + profile);
+      leaked.push(profile);
+    }
   }
   return rows;
 }
@@ -295,6 +332,10 @@ async function main() {
   fs.writeFileSync(OUT, JSON.stringify(all, null, 1), "utf8");
   const screens = all.filter((row) => row.data).length;
   console.log("screens measured: " + screens + " of " + all.length + " -> " + OUT);
+  if (leaked.length) {
+    console.error("LEAKED " + leaked.length + " browser tree(s) still holding a profile: " + leaked.join(" "));
+    process.exit(1);
+  }
   if (!screens) process.exit(1);
   process.exit(0);
 }
