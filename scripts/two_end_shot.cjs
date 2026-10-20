@@ -36,6 +36,8 @@ const CLIP = flag("clip", "");
 const OUT = path.resolve(flag("out", "two_end_preview.png"));
 const SIZE = (flag("size", "1456x808") || "").split("x").map(Number);
 const LAYERS = Number(flag("layers", "1"));
+// `--strip 8,20,34` 给一串平色：这一趟不拍画面，拍「产品自己那张滤镜作用在平色上」的一排格子。
+const STRIP = (flag("strip", "") || "").split(",").filter((v) => v !== "").map(Number);
 const EDGE = flag("edge", "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -188,6 +190,28 @@ const WAIT = `(function(){
     guide: Boolean(document.querySelector('.mask-guide'))};
 })()`;
 
+// 平色那一排：把**产品自己那张滤镜**贴到一整排平色块上，块与块之间留缝。
+// 斜坡那一趟量的是「缩放之后的画面」，这一趟量的是「滤镜本身」——没有任何重采样掺进来。
+const STRIP_BUILD = (levels) => `(function(){
+  var f = document.querySelector('filter');
+  if (!f) return {error: '页面上没有 <filter>'};
+  var old = document.getElementById('two-end-strip');
+  if (old) old.remove();
+  var box = document.createElement('div');
+  box.id = 'two-end-strip';
+  box.style.cssText = 'position:fixed;left:0;top:0;z-index:2147483647;white-space:nowrap;' +
+    'line-height:0;font-size:0;background:#000;padding:0;margin:0';
+  ${JSON.stringify(levels)}.forEach(function (v) {
+    var out = document.createElement('div');
+    out.style.cssText = 'display:inline-block;vertical-align:top;width:40px;height:40px;margin:0;' +
+      'background:rgb(' + v + ',' + v + ',' + v + ');filter:url(#' + f.id + ')';
+    box.appendChild(out);
+  });
+  document.body.appendChild(box);
+  return {filter_id: f.id, cells: ${JSON.stringify(levels)}.length,
+    primitives: Array.prototype.map.call(f.children, function (p) { return p.tagName; })};
+})()`;
+
 async function main() {
   const hostPort = await freePort(12900 + (process.pid % 400));
   const debugPort = await freePort(9900 + (process.pid % 300));
@@ -235,19 +259,36 @@ async function main() {
     if (seen.mask_layers !== LAYERS) {
       throw new Error("遮罩层数是 " + seen.mask_layers + "，引擎交的是 " + LAYERS + " 张图");
     }
-    const shot = await cdp.send("Page.captureScreenshot", {
-      format: "png",
-      clip: { x: seen.rect.x, y: seen.rect.y, width: seen.rect.width, height: seen.rect.height, scale: 1 },
-      captureBeyondViewport: false,
-    }, 30000);
-    if (!shot || !shot.data) throw new Error("CDP 回了没有图");
-    fs.mkdirSync(path.dirname(OUT), { recursive: true });
-    fs.writeFileSync(OUT, Buffer.from(shot.data, "base64"));
-    console.log(JSON.stringify({
-      out: OUT, rect: seen.rect, mask_layers: seen.mask_layers,
-      mask_composite: seen.mask_composite, media: seen.media,
-      natural: seen.natural, png_bytes: fs.statSync(OUT).size,
-    }));
+    if (STRIP.length) {
+      // 平色那一趟：不拍 `.masked-picture`，拍刚铺出来的那一排格子。
+      const built = await evaluate(STRIP_BUILD(STRIP));
+      if (!built || built.error) throw new Error("平色格子铺不出来：" + JSON.stringify(built));
+      await sleep(400);
+      const strip = await cdp.send("Page.captureScreenshot", {
+        format: "png",
+        clip: { x: 0, y: 0, width: 40 * STRIP.length, height: 40, scale: 1 },
+        captureBeyondViewport: false,
+      }, 30000);
+      if (!strip || !strip.data) throw new Error("CDP 回了没有图（平色）");
+      fs.mkdirSync(path.dirname(OUT), { recursive: true });
+      fs.writeFileSync(OUT, Buffer.from(strip.data, "base64"));
+      console.log(JSON.stringify({ out: OUT, strip: built, levels: STRIP,
+        png_bytes: fs.statSync(OUT).size }));
+    } else {
+      const shot = await cdp.send("Page.captureScreenshot", {
+        format: "png",
+        clip: { x: seen.rect.x, y: seen.rect.y, width: seen.rect.width, height: seen.rect.height, scale: 1 },
+        captureBeyondViewport: false,
+      }, 30000);
+      if (!shot || !shot.data) throw new Error("CDP 回了没有图");
+      fs.mkdirSync(path.dirname(OUT), { recursive: true });
+      fs.writeFileSync(OUT, Buffer.from(shot.data, "base64"));
+      console.log(JSON.stringify({
+        out: OUT, rect: seen.rect, mask_layers: seen.mask_layers,
+        mask_composite: seen.mask_composite, media: seen.media,
+        natural: seen.natural, png_bytes: fs.statSync(OUT).size,
+      }));
+    }
   } catch (error) {
     console.error(String(error && error.message ? error.message : error));
     code = 1;

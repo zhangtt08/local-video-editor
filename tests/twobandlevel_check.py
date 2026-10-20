@@ -76,6 +76,10 @@ MOVEMENT = 20
 # 第二枚布尔说的是这一档**能不能**拿去比「导出 vs 它拿到的那张表」：YUV 那一档自己就要过
 # 两次矩阵与一次 4:2:0，实测它比 RGB 那一档多带 2~4 级，那不该记在调色链头上。
 PRESETS = (("dpx-sequence", True), ("h264-source-quality", False))
+# 平色那一趟取的几级：最暗的几级 + 中段 + 接近顶。斜坡量到差的那几处都在这里。
+FLAT_LEVELS = (8, 20, 34, 64, 128, 200, 250)
+# 2 级是实测：平色输入下浏览器那张滤镜对表最差 2 级（34 与 128 那两格）。
+FLAT_TOLERANCE = 2
 
 
 def fail(message: str) -> None:
@@ -327,6 +331,27 @@ def compare(export: tuple[int, int, bytes], preview: tuple[int, int, bytes], sta
     return {"worst": worst, "over": over, "blocks": blocks, "ref_gap": ref_gap}
 
 
+def strip_shot(pid: str, folder: Path, levels) -> tuple[list[tuple[int, int, int]], dict]:
+    """把产品自己那张滤镜贴到一排平色上拍回来——这一趟里没有任何缩放。"""
+    png = folder / "strip.png"
+    argv = [
+        "node", str(SHOT), "--renderer", str(RENDERER),
+        "--engine", f"http://127.0.0.1:{PORT}", "--token", TOKEN,
+        "--project", pid, "--clip", "c", "--out", str(png), "--layers", "0",
+        "--strip", ",".join(str(v) for v in levels), "--edge", str(EDGE),
+    ]
+    answer = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8",
+                            errors="replace", cwd=str(ROOT), creationflags=0x08000000,
+                            timeout=300)
+    assert answer.returncode == 0, f"平色腿退出 {answer.returncode}: {answer.stderr[-500:]}"
+    info = json.loads(answer.stdout.strip().splitlines()[-1])
+    width, height, raw = first_frame(png)
+    assert width == 40 * len(levels) and height == 40, (width, height)
+    cells = [at(raw, width, height, (index + 0.5) / len(levels), 0.5)
+             for index in range(len(levels))]
+    return cells, info
+
+
 def main() -> None:
     require_prerequisites()
     global PORT
@@ -424,6 +449,22 @@ def main() -> None:
                         f"（在 {each['ref_gap']['export']['where']}），"
                         f"超过 8 位量化该有的 {AUTHORITY} 级"
                     )
+            # 平色那一趟：把缩放摘掉，只问「浏览器这张滤镜把 8 变成几」。斜坡那一趟里
+            # 预览比导出低 3~4 级，到底是滤镜的锅还是「512 宽的两级台阶被画到 414 宽」的锅，
+            # 由这一趟分开——它没有任何重采样。
+            cells, strip_info = strip_shot(pid, folder, FLAT_LEVELS)
+            primitives = strip_info["strip"]["primitives"]
+            assert "feComponentTransfer" in primitives and "feColorMatrix" in primitives, primitives
+            flat = []
+            for level, cell in zip(FLAT_LEVELS, cells):
+                want = reference(stages, (level, level, level))
+                flat.append((level, cell, want, max(abs(cell[c] - want[c]) for c in range(3))))
+            worst_flat = max(flat, key=lambda row: row[3])
+            if worst_flat[3] > FLAT_TOLERANCE:
+                problems.append(
+                    "平色那一趟：滤镜把 " + " / ".join(f"{r[0]}→{r[1]}" for r in flat) +
+                    f" 对表最差 {worst_flat[3]} 级，超过 {FLAT_TOLERANCE} 级"
+                )
             assert not problems, "\n".join(problems)
             points = (SAMPLE_TO - SAMPLE_FROM + 1) * 3 + 54
             report = "；".join(
@@ -436,7 +477,9 @@ def main() -> None:
             print(
                 "PASS: 斜坡 " + f"{SAMPLE_FROM}~{SAMPLE_TO} 级与六块饱和色上，预览与导出的"
                 f"每一通道都只差 ≤{TOLERANCE} 级（每档容器 {points} 个通道值）；{report}；"
-                f"链子编译出的阶段是 {kinds}"
+                f"平色那一趟（没有任何缩放）滤镜对表最差 {worst_flat[3]} 级："
+                f"{worst_flat[0]} 级画成 {worst_flat[1]}，表算的是 {worst_flat[2]}；"
+                f"链子编译出的阶段是 {kinds}，平色那趟走的是 {primitives}"
             )
         finally:
             process.kill()
