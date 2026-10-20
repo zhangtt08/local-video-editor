@@ -98,7 +98,48 @@
 才有上面那张绿表。「动画曲线编辑器」那一档起初 `.curve-plot` 不在 DOM，是因为要**先点一颗片段**
 再点那颗分段按钮——而且必须是真 `pointerdown`（`element.click()` 不算选中，片段的选中写在 `onPointerDown` 里），不是那一屏不画画布。
 
-## 当前停放点（1.218：扫描接进浮层那三屏，矮窗里动画曲线那一列学会了自己让位）
+## 当前停放点（1.219：转场那一格不再吃掉针，叫停 FFmpeg 那一手有了截止时间，标准 Agent API 接回真引擎）
+
+- **先收 1.218 留的那笔账（针与转场牌子那两处重叠）**：`.transition-badge` 原先写 `top: 33px`——那是照一档行高猜的，
+  行高一变就压到针道上（量到的那一对：牌子 [330,579,31,18] 正好盖住第一条针 [329,582,16,12]）。现在牌子的高度与下缘
+  由 `keyframeLanes.ts` 下发，CSS 里那一行不再写 `top`/`height`；判定「这一枚针压没压在牌子底下」用同一份数。
+  规矩还是那一条：**宁可少画，也不留一枚点不到的针**——被压住的那枚不进条上，进「+N」那一格，出路仍是点开动画曲线。
+- **夹针那一手左端原来写字面 6，比针自己的半宽（10px）还小**：贴边那一枚有半个盒子伸出片段之外，`overflow: hidden`
+  当场裁掉（量到针从 329 起、片段从 330 起）。现在两端都按 `NEEDLE_HALF_PIXELS` 夹中心。「+N」也改了口径：
+  它数的不再足「条数」而是**枚数**，被牌子压住的那些一起进去，两处不各数一遍。
+- **叫停 FFmpeg 那一手没有截止时间，是一笔真交付缺陷**：这台机器上 `taskkill` 会不回来，于是「取消」钉在 `_kill` 里，
+  渲染线程走不到 `finally`，其后的作业全停在「排队等待渲染」，那半截 `.part` 也留在盘上（两遍实测：431 s、同样三条红）。
+  `jobs._kill` 现在带 `KILL_TIMEOUT_SECONDS=10`，等不到就退回 `process.kill()`——要的是「它停了」，不是「哪一种停法」。
+  同一类账还在两处：`scripts/build_engine.py` 收进程的 `taskkill`/WMI 那几手（这一轮实测把 `build_check` 与随包引擎那一档
+  钉满整套的 2400 s 兜底，那期间没人知道它是红还是死），以及 `tests/packed_engine_surface_check.py` 读 ready 行那一手
+  （起不来的 exe 不吐字，`readline()` 永远不返回——门禁不是红，是挂了 40 分钟）。现在三处都有截止时间，红的必须是产品那一件事。
+- **夹具不许说谎**：`tests/ui_shape_check.py` 里那三段片段原先是 `4 * 2_352_000` 格＝**0.13 秒**，默认缩放下整条片段
+  只画 8 px 宽，于是把手、针、转场牌子全挤在同一个 8 px 里——量出来的「重叠」是夹具自己造的。现在按人真正会剪的数走
+  （4 秒一段，每秒 70_560_000 格），并把 `transition.set` 加回夹具：「22 屏 green」说的必须是**转场上场时也 green**。
+  扫描还多钉一件事：少画的那些针**必须有名字**（`clip-keyframe-more` 那一格在场且写 `+N`），静悄悄少画与点不到同罪。
+- **`agent/` 那一层标准 Agent API：一轮都没跑通过，这一轮接回真引擎**。它调的是 `store.create_project` /
+  `store.apply_batch` / `p.id`，而引擎那边是 `create` / `mutate` / `list_projects` 交回 dict——一个字都执行不到；
+  它那张手抄的 `capabilities` 还把转场名写成 `fade_black`/`flash_white`/`wipe_left`…，引擎那张表里叫
+  `dip_black`/`dip_white`/`wipe_from_left`…，照这份名单写命令的 Agent 一定被拒。现在 `agentcut.capabilities` 就是
+  `contracts.capabilities()` 那一份（同源，不抄第二份），六只工具逐条走真 store，`AGENTCUT_DATA_DIR` 能把库指开。
+  新增门禁 `tests/agentapi_check.py`：真起 `agent/server.py`、真发 31 条请求——守卫三条（假 Host 403、外来 Origin 403、
+  非 GET 无令牌 401）都拒、名单与引擎那张表逐字相同、旧名字绝迹、写涨一个版本、dry-run 与被拒那一手都不写库、
+  三类拒绝各有名字，并且钉着**用户那个 `data/agentcut.sqlite3` 一个字节都没动**。突变复测：把 `fade_black` 塞回
+  `handle_capabilities`，两条各自红在自家断言上（「同源」与「抄错的旧名已绝迹」），还原后绿。
+- **`agent/` 的历史风格账一起收掉**：那 27 条 E501 与另 9 条（E402/F401/E731/I001）都清了，`tests/stylewidth_check.py`
+  的欠账上限从 `{tests 0, agent 27, scripts 0}` 降到三档全 0；`ruff check src tests scripts agent` 这一轮第一次全绿。
+- **实测**：71 档壳检全绿；`ruff check src tests scripts agent` 与 `stylewidth_check` 同一轮全绿，欠账上限三档全 0；空闲机单跑 `tests/suite_check.py` **132/132**（这一轮新增 `tests/agentapi_check.py`，31 条断言）；`tests/ui_shape_check.py` 22 屏 `SUMMARY green`——地板 12.5px、0 处尖角、0 处文字被切、0 处控件点不到、0 处同一格叠行、4 屏的「+N」有名（画不下的针都有名字，静悄悄少画也算红）。突变复测两处：把旧名字 `fade_black` 塞回 `handle_capabilities`，「与引擎那张表逐字相同」与「抄错的旧名已绝迹」各自红在自家断言上；把 `timeout=KILL_TIMEOUT_SECONDS` 从 `_kill` 摘掉，`media_check` 那一行先红，不用等四百秒。两轮都还原后绿。
+- **发布账**：`build_engine --verify` 通过（这一轮走 `--no-uv`：venv 里的 PyInstaller 6.22.3；`uv run --with pyinstaller` 在这台机器上不出声地钉死，两份实测见 `scripts/build_engine.py` 顶上那段）——冻结引擎自报 1.219.0，冷启动 879 ms、裸启动 705 ms（main.ts 预算 15000 ms），随包 ffmpeg 6.1.1 79.0 MB / ffprobe 4.0.2 60.1 MB / vosk 中文模型 65.1 MB，staged 合计 298.8 MB；`npm run dist` 后根 `AgentCut.exe` 与 `release/AgentCut-便携版.exe` `cmp` 逐字节相同（185,132,959 B，sha256 前缀 929c19bef137f778），安装版 185,293,670 B（前缀 0d00b16693640154）；`released_package_check` 绿（asar 1.219.0、84 个文件、51 句人话、随包引擎就是刚构建那一份）；`packed_engine_surface_check` 绿（包里那支引擎真 HTTP 交回 1.219.0，拒绝那一手不写状态）。
+- **下一轮（1.220）的具体入口**：
+  1. 多遮罩叠加（`Clip.mask` 复数化）——合成工作流剩下的最大一块，动的是契约、reducer、导出链、预览清单与检查器四样，
+     量级比这几轮都大。开工前先把「一条片段一条遮罩」这句话印在哪些地方列全（`grep -rn "\.mask\b" src/agentcut` 上一轮量到 47 处）。
+  2. 浏览器侧的 3D 立方表（`lut3d_preview` 仍为 false）。要做得先把「预览与导出读同一张表」钉成断言，不然又是一端生效。
+  3. 扫描还差的两屏：导出确认弹层里的第二页、以及「重置布局」之后那一屏。
+  4. `agent/.endpoint` 是服务每次启动都重写的运行态，已从版本控制里拿出来（否则跑一次门禁就脏一次树）。
+  5. 遮罩跟踪仍不估计旋转：1.218 那把因果尺（`causal_chain_measured`）量的是绝对角搜索那条路，尾帧 8.77°；
+     要交得出去得先破「NCC 在近平坦的角上选不动」，不是再调步长。
+
+## 上一轮停放点（1.218：扫描接进浮层那三屏，矮窗里动画曲线那一列学会了自己让位）
 
 - **这一轮先做用户点名的那件事的剩下半截**：1.217 把尺固定进仓库，这一轮把它伸到**浮层**——
   `scripts/ui_shape_sweep.cjs` 新增 `--extra <名字>`（真点那颗按钮，点开了才量，点不开记一条

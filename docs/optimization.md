@@ -6162,3 +6162,40 @@ schema 仍是 21：存的形状没变，只是校验放宽，旧工程照读；�
 **结构门禁**：plan 里每条以 `[n:v]` 开头的层链，它的 `trim=duration` 必须等于那一路输入的 `-t`。
 这条门禁独立有价值：它是「画面没了被伪装成画面就是黑的」那一类里目前唯一抓得住的证据，而那条帧路由
 本身还欠一次点名的拒绝（记在停放点的下一轮入口）。
+
+## 1.219（2026-10-20）：转场牌子与针道错开、叫停 FFmpeg 有截止时间、标准 Agent API 接回真引擎
+
+- **这一轮三件事都不是重构，是交付缺陷**。
+- **① 时间线上那枚转场牌子压在针道上**（1.218 把夹具装满之后量到的两处，当时只记了数没修）：
+  `.transition-badge` 的 `top: 33px` 是照一档行高猜的，行高一变就盖住第一条针（实测牌子 [330,579,31,18]
+  与针 [329,582,16,12] 相交）。现在牌子的下缘、高度与最小宽都由 `desktop/src/keyframeLanes.ts` 下发，
+  「这一枚压没压在牌子底下」(`underSeamBadge`) 与画它读同一份数；被压住的那枚**不画**，改由「+N」那一格
+  报出去——沿用「宁可少画，也不留一枚点不到的针」那条规矩的横向版本。同一处还修了夹针的左端：原来写字面 6，
+  比针自己的半宽 10px 小，贴边那一枚有半个盒子被 `overflow: hidden` 裁掉。`+N` 的口径也从「条」改成「枚」。
+- **② `JobRuntime._kill` 没有截止时间**：这台机器上 `taskkill` 会不回来，于是「取消」一手把渲染线程钉在
+  `finally` 之前，其后的作业全停在「排队等待渲染」，那半截 `.part` 留在盘上（两遍实测：431 s、同样三条红）。
+  现在 `KILL_TIMEOUT_SECONDS=10`，等不到就退回 `process.kill()`——要的是「它停了」，不是「哪一种停法」。
+  同一类账在 `scripts/build_engine.py`（收进程的 taskkill/WMI 那几手没有截止时间，把 `build_check` 与随包引擎
+  那一档钉满整套 2400 s 兜底）与 `tests/packed_engine_surface_check.py`（读 ready 行用裸 `readline()`，
+  起不来的 exe 不吐字，门禁不是红而是挂 40 分钟）一起收了：三处现在都有截止时间，红的那一句必须是产品那一件事。
+- **③ `agent/` 那一层对外 Agent 的标准 API 一行都没跑通过**：它调 `store.create_project` / `store.apply_batch` /
+  `p.id`，而引擎那边是 `create` / `mutate` / `list_projects`（交回 dict）；它那张手抄的 `capabilities` 把转场名写成
+  `fade_black`/`flash_white`/`wipe_left`…，引擎那张表里叫 `dip_black`/`dip_white`/`wipe_from_left`…，
+  照这份名单写命令的 Agent 一定被拒。现在 `agentcut.capabilities` 就是 `contracts.capabilities()` 那一份
+  （同源，不再抄第二份），六只工具逐条走真 store，`AGENTCUT_DATA_DIR` 能把库指开。
+  新门禁 `tests/agentapi_check.py` 真起 `agent/server.py`、真发 31 条请求：守卫三条（假 Host 403、外来 Origin 403、
+  非 GET 无令牌 401）都拒、名单与引擎那张表逐字相同、旧名绝迹、写涨一个版本、dry-run 与被拒那一手都不写库、
+  三类拒绝各有名字，并钉住**用户那个 `data/agentcut.sqlite3` 一个字节都没动**。突变复测：把 `fade_black`
+  塞回 `handle_capabilities`，两条各自红在自家断言上，还原后绿。
+- **夹具不许说谎**：`tests/ui_shape_check.py` 那三段片段原本是 `4 * 2_352_000` 格＝0.13 秒，默认缩放下整条只画
+  8 px 宽，把手、针、转场牌子全挤进同一个 8 px——量出来的「重叠」是夹具自己造的。现在按人真正会剪的数走
+  （4 秒一段），并把 `transition.set` 加回夹具：「22 屏 green」必须包括转场在场；扫描还新增一条判据——
+  少画的那些针**必须有名字**（`clip-keyframe-more` 在场且写 `+N`），静悄悄少画与点不到同罪。
+- **风格账收净**：`agent/` 的 27 条 E501 与另 9 条（E402/F401/E731/I001）一起清掉，`tests/stylewidth_check.py`
+  的欠账上限三档全 0，`ruff check src tests scripts agent` 第一次全绿。
+- **这台机器上冻结引擎的一条新路**：`uv run --with pyinstaller` 会不出声地钉死（两份实测：23 分钟与 75 s 超时，
+  零输出、零 CPU；`UV_OFFLINE=1` 也不救），而 `uv pip install --offline pyinstaller` 0.3 s 就把 6.22.3 装进 venv。
+  `build_engine.py` 的 `--no-uv` 这一档现在优先用 `sys.executable -m PyInstaller`，不再依赖刚写出来的那个
+  控制台壳——实时杀软下新写的 `.exe` 启动子进程会卡在进程创建里。
+- **实测**：71 档壳检全绿；`ruff check src tests scripts agent` 与 `stylewidth_check` 同一轮全绿，欠账上限三档全 0；空闲机单跑 `tests/suite_check.py` **132/132**（这一轮新增 `tests/agentapi_check.py`，31 条断言）；`tests/ui_shape_check.py` 22 屏 `SUMMARY green`——地板 12.5px、0 处尖角、0 处文字被切、0 处控件点不到、0 处同一格叠行、4 屏的「+N」有名（画不下的针都有名字，静悄悄少画也算红）。突变复测两处：把旧名字 `fade_black` 塞回 `handle_capabilities`，「与引擎那张表逐字相同」与「抄错的旧名已绝迹」各自红在自家断言上；把 `timeout=KILL_TIMEOUT_SECONDS` 从 `_kill` 摘掉，`media_check` 那一行先红，不用等四百秒。两轮都还原后绿。
+- **发布账**：`build_engine --verify` 通过（这一轮走 `--no-uv`：venv 里的 PyInstaller 6.22.3；`uv run --with pyinstaller` 在这台机器上不出声地钉死，两份实测见 `scripts/build_engine.py` 顶上那段）——冻结引擎自报 1.219.0，冷启动 879 ms、裸启动 705 ms（main.ts 预算 15000 ms），随包 ffmpeg 6.1.1 79.0 MB / ffprobe 4.0.2 60.1 MB / vosk 中文模型 65.1 MB，staged 合计 298.8 MB；`npm run dist` 后根 `AgentCut.exe` 与 `release/AgentCut-便携版.exe` `cmp` 逐字节相同（185,132,959 B，sha256 前缀 929c19bef137f778），安装版 185,293,670 B（前缀 0d00b16693640154）；`released_package_check` 绿（asar 1.219.0、84 个文件、51 句人话、随包引擎就是刚构建那一份）；`packed_engine_surface_check` 绿（包里那支引擎真 HTTP 交回 1.219.0，拒绝那一手不写状态）。
