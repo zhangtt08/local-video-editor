@@ -21,7 +21,9 @@ MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 
 SCHEMA_VERSION = (
 
-    24  # v24 lets that picture move: a layer carries its own keys, so a v23 row has none and
+    25  # v25 lets one clip carry a second box to cut with; a v24 row has none and reads
+    #     as "just the one mask", which is exactly what the missing field meant.
+    #     v24 lets that picture move: a layer carries its own keys, so a v23 row has none and
     #     reads as the static offset/scale it already carried. v23 gives that picture a place
     #     and a size; v22 rows have them absent and read as
     #     "cover the picture box", which is exactly what the missing fields meant. v22 lets a
@@ -39,7 +41,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.220.0"
+APP_VERSION = "1.221.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -422,6 +424,10 @@ MASK_FIELDS = {
 }
 
 MASK_SIZE_FIELDS = {"mask_width", "mask_height"}
+# 1.221：一条片段可以再叠几块**矩形/椭圆**的遮罩，与主遮罩相乘（交集）。
+# 上限 4 是把「两端的图都要各出一张」这件事收在一个能预算的数上：导出那条 alpha 是
+# `alpha(X,Y)*A*B*C*D`，浏览器那一侧是 `mask-composite: intersect` 叠同样几层。
+MASK_STACK_LIMIT = 4
 
 Property = EffectProperty | MaskProperty | SpatialProperty
 
@@ -2647,6 +2653,12 @@ class Clip(Contract):
     color: ClipColor = Field(default_factory=ClipColor)
 
     mask: ShapeMask | None = None
+    # 1.221：主遮罩之外再叠的几块，与主遮罩**相乘**（都留着的那一块才露出来）。
+    # 关键帧仍只跟着主遮罩走——那五条 `mask_*` 曲线说的是「这一条片段的那一个洞」，
+    # 一块会动的第二洞要的是另一套寻址，不在这版里；界面上这一句是明说的。
+    extra_masks: Annotated[list[ShapeMask], Field(max_length=MASK_STACK_LIMIT)] = (
+        Field(default_factory=list)
+    )
 
     fade: FadeEnvelope | None = None
 
@@ -4404,6 +4416,15 @@ class MaskTrackPoint(Contract):
 
 
 
+class ClipMaskStackSet(Contract):
+    """主遮罩之外那几块的整体写入：与 `clip.mask`、`clip.grade` 同一个规矩——一次交回一整串，
+    不在服务端猜「第几块要换成什么」，也不给同一份状态留第二个主人。"""
+
+    op: Literal["clip.mask_stack"]
+    clip_id: Identifier
+    masks: Annotated[list[ShapeMask], Field(max_length=MASK_STACK_LIMIT)]
+
+
 class ClipMaskTrack(Contract):
 
     """One atomic rewrite of a box mask's motion from a tracked path.
@@ -4609,6 +4630,7 @@ Command = Annotated[
     | ClipEffectsSet
 
     | ClipMaskSet
+    | ClipMaskStackSet
 
     | ClipMaskTrack
 
@@ -6820,6 +6842,7 @@ def capabilities(
             "clip.effects",
 
             "clip.mask",
+            "clip.mask_stack",
 
             "clip.mask_track",
 
@@ -6955,6 +6978,7 @@ def capabilities(
             # is executed as frames, one plate per window, never as one stretched unit image.
 
             "mask_rotation": True,
+            "mask_stack": True,
 
             # 1.165: that angle accepts keyframes. Both ends execute one frame-aligned staircase
 
@@ -7245,6 +7269,7 @@ def capabilities(
             "mask_rotation_limit": MASK_ROTATION_LIMIT,
 
             "mask_shape_keys": MASK_SHAPE_KEY_LIMIT,
+            "extra_masks": MASK_STACK_LIMIT,
 
             "mask_shape_schedule_segments": MASK_SHAPE_SCHEDULE_MAX,
 

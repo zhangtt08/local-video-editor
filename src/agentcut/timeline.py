@@ -264,7 +264,7 @@ def _validate_scope(project: Project) -> None:
             raise EditorError(
                 "INVALID_TEXT", "text clips require text style; media clips cannot carry text"
             )
-        if clip.mask and track.kind != "video":
+        if (clip.mask or clip.extra_masks) and track.kind != "video":
             raise EditorError("INVALID_MASK", "masks require a picture track", clip_id=clip.id)
         problem = clip.mask_animation_problem()
         if problem:
@@ -929,6 +929,7 @@ def apply_commands(
                             "track_id": command.track_id,
                             "transition_in": None,
                             "mask": None,
+                            "extra_masks": [],
                             "keyframes": [k for k in clip.keyframes if k.property == "gain"],
                             "link_id": link,
                             "link_source_offset_ticks": 0,
@@ -954,6 +955,19 @@ def apply_commands(
                         clip.text = TextStyle.model_validate(clip.text.model_dump() | command.text)
                 elif command.op == "clip.mask":
                     clip.mask = command.mask.model_copy(deep=True) if command.mask else None
+                elif command.op == "clip.mask_stack":
+                    # 这一版只收矩形与椭圆：自由形状的 alpha 是一张逐帧的板，两端的图要各出一张，
+                    # 叠两层那种「交集」在浏览器里是 mask-composite，在导出里是又一张 PNG——
+                    # 与其悄悄只吃第一块，不如点名拒绝并把出路说清（复制一层，在那一层上画）。
+                    for extra in command.masks:
+                        if extra.shape == "path":
+                            raise EditorError(
+                                "INVALID_MASK",
+                                "再叠的那几块只收矩形与椭圆；要再抠一个自由形状，"
+                                "把这段复制一层，在那一层上画",
+                                clip_id=clip.id,
+                            )
+                    clip.extra_masks = [extra.model_copy(deep=True) for extra in command.masks]
                 elif command.op == "clip.mask_track":
                     _apply_mask_track(clip, command.points, command.merge)
                 elif command.op == "clip.color":

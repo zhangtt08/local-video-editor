@@ -968,6 +968,12 @@ def preview_manifest(
             "mask_image": mask_image(clip.mask, project.settings.width, project.settings.height)
             if clip.mask
             else None,
+            # 1.221：主遮罩之外再叠的几块，浏览器用 `mask-composite: intersect` 叠在同一幅画面上，
+            # 导出用 `alpha*A*B` 乘在同一条 alpha 上——两端的图出自同一个 `mask_image`。
+            "extra_mask_images": [
+                mask_image(extra, project.settings.width, project.settings.height)
+                for extra in clip.extra_masks
+            ] or None,
             "mask_curves": mask_curves or None,
             "mask_rotation_windows": rotation_windows or None,
             "mask_shape": mask_shape or None,

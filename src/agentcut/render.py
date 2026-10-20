@@ -1674,6 +1674,10 @@ def compile_render_plan(
                 alpha = []
                 if clip.mask and not path_mask:
                     alpha.append(f"({alpha_expression(clip.mask, mask_values, mask_box)})")
+                # 1.221：再叠的几块与主遮罩**相乘**——这一串本来就是 `*` 起来的，
+                # 多一块就是多一个括号；它们不带动画，所以 `mask_values` 交回 None。
+                for extra in clip.extra_masks:
+                    alpha.append(f"({alpha_expression(extra, None, mask_box)})")
                 if (
                     clip.effects.opacity != 1
                     or "opacity" in animated

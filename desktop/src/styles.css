@@ -1055,6 +1055,10 @@ table.table tr.current td { background: var(--accent-soft); }
 .mask-shape-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; max-height: 168px; overflow: auto; }
 .mask-shape-list li { display: flex; align-items: center; gap: 6px; }
 .mask-shape-list select { width: 96px; }
+/* 1.221：再叠的那几块。一格一行、行里只放这一件事要说的那句话，圆角与卡片同一档。 */
+.mask-stack { display: grid; gap: 5px; margin-top: 9px; }
+.mask-stack-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: var(--fs-label); }
+.mask-stack-row { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 5px 9px; font-size: var(--fs-body); }
 
 /* 标尺上的标记：一条竖线 + 名字，点击即跳转，× 删除。颜色只是给眼睛用的分组。 */
 .ruler-marker { position: absolute; top: 0; height: 100%; display: flex; align-items: flex-start; transform: translateX(-1px); }

@@ -190,6 +190,10 @@ class ProjectStore:
                 # pre-1.118 payload had: dropping it keeps those receipts replaying.
                 if "asset_id" in node and not node.get("mask_shape_keys"):
                     node.pop("mask_shape_keys", None)
+                # 1.221 gave a clip its extra boxes. A payload that never mentions one must hash as
+                # the one-mask clip it was, so old receipts keep replaying.
+                if "asset_id" in node and not node.get("extra_masks"):
+                    node.pop("extra_masks", None)
                 # 1.120 gave a parallel node its branch weights. An absent table and an empty one
                 # are the same thing (every branch counts the same), so a pre-1.120 payload that
                 # never mentions weights keeps hashing as the payload it was.

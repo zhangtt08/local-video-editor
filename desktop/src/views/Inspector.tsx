@@ -67,6 +67,7 @@ import {
   reconcileLink,
   prefs,
   setClipMask,
+  setClipMaskStack,
   setMaskEditing,
   updateTrack,
   editableProject,
@@ -541,6 +542,7 @@ function MaskFields({ clip }: { clip: Clip }) {
         })}
         <div className="effect-row"><label htmlFor="mask-feather">向内羽化</label><EffectInput id="mask-feather" value={mask.feather * 100} min={0} max={100} step={1} onCommit={(value) => setClipMask(clip.id, { ...mask, feather: value / 100 })} /><span className="dim">%</span></div>
         {mask.shape === "path" ? null : rotationLimit === undefined ? <p className="hint">这一版引擎没有遮罩角度这一格。</p> : <div className="effect-row"><label htmlFor="mask-rotation">遮罩角度</label><EffectInput id="mask-rotation" value={angleKey?.value ?? mask.rotation ?? 0} min={-rotationLimit} max={rotationLimit} step={1} onCommit={(value) => angleKey ? setKeyframe(clip.id, { property: "mask_rotation", at_ticks: at, value, interpolation: angleKey.interpolation ?? "linear" }) : setClipMask(clip.id, { ...mask, rotation: value })} /><span className="dim">°</span>{rotationCurves && animatable ? <button type="button" className={`keyframe-btn${angleKey ? " active" : ""}`} aria-label={angleKey ? "删除遮罩角度关键帧" : "添加遮罩角度关键帧"} title={angleKey ? "删掉这一刻的遮罩角度关键帧" : "在播放头记一格遮罩角度。导出与预览走同一份按帧对齐的阶梯：引擎把曲线切成几段窗，每窗一张图、一格一步"} disabled={disabled} onClick={() => angleKey ? removeKeyframe(clip.id, "mask_rotation", at + (clip.animation_offset_ticks ?? 0)) : setKeyframe(clip.id, { property: "mask_rotation", at_ticks: at, value: mask.rotation ?? 0, interpolation: "linear" })}>◇</button> : null}</div>}
+        <MaskStack clip={clip} disabled={disabled} />
         <label><input type="checkbox" checked={mask.inverted} onChange={(e) => setClipMask(clip.id, { ...mask, inverted: e.target.checked })} />反转遮罩</label>
         <div className="insp-actions"><button className={`btn tiny${app.maskEditing ? " active" : ""}`} aria-pressed={app.maskEditing} onClick={() => setMaskEditing(!app.maskEditing)}>画面中编辑</button>
           {animatable && project ? <button className="btn tiny" disabled={disabled || Boolean(runOn.blocked)} title={runOn.blocked ?? (mask.shape === "path" ? "从播放头开始逐帧分析画面，把轮廓的中心写成关键帧，一直量到片段结尾（单次上限由引擎的 capabilities 下发，量不完会在提示里说清）；路径遮罩只整体搬动，不改形状与大小。主体被挡住时按匀速补一段，同时每一帧都在整幅画面里重新找它，找回后把补的那段按真实位置校正；跟丢时会停下来说明" : "从播放头开始逐帧分析画面，把遮罩中心与大小写成关键帧，一直量到片段结尾（单次上限由引擎的 capabilities 下发，量不完会在提示里说清）；主体被挡住时按匀速补一段，同时每一帧都在整幅画面里重新找它，找回后把补的那段按真实位置校正；跟丢时会停下来说明")} onClick={() => trackMasks([{ clipId: clip.id, fromTicks: at, frames: runOn.frames, merge: true, reacquire: trackSweep, maxGapFrames: trackGap, scale: trackScale }])}>{(clip.keyframes ?? []).some((key) => key.property === "mask_x") ? "接着跟" : "跟踪主体"}</button> : null}
@@ -564,6 +566,25 @@ function MaskFields({ clip }: { clip: Clip }) {
 
 /** 1.118：路径遮罩的轮廓帧。界面只列引擎记下的那几帧，改的是其中一枚的形状或插值——「两帧之间怎么过渡」
  * 由引擎算，导出与预览读同一份窗表，所以这里既不数时间也不插值。额度、名字都从 capabilities 出去。 */
+/** 1.221：主遮罩之外那几块。这一版只切不动——要让它跟着画面走，把这段复制一层。 */
+function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
+  const app = useApp();
+  const limit = app.caps?.limits?.extra_masks ?? 0;
+  const stack = clip.extra_masks ?? [];
+  const full = stack.length >= limit;
+  const write = (masks: ShapeMask[]) => setClipMaskStack(clip.id, masks);
+  return <div className="mask-stack">
+    <div className="mask-stack-head"><span>再叠的遮罩</span><span className="dim">{stack.length} / {limit} 块 · 与主遮罩取交集</span></div>
+    {stack.map((item, index) => <div className="mask-stack-row" key={`stack-${index}`}>
+      <span>{item.shape === "rectangle" ? "矩形" : "椭圆"}</span>
+      <span className="dim">中心 {Math.round(item.center_x * 100)}，{Math.round(item.center_y * 100)} · {Math.round(item.width * 100)}×{Math.round(item.height * 100)}%</span>
+      <button type="button" className="btn tiny subtle" disabled={disabled} aria-label={`删掉第 ${index + 1} 块叠加遮罩`} onClick={() => write(stack.filter((_, position) => position !== index))}>删掉</button>
+    </div>)}
+    <div className="insp-actions"><button className="btn tiny" disabled={disabled || full || limit === 0} title={full ? `最多 ${limit} 块；要再加，先删掉一块` : "这一版引擎不认识「再叠的遮罩」这一格，出路是换一台会回的引擎"} onClick={() => write([...stack, { ...DEFAULT_MASK, shape: "rectangle", feather: 0, vertices: null }])}>再抠一块</button></div>
+    {stack.length ? <p className="hint" title="再叠的这几块写的是静态的洞：那五条关键帧说的都是主遮罩">再叠的这几块只切不动；要让它跟着画面走，把这段复制一层，在那一层上画。</p> : null}
+  </div>;
+}
+
 function MaskShapeKeys({ clip, mask, disabled, at }: { clip: Clip; mask: ShapeMask; disabled: boolean; at: number }) {
   const app = useApp();
   const limit = app.caps?.limits?.mask_shape_keys ?? 32;

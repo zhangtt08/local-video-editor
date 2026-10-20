@@ -51,7 +51,7 @@ function outline(vertices: MaskVertex[]) {
 }
 
 /** Geometry-only handles; the server compiles the actual alpha image during a gesture. */
-export function MaskPicture({ clip, image, children, editable = true, animation, shape, rotation }: { clip: Clip; image?: string | null; children: ReactNode; editable?: boolean; animation?: { unit: string | null; curves: Record<MaskProperty, Curve> } | null; shape?: MaskShapeWindow[] | null; rotation?: MaskRotationWindow[] | null }) {
+export function MaskPicture({ clip, image, extra, children, editable = true, animation, shape, rotation }: { clip: Clip; image?: string | null; extra?: string[] | null; children: ReactNode; editable?: boolean; animation?: { unit: string | null; curves: Record<MaskProperty, Curve> } | null; shape?: MaskShapeWindow[] | null; rotation?: MaskRotationWindow[] | null }) {
   const app = useApp(); const play = usePlay();
   const [draft, setDraft] = useState<ShapeMask | null>(null);
   const [compiled, setCompiled] = useState<{ mask: ShapeMask; image: string } | null>(null);
@@ -294,8 +294,16 @@ export function MaskPicture({ clip, image, children, editable = true, animation,
         ? { maskImage: animated.unit, "--mask-x": mask?.center_x ?? .5, "--mask-y": mask?.center_y ?? .5 } as CSSProperties
         : { maskImage: animated.unit, "--mask-x": mask?.center_x ?? .5, "--mask-y": mask?.center_y ?? .5, "--mask-w": mask?.width ?? 1, "--mask-h": mask?.height ?? 1 } as CSSProperties
       : { maskImage: pictureImage ?? undefined, maskSize: "100% 100%", maskRepeat: "no-repeat" };
+  // 1.221：再叠的那几块与主遮罩**相乘**。浏览器这一侧是标准的 `mask-composite: intersect`
+  // 叠在同一幅画面上，导出那一侧是同一条 alpha 上多一个括号；两端的图都出自引擎那一份
+  // `mask_image`，所以「预览里那个洞」与「成片里那个洞」是同一个洞。
+  const primaryImage = spun ? spun.image : shapeWindow ? shapeWindow.image : animated ? animated.unit : pictureImage;
+  const layers = [primaryImage, ...(extra ?? [])].filter(Boolean) as string[];
+  const stacked: CSSProperties = layers.length > 1
+    ? { ...pictureStyle, maskImage: layers.join(", "), maskSize: "100% 100%", maskRepeat: "no-repeat", maskComposite: "intersect" }
+    : pictureStyle;
   return <>
-    <div ref={picture} className={`layer-transform masked-picture${shapeWindow ? " morph-mask" : animated || spun ? (rotated ? " rotated-mask" : " animated-mask") : ""}`} style={pictureStyle}>{children}</div>
+    <div ref={picture} className={`layer-transform masked-picture${shapeWindow ? " morph-mask" : animated || spun ? (rotated ? " rotated-mask" : " animated-mask") : ""}`} style={stacked}>{children}</div>
     {visible && mask ? <svg ref={svg} className={`mask-guide${disabled ? " locked" : ""}`} viewBox="0 0 100 100" preserveAspectRatio="none" role="group" aria-label="画面遮罩编辑器" tabIndex={0}
       style={shift.tx || shift.ty || shift.sx !== 1 || shift.sy !== 1 ? { transform: `translate(${(shift.tx * 100).toFixed(4)}%, ${(shift.ty * 100).toFixed(4)}%) scale(${shift.sx.toFixed(6)}, ${shift.sy.toFixed(6)})` } : undefined}
       onDoubleClick={(event) => {
