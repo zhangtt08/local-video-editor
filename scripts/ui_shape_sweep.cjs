@@ -271,6 +271,20 @@ async function sweepOne(size, hostPort, probeSource) {
         }
       }
     };
+    // 1.231：可选地在量之前真选一次下拉（`--choose "<aria-label>=<value>"`）。下拉不是按钮，
+    // 点一下只会弹原生的列表；要证明「选了之后真的发出去了一条命令」，就得设值并派发 change。
+    const choose = flag("choose", "");
+    if (choose) {
+      await sleep(1200);
+      const outcome = await evaluate("(function(){var spec=" + JSON.stringify(choose) +
+        ";var at=spec.indexOf('=');var label=spec.slice(0,at), value=spec.slice(at+1);" +
+        "var hit=Array.from(document.querySelectorAll('select'))" +
+        ".find(function(n){return (n.getAttribute('aria-label')||'')===label;});" +
+        "if(!hit) return 'no select: '+label;hit.value=value;" +
+        "hit.dispatchEvent(new Event('change',{bubbles:true}));return 'ok:'+hit.value;})()");
+      console.log("choose " + choose + " -> " + outcome);
+      await sleep(900);
+    }
     // 名字要跟着「哪一颗真亮着」走，不能按名单的第 0 颗猜——深链会直接把应用带到编辑器，
     // 那一行挂错名字，读表的人就会以为「项目」那一屏长这个样子。
     const lit = tabs.find((row) => row.selected) || tabs[0];

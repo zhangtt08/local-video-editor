@@ -21,6 +21,7 @@ import {
 } from "../workingSpace";
 import { setFoldTransfer, setWorkingPrimaries } from "../store";
 import { linkOffsetSentence } from "../linkOffset";
+import { MOTION_PRESETS, motionCommands, motionWords, type MotionPresetId, type MotionSide } from "../motionPresets";
 import {
   adoptFade,
   clearBatch,
@@ -68,6 +69,7 @@ import {
   prefs,
   setClipMask,
   setClipMaskStack,
+  editAtRevision,
   setMaskEditing,
   updateTrack,
   editableProject,
@@ -390,6 +392,7 @@ function EffectsFields({ clip }: { clip: Clip }) {
         <button aria-label="删除关键帧" disabled={locked} onClick={() => removeKeyframe(clip.id, k.property, k.at_ticks - offset)}>×</button>
       </div>)}
     </div>
+    <MotionControls clip={clip} locked={locked} />
     <details className="slide-controls"><summary className="panel-label">源画面划动与滑移</summary><fieldset disabled={locked} className="effects-fields">
       <div className="effect-row"><label htmlFor="slide-frames">步长</label><input id="slide-frames" className="input" type="number" min={1} max={Math.max(1, Math.floor(clip.duration_ticks / (project ? frameTicks(project.settings.frame_rate) : 1)))} step={1} value={slideFrames} onChange={(e) => setSlideFrames(Math.max(1, Math.round(Number(e.target.value) || 1)))} /><span>帧</span></div>
       <div className="insp-actions">
@@ -402,6 +405,47 @@ function EffectsFields({ clip }: { clip: Clip }) {
     </fieldset></details>
     <FadeControls clip={clip} locked={locked} properties={fadeProperties(clip, asset)} />
   </section>;
+}
+
+/** 1.231：入场 / 出场动画预设。没有新的引擎语义——每一档只算「头/尾该写哪几枚针」，
+ *  交出去的仍是普通 `keyframe.set`，一批一个版本、撤销一次回一步。终格永远是片段自己的静态值，
+ *  所以「已经缩到 0.8」的片段套放大，是从 0.8×0.86 起、仍收在 0.8。 */
+function MotionControls({ clip, locked }: { clip: Clip; locked: boolean }) {
+  const app = useApp();
+  const project = editableProject(app);
+  const [seconds, setSeconds] = useState(0.5);
+  const [said, setSaid] = useState("");
+  if (!project) return null;
+  const frame = frameTicks(project.settings.frame_rate);
+  const shorter = clip.duration_ticks < 2 * frame;
+  const apply = (side: MotionSide, id: MotionPresetId | "") => {
+    if (!id) return;
+    const preset = MOTION_PRESETS.find((item) => item.id === id);
+    if (!preset) return;
+    const commands = motionCommands(clip, side, preset.id, seconds, frame);
+    setSaid(motionWords(commands, clip, side, seconds));
+    if (commands.length) {
+      editAtRevision(commands, project.id, project.revision, `${side === "in" ? "入场" : "出场"}动画 · ${preset.label}`);
+    }
+  };
+  return <details className="motion-controls"><summary className="panel-label">入场 / 出场动画</summary>
+    <fieldset className="effects-fields" disabled={locked || shorter}>
+      <div className="effect-row"><label htmlFor="motion-length">时长</label>
+        <select id="motion-length" className="input" value={seconds} onChange={(event) => setSeconds(Number(event.target.value))}>
+          {[0.3, 0.5, 0.8, 1.2].map((value) => <option key={value} value={value}>{value.toFixed(1)} 秒</option>)}
+        </select>
+      </div>
+      {(["in", "out"] as const).map((side) => <div className="effect-row" key={side}>
+        <label htmlFor={`motion-${side}`}>{side === "in" ? "入场" : "出场"}</label>
+        <select id={`motion-${side}`} className="input" value="" onChange={(event) => apply(side, event.target.value as MotionPresetId | "")} aria-label={`${side === "in" ? "入场" : "出场"}动画预设`}>
+          <option value="">{shorter ? "片段太短" : "选一个预设…"}</option>
+          {MOTION_PRESETS.map((preset) => <option key={preset.id} value={preset.id} title={preset.hint}>{preset.label}</option>)}
+        </select>
+      </div>)}
+      {said ? <p className="hint" role="status">{said}</p> : null}
+      <p className="hint" title="预设写的是这条曲线开头或结尾的两枚针，终格永远是片段自己的静态值；同一格已有的针会被顶替，别的针一根不动">预设只写头/尾两枚针（缓入缓出），一批一个版本；要撤掉，在下面的关键帧列表里删，或按一次撤销。</p>
+    </fieldset>
+  </details>;
 }
 
 /** 淡入淡出改的是片段两条边上的窗口（`Clip.fade`）：一头一次提交只动自己那一头，所以淡入与淡出能
