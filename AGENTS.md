@@ -112,10 +112,8 @@
 - **这一节的账是谁跑出来的**：代码在 `2589603`，文档与验证在下一手。验证跑的是
   HEAD 上那一套只读门禁——`tsc --noEmit` 干净、`desktop_ts_check` **75 档全绿**、
   `ui_shape_check` **38 屏 green（字压字 0）**。
-- **包账这一轮不记**：链没跑（1.228 那一轮已经写明「树不静就不建」，这一轮同样没有
-  一次干净的构建可引）。要记就用 `scripts/land_1228.sh` 那一套在树安静时重跑，
-  量到什么写什么。
-- **门禁账（跑在代码提交之后的 HEAD 上，一整套只读）**：`tsc --noEmit` 干净、`desktop_ts_check` **75 档全绿**、`ui_shape_check` **38 屏 green**（地板 12.5px、叠行合计 0、遮罩后 515、缺口有名 4、下拉被切 0、**字压字合计 0**）。**包账这一轮不记**：链没跑——判法见上一轮那一条（树不静就不建，量到什么写什么）。
+- **包账（01:26 那一趟链，重试一次才成）**：`build_engine --verify` 通过（冻结引擎自报 **1.229.0 / schema 25**）；`npm run dist` 后根 `AgentCut.exe` 与 `desktop/release/AgentCut-便携版.exe` `cmp` 逐字节相同（**185,133,559 B，sha256 前缀 42f06484057e687b**）；`released_package_check` 绿、`packed_engine_surface_check` 绿（包里那支引擎真 HTTP 交回 1.229.0 与 schema 25）、`ui_shape_check` 38 屏 green。**第一次那一趟红在 `npm run dist` 的 TLS 掉线**（electron-builder 取工具链时「Client network socket disconnected」）；红之后 `released_package_check` 立刻红在「包里那支引擎不是刚建出来的那一支」——**建失败会把包留在半旧不新的状态**，那不是假警报：01:11 那份 `AgentCut.exe` 就是上一趟没走完的产物。重试那一次网络通了才真的对上。
+- **门禁账（跑在代码提交之后的 HEAD 上）**：`tsc --noEmit` 干净、`desktop_ts_check` **75 档全绿**、`ui_shape_check` **38 屏 green**（地板 12.5px、叠行合计 0、遮罩后 515、缺口有名 4、下拉被切 0、**字压字合计 0**）。
 - **下一轮（1.230）的具体入口**：
   1. 先修 1.223 量到的那 3~4 级：1.225 那把段数/项数的尺已经能证明「画的就是清单那一串阶段」，
      剩下的差要往取样几何上查——把 `--strip` 那一腿按预览同一比例再画一次，

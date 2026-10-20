@@ -6570,6 +6570,6 @@ Agent 用 `clip.mask_stack` 写得进去，人在界面上只能加一块、删�
 
 **这一节的验证**：跑在代码提交之后的 HEAD 上，用的是一整套只读门禁——
 `tsc --noEmit` 干净、`desktop_ts_check` 75 档全绿、`ui_shape_check` 38 屏 green。
-**包账这一轮不记**：链没跑。1.228 那一轮把「两个 agent 在同一份树里各自构建」踩出来的
+**包账（01:26 那一趟链，重试一次才成）**：`build_engine --verify` → `npm run dist` → 根 `AgentCut.exe` 与便携版逐字节相同（185,133,559 B，sha256 前缀 42f06484057e687b）；`released_package_check`、`packed_engine_surface_check`（包里那支引擎真 HTTP 交回 1.229.0 / schema 25）、`ui_shape_check` 38 屏 green 全过。第一次那一趟红在 `npm run dist` 的 TLS 掉线，红之后 `released_package_check` 立刻红在「包里那支引擎不是刚建出来的那一支」——**建失败会把包留在半旧不新的状态**，这条不是假警报。
 假红写进了账（`released_package_check` 红在两份引擎字节对不上，而 PyInstaller 不是逐字节
 可复现的），判法就是那一条：树不静就不建，量到什么写什么。
