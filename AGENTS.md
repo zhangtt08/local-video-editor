@@ -120,6 +120,18 @@
   （asar 1.237.0、84 个文件、52 句人话）；`packed_engine_surface_check` 绿（包里那支引擎真 HTTP
   交回 1.237.0）；空闲机单跑 `tests/suite_check.py` **138/138 checks passed**（`SUITE_EXIT=0`，
   `suite_1237.log`，里面那次 `ui_shape_check` 仍是 **38 屏 green**）。
+- **装机那一腿（1.237 的发布包本身）**：`AgentCut.exe --remote-debugging-port=9333` 起真窗口，
+  页面是 `file:///…app.asar/dist/renderer/index.html`（**file:// 原点**），CDP 读到的正文里有
+  「引擎在线 v1.237.0」、用户自己那份工程（r15、1280×720 视频 `readyState=4`、缩略图
+  `complete`、监视器 579×326），`.layer-error`／`.toast` 一个都没有；`Page.captureScreenshot`
+  存下 1.4 MB 的真页面（`native-1.237` 那一族里）。这一腿同时回答了 1.234 留下的那个疑问：
+  `<img crossOrigin="anonymous">` 在这个 file:// 壳里拿得到画面（视频同一台引擎、同一个端口），
+  并不是「一加 CORS 就白屏」。关窗后 `Get-Process AgentCut` 计数 **0**。
+  （同一次里 `PrintWindow` 抓出来是空白——这台机器上这个 Electron 窗口的 GPU 图层它拿不到；
+  CDP 那条腿才是能出图的那一条，记账用后者。）
+- **清理**：仓库根 13 份构建／套件日志已删，`scripts/land_1228.sh` 与 `land_1228.log`（不是这一轮
+  的产物）移到证据目录；`%TEMP%` 里 `agentcut-*` 目录归零，泄漏的两棵 headless Edge
+  （`agentcut-two-end-*`／`agentcut-webgl-*`）按 profile 名杀干净并验过计数 0。
 - **下一轮（1.238）的具体入口**：
   1. 再叠的块**各自动**（`mask_*` 五条曲线的「哪一块」寻址，契约级改动；1.237 只到「一起跟主遮罩」）。
   2. 跟随目前只跟中心，大小与角度不跟——要跟就得让每一层各有自己的 width/height/rotation 动画，
