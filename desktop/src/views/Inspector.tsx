@@ -7,7 +7,7 @@ import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionCh
 import { Icon, Modal } from "../ui";
 import { GradeFields } from "./GradeFields";
 import { SpeedFields } from "./SpeedFields";
-import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeAdoptHint, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, INTERPOLATIONS, maskAnimFields, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackGroup, trackingKnobs, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
+import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeAdoptHint, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, fitSpeedPercent, INTERPOLATIONS, maskAnimFields, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackGroup, trackingKnobs, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
 import { frameTicks, TIMEBASE, align, humanDuration, offsetWords, seconds, timecode, ticks } from "../time";
 import {
   DISPLAY_PRIMARIES,
@@ -148,6 +148,9 @@ function clampPercent(raw: string, ceiling = 100): number {
 
 function ClipFields({ clip }: { clip: Clip }) {
     const app = useApp();
+    // 1.233：适配时长的目标秒数是这一格自己的草稿（与工程状态无关），说完那句回执就留着给人看。
+    const [fitSeconds, setFitSeconds] = useState("5");
+    const [fitSaid, setFitSaid] = useState("");
     const project = editableProject(app, true) ?? app.project;
     if (!project) return null;
     const asset = project.assets[clip.asset_id];
@@ -204,6 +207,16 @@ function ClipFields({ clip }: { clip: Clip }) {
           {[.25, .5, .75, 1, 1.25, 1.5, 2, 3, 4].map((speed) => <option key={speed} value={speed}>{speed}×</option>)}
           {![25,50,75,100,125,150,200,300,400].includes(clip.speed_percent ?? 100) ? <option value={(clip.speed_percent ?? 100) / 100}>{(clip.speed_percent ?? 100) / 100}×</option> : null}
         </select></div> : null}
+        {asset?.kind !== "image" && asset?.kind !== "text" ? <div className="effect-row"><label htmlFor="clip-fit">适配到</label>
+          <input id="clip-fit" className="input mono" type="number" min={0.1} step={0.1} value={fitSeconds} disabled={track?.locked} onChange={(event) => setFitSeconds(event.target.value)} />
+          <span className="dim">秒</span>
+          <button type="button" className="btn tiny" disabled={track?.locked} title="按目标时长反算播放速度：这段消耗的源不变，放不进 25%–400% 时会说明它能放成几秒" onClick={() => {
+            const fit = fitSpeedPercent(clip, Number(fitSeconds), frameTicks(project.settings.frame_rate));
+            setFitSaid(fit.words);
+            if (fit.percent) setClipSpeed(clip.id, fit.percent / 100);
+          }}>适配</button>
+        </div> : null}
+        {fitSaid ? <p className="hint" role="status">{fitSaid}</p> : null}
         {asset?.kind !== "image" && asset?.kind !== "text" ? <p className="hint">保留音高，变速后自动移动本轨后续片段；动画仍按时间线时间播放。</p> : null}
         <div className="insp-actions">
           <SplitButton clip={clip} />

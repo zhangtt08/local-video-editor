@@ -8,6 +8,35 @@ import { TIMEBASE } from "./time";
  * 的比例上限，`limits.blur_radius_limit_px` 是导出/预览半径一致性和实测过的最大像素半径，
  * 按当前画幅高折算后取小——旧引擎不下发这两个字段时返回 0，界面就不显示这一行。
  */
+/** 1.233：把这一段正好放进「几秒」。算的是播放速度：这段消耗的源不变，时长按倍率缩放。
+ *  引擎的速度量程是 25%–400%，放不进去就点名这段能放成几秒——不静悄悄夹到边上，
+ *  也不绕过那条校验（真的越界时引擎仍会拒）。带曲线变速的片段先拒：一条曲线没有单一倍率。 */
+export function fitSpeedPercent(clip: Clip, seconds: number, frame: number): { percent?: number; words: string } {
+  if (clip.speed_curve && clip.speed_curve.length) {
+    return { words: "这段带着曲线变速：先关掉曲线，再按时长适配。" };
+  }
+  const speed = clip.speed_percent ?? 100;
+  const source = (clip.duration_ticks * speed) / 100;
+  const target = Math.round((seconds * TIMEBASE) / frame) * frame;
+  if (!(target > 0) || !Number.isFinite(target)) return { words: "目标时长要大于零。" };
+  const percent = Math.round((source / target) * 100);
+  if (percent < 25 || percent > 400) {
+    const shortest = source / 4 / TIMEBASE;
+    const longest = source * 4 / TIMEBASE;
+    return {
+      words: `放不进 ${(target / TIMEBASE).toFixed(2)} 秒：播放速度只有 25%–400%，`
+        + `这段能适配成 ${shortest.toFixed(2)}–${longest.toFixed(2)} 秒。`,
+    };
+  }
+  const now = clip.duration_ticks / TIMEBASE;
+  if (percent === speed) return { percent, words: `这段现在就是 ${now.toFixed(2)} 秒（${percent}%），不用改。` };
+  return {
+    percent,
+    words: `播放速度 ${speed}% → ${percent}%，这段从 ${now.toFixed(2)} 秒变成 ${(target / TIMEBASE).toFixed(2)} 秒。`,
+  };
+}
+
+
 export function blurMaxPercent(caps: Capabilities | null, frameHeight: number): number {
   if (!caps?.features.clip_blur || frameHeight <= 0) return 0;
   return Math.min(
