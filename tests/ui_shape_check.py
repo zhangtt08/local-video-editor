@@ -198,7 +198,15 @@ def seed_project(token: str) -> str:
             "clip_id": "k2",
             "masks": [
                 {"shape": "rectangle", "center_x": 0.62, "center_y": 0.5, "width": 0.3,
-                 "height": 0.34, "rotation": 0, "feather": 0.05, "inverted": False},
+                 "height": 0.34, "rotation": 0, "feather": 0.05, "inverted": False,
+                 "keys": [
+                     {"at_ticks": 0, "center_x": 0.62, "center_y": 0.5, "width": 0.3,
+                      "height": 0.34, "rotation": 0, "interpolation": "linear"},
+                     {"at_ticks": 2 * second, "center_x": 0.55, "center_y": 0.5,
+                      "width": 0.3, "height": 0.34, "rotation": 6, "interpolation": "ease"},
+                     {"at_ticks": 4 * second, "center_x": 0.48, "center_y": 0.5,
+                      "width": 0.3, "height": 0.34, "rotation": 0, "interpolation": "hold"},
+                 ]},
                 {"shape": "ellipse", "center_x": 0.38, "center_y": 0.5, "width": 0.22,
                  "height": 0.28, "rotation": 18, "feather": 0.02, "inverted": True},
             ],

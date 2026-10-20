@@ -106,5 +106,11 @@ assert.match(inspector, /Math\.round\(raw \/ frame\) \* frame/, "框点没有落
 assert.match(engine, /extra_mask_windows\?: \(ExtraMaskWindow\[\] \| null\)\[\] \| null/, "清单的类型里没有每块自己的窗");
 assert.match(picture, /rotationWindowAt\(windows, local\)/, "浏览器没有按播放头挑那一块自己的窗");
 assert.match(picture, /row\.own \? "0px 0px"/, "自己带框点的那一层没有按整画面图落位");
+// 1.239：每一枚框点在卡片里有名字——时刻可跳、插值可改（贝塞尔不在这一档）、删除只走那一处 patch。
+assert.match(inspector, /className="mask-stack-keylist"/, "框点没有一张看得见的表");
+assert.match(inspector, /timecode\(key\.at_ticks, app\.project\?\.settings\.frame_rate/, "框点的时刻不是时间码");
+assert.match(inspector, /playhead\.set\(clip\.position_ticks \+ key\.at_ticks\)/, "点时刻没有把播放头挪过去");
+assert.match(inspector, /value !== "bezier"/, "框点里出现了这一档不支持的贝塞尔插值");
+assert.match(inspector, /row\.at_ticks !== key\.at_ticks/, "删除一枚框点没有走同一处 patch");
 
 console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的五个数与羽化/反转都在格子里改、每一块可以打自己的框点、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、样式仍走刻度");

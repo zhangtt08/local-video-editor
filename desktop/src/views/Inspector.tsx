@@ -1,5 +1,5 @@
 import { manifestUrl } from "../manifestFetch";
-import type { Keyframe, MaskShapeKeyframe, SpatialProperty } from "../engine";
+import type { Keyframe, MaskBoxKey, MaskShapeKeyframe, SpatialProperty } from "../engine";
 import { useEffect, useId, useRef, useState } from "react";
 
 import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionChoices, type AnimatedEffect, type Capabilities, type Clip, type LinkStatus, type SampledValues, type ShapeMask, type TransitionKind, BLEND_MODES} from "../engine";
@@ -704,6 +704,23 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
           {item.keys?.length ? <button type="button" className="btn tiny subtle" disabled={disabled}
             onClick={() => patch(index, { keys: [] })}>清空框点</button> : null}
         </div>
+        {item.keys?.length ? <ul className="mask-stack-keylist">
+          {item.keys.map((key) => <li key={key.at_ticks}>
+            <button type="button" className="btn tiny mono" title="把播放头移到这一帧"
+              onClick={() => { playhead.pause(); playhead.set(clip.position_ticks + key.at_ticks); }}>
+              {timecode(key.at_ticks, app.project?.settings.frame_rate ?? { numerator: 30, denominator: 1 })}
+            </button>
+            <select className="input tiny" aria-label="这一段框点的插值" value={key.interpolation ?? "linear"}
+              disabled={disabled}
+              onChange={(event) => patch(index, { keys: (item.keys ?? []).map((row) => row.at_ticks === key.at_ticks
+                ? { ...row, interpolation: event.target.value as MaskBoxKey["interpolation"] } : row) })}>
+              {Object.entries(INTERPOLATIONS).filter(([value]) => value !== "bezier").map(([value, label]) =>
+                <option key={value} value={value}>{label}</option>)}
+            </select>
+            <button type="button" className="btn tiny subtle" disabled={disabled} title="删掉这一枚框点"
+              onClick={() => patch(index, { keys: (item.keys ?? []).filter((row) => row.at_ticks !== key.at_ticks) })}>删除</button>
+          </li>)}
+        </ul> : null}
       </div>
     </div>)}
     <div className="insp-actions"><button className="btn tiny" disabled={disabled || full || limit === 0} title={full ? `最多 ${limit} 块；要再加，先删掉一块` : "这一版引擎不认识「再叠的遮罩」这一格，出路是换一台会回的引擎"} onClick={() => write([...stack, { ...DEFAULT_MASK, shape: "rectangle", feather: 0, vertices: null }])}>再抠一块</button></div>

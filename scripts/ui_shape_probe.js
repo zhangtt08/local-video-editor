@@ -295,9 +295,17 @@ function measureAgentCutUi() {
         if (hit.contains(el)) {
           var hs = getComputedStyle(hit);
           var hb = hit.getBoundingClientRect();
+          // 比的是**可视框**（去掉滚动条那一条），不是边框盒：落在自己滚动条上的控件
+          // 滚一滚就摸得着，和「被兄弟遮罩盖住」不是一件事。
+          var cb = {
+            left: hb.left + hit.clientLeft,
+            top: hb.top + hit.clientTop,
+            right: hb.left + hit.clientLeft + hit.clientWidth,
+            bottom: hb.top + hit.clientTop + hit.clientHeight,
+          };
           if (/auto|scroll/.test(hs.overflowX + " " + hs.overflowY) &&
-              (rect.bottom > hb.bottom + 1 || rect.top < hb.top - 1 ||
-               rect.right > hb.right + 1 || rect.left < hb.left - 1)) {
+              (rect.bottom > cb.bottom + 1 || rect.top < cb.top - 1 ||
+               rect.right > cb.right + 1 || rect.left < cb.left - 1)) {
             scrollAway.push((text || el.getAttribute("aria-label") || tag).slice(0, 24));
             continue;
           }
