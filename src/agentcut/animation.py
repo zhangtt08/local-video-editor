@@ -994,6 +994,8 @@ def preview_manifest(
                 mask_image(extra, project.settings.width, project.settings.height)
                 for extra in clip.extra_masks
             ] or None,
+            # 1.237：这几块跟不跟主遮罩的中心一起平移——浏览器按同一份曲线平移每一层。
+            "extra_masks_follow": clip.extra_masks_follow,
             "mask_curves": mask_curves or None,
             "mask_rotation_windows": rotation_windows or None,
             "mask_shape": mask_shape or None,

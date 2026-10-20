@@ -51,7 +51,7 @@ function outline(vertices: MaskVertex[]) {
 }
 
 /** Geometry-only handles; the server compiles the actual alpha image during a gesture. */
-export function MaskPicture({ clip, image, extra, children, editable = true, animation, shape, rotation }: { clip: Clip; image?: string | null; extra?: string[] | null; children: ReactNode; editable?: boolean; animation?: { unit: string | null; curves: Record<MaskProperty, Curve> } | null; shape?: MaskShapeWindow[] | null; rotation?: MaskRotationWindow[] | null }) {
+export function MaskPicture({ clip, image, extra, children, editable = true, follow = false, animation, shape, rotation }: { clip: Clip; image?: string | null; extra?: string[] | null; children: ReactNode; editable?: boolean; follow?: boolean; animation?: { unit: string | null; curves: Record<MaskProperty, Curve> } | null; shape?: MaskShapeWindow[] | null; rotation?: MaskRotationWindow[] | null }) {
   const app = useApp(); const play = usePlay();
   const [draft, setDraft] = useState<ShapeMask | null>(null);
   const [compiled, setCompiled] = useState<{ mask: ShapeMask; image: string } | null>(null);
@@ -319,12 +319,18 @@ export function MaskPicture({ clip, image, extra, children, editable = true, ani
         ? "calc((var(--mask-x) - var(--mask-w) / 2) * var(--mask-lw) * 1px) " +
           "calc((var(--mask-y) - var(--mask-h) / 2) * var(--mask-lh) * 1px)"
         : "0px 0px";
+  // 1.237：跟着走的那几块用主遮罩同一条中心曲线平移——`--mask-x/--mask-y` 减去主遮罩的
+  // 静止中心就是「这一帧挪了多少」，它们自己的静止中心仍然烘在自己的图里。大小与角度不跟。
+  const followPosition =
+    `calc((var(--mask-x) - ${mask?.center_x ?? .5}) * var(--mask-lw) * 1px) ` +
+    `calc((var(--mask-y) - ${mask?.center_y ?? .5}) * var(--mask-lh) * 1px)`;
+  const extraPosition = follow ? followPosition : "0px 0px";
   const stacked: CSSProperties = layers.length > 1
     ? {
         ...pictureStyle,
         maskImage: layers.join(", "),
         maskSize: [mainSize, ...layers.slice(1).map(() => "100% 100%")].join(", "),
-        maskPosition: [mainPosition, ...layers.slice(1).map(() => "0px 0px")].join(", "),
+        maskPosition: [mainPosition, ...layers.slice(1).map(() => extraPosition)].join(", "),
         maskRepeat: "no-repeat",
         maskComposite: "intersect",
       }

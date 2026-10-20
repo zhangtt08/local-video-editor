@@ -21,7 +21,9 @@ MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 
 SCHEMA_VERSION = (
 
-    25  # v25 lets one clip carry a second box to cut with; a v24 row has none and reads
+    26  # v26 lets those extra boxes follow the main mask's centre (a v25 row carries no flag and
+    #     stays put, which is exactly what the missing field meant). v25 lets one clip carry a
+    #     second box to cut with; a v24 row has none and reads
     #     as "just the one mask", which is exactly what the missing field meant.
     #     v24 lets that picture move: a layer carries its own keys, so a v23 row has none and
     #     reads as the static offset/scale it already carried. v23 gives that picture a place
@@ -41,7 +43,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.236.0"
+APP_VERSION = "1.237.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -2659,6 +2661,9 @@ class Clip(Contract):
     extra_masks: Annotated[list[ShapeMask], Field(max_length=MASK_STACK_LIMIT)] = (
         Field(default_factory=list)
     )
+    # 1.237：再叠的这几块可以跟着主遮罩的**中心平移**一起走（大小与角度仍各自保留）。
+    # 默认关：旧工程里它们本来就原地不动，这一格缺席等于 false，画面一字不变。
+    extra_masks_follow: bool = False
 
     fade: FadeEnvelope | None = None
 
@@ -4423,6 +4428,8 @@ class ClipMaskStackSet(Contract):
     op: Literal["clip.mask_stack"]
     clip_id: Identifier
     masks: Annotated[list[ShapeMask], Field(max_length=MASK_STACK_LIMIT)]
+    # None 就是「这一笔不动那一格」，所以打开/关闭可以和整串一起交，也可以单独交。
+    follow: bool | None = None
 
 
 class ClipMaskTrack(Contract):
@@ -6979,6 +6986,7 @@ def capabilities(
 
             "mask_rotation": True,
             "mask_stack": True,
+            "mask_stack_follow": True,
 
             # 1.165: that angle accepts keyframes. Both ends execute one frame-aligned staircase
 

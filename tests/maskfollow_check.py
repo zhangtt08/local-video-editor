@@ -200,11 +200,11 @@ def preview_shot(pid: str, tick: int, folder: Path, key: str) -> dict:
     return info
 
 
-def make_project(folder: Path, animate: bool) -> str:
+def make_project(folder: Path, animate: bool, follow: bool = False) -> str:
     made = request(
         "/v1/projects",
-        {"request_id": f"mf-new-{animate}",
-         "name": "再叠的块跟着走" + ("（动）" if animate else "（静）"),
+        {"request_id": f"mf-new-{animate}-{follow}",
+         "name": "再叠的块跟着走" + ("（跟）" if follow else "（动）" if animate else "（静）"),
          "settings": {"width": WIDTH, "height": HEIGHT,
                       "frame_rate": {"numerator": 30, "denominator": 1}}},
         "POST",
@@ -218,7 +218,7 @@ def make_project(folder: Path, animate: bool) -> str:
         {"op": "clip.add", "clip": {"id": "c", "asset_id": "w", "track_id": "v",
                                     "position_ticks": 0, "duration_ticks": 2 * SECOND}},
         {"op": "clip.mask", "clip_id": "c", "mask": PRIMARY},
-        {"op": "clip.mask_stack", "clip_id": "c", "masks": [EXTRA]},
+        {"op": "clip.mask_stack", "clip_id": "c", "masks": [EXTRA], "follow": follow},
     ]
     if animate:
         commands += [
@@ -266,6 +266,7 @@ def main() -> None:
         try:
             static = readings(make_project(folder, False), folder, "static")
             moving = readings(make_project(folder, True), folder, "moving")
+            following = readings(make_project(folder, True, True), folder, "following")
             # 两块盒子是相乘的：亮 = 同时在主遮罩与再叠那块里面。
             # 主遮罩 [0.2,0.8] 随中心曲线右移；再叠那块 [0.2,0.5] 不动。
             #   静止：任何时刻都亮在 [0.2,0.5]；
@@ -276,18 +277,23 @@ def main() -> None:
                 ("static", "t18"): (True, True, True, False),
                 ("moving", "t0"): (True, True, True, False),
                 ("moving", "t18"): (False, False, True, False),
+                # 1.237：勾上「跟着主遮罩平移」之后，再叠那块随主遮罩一起右移 0.135，
+                # 所以 t1.8 的 x=0.55 也落进了它的洞里。
+                ("following", "t0"): (True, True, True, False),
+                ("following", "t18"): (False, False, True, True),
             }
-            for name, data in (("static", static), ("moving", moving)):
+            names = {"static": "静止", "moving": "主遮罩在动", "following": "跟着主遮罩平移"}
+            for name, data in (("static", static), ("moving", moving), ("following", following)):
                 for side in ("export", "preview"):
                     for when in ("t0", "t18"):
                         image = data[side][when]
                         actual = tuple(bright(image, x, 0.5) for x in PROBES)
                         want = expected[(name, when)]
-                        label = f"{'静止' if name == 'static' else '主遮罩在动'} / {side} / {when}"
+                        label = f"{names[name]} / {side} / {when}"
                         print(f"   {label}：{actual}（期望 {want}）")
                         assert actual == want, (label, actual, want)
             # 两端逐点一致（这一档的核心：同一份工程的两个「洞」）。
-            for name, data in (("static", static), ("moving", moving)):
+            for name, data in (("static", static), ("moving", moving), ("following", following)):
                 for when in ("t0", "t18"):
                     for x in PROBES:
                         left = bright(data["export"][when], x, 0.5)
@@ -296,9 +302,10 @@ def main() -> None:
                             f"{name} {when} x={x}: 成片 {left} 预览 {right}——两端的洞不一样"
                         )
             print(
-                "PASS: 主遮罩的中心曲线把盒子推到右边之后，再叠那块仍在原地（x=0.42 两端都亮、"
-                "x=0.55 两端都暗），主遮罩自己也在动（x=0.30 由亮转暗），静止那一趟两端不动；"
-                "两个时刻四个探针两端逐点一致"
+                "PASS: 主遮罩右移之后，不跟随的再叠块仍在原地"
+                "（x=0.42 都亮、x=0.55 都暗），跟随的那一块跟着右移（x=0.55 由暗转亮）；"
+                "主遮罩自己也在动（x=0.30 由亮转暗），静止那一趟两端不动；"
+                "三趟两个时刻四个探针两端逐点一致"
             )
         finally:
             process.kill()

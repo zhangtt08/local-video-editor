@@ -32,9 +32,13 @@ assert.equal((store.match(/op: "clip\.mask_stack"/g) ?? []).length, 1, "clip.mas
 // ② 检查器：列表、加一块、删一块，额度听引擎的，做不到的那件事明说
 assert.match(inspector, /<MaskStack clip=\{clip\} disabled=\{disabled\} \/>/, "叠加那一格没接进遮罩区");
 assert.match(inspector, /app\.caps\?\.limits\?\.extra_masks/, "「最多几块」不在引擎那一份数上");
-assert.match(inspector, /再叠的这几块只切不动/, "关键帧只跟主遮罩走这件事必须写在格子里，不是藏在帮助里");
+assert.match(inspector, /只切不动/, "关键帧只跟主遮罩走这件事必须写在格子里，不是藏在帮助里");
+// 1.237：那一格旁边多了一个「跟着主遮罩平移」的开关，勾上之后它们跟着中心曲线走。
+assert.match(inspector, /跟着主遮罩平移/, "「跟着主遮罩平移」这一格不在检查器里");
+assert.match(inspector, /setClipMaskStack\(clip\.id, stack, event\.target\.checked\)/, "那个勾没有把 follow 交出去");
 assert.match(inspector, /与主遮罩取交集/, "那一格没说清叠出来的是什么关系");
-assert.equal((inspector.match(/setClipMaskStack\(clip\.id/g) ?? []).length, 1, "叠加那一串有两个写入口，早晚一份对不上");
+// 1.237：改一块与勾「跟着主遮罩平移」是两条人路，但都只进 setClipMaskStack 这一个写入口。
+assert.equal((inspector.match(/setClipMaskStack\(clip\.id/g) ?? []).length, 2, "叠加那一串的写入口不止那两处，早晚一份对不上");
 
 // ③ 浏览器：叠的是引擎给的图，取交集用标准那一格，不自己再算 alpha
 assert.match(picture, /const layers = \[primaryImage, \.\.\.\(extra \?\? \[\]\)\]\.filter\(Boolean\)/,
@@ -81,10 +85,12 @@ assert.match(
   /maskSize: \[mainSize, \.\.\.layers\.slice\(1\)\.map\(\(\) => "100% 100%"\)\]\.join\(", "\)/,
   "再叠的层的尺寸不是各自的 100%×100%",
 );
+assert.match(picture, /const followPosition =/, "「跟着主遮罩平移」没有一条自己的落位算式");
+assert.match(picture, /const extraPosition = follow \? followPosition : "0px 0px";/, "跟不跟这一格没有决定再叠层的落位");
 assert.match(
   picture,
-  /maskPosition: \[mainPosition, \.\.\.layers\.slice\(1\)\.map\(\(\) => "0px 0px"\)\]\.join\(", "\)/,
-  "再叠的层的落位不是各自的 0,0——它们会被主遮罩的盒子原点一起搬走",
+  /maskPosition: \[mainPosition, \.\.\.layers\.slice\(1\)\.map\(\(\) => extraPosition\)\]\.join\(", "\)/,
+  "再叠的层的落位不是各自的 0,0 / 跟随时的主遮罩平移",
 );
 assert.match(picture, /calc\(\(var\(--mask-x\) - 0\.5\) \* var\(--mask-lw\) \* 1px\)/, "角度那一支的落位公式变了");
 assert.match(picture, /calc\(\(var\(--mask-x\) - var\(--mask-w\) \/ 2\) \* var\(--mask-lw\) \* 1px\)/, "中心/宽高那一支的落位公式变了");

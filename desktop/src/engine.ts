@@ -285,7 +285,7 @@ export type SharpenSteps = {
   curve: { offset: number; id: string | null; easing: string }[];
 };
 export type SharpenSpec = SharpenStatic | SharpenSteps;
-export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; webgl?: boolean; color_basics?: number[] | null; grade?: GradeTables | null; sharpen?: SharpenSpec | null; speed?: RampPiece[] | null; mask_image?: string | null; extra_mask_images?: string[] | null; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; mask_shape?: MaskShapeWindow[] | null; mask_rotation_windows?: MaskRotationWindow[] | null; spatial?: Partial<Record<SpatialProperty, Curve>> | null; edge_filter?: string | null; curves: Record<AnimatedEffect, Curve>; transition: TransitionEnvelope; fade?: Record<"opacity" | "gain", Curve> | null;
+export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; webgl?: boolean; color_basics?: number[] | null; grade?: GradeTables | null; sharpen?: SharpenSpec | null; speed?: RampPiece[] | null; mask_image?: string | null; extra_mask_images?: string[] | null; extra_masks_follow?: boolean; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; mask_shape?: MaskShapeWindow[] | null; mask_rotation_windows?: MaskRotationWindow[] | null; spatial?: Partial<Record<SpatialProperty, Curve>> | null; edge_filter?: string | null; curves: Record<AnimatedEffect, Curve>; transition: TransitionEnvelope; fade?: Record<"opacity" | "gain", Curve> | null;
       layer?: { asset_id: string; mode: BlendMode; mix: number; offset_x: number; offset_y: number; scale: number; rotation?: number; windows?: LayerWindow[]; paintable: boolean; reason?: string | null }[];
       composite?: CompositeEdge | null }> };
 
@@ -304,6 +304,7 @@ export type Clip = {
   mask?: ShapeMask | null;
   /** 1.221：主遮罩之外再叠的几块（矩形/椭圆），与主遮罩相乘；关键帧仍只跟主遮罩走。 */
   extra_masks?: ShapeMask[];
+  extra_masks_follow?: boolean;
   fade?: FadeEnvelope | null;
   id: string;
   asset_id: string;

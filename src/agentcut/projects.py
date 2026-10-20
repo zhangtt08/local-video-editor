@@ -194,6 +194,9 @@ class ProjectStore:
                 # the one-mask clip it was, so old receipts keep replaying.
                 if "asset_id" in node and not node.get("extra_masks"):
                     node.pop("extra_masks", None)
+                # 1.237: a clip that never asked for following hashes as one that could not.
+                if "asset_id" in node and not node.get("extra_masks_follow"):
+                    node.pop("extra_masks_follow", None)
                 # 1.120 gave a parallel node its branch weights. An absent table and an empty one
                 # are the same thing (every branch counts the same), so a pre-1.120 payload that
                 # never mentions weights keeps hashing as the payload it was.

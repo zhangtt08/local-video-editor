@@ -1675,9 +1675,29 @@ def compile_render_plan(
                 if clip.mask and not path_mask:
                     alpha.append(f"({alpha_expression(clip.mask, mask_values, mask_box)})")
                 # 1.221：再叠的几块与主遮罩**相乘**——这一串本来就是 `*` 起来的，
-                # 多一块就是多一个括号；它们不带动画，所以 `mask_values` 交回 None。
-                for extra in clip.extra_masks:
-                    alpha.append(f"({alpha_expression(extra, None, mask_box)})")
+                # 多一块就是多一个括号。1.237：开了 `extra_masks_follow` 的那几块跟着主遮罩的
+                # **中心**平移（各自的位置偏移加在同一个表达式上，大小与角度仍是自己的）；
+                # 没开就仍交回 None，编译串与 1.236 逐字节相同。
+                for slot, extra in enumerate(clip.extra_masks):
+                    follow = (
+                        clip.extra_masks_follow
+                        and clip.mask is not None
+                        and not path_mask
+                    )
+                    values = None
+                    if follow:
+                        registers = (20 + 2 * slot, 21 + 2 * slot)
+                        values = {
+                            "mask_x": (
+                                f"({expression(clip, 'mask_x', 'T', registers)}"
+                                f"+{extra.center_x - clip.mask.center_x:.9f})"
+                            ),
+                            "mask_y": (
+                                f"({expression(clip, 'mask_y', 'T', registers)}"
+                                f"+{extra.center_y - clip.mask.center_y:.9f})"
+                            ),
+                        }
+                    alpha.append(f"({alpha_expression(extra, values, mask_box)})")
                 if (
                     clip.effects.opacity != 1
                     or "opacity" in animated

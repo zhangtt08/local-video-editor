@@ -968,6 +968,8 @@ def apply_commands(
                                 clip_id=clip.id,
                             )
                     clip.extra_masks = [extra.model_copy(deep=True) for extra in command.masks]
+                    if command.follow is not None:
+                        clip.extra_masks_follow = command.follow
                 elif command.op == "clip.mask_track":
                     _apply_mask_track(clip, command.points, command.merge)
                 elif command.op == "clip.color":

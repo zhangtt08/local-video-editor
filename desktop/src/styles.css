@@ -1094,6 +1094,7 @@ table.table tr.current td { background: var(--accent-soft); }
 .mask-stack-cell > span:first-child { flex: none; color: var(--ink-3); font-size: var(--fs-label); }
 .mask-stack-cell .input { flex: 1 1 40px; min-width: 0; width: auto; }
 .mask-stack-cell > .dim { flex: none; font-size: var(--fs-label); }
+.mask-stack-follow { display: flex; align-items: center; gap: 6px; margin: 4px 0 2px; font-size: var(--fs-label); color: var(--ink-2); }
 .mask-stack-invert { grid-column: 1 / -1; gap: 6px; color: var(--ink-2); }
 
 /* 标尺上的标记：一条竖线 + 名字，点击即跳转，× 删除。颜色只是给眼睛用的分组。 */

@@ -2129,9 +2129,12 @@ export function editAtRevision(commands: Command[], projectId: string, revision:
 
 /** 1.221：主遮罩之外那几块的整体写入——与 `clip.mask` 同一个规矩，一次交回一整串，
  *  不在服务端猜「第几块要换成什么」，也不给同一份状态留第二个主人。 */
-export function setClipMaskStack(clipId: string, masks: ShapeMask[], projectId = state.project?.id, revision = state.project?.revision) {
+export function setClipMaskStack(clipId: string, masks: ShapeMask[], follow?: boolean, projectId = state.project?.id, revision = state.project?.revision) {
   if (projectId === undefined || revision === undefined) return;
-  editAtRevision([{ op: "clip.mask_stack", clip_id: clipId, masks }], projectId, revision, "调整叠加遮罩");
+  const command: Record<string, unknown> = { op: "clip.mask_stack", clip_id: clipId, masks };
+  // 没点那一格就不交这一格：与「交 false」是两种意思（一个不动、一个关掉）。
+  if (follow !== undefined) command.follow = follow;
+  editAtRevision([command] as never, projectId, revision, "调整叠加遮罩");
 }
 
 export function setClipMask(clipId: string, mask: ShapeMask | null, projectId = state.project?.id, revision = state.project?.revision) {
