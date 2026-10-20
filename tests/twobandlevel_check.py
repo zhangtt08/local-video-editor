@@ -235,6 +235,30 @@ def export_frame(pid: str, revision: int, preset_id: str, folder: Path) -> Path:
     return frames[0]
 
 
+def run_shot(argv, label: str) -> subprocess.CompletedProcess:
+    """跑一趟拍照腿，撞上下面那一种抖动就重试一次。
+
+    这台机器上的 headless Edge 偶发在 attach 那一刻把 CDP socket 关掉：1.223 在照片腿
+    上记过一次（那一腿当时就加了重试），1.226 的全套里又撞上一次——撞的是**没有重试的
+    那一腿**（平色）。两次的原文都带进那一句红里，重试不是把判据放软：真的对不上时，
+    两趟都会红在同一句上。
+    """
+    first = ""
+    answer = None
+    for attempt in (1, 2):
+        answer = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8",
+                                errors="replace", cwd=str(ROOT), creationflags=0x08000000,
+                                timeout=300)
+        if answer.returncode == 0:
+            return answer
+        text = (answer.stderr or "")[-600:]
+        if attempt == 1:
+            first = text
+            time.sleep(2.0)
+    raise AssertionError(f"{label}退出码 {answer.returncode}（重试过一次还是这样）；"
+                         f"第一次：{first}；第二次：{text}")
+
+
 def preview_shot(pid: str, folder: Path, stages) -> Path:
     """拍预览那一腿，并且当场对一遍「画出来的段数 == 清单交的段数」。"""
     png = folder / "preview-levels.png"
@@ -247,18 +271,7 @@ def preview_shot(pid: str, folder: Path, stages) -> Path:
         "--table-values", "256",
         "--edge", str(EDGE),
     ]
-    retries = 0
-    while True:
-        answer = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8",
-                                errors="replace", cwd=str(ROOT), creationflags=0x08000000,
-                                timeout=300)
-        if answer.returncode == 0:
-            break
-        if retries >= 1:
-            raise AssertionError(f"照片腿退出 {answer.returncode}（重试过一次还是这样）: "
-                                 f"{answer.stderr[-600:]}")
-        retries += 1
-        time.sleep(2.0)
+    run_shot(argv, "照片腿")
     assert png.exists(), "照片腿说写完了但文件不在"
     return png
 
@@ -344,10 +357,7 @@ def strip_shot(pid: str, folder: Path, levels) -> tuple[list[tuple[int, int, int
         "--project", pid, "--clip", "c", "--out", str(png), "--layers", "0",
         "--strip", ",".join(str(v) for v in levels), "--edge", str(EDGE),
     ]
-    answer = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8",
-                            errors="replace", cwd=str(ROOT), creationflags=0x08000000,
-                            timeout=300)
-    assert answer.returncode == 0, f"平色腿退出 {answer.returncode}: {answer.stderr[-500:]}"
+    answer = run_shot(argv, "平色腿")
     info = json.loads(answer.stdout.strip().splitlines()[-1])
     width, height, raw = first_frame(png)
     assert width == 40 * len(levels) and height == 40, (width, height)
