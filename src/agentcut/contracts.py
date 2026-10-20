@@ -41,7 +41,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.233.0"
+APP_VERSION = "1.234.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -7092,11 +7092,12 @@ def capabilities(
 
             "lut3d": True,
 
-            # The exporter runs a 3D LUT through FFmpeg's `lut3d`; no browser primitive
+            # 1.234：浏览器这一端也能画立方表了——`gradeCanvas.ts` 用 WebGL2 采样同一张表、
+            # 同一个四面体插值档，与导出的 `lut3d=…:interp=tetrahedral` 读的是同一批格点。
+            # 唯一的例外是链上还有第二路画面（composite / layer）：那要两个输入，画布只接一个，
+            # 引擎在那条链上把立方阶段标成 `preview: false`，界面照旧说「预览不生效」。
 
-            # can evaluate a cross-channel cube, so the UI must say the preview does not show it.
-
-            "lut3d_preview": False,
+            "lut3d_preview": True,
 
             # 1.144：链子的第二路画面输入。编译与导出这一端是真的生效（`split` + `blend`），
 

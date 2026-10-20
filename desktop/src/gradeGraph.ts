@@ -214,10 +214,11 @@ function operationText(node: GradeNode): string {
     parts.push(`加权 ${node.weights.map((weight) => `×${weight}`).join("/")}`);
   }
   if (node.kind === "lut") parts.push(`${node.title} · ${node.size} 点`);
-  // 3D 表在卡片上就把「预览不生效」写出来：这是一张只有导出会走它的表，不是近似。
+  // 1.234：立方表现在预览也画（画布上同一张表、同一档四面体插值），卡片不再说「仅导出生效」；
+  // 「什么时候只在导出里生效」由下面那一行说明按这一条链的实际情况讲。
   if (node.kind === "lut3d")
     parts.push(
-      `${node.title} · ${node.size}³ 网格 · 仅导出生效` +
+      `${node.title} · ${node.size}³ 网格 · 预览与导出同一张表` +
         (node.resampled_from ? ` · 由 ${node.resampled_from}³ 重采样` : ''),
     );
   // 色阶卡片报出自己把输入量程的哪一段拉到了满量程，人不用点开也知道这个节点在做什么。

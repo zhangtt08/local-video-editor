@@ -39,7 +39,7 @@ assert.deepEqual(resolveMixerPath(undefined, [0]), [], "节点被删了也不能
 const cube = { kind: "lut3d", title: "t", size: 2, cells: [0, 0, 0, 1, 1, 1], enabled: true } as unknown as GradeNode;
 const chainCurve = curve();
 assert.equal(chainFieldsFor(chainCurve, []), chainCurve, "链上挑中一条曲线就摆它自己的控件");
-assert.equal(chainFieldsFor(cube, [])?.kind, "lut3d", "3D 表也要摆出自己那一段（说预览不生效，而不是没有面板）");
+assert.equal(chainFieldsFor(cube, [])?.kind, "lut3d", "3D 表也要摆出自己那一段（说它与导出同一张表，而不是没有面板）");
 assert.equal(chainFieldsFor(nested, []), null, "混频台走自己那块面板，不是节点的控件");
 assert.equal(chainFieldsFor(nested, [0]), null, "进到里层时外层节点的控件不许压在下面");
 assert.equal(chainFieldsFor(chainCurve, [0]), null, "路径非空就不摆外层控件：这一步本不该发生，发生了也不能画");

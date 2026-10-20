@@ -3846,7 +3846,9 @@ SHA-256 比对。
 用恒等表量不出来（重采样后逐点差 <0.02）。`resampled_from` 存在节点上而不是只存在回复里，是为了让那个信息跟着
 这条 look 一辈子，而不是导入那一刻闪过。
 
-第三个决定是**不假装两端一致**。`features.lut3d=true` 与 `features.lut3d_preview=false` 同时下发；
+第三个决定是**不假装两端一致**。（1.234 起这一条被兑现了：浏览器那一头多了一块 WebGL2 画布，
+按同一张表、同一档四面体插值画，`features.lut3d_preview` 翻成 true；实测 12 块平色板两端最差 2 级。
+下面这几段记的是 1.103 当时的决定，留作来历。）`features.lut3d=true` 与 `features.lut3d_preview=false` 同时下发；
 `preview-manifest` 里根本没有那一段（`preview_grade` 按 `preview: false` 整个拿掉，只剩立方的链连 `url(#…)` 都不写）；节点卡片上写「预览不生效、导出生效」；
 节点上没有 `mix` 也没有 `blend`——一个只有一端会执行的强度，给了就是让人对一个看不见的数做决定。这与 1.78
 降噪的处理同一条规矩，而那次已经证明：写清楚比给一个近似更值得。

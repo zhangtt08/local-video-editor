@@ -6,6 +6,7 @@ import { MaskPicture } from "./MaskPicture";
 import { TIMEBASE, frameTicks, humanDuration, pacing, rateLabel, timecode } from "../time";
 import type { AnimatedEffect, BlendMode, Clip, GradeTables, PreviewManifest, Project, Track } from "../engine";
 import { feColorMatrixValues } from "../engine";
+import { gradeNeedsCanvas, paintGrade } from "../gradeCanvas";
 import { blurFrames, compositeLive, compositeSwap, layerFrames, layerStyle, sharpenFilters, sharpenFrames, sharpenSteps, wipeClipPath } from "../effects";
 import { appInfo, clearProxyCache, clearDerivedCache, cycleSafeArea, editSource, fourPoint, jumpEditPoint, markSource, playhead, PROXY_WIDTHS, selectClip, selectedSource, setMonitorMode, setProxyWidth, setSourceCursor, setSourcePlaying, setSourceRipple, setSourceTarget, timelineEnd, useApp, usePlay } from "../store";
 
@@ -52,7 +53,7 @@ function FilterDefs({ plan }: { plan: PreviewManifest | null }) {
         <feFuncR type="table" tableValues={stage.r.join(" ")} />
         <feFuncG type="table" tableValues={stage.g.join(" ")} />
         <feFuncB type="table" tableValues={stage.b.join(" ")} />
-      </feComponentTransfer> : <feColorMatrix key={stage.id} type="matrix" values={feColorMatrixValues(stage.m).join(" ")} />)}
+      </feComponentTransfer> : stage.type === "matrix" ? <feColorMatrix key={stage.id} type="matrix" values={feColorMatrixValues(stage.m).join(" ")} /> : null)}
     </filter>)}
       {found.sharpens.map((spec) => <filter key={spec.id} id={spec.id} colorInterpolationFilters="sRGB" primitiveUnits="objectBoundingBox" x="-2%" y="-2%" width="104%" height="104%">
         {/* Same formula the exporter compiles: 源 + 量×(源 − 高斯(源)). The arithmetic composite
@@ -217,6 +218,10 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
   clip: Clip; track: Track; project: Project; plan: PreviewManifest["clips"][string] | undefined; url?: string; ticks: number; playing: boolean; monitorMuted: boolean; mixed?: boolean; manifest?: PreviewManifest; streams?: Record<string, string>; interactive?: boolean; parentGain?: () => number; clockRate?: number;
 }) {
   const elementRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
+  // 1.234：链上有立方表时画面改由一块 WebGL2 画布画（同一张表、同一档四面体插值），
+  // 视频/图片原件只是源——它仍要播（提供时钟与声音），只是不再直接画到屏幕上。
+  const imageRef = useRef<HTMLImageElement | null>(null);
+  const gradeCanvas = useRef<HTMLCanvasElement | null>(null);
   const wrappers = useRef<Partial<Record<AnimatedEffect, HTMLElement | null>>>({});
   const fades = useRef<Partial<Record<"opacity" | "gain", HTMLElement | null>>>({});
   // 1.98: 柔焦的曲线编译成一格一步的窗，浏览器只把那份窗动画到这一层 `filter` 上。
@@ -229,6 +234,11 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
   const moves = useRef<Partial<Record<"motion_x" | "motion_y" | "zoom" | "reveal", HTMLElement | null>>>({});
   const animations = useRef<Animation[]>([]); const [error, setError] = useState("");
   const asset = project.assets[clip.asset_id]; const isAudio = track.kind === "audio"; const isImage = asset?.kind === "image";
+  const canvasGrade = plan && gradeNeedsCanvas(plan.grade) ? plan.grade : null;
+  // 画布的失败不藏着：拿不到 WebGL2 或着色器编不过时，画面退回未套 LUT 的原件并明说，
+  // 而不是留一块黑（黑会被当成「这段就是黑的」）。
+  const [canvasFailed, setCanvasFailed] = useState(false);
+  const canvasLive = canvasGrade !== null && !canvasFailed;
   const relative = (ticks - clip.position_ticks) / TIMEBASE;
   const pace = pacing(clip.speed_percent ?? 100, plan?.speed, relative);
   const effectiveRate = pace.rate * clockRate;
@@ -334,12 +344,12 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
     const gain = wrappers.current.gain; const sound = blends.current.sound;
     return (gain ? Number(getComputedStyle(gain).opacity) * 4 : 1) * (sound ? Number(getComputedStyle(sound).opacity) : 1) * fadeValue("gain") * track.volume * (plan?.sound_enabled ? 1 : 0) * (parentGain?.() ?? 1);
   };
-  const media = asset?.sequence_id && manifest ? <NestedPreview id={asset.sequence_id} project={project} manifest={manifest} streams={streams} ticks={clip.source_in_ticks + Math.floor((ticks - clip.position_ticks) * (clip.speed_percent ?? 100) / 100)} playing={playing} monitorMuted={monitorMuted || track.muted || !plan?.sound_enabled} parentGain={inheritedGain} clockRate={clockRate * (clip.speed_percent ?? 100) / 100} /> : clip.text ? <div className="caption-layer" style={textLayerStyle(clip.text, textFonts)}><span>{clip.text.body}</span></div> : !url ? <div className="layer-error">「{asset?.label}」素材离线或未导入</div> : isImage ? <img src={url} alt={asset?.label} /> : isAudio ? <audio ref={(node) => { elementRef.current = node; }} crossOrigin="anonymous" src={url} preload="auto" onError={() => setError("音频无法解码")} /> : <video ref={(node) => { elementRef.current = node; }} crossOrigin="anonymous" src={url} playsInline preload="auto" onError={() => setError("视频无法解码")} />;
+  const media = asset?.sequence_id && manifest ? <NestedPreview id={asset.sequence_id} project={project} manifest={manifest} streams={streams} ticks={clip.source_in_ticks + Math.floor((ticks - clip.position_ticks) * (clip.speed_percent ?? 100) / 100)} playing={playing} monitorMuted={monitorMuted || track.muted || !plan?.sound_enabled} parentGain={inheritedGain} clockRate={clockRate * (clip.speed_percent ?? 100) / 100} /> : clip.text ? <div className="caption-layer" style={textLayerStyle(clip.text, textFonts)}><span>{clip.text.body}</span></div> : !url ? <div className="layer-error">「{asset?.label}」素材离线或未导入</div> : isImage ? <img ref={imageRef} className={canvasLive ? "grade-source-hidden" : undefined} crossOrigin="anonymous" src={url} alt={asset?.label} /> : isAudio ? <audio ref={(node) => { elementRef.current = node; }} crossOrigin="anonymous" src={url} preload="auto" onError={() => setError("音频无法解码")} /> : <video ref={(node) => { elementRef.current = node; }} className={canvasLive ? "grade-source-hidden" : undefined} crossOrigin="anonymous" src={url} playsInline preload="auto" onError={() => setError("视频无法解码")} />;
   // 「叠一层原图」这条边（1.193）：导出那两步是 `(1-mix)·raw + mix·mode(graded, raw)`，浏览器用
   // 两层就画得出来——底层原图，上面一个 `opacity=mix` 的隔离容器，容器内「已调色」作底、原图按
   // `mix-blend-mode` 相合。`normal` 那一档要交换容器里那两层的顺序（`compositeSwap` 一处判断）：
   // FFmpeg 的 normal 交回第一个输入、CSS 的交回上面那一层。
-  const graded = <div ref={(node) => { blurs.current.edge = node; }} className="layer-edge" style={{ filter: plan?.edge_filter ?? undefined }}><div ref={(node) => { blurs.current.blur = node; }} className="layer-blur"><div className="layer-transform" style={{ filter: plan?.color_filter }}>{media}</div></div></div>;
+  const graded = <div ref={(node) => { blurs.current.edge = node; }} className="layer-edge" style={{ filter: plan?.edge_filter ?? undefined }}><div ref={(node) => { blurs.current.blur = node; }} className="layer-blur"><div className="layer-transform" style={{ filter: plan?.color_filter }}>{media}{canvasLive ? <canvas ref={gradeCanvas} className="grade-canvas" aria-hidden="true" /> : null}{canvasGrade && canvasFailed ? <div className="layer-error grade-fallback">预览画不出这张立方表（这台浏览器没有可用的 WebGL2），画面按未套 LUT 显示；导出不受影响</div> : null}</div></div></div>;
   // 1.196：视频那一段的「原图」不是第二路解码，而是把已经解码好的那一帧拓进一张 canvas。
   // 本轮量过（AGENTS 1.195 那一节）：暂停与逐帧时两路逐格 0 差，而播放中再开一路解码会把主线程
   // 的动画帧率打掉一半（rAF 181→94）——所以引擎对视频交回 `motion:"paused"`，播放中这一级不画。
@@ -370,6 +380,47 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
       source.removeEventListener("loadeddata", paint);
     };
   }, [relative, playing, url, isImage]);
+  // 1.234：立方表那条链画在画布上。画布的**内部分辨率跟着源的大小走**（按这一格等比缩，
+  // 最多两倍），CSS 再按 `object-fit: contain` 装进这一格——所以它和原来的 <video>/<img>
+  // 在同一格里占的是同一块画面，补边与遮罩坐标一个字都不用改。
+  // 换帧：视频播放时按 rAF、暂停/逐帧时按 seeked 与 loadeddata；图片只画一次（load）。
+  useEffect(() => { setCanvasFailed(false); }, [canvasGrade?.id]);
+  useEffect(() => {
+    const canvas = gradeCanvas.current;
+    const source = (elementRef.current ?? imageRef.current) as HTMLVideoElement | HTMLImageElement | null;
+    if (!canvas || !canvasGrade || !source) return;
+    let frame = 0;
+    const draw = () => {
+      const box = canvas.parentElement?.getBoundingClientRect();
+      const width = (source as HTMLVideoElement).videoWidth || (source as HTMLImageElement).naturalWidth || 0;
+      const height = (source as HTMLVideoElement).videoHeight || (source as HTMLImageElement).naturalHeight || 0;
+      if (!width || !height) return;
+      const scale = Math.min((box?.width ?? width) / width, (box?.height ?? height) / height, 2);
+      canvas.width = Math.max(2, Math.round(width * scale));
+      canvas.height = Math.max(2, Math.round(height * scale));
+      // 同一份源可能因为跨源而拒绝上传（量到过：`<img>` 少一个 crossOrigin，texImage2D 抛
+      // SecurityError，画布留在黑底）；抛出来的失败与返回假的失败走同一条退路。
+      let painted = false;
+      try {
+        painted = paintGrade(canvas, source, canvasGrade, plan?.color_basics ?? [1, 1, 1]);
+      } catch {
+        painted = false;
+      }
+      if (!painted) setCanvasFailed(true);
+    };
+    draw();
+    const events = ["loadeddata", "loadedmetadata", "seeked", "timeupdate", "load"];
+    for (const name of events) source.addEventListener(name, draw);
+    if (playing && source instanceof HTMLVideoElement) {
+      const loop = () => { draw(); frame = requestAnimationFrame(loop); };
+      frame = requestAnimationFrame(loop);
+    }
+    return () => {
+      for (const name of events) source.removeEventListener(name, draw);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [canvasGrade?.id, plan?.color_basics, playing, url]);
+
   const rawAt = (blend?: BlendMode) => <div className="layer-transform">{isImage ? <img className="composite-raw" alt="" aria-hidden="true" src={url} style={blend ? { mixBlendMode: blend } : undefined} /> : <canvas className="composite-raw" aria-hidden="true" style={blend ? { mixBlendMode: blend } : undefined} />}</div>;
   const edge = plan?.composite;
   // 画不画得了只听清单里那一行：`paintable` 是「这一段有没有第二幅画」，`motion` 是「什么时候

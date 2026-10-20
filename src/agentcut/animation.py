@@ -854,9 +854,29 @@ def preview_manifest(
         curves = {}
         for prop in ("x", "y", "scale", "rotation", "opacity", "gain"):
             curves[prop] = property_curve(clip, prop)
-        grade = preview_grade(
-            clip.color, project.settings.working_primaries, project.settings.fold_transfer
+        # 1.234：立方表能不能交给画布，只问这一处——画面是视频或图片才谈得上读那一帧；
+        # 文字层（DOM 文字）与嵌套合成（一棵子树）都交不出 TexImageSource。
+        source_asset = project.assets.get(clip.asset_id)
+        drawable = (
+            bool(source_asset)
+            and source_asset.kind in ("video", "image")
+            and not source_asset.sequence_id
         )
+        grade = preview_grade(
+            clip.color,
+            project.settings.working_primaries,
+            project.settings.fold_transfer,
+            draw_cube=drawable,
+        )
+        # 1.234：链上有立方表时整条链（含曝光/对比/饱和）由画布上的 WebGL 走一遍，CSS 这一串
+        # 里一格都不许再乘——两边都算就是两次调色。`color_basics` 是画布要的那三个数，
+        # 与 `color_filter` 里那三项同源：同一条式子在下面只算一次。
+        # 判据必须是「格点真的在这条回包里」（`cells_u8`）：文字层、嵌套合成、带第二路画面的
+        # 那种链上立方交不出去，画布画不了——那时清空 CSS 就是把整条调色悄悄丢掉。
+        webgl = bool(grade) and any(
+            stage.get("type") == "lut3d" and stage.get("cells_u8") for stage in grade["stages"]
+        )
+        basics = [2**clip.color.exposure, clip.color.contrast, clip.color.saturation]
         track = tracks[clip.track_id]
         # The fade travels as its own curve because the browser multiplies nested opacity, not two
         # numbers on one element: a factor curve holding 1.0 through the middle of the clip composes
@@ -989,11 +1009,18 @@ def preview_manifest(
             # One key, two shapes: a clip that does not step gets the single static filter the
             # browser has always drawn, a stepped one gets the window table it animates.
             "sharpen": stepped or sharpen,
+            # 画布这一档自己算基础调色与整条链；CSS 这一串只剩柔焦与清晰（它们按顺序留在外层）。
+            "webgl": webgl,
+            "color_basics": basics if webgl else None,
             "color_filter": (
-                f"brightness({2**clip.color.exposure}) "
-                f"contrast({clip.color.contrast}) saturate({clip.color.saturation})"
+                ""
+                if webgl
+                else (
+                    f"brightness({basics[0]}) "
+                    f"contrast({basics[1]}) saturate({basics[2]})"
+                )
+                + (f" url(#{grade['id']})" if grade else "")
             )
-            + (f" url(#{grade['id']})" if grade else "")
             # The blur fraction the exporter feeds to `blur_sigma` becomes 1cqh = 1% of the frame's
             # rendered height here, so the preview's radius is the same number of frame-heights.
             # A keyframed radius is NOT baked in: `spatial` carries the windows and the browser

@@ -2393,11 +2393,16 @@ reducer 分支；改的只是界面此前只在检查器给一个 ◇ 按钮，�
 `resampled_from` 不比存的网格大、带 `mix`/`blend`、或塞进 `parallel` 分支，都是 422。坏文件的拒绝带
 `line`/`size`/`rows`，`INVALID_LUT` 一个码不混用。
 
-导出生效、预览不生效，是这一条的边界：`grade_tables` 交出的阶段是
-`{"type":"lut3d","id","title","size","preview":false}`（表体不搬，那是 49k 个数）；界面读的 `preview_grade` 按 `preview: false` 再把这一段整个去掉，所以一条只有立方的链在 manifest 里 `grade` 是 `null`、CSS 串里没有 `url(#…)`——浏览器为收到的每个阶段画原语，留一个没有数字的滤镜就是画面消失，而不是预览不变。
+1.234 起预览也生效：`grade_tables` 交出的立方阶段带 `cells_u8`（红最快、每格三字节的 base64，
+17³ 是 14,739 字节）与 `preview: true`，界面读的 `preview_grade` 不再把这一段拿掉；
+`preview-manifest` 那一行同时给 `webgl: true` 与 `color_basics`（曝光/对比/饱和三个数），
+`color_filter` 清空——整条链由 `desktop/src/gradeCanvas.ts` 的 WebGL2 画布按同一张表、
+同一档四面体插值走一遍。两种时候仍交不出立方：画面是文字层或嵌套合成（没有 `TexImageSource`），
+或链上还有第二路画面（`composite`/`layer` 要两个输入）——那时 `webgl` 为假、`color_basics` 为 `null`，
+CSS 滤镜串保留其余各段（立方那一级照旧只在导出里生效），不会把整条调色悄悄丢掉。
 导出侧 `compile_render_plan` 把节点写成作业目录里的 `lut3d-<sha>.cube` 并产出
 `lut3d=file=lut3d-<sha>.cube:interp=tetrahedral`。`capabilities` 两条并放：
-`features.lut3d=true`、`features.lut3d_preview=false`；界面据此在节点卡片上写「仅导出生效」。
+`features.lut3d=true`、`features.lut3d_preview=true`。
 它没有强度也没有混合方式，理由写在契约里：只有一端能执行的强度不是强度——与 1.78 的降噪同一个规矩。
 
 
@@ -2608,9 +2613,10 @@ def），`curve` 逐点 `{offset, id, easing}`，强度 0 的那一格 `id` 是 
 的 2³ 置换（红蓝对调、三通道轮转）：纯红 (231, 29, 20) 走 P+Q 得 (27, 230, 18)、走 Q+P 得 (230, 18, 28)，
 两者都落在整数置换的理想值 2 级以内；同一张放两次得 (229, 28, 19)，回到原片。夹在两张中间的那条单通道
 曲线读的是「前一张换完之后」的那一路通道：夹在中间是 (28, 230, 39)，挪到链首是 (27, 209, 18)。
-预览那一端一张都不进 `preview_manifest`，几张都是；界面上每张立方各写一张卡片（`N³ 网格 · 仅导出生效`，
-重采样过的还说 `由 M³ 重采样`），卡片上没有强度可标——`GradeLut3D` 契约里就没有 `mix` 字段，
-`features.lut3d_preview` 为假就是这件事的原因。
+1.234 起预览那一端每张立方都带着自己的格点进 `preview_manifest`、同一条画布按链序走一遍
+（`features.lut3d_preview` 为真）；画不出来的那两种链（文字/嵌套合成、带第二路画面）上，
+卡片才写「仅导出生效」并说明原因。卡片上仍没有强度可标——`GradeLut3D` 契约里就没有 `mix` 字段：
+只有一端能执行的强度不是强度。
 
 ## 1.136 透明通道母版：`transparent` 是请求里的一词，不是滤镜串里的一句承诺
 

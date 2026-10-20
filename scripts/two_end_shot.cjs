@@ -40,6 +40,8 @@ const LAYERS = Number(flag("layers", "1"));
 const TABLES = flag("tables", "") === "" ? null : Number(flag("tables", ""));
 const MATRICES = flag("matrices", "") === "" ? null : Number(flag("matrices", ""));
 const TABLE_VALUES = flag("table-values", "") === "" ? null : Number(flag("table-values", ""));
+// `--webgl`：这一趟拍的是立方表那块画布（1.234）。它必须真的在、内部尺寸>0、源被藏起来。
+const WEBGL = args.includes("--webgl");
 // `--strip 8,20,34` 给一串平色：这一趟不拍画面，拍「产品自己那张滤镜作用在平色上」的一排格子。
 const STRIP = (flag("strip", "") || "").split(",").filter((v) => v !== "").map(Number);
 const EDGE = flag("edge", "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe");
@@ -139,8 +141,17 @@ function connect(webSocketUrl) {
     const socket = new WebSocket(webSocketUrl);
     let nextId = 1;
     const pending = new Map();
+    const logs = [];
     socket.addEventListener("message", (event) => {
       const message = JSON.parse(event.data);
+      if (message.method === "Runtime.consoleAPICalled") {
+        const text = (message.params.args || []).map((arg) => arg.value ?? arg.description ?? "").join(" ");
+        logs.push((message.params.type || "log") + ": " + text);
+      }
+      if (message.method === "Runtime.exceptionThrown") {
+        const detail = message.params.exceptionDetails || {};
+        logs.push("exception: " + ((detail.exception && detail.exception.description) || detail.text || "?"));
+      }
       if (message.id && pending.has(message.id)) { pending.get(message.id)(message); pending.delete(message.id); }
     });
     socket.addEventListener("open", () => {
@@ -158,6 +169,7 @@ function connect(webSocketUrl) {
             });
             socket.send(JSON.stringify({ id, method, params: params || {} }));
           }),
+        logs,
         close: () => { try { socket.close(); } catch {} },
       });
     });
@@ -199,8 +211,32 @@ const WAIT = `(function(){
       sizes.push((el.getAttribute('tableValues') || '').trim().split(/\\s+/).filter(Boolean).length);
     });
   });
+  var webgl = null;
+  var canvas = document.querySelector('.grade-canvas');
+  if (canvas) {
+    var holder = canvas.parentElement;
+    var src = holder ? holder.querySelector('img, video') : null;
+    var centre = null;
+    var glError = null;
+    try {
+      var gl = canvas.getContext('webgl2');
+      if (gl) {
+        glError = gl.getError();
+        var px = new Uint8Array(4);
+        gl.readPixels(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 1, 1,
+          gl.RGBA, gl.UNSIGNED_BYTE, px);
+        centre = [px[0], px[1], px[2], px[3]];
+      }
+    } catch (error) { centre = String(error); }
+    webgl = {width: canvas.width, height: canvas.height,
+      visible: getComputedStyle(canvas).visibility !== 'hidden',
+      hidden_source: src ? getComputedStyle(src).visibility === 'hidden' : false,
+      context: Boolean(canvas.getContext('webgl2')),
+      gl_error: glError, centre: centre};
+  }
   return {state: 'seen',
     rect: {x: r.x, y: r.y, width: r.width, height: r.height},
+    webgl: webgl,
     mask_layers: layers,
     grade_ids: grade.map(function (f) { return f.id; }),
     tables: tables, matrices: matrices, table_sizes: sizes,
@@ -248,6 +284,7 @@ async function main() {
     { stdio: "ignore" }
   );
   let code = 0;
+  let cdp = null;
   try {
     let target = null;
     for (let attempt = 0; attempt < 80 && !target; attempt += 1) {
@@ -258,7 +295,7 @@ async function main() {
       if (!target && pages.length && attempt > 40) throw new Error("attached page is someone else's: " + pages.map((p) => p.url).join(" "));
     }
     if (!target) throw new Error("the renderer never opened a page target for " + url);
-    const cdp = await connect(target.webSocketDebuggerUrl);
+    cdp = await connect(target.webSocketDebuggerUrl);
     await cdp.send("Runtime.enable");
     await cdp.send("Page.enable");
     await cdp.send("Emulation.setDeviceMetricsOverride", { width: SIZE[0], height: SIZE[1], deviceScaleFactor: 1, mobile: false });
@@ -292,6 +329,17 @@ async function main() {
       throw new Error("有表的 tableValues 不是 " + TABLE_VALUES + " 项，实测 "
         + JSON.stringify(seen.table_sizes));
     }
+    if (WEBGL) {
+      if (!seen.webgl) throw new Error("清单说这条链要画布，页面上没有 .grade-canvas");
+      if (!seen.webgl.visible) throw new Error("画布被藏起来了：" + JSON.stringify(seen.webgl));
+      if (!seen.webgl.context) throw new Error("这块画布拿不到 WebGL2：" + JSON.stringify(seen.webgl));
+      if (!(seen.webgl.width > 2 && seen.webgl.height > 2)) {
+        throw new Error("画布内部尺寸是 " + seen.webgl.width + "×" + seen.webgl.height);
+      }
+      if (!seen.webgl.hidden_source) {
+        throw new Error("源元素还看得见——画布与源会叠两次");
+      }
+    }
     if (STRIP.length) {
       // 平色那一趟：不拍 `.masked-picture`，拍刚铺出来的那一排格子。
       const built = await evaluate(STRIP_BUILD(STRIP));
@@ -319,10 +367,15 @@ async function main() {
       console.log(JSON.stringify({
         out: OUT, rect: seen.rect, mask_layers: seen.mask_layers,
         mask_composite: seen.mask_composite, media: seen.media,
-        natural: seen.natural, png_bytes: fs.statSync(OUT).size,
+        natural: seen.natural, webgl: seen.webgl,
+        logs: WEBGL ? cdp.logs.slice(-20) : undefined,
+        png_bytes: fs.statSync(OUT).size,
       }));
     }
   } catch (error) {
+    if (cdp && cdp.logs && cdp.logs.length) {
+      console.error("页面控制台：\n" + cdp.logs.slice(-30).join("\n"));
+    }
     console.error(String(error && error.message ? error.message : error));
     code = 1;
   } finally {

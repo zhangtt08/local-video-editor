@@ -314,7 +314,7 @@ function OpFields({ node, idPrefix, limits, layerTick, layerOffset, onReplace, o
   if (node.kind === "lut3d") {
     return <div className="grade-body">
       <p className="hint">正在用「{node.title}」：{node.size}³ 网格、共 {node.cells.length / 3} 个 RGB 格点。</p>
-      <p className="hint">跨通道的表浏览器画不出来，所以<b>预览不生效、导出生效</b>；它也没有强度与混合方式。</p>
+      <p className="hint">预览与导出读同一张表（四面体插值与 FFmpeg 同档）；<b>文字、嵌套合成或带第二路画面时只在导出里生效</b>；它没有强度与混合方式。</p>
       {node.resampled_from ? <p className="hint">原文件 {node.resampled_from}³ 超出网格上限，导入时已重采样到 {node.size}³。</p> : null}
       {onReplace ? <button className="btn tiny" onClick={onReplace}>换一张 LUT</button> : null}
     </div>;

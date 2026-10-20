@@ -51,9 +51,9 @@ assert.equal(cards[3].lanes.length, 0, "a LUT is one node, not a set of branches
 // 3D 表在卡片上就把两件事写明白：浏览器画不出它（只有导出会走它），以及它没有强度可拧
 // ——契约里就没有 mix 那个字段，卡片说「强度 100%」就等于允诺一件引擎不会做的事。
 assert.equal(cards[4].label, "5. 3D LUT");
-assert.match(cards[4].detail, /Print 01 · 17³ 网格 · 仅导出生效/, cards[4].detail);
+assert.match(cards[4].detail, /Print 01 · 17³ 网格 · 预览与导出同一张表/, cards[4].detail);
 assert.equal(cards[5].label, "6. 3D LUT");
-assert.match(cards[5].detail, /Print 02 · 2³ 网格 · 仅导出生效 · 由 33³ 重采样/, cards[5].detail);
+assert.match(cards[5].detail, /Print 02 · 2³ 网格 · 预览与导出同一张表 · 由 33³ 重采样/, cards[5].detail);
 for (const card of [cards[4], cards[5]]) {
   assert.doesNotMatch(card.detail, /强度/, `${card.detail} 里不该有强度`);
   assert.equal(card.lanes.length, 0, "a cube is one node, not a set of branches");
@@ -82,6 +82,6 @@ const disabled = cardsFor([
 ] as never as Parameters<typeof cardsFor>[0]);
 assert.equal(disabled[0].enabled, false, "a bypassed node has to look bypassed in the picture");
 assert.equal(disabled[1].enabled, false, "a bypassed cube has to look bypassed too");
-assert.match(disabled[1].detail, /仅导出生效/, disabled[1].detail);
+assert.match(disabled[1].detail, /预览与导出同一张表/, disabled[1].detail);
 
 console.log("PASS: grade graph — cards describe their nodes, drops clamp, moves stay pure");

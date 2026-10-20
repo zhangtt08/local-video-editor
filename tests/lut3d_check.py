@@ -23,6 +23,7 @@
   `max_lut3d_size` 与契约同一个数。
 """
 
+import base64
 import json
 import subprocess
 import sys
@@ -332,18 +333,24 @@ def chain_suite() -> None:
         sorted(twin.text_files),
     )
 
-    # 预览那一端：几张立方都不重要，一段都不许进 manifest。
+    # 1.234：预览这一端由画布画立方——它们带着格点进段表，CSS 那一串里没有滤镜可挂。
     both_preview = preview_manifest(project(Path(__file__), [swapped, plain_cube]))["clips"]["b"]
-    assert both_preview["grade"] is None and "url(#" not in both_preview["color_filter"], (
-        both_preview["grade"]
+    both_stages = both_preview["grade"]["stages"]
+    assert [stage["type"] for stage in both_stages] == ["lut3d", "lut3d"], both_stages
+    assert all(
+        stage["preview"] is True and "cells_u8" in stage for stage in both_stages
+    ), both_stages
+    assert both_preview["webgl"] is True and "url(#" not in both_preview["color_filter"], (
+        both_preview["webgl"],
+        both_preview["color_filter"],
     )
     drawn = preview_manifest(project(Path(__file__), [swapped, curve, plain_cube]))["clips"]["b"][
         "grade"
     ]["stages"]
-    assert [stage["type"] for stage in drawn] == ["lut"], drawn
+    assert [stage["type"] for stage in drawn] == ["lut3d", "lut", "lut3d"], drawn
     print(
         "   多张立方：两张各自成一段且文件各写一份、同一张放两次只写一个文件但图里两段、"
-        "关掉那张整个不在场、立方把每通道那段打断两次、预览里几张都不进表"
+        "关掉那张整个不在场、立方把每通道那段打断两次、预览里几张都带着格点进表"
     )
 
 
@@ -359,7 +366,9 @@ def both_ends_suite() -> None:
     )
     tables = grade_tables(target.clips["b"].color)
     stage = tables["stages"][0] if isinstance(tables, dict) else tables[0]
-    assert stage["type"] == "lut3d" and stage["preview"] is False and "cells" not in stage, stage
+    assert stage["type"] == "lut3d" and stage["preview"] is True, stage
+    # 2³ 的格子、每格三字节——画布按红最快读进 3D 纹理。
+    assert len(base64.b64decode(stage["cells_u8"])) == 2 * 2 * 2 * 3, stage
     assert "lut3d" in json.dumps(tables, ensure_ascii=False)
 
     class Plan:
@@ -409,21 +418,38 @@ def both_ends_suite() -> None:
     else:
         raise AssertionError("没有 plan 时本该点名拒绝")
 
-    # 界面真正读的是 preview_manifest 里那份阶段表。跨通道的立方必须整个不在场：浏览器会按
-    # 「不是 lut 就是 matrix」给它画一个原语，而它没有 `r/g/b` 也没有 `m`——那不是「预览不生效」，
-    # 那是一个没有数字的滤镜，画面会直接消失。这一段断的是那份产物，不是引擎的意图。
+    # 界面真正读的是 preview_manifest 里那份阶段表。1.234 起立方由画布画：它带着格点进表，
+    # 并且这一条片段的 CSS 滤镜串里**一个字都不许再挂**（画布已经把基础调色与整条链算过一遍）。
     solo = preview_manifest(target)["clips"]["b"]
-    assert solo["grade"] is None, solo["grade"]
-    assert "url(#" not in solo["color_filter"], solo["color_filter"]
+    assert solo["webgl"] is True and solo["color_filter"] == "", (
+        solo["webgl"],
+        solo["color_filter"],
+    )
+    assert [stage["type"] for stage in solo["grade"]["stages"]] == ["lut3d"], solo["grade"]
+    assert "cells_u8" in solo["grade"]["stages"][0], solo["grade"]["stages"][0]
+    assert solo["color_basics"] and len(solo["color_basics"]) == 3, solo["color_basics"]
     mixed = preview_manifest(project(Path(__file__), both.grade))["clips"]["b"]
     drawn = mixed["grade"]["stages"]
-    assert [stage["type"] for stage in drawn] == ["lut", "lut"], drawn
-    assert all({"r", "g", "b"} <= set(stage) or "m" in stage for stage in drawn), drawn
-    assert not any(stage["type"] == "lut3d" for stage in drawn), drawn
-    assert f"url(#{mixed['grade']['id']})" in mixed["color_filter"], mixed["color_filter"]
+    assert "lut3d" in [stage["type"] for stage in drawn], drawn
+    assert mixed["webgl"] is True and "url(#" not in mixed["color_filter"], mixed["color_filter"]
+    # 第二路画面那种链画布接不下来：立方退回「只在导出里生效」，而**别的那几段仍要留在 CSS
+    # 滤镜里**——`webgl` 若只看「链上有没有立方」，这一条片段的整条调色会在预览里悄悄消失。
+    edged = [
+        {"kind": "curve", "channel": "rgb", "points": [{"x": 0.0, "y": 0.2}, {"x": 1.0, "y": 0.8}]},
+        node_for_grade,
+        {"kind": "composite", "mode": "screen", "mix": 0.5},
+    ]
+    edged_row = preview_manifest(project(Path(__file__), edged))["clips"]["b"]
+    assert edged_row["webgl"] is False, edged_row["webgl"]
+    assert edged_row["color_basics"] is None, edged_row["color_basics"]
+    assert "url(#" in edged_row["color_filter"], edged_row["color_filter"]
+    assert all("cells_u8" not in stage for stage in edged_row["grade"]["stages"]), (
+        edged_row["grade"]
+    )
+    cube_lines = len(body.splitlines()) - 4
     print(
-        f"   两端：浏览器阶段只带 preview=false（不搬 {len(body.splitlines()) - 4} 行表体），"
-        "导出串与作业目录里的 cube 对得上；preview_manifest 交出的表里根本没有立方那一段"
+        f"   两端：预览带格点进画布、CSS 清空（表体 {cube_lines} 行只在导出里），"
+        "第二路画面那种链接不下立方时别的段仍留在 CSS 里"
     )
 
 
@@ -632,7 +658,7 @@ def http_suite(folder: Path) -> None:
         )
         assert refused.status_code == 422, refused.text
         caps = client.get("/v1/capabilities", headers=headers).json()
-        assert caps["features"]["lut3d"] is True and caps["features"]["lut3d_preview"] is False, (
+        assert caps["features"]["lut3d"] is True and caps["features"]["lut3d_preview"] is True, (
             caps["features"]
         )
         assert caps["grade_limits"]["max_lut3d_size"] == 17, caps["grade_limits"]
@@ -648,13 +674,13 @@ def main() -> None:
     both_ends_suite()
     published = capabilities()
     assert (
-        published["features"]["lut3d"] is True and published["features"]["lut3d_preview"] is False
+        published["features"]["lut3d"] is True and published["features"]["lut3d_preview"] is True
     )
     with tempfile.TemporaryDirectory(prefix="agentcut-lut3d-") as scratch:
         folder = Path(scratch)
         media_suite(folder)
         http_suite(folder)
-    print("PASS: 3D LUT 导入即节点、契约拒得点名、导出真换像素、预览不支持这件事写在能力与界面上")
+    print("PASS: 3D LUT 导入即节点、契约拒得点名、导出真换像素、预览带着同一张表的格点进画布")
 
 
 if __name__ == "__main__":

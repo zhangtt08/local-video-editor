@@ -307,6 +307,11 @@ textarea.input { resize: vertical; line-height: 1.5; }
 .editor { --preview-reserve: 448px; display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .editor-main { display: grid; grid-template-columns: 288px minmax(0, 1fr) 342px; min-height: 0; flex: 1; }
 .preview-layer, .layer-transform { position: absolute; inset: 0; }
+/* 1.234：立方表那条链画在这块画布上；源元素仍在原地（只是看不见），尺寸与它逐项相同。 */
+.grade-canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
+.grade-source-hidden { visibility: hidden; }
+/* 画布失败时只占底边一条：画面仍是原件（未套 LUT），这句话说清为什么，导出不受影响。 */
+.grade-fallback { inset: auto 0 0 0; padding: 6px 10px; font-size: var(--fs-label); text-align: center; background: rgba(34, 40, 42, .86); }
 .preview-track { position: absolute; inset: 0; isolation: isolate; pointer-events: none; }
 .transition-black { position: absolute; inset: 0; background: black; pointer-events: none; }
 .transition-white { position: absolute; inset: 0; background: white; pointer-events: none; }

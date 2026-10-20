@@ -8,6 +8,7 @@ per-channel curves is not itself a per-channel curve. Order is preserved and bot
 same list, so preview and render stay one authority rather than merely similar.
 """
 
+import base64
 import hashlib
 
 from .gamut import DEFAULT_FOLD_TRANSFER, transfer_tables, working_collapse
@@ -520,27 +521,47 @@ def _stage_id(payload) -> str:
     return hashlib.sha1(repr(payload).encode()).hexdigest()[:12]
 
 
-def grade_tables(color) -> dict | None:
+def cube_payload(cells) -> str:
+    """The cube as the browser's 3D texture: uint8 RGB, red fastest, base64.
+
+    8 位一格是预览这一档能承受的分辨率：FFmpeg 读的是浮点 .cube，两者的差在 1/255 以内，
+    而 17³ 一整张表压成 14.7 KB（base64 约 19.6 KB）——清单每换一版都要重发一次，
+    这里省下的正是那一笔。格子超过 255 的按 255 夹住（.cube 的取值本来就在 0..1）。
+    """
+    raw = bytes(min(255, max(0, round(value * 255))) for value in cells)
+    return base64.b64encode(raw).decode("ascii")
+
+
+def grade_tables(color, draw_cube: bool = True) -> dict | None:
     """The ordered stage list the browser builds primitives from, or None for a no-op chain.
 
     The chain's id covers every stage, so one `filter: url(#id)` still references the whole grade
     and two clips with the same look still share one filter definition.
+
+    `draw_cube` 是「这一条片段的画面能不能交给那块画布」：视频与图片能（画布读的是同一帧），
+    文字层与嵌套合成不能（前者是 DOM 文字、后者是一棵子树），传 False 时立方阶段照旧
+    `preview: false`，界面那一句「只在导出里生效」才是实话。
     """
     stages = grade_stages(color)
     if not stages:
         return None
+    # 1.234：立方表现在浏览器也画得出来（`gradeCanvas.ts` 的 WebGL2 采样，四面体插值，
+    # 与导出同一个档），所以它带着格点出门。只有一个例外：链上还有第二路画面
+    # （composite / layer）时那条链要两个输入，画布这一档只接一个——那种链上它照旧
+    # `preview: false`，界面那句「预览不生效」只在那一格说得出口。
+    edge = any(stage["type"] in ("composite", "layer") for stage in stages)
+    draw_cube = draw_cube and not edge
     built = []
     for stage in stages:
         if stage["type"] == "lut3d":
-            # The browser has no primitive for a cross-channel cube, so the stage travels
-            # without its data; `preview: false` is what the interface labels 预览不生效.
             built.append(
                 {
                     "type": "lut3d",
                     "id": f"d{_stage_id([stage['size'], stage['title']])}",
                     "title": stage["title"],
                     "size": stage["size"],
-                    "preview": False,
+                    "preview": draw_cube,
+                    **({"cells_u8": cube_payload(stage["cells"])} if draw_cube else {}),
                 }
             )
             continue
@@ -586,7 +607,10 @@ def grade_tables(color) -> dict | None:
 
 
 def preview_grade(
-    color, working_primaries: str = "rec709", fold_transfer: str = DEFAULT_FOLD_TRANSFER
+    color,
+    working_primaries: str = "rec709",
+    fold_transfer: str = DEFAULT_FOLD_TRANSFER,
+    draw_cube: bool = True,
 ) -> dict | None:
     """The stage list the browser can composite, or None when the chain has nothing it can draw.
 
@@ -595,7 +619,7 @@ def preview_grade(
     the interface draws every stage it receives, so a cube would come out as a filter primitive
     holding no numbers — that is a vanished picture, not the documented 预览不生效.
     """
-    tables = grade_tables(color)
+    tables = grade_tables(color, draw_cube)
     collapse = working_collapse(working_primaries)
     if tables is None and collapse is None:
         # 既没有链子也不折：默认档下这一段没有浏览器要画的东西，与 1.159 之前的回包逐字节相同。

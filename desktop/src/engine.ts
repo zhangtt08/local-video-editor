@@ -88,7 +88,8 @@ export type GradeOperation =
   /** 导入的 1D 查找表：三个通道各一条折线，采样点由引擎解析 `.cube` 文件得到，界面不自己读文件。 */
   | { kind: "lut"; title: string; size: number; channels: number[][]; enabled: boolean; mix?: number; blend?: BlendMode }
   /** 导入的 3D 查找表：一个 size³ 的 RGB 立方，按定义跨通道，所以它像通道混合那样打断每通道的合并。
-   *  浏览器画不出它（`capabilities.features.lut3d_preview` 为 false），界面必须写「预览不生效」；
+   *  1.234 起浏览器也画它（`GradeStage.cells_u8` 交给 `gradeCanvas.ts` 的 WebGL2），界面按
+   *  `webgl`/`preview` 两个旗号说「同一张表」还是「只在导出里生效」；
    *  这里既没有 mix 也没有 blend，与契约同一处决定：只有一端能执行的强度不是强度。 */
   | { kind: "lut3d"; title: string; size: number; cells: number[]; resampled_from?: number | null; enabled: boolean };
 /** 引擎 `/v1/lut/parse` 的回复：可直接放进调色链的节点内容（不含启用、强度等每节点默认值）。
@@ -134,7 +135,10 @@ export type GradeTables = { id: string; stages: GradeStage[] };
  *  「曲线→通道混合」与「通道混合→曲线」是两张不同的图，两端都按这份列表走。 */
 export type GradeStage =
   | { id: string; type: "lut"; r: number[]; g: number[]; b: number[] }
-  | { id: string; type: "matrix"; m: number[] };
+  | { id: string; type: "matrix"; m: number[] }
+  /** 1.234：立方表由 `gradeCanvas.ts` 的 WebGL2 画；`cells_u8` 是红最快、每格三字节的 base64。
+   *  `preview:false` 只在链上还有第二路画面时出现（那种链画布接不了两个输入）。 */
+  | { id: string; type: "lut3d"; title: string; size: number; cells_u8?: string; preview?: boolean };
 /** 1.107：一份工程的查找表额度回执。「还够放几张表」这类换算全在引擎里，界面不许再除一遍。 */
 export type GradeCapacity = { samples: number; limit: number; room: number; room_cubes: number;
   room_tables: number; cube_samples: number; table_samples: number; clips_with_tables: number;
@@ -281,7 +285,7 @@ export type SharpenSteps = {
   curve: { offset: number; id: string | null; easing: string }[];
 };
 export type SharpenSpec = SharpenStatic | SharpenSteps;
-export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; grade?: GradeTables | null; sharpen?: SharpenSpec | null; speed?: RampPiece[] | null; mask_image?: string | null; extra_mask_images?: string[] | null; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; mask_shape?: MaskShapeWindow[] | null; mask_rotation_windows?: MaskRotationWindow[] | null; spatial?: Partial<Record<SpatialProperty, Curve>> | null; edge_filter?: string | null; curves: Record<AnimatedEffect, Curve>; transition: TransitionEnvelope; fade?: Record<"opacity" | "gain", Curve> | null;
+export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; webgl?: boolean; color_basics?: number[] | null; grade?: GradeTables | null; sharpen?: SharpenSpec | null; speed?: RampPiece[] | null; mask_image?: string | null; extra_mask_images?: string[] | null; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; mask_shape?: MaskShapeWindow[] | null; mask_rotation_windows?: MaskRotationWindow[] | null; spatial?: Partial<Record<SpatialProperty, Curve>> | null; edge_filter?: string | null; curves: Record<AnimatedEffect, Curve>; transition: TransitionEnvelope; fade?: Record<"opacity" | "gain", Curve> | null;
       layer?: { asset_id: string; mode: BlendMode; mix: number; offset_x: number; offset_y: number; scale: number; rotation?: number; windows?: LayerWindow[]; paintable: boolean; reason?: string | null }[];
       composite?: CompositeEdge | null }> };
 
