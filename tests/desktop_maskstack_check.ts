@@ -71,4 +71,24 @@ assert.match(inspector, /write\(stack\.map\(\(item, position\) => \(position ===
 assert.match(css, /\.mask-stack-grid\s*\{[^}]*grid-template-columns: 1fr 1fr/, "两列那一格没排成两列");
 assert.match(css, /\.mask-stack-invert\s*\{[^}]*grid-column: 1 \/ -1/, "反转那一行占整行，不跟别的挤一格");
 
-console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的五个数与羽化/反转都在格子里改、浏览器叠的是引擎那几张图并取交集、样式仍走刻度");
+// ⑦ 1.236：`mask-size` / `mask-position` 是按层给的。这一条是量出来的缺陷：主遮罩的中心
+// 曲线一动，`mask-position` 就按主遮罩的盒子原点把再叠的那几块也搬走（预览里被挪了 0.215，
+// 导出原地不动），两端的洞不是同一个。主遮罩一层用自己的公式，再叠的每一层都是 100% / 0,0。
+assert.match(picture, /const mainSize = shapeWindow/, "主遮罩那一层的尺寸不是按自己那一支算的");
+assert.match(picture, /const mainPosition = shapeWindow/, "主遮罩那一层的落位不是按自己那一支算的");
+assert.match(
+  picture,
+  /maskSize: \[mainSize, \.\.\.layers\.slice\(1\)\.map\(\(\) => "100% 100%"\)\]\.join\(", "\)/,
+  "再叠的层的尺寸不是各自的 100%×100%",
+);
+assert.match(
+  picture,
+  /maskPosition: \[mainPosition, \.\.\.layers\.slice\(1\)\.map\(\(\) => "0px 0px"\)\]\.join\(", "\)/,
+  "再叠的层的落位不是各自的 0,0——它们会被主遮罩的盒子原点一起搬走",
+);
+assert.match(picture, /calc\(\(var\(--mask-x\) - 0\.5\) \* var\(--mask-lw\) \* 1px\)/, "角度那一支的落位公式变了");
+assert.match(picture, /calc\(\(var\(--mask-x\) - var\(--mask-w\) \/ 2\) \* var\(--mask-lw\) \* 1px\)/, "中心/宽高那一支的落位公式变了");
+assert.doesNotMatch(picture, /maskSize: "100% 100%", maskRepeat: "no-repeat", maskComposite: "intersect"/,
+  "又回到「一整串只给一个 mask-size」——再叠的块会被主遮罩的落位带跑");
+
+console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的五个数与羽化/反转都在格子里改、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、样式仍走刻度");

@@ -33,6 +33,7 @@ const ENGINE = flag("engine", "");
 const TOKEN = flag("token", "");
 const PROJECT = flag("project", "");
 const CLIP = flag("clip", "");
+const TICK = flag("tick", "");
 const OUT = path.resolve(flag("out", "two_end_preview.png"));
 const SIZE = (flag("size", "1456x808") || "").split("x").map(Number);
 const LAYERS = Number(flag("layers", "1"));
@@ -236,8 +237,12 @@ const WAIT = `(function(){
       context: Boolean(canvas.getContext('webgl2')),
       gl_error: glError, centre: centre};
   }
+  var masked = document.querySelector('.masked-picture');
+  var maskX = masked ? getComputedStyle(masked).getPropertyValue('--mask-x').trim() : null;
   return {state: 'seen',
     rect: {x: r.x, y: r.y, width: r.width, height: r.height},
+    playhead: (document.querySelector('.ph-time') || {}).textContent || null,
+    mask_x: maskX,
     webgl: webgl,
     mask_layers: layers,
     grade_ids: grade.map(function (f) { return f.id; }),
@@ -276,7 +281,8 @@ async function main() {
   const profile = path.join(os.tmpdir(), "agentcut-two-end-" + Date.now().toString(36));
   const url = "http://127.0.0.1:" + hostPort + "/index.html?engine=http%3A%2F%2F127.0.0.1%3A" + hostPort +
     "&token=" + encodeURIComponent(TOKEN) + "&project=" + encodeURIComponent(PROJECT) +
-    "&clip=" + encodeURIComponent(CLIP);
+    "&clip=" + encodeURIComponent(CLIP) +
+    (TICK ? "&tick=" + encodeURIComponent(TICK) : "");
   const host = await startHost(hostPort);
   const edge = spawn(
     EDGE,
@@ -403,6 +409,7 @@ async function main() {
         out: OUT, rect: seen.rect, mask_layers: seen.mask_layers,
         mask_composite: seen.mask_composite, media: seen.media,
         natural: seen.natural, webgl: seen.webgl, play: seen.play,
+        playhead: seen.playhead, mask_x: seen.mask_x,
         logs: WEBGL ? cdp.logs.slice(-20) : undefined,
         png_bytes: fs.statSync(OUT).size,
       }));

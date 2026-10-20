@@ -299,8 +299,35 @@ export function MaskPicture({ clip, image, extra, children, editable = true, ani
   // `mask_image`，所以「预览里那个洞」与「成片里那个洞」是同一个洞。
   const primaryImage = spun ? spun.image : shapeWindow ? shapeWindow.image : animated ? animated.unit : pictureImage;
   const layers = [primaryImage, ...(extra ?? [])].filter(Boolean) as string[];
+  // 1.236：`mask-size` 与 `mask-position` 都是**按层**的。这里以前只给一个值，于是主遮罩一动，
+  // `mask-position` 就按主遮罩的盒子原点把再叠的那几块一起搬走——预览里的洞与成片里的洞
+  // 在中心/宽高曲线下不是同一个（`two_end` 量到过：主遮罩中心 0.515 时预览的再叠块被挪了
+  // 0.215，导出那块原地不动）。现在主遮罩一层用自己的方子，再叠的每一层都按自己的整画面图
+  // 落在 0,0；它们「只切不动」这句话在两端同时成立。
+  const mainSize = shapeWindow
+    ? "calc(var(--shape-w) * var(--mask-lw) * 1px) calc(var(--shape-h) * var(--mask-lh) * 1px)"
+    : animated && !spun && !rotated
+      ? "calc(var(--mask-w) * var(--mask-lw) * 1px) calc(var(--mask-h) * var(--mask-lh) * 1px)"
+      : "100% 100%";
+  const mainPosition = shapeWindow
+    ? "calc((var(--mask-x) + var(--shape-ox) - var(--shape-w) / 2) * var(--mask-lw) * 1px) " +
+      "calc((var(--mask-y) + var(--shape-oy) - var(--shape-h) / 2) * var(--mask-lh) * 1px)"
+    : spun || (animated && rotated)
+      ? "calc((var(--mask-x) - 0.5) * var(--mask-lw) * 1px) " +
+        "calc((var(--mask-y) - 0.5) * var(--mask-lh) * 1px)"
+      : animated
+        ? "calc((var(--mask-x) - var(--mask-w) / 2) * var(--mask-lw) * 1px) " +
+          "calc((var(--mask-y) - var(--mask-h) / 2) * var(--mask-lh) * 1px)"
+        : "0px 0px";
   const stacked: CSSProperties = layers.length > 1
-    ? { ...pictureStyle, maskImage: layers.join(", "), maskSize: "100% 100%", maskRepeat: "no-repeat", maskComposite: "intersect" }
+    ? {
+        ...pictureStyle,
+        maskImage: layers.join(", "),
+        maskSize: [mainSize, ...layers.slice(1).map(() => "100% 100%")].join(", "),
+        maskPosition: [mainPosition, ...layers.slice(1).map(() => "0px 0px")].join(", "),
+        maskRepeat: "no-repeat",
+        maskComposite: "intersect",
+      }
     : pictureStyle;
   return <>
     <div ref={picture} className={`layer-transform masked-picture${shapeWindow ? " morph-mask" : animated || spun ? (rotated ? " rotated-mask" : " animated-mask") : ""}`} style={stacked}>{children}</div>
