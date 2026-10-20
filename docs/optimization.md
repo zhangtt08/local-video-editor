@@ -6433,3 +6433,41 @@ schema 仍是 21：存的形状没变，只是校验放宽，旧工程照读；�
 ② 期望的表段数 +1 → 红在「预览画了 2 段表，清单交的是 3 段（滤镜 id：g9de94c983f980a17）」，
 报错自带实测的数与 id。
 
+
+## 1.226（2026-10-20）：门禁建完临时目录开始还了
+
+**发现的方式很偶然**：1.225 写发布账时想确认「量具跑完有没有留东西」，
+`ui-shape-*` 那一摊是 0（1.222 修的那次确实修住了），但同一句查下去，`%TEMP%` 里
+有 **110 个 `agentcut-*` 目录、合计 24.7 MB**——一天两趟全套的量。
+
+**根因**：14 档门禁各写 `tempfile.mkdtemp(prefix="agentcut-…")`。`mkdtemp` 只建不删，
+`TemporaryDirectory` 才有「用完就删」那一半；这些档选前者的原因都是「要传给子进程」，
+但传路径不需要以留下垃圾为代价。
+
+**改法**：`tests/scratch.py` 给一个 `make(prefix)`——建完挂 `atexit`，退出时 `rmtree(ignore_errors=True)`。
+`ignore_errors` 不是偷懒：Windows 上刚退出的子进程可能还攥着句柄，为一个临时目录
+把整趟门禁染红，报上来的就不是产品的问题（与 1.222 那条「量具的抖动不是缺陷」同一口径）。
+14 档一行换一行，控制流不动；`make_str` 专门留给把路径当 `str` 用的那一档，不顺手改类型。
+
+**顺手收进来一处判据外的档**：`planinput_check.py` 的 prefix 是 `"planinput-"`，
+连 `agentcut-` 都没有——任何按前缀数的检查都看不见它。现在统一进前缀。
+
+**新门禁 `tests/tempclean_check.py` 两条一起判**：
+① 真跑一档门禁（`maskbox_check.py`：快、真起引擎、真建一个地方），跑前跑后各数一次
+`agentcut-*`，多出来一个就是没还；② helper 之外源码里不许再出现 `tempfile.mkdtemp(`。
+只查字面挡不住「helper 自己坏了」；只跑一趟挡不住下一轮新加一档不用 helper 的。
+needle 拆两截写、认的是带括号的调用形状——第一版按词匹配，被自己说明里那句
+「各用 `tempfile.mkdtemp` 建一个地方」抓成违规；**改的是判据，不是把说明里的词删掉**。
+
+**突变**：把 `cache_check.py` 改回直接建 → 红在②，点名 `cache_check.py`；
+把 `scratch.py` 那行 `atexit.register` 注释掉 → 红在①，
+「跑完 `maskbox_check.py` 之后 `%TEMP%` 里多出 1 个 `agentcut-*` 目录没被还：
+`agentcut-maskbox-2bz7mfq9`」。还原后重跑绿（跑前 111、跑后 111）。
+
+**旧账清法**：修之前留下的不是一天的量——清点时共 161 个 `agentcut-*` / `planinput-*`
+目录（最旧的一个是 2026-10-18 00:48 建的）。分两次清：先清 159 个（都超过 30 分钟、
+当时没有门禁在跑，按名字与创建时间逐个核过是自己的）；跑完 136 档全套再数，
+那一趟一个没留，场上只剩 2 个且都比它早（`agentcut-engine-check` 是
+`build_engine --verify` 的工作目录、`agentcut-maskbox-2bz7mfq9` 是本轮突变留下的），
+核过之后删，归零。
+

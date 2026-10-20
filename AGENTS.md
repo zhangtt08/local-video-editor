@@ -98,7 +98,57 @@
 才有上面那张绿表。「动画曲线编辑器」那一档起初 `.curve-plot` 不在 DOM，是因为要**先点一颗片段**
 再点那颗分段按钮——而且必须是真 `pointerdown`（`element.click()` 不算选中，片段的选中写在 `onPointerDown` 里），不是那一屏不画画布。
 
-## 当前停放点（1.225：那句「窗口太矮」只该由用户拖出来——预览那几张表第一次被逐段对上清单）
+## 当前停放点（1.226：验东西的那一手不再往用户的 `%TEMP%` 里堆垃圾）
+
+- **这一轮修的是门禁自己**。1.225 跑发布账时量到：一天两趟全套之后，`%TEMP%` 里留着
+  **110 个 `agentcut-*` 目录、合计 24.7 MB**。根因不在产品，在量具：14 档门禁各用
+  `tempfile.mkdtemp` 建一个地方，而 `mkdtemp` 不像 `TemporaryDirectory`——它没有
+  「用完就删」那一半，建了就一直放着。验东西的那一手不该往用户的地方堆垃圾。
+- **`tests/scratch.py`**：`make(prefix)` 建目录并挂 `atexit` 删掉。删的时候
+  `ignore_errors=True`——Windows 上刚退出的子进程可能还攥着句柄，为一个临时目录
+  把整趟门禁染红，报上来的就不是产品的问题了（量具的抖动不是缺陷，1.222 那条同一口径）。
+  `make_str` 留给那些把路径当 `str` 用的调用点，不顺手改它们的类型。
+- **14 档一行换一行**（`agentapi`/`audiocurve`/`cache`/`curvefidelity`/`fade`/`focusbasis`/
+  `gradelevels`/`maskbox`/`motion`/`planinput`/`recipe`/`reframe`/`renderfail`/`safearea`），
+  控制流没动。`planinput` 那一个原本连 `agentcut-` 前缀都没有（`prefix="planinput-"`），
+  现在统一进前缀，也就一起进了下面那一判的射程——**这一条是顺手把一处漏在判据外的档收进来**。
+- **新门禁 `tests/tempclean_check.py` 两件事一起判**：
+  ① **真跑一档门禁**（`maskbox_check.py`：快、真起引擎、真建一个地方），跑前跑后各数一次
+     `agentcut-*`，多出来一个就是没还；② 源码里 helper 之外不许再出现 `tempfile.mkdtemp(`。
+  两条缺一不可：只查字面挡不住「helper 自己坏了」；只跑一趟挡不住下一轮新加一档不用 helper 的。
+  字面认的是**调用形状**（带括号）而且 needle 拆两截写——这一档自己的说明里也要提这个词，
+  整串匹配会把自己抓成违规的那一个（第一次跑就是这么红的，改的是判据不是说明）。
+- **突变两手各自红在自家断言上**：把 `cache_check.py` 改回直接 `mkdtemp` → 红在②，点名
+  `cache_check.py`；把 `scratch.py` 里那行 `atexit.register` 注释掉 → 红在①，
+  「跑完 `maskbox_check.py` 之后 `%TEMP%` 里多出 1 个 `agentcut-*` 目录没被还：
+  `agentcut-maskbox-2bz7mfq9`」。还原后重跑绿：跑前 111、跑后 111，一个没多。
+- **旧账怎么清的**：修之前留下的不是一天的量——清点时共 **161 个** `agentcut-*` / `planinput-*`
+  目录，最旧的一个是 2026-10-18 00:48 建的。分两次清：先清掉 159 个（都超过 30 分钟、
+  当时没有门禁在跑，按名字与创建时间逐个核过是自己的）；跑完 136 档全套再数，
+  **那一趟一个没留**，场上只剩 2 个且都比它早（`agentcut-engine-check` 是
+  `build_engine --verify` 的工作目录、`agentcut-maskbox-2bz7mfq9` 是本轮突变留下的），
+  核过之后删，归零。
+- **全套第一次跑的时候红过一档**，红的方式正是这一轮的主题：`twobandlevel_check.py` 的
+  **平色那一腿**报「CDP socket error」——这台机器上的 headless Edge 偶发在 attach 那一刻
+  把 socket 关掉，1.223 在照片腿上记过一次、当时**只给那一腿**加了重试。现在两腿合成一处
+  `run_shot(argv, label)`：撞上重试一次，两次都红才停，红的那一句把两次的原文都带上。
+  这不是把判据放软——突变验过：把期望的表段数 +99，红的是同一句两遍
+  （「预览画了 2 段表，清单交的是 101 段（滤镜 id：`g9de94c983f980a17`）」）。
+  补完之后才是 136/136。
+- **发布账**：`build_engine --verify`（`--no-uv`，venv 的 PyInstaller 6.22.3，冻结 18.3s）通过：冻结引擎自报 **1.226.0 / schema 25**，冷启动 **815 ms**、裸启动 706 ms（预算 15000 ms），随包 ffmpeg 79.0 MB / ffprobe 60.1 MB / vosk 中文模型 65.1 MB，staged 合计 298.8 MB；`npm run dist` 后根 `AgentCut.exe` 与 `desktop/release/AgentCut-便携版.exe` `cmp` 逐字节相同（**185,134,729 B，sha256 前缀 b31f05c4246b4ca8**），安装版 185,295,441 B（前缀 169d8a0f731f1396）；`released_package_check` 绿（PASS: AgentCut.exe == portable build, app.asar carries 1.226.0 with 84 files, the shipped engine is the built one, and the renderer says 51 sentences a person can read）；`packed_engine_surface_check` 绿（包里那支引擎真 HTTP 交回 1.226.0 与 schema 25）；`ui_shape_check` **32 屏 green**（地板=12.5px 叠行合计=0 遮罩后=157 缺口有名=4 下拉被切=0）。空闲机单跑 `tests/suite_check.py` **136/136 checks passed**、`suite_rc=0`（135 变 136 多出来的那一档就是 `tempclean_check.py`，它在那一整套里只用 2.1 s）；`ruff check` 全绿、`stylewidth_check` 欠账三档 0、`tsc --noEmit` 干净（55 份源）、74 档壳检全绿。**这一轮的判据自己过了一遍**：整套跑完之后 `%TEMP%` 里 `agentcut-*` 与 `planinput-*` 目录 **0 个**——当时还在的 2 个都比那一趟早（`agentcut-engine-check` 是 `build_engine --verify` 的工作目录、`agentcut-maskbox-2bz7mfq9` 是本轮突变留下的），按名字与创建时间核过是自己的才删，删完归零。中途那一趟全套红过一次（`twobandlevel` 的平色腿撞上 CDP socket 抖动），补上「两腿共用一次重试」之后重跑才是这 136/136。
+- **下一轮（1.227）的具体入口**：
+  1. 先修 1.223 量到的那 3~4 级：1.225 那把段数/项数的尺已经能证明「画的就是清单那一串阶段」，
+     剩下的差要往取样几何上查——把 `--strip` 那一腿按预览同一比例再画一次，
+     与斜坡那一腿对差；只有排除或证实了「缩放」与「台阶宽度」两条，才动那一档的容差。
+  2. 浏览器侧 3D 立方表（`lut3d_preview`）：WebGL2 已实测可行；先把「预览画不出立方」这句话
+     变成能失败的一档（现在只有 `features.lut3d_preview=false` 一个旗号与帮助里一句话），
+     再决定要不要真上 WebGL。两端必须同一插值档（导出是 tetrahedral）。
+  3. 再叠的块跟着画面走：给 `mask_*` 那五条曲线一个「哪一块」的寻址（契约级改动，
+     新增带默认值字段是一次指纹事件：剥离 + 三处镜像夹具）。
+  4. 扫描还差的两屏：导出确认弹层第二页、调色链卡片那个「点了才画」的菜单。
+  5. 遮罩跟踪仍不估计旋转：要交得出去得先破「NCC 在近平坦的角上选不动」。
+
+## 上一轮停放点（1.225：那句「窗口太矮」只该由用户拖出来——预览那几张表第一次被逐段对上清单）
 
 - **最小窗里一开机就在抱怨用户**。扫描量到 `.timeline-clamped` 挂在 1040×660 的
   「剪辑」与「重置布局」两屏上：那句「你要 300 px，现在只剩 212 px」是**应用自己**那一档
