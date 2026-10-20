@@ -183,6 +183,9 @@ async function sweepOne(size, hostPort, probeSource) {
   const url = "http://127.0.0.1:" + hostPort + "/?engine=http%3A%2F%2F127.0.0.1%3A" + hostPort +
     "&token=" + encodeURIComponent(TOKEN) + "&project=" + encodeURIComponent(PROJECT) +
     (flag("clip", "") ? "&clip=" + encodeURIComponent(flag("clip", "")) : "") +
+    // 1.230：把播放头放到这一格再量/截图。演示那条工程在 0 秒是淡入的第一帧（全黑），
+    // 拿它当界面证据会让人以为监视器不画——刻度是工程自己的时钟，深链本来就认这一个参数。
+    (flag("tick", "") ? "&tick=" + encodeURIComponent(flag("tick", "")) : "") +
     (flag("panel", "") ? "&panel=" + encodeURIComponent(flag("panel", "")) : "");
   const edge = spawn(
     EDGE,
