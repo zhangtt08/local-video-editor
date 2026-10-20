@@ -93,9 +93,16 @@ def request(path: str, token: str, payload=None, method="GET"):
 
 
 def seed_project(token: str) -> str:
-    """一条视频轨 + 三段带针的片段 + 一条有中文名的合成——界面得有真东西才量得出形状。"""
+    """一条视频轨 + 三段带针的片段 + 一条有中文名的合成——界面得有真东西才量得出形状。
+
+    1.219 把这几段的长度改成**人真正会剪的那个数**：一秒 70_560_000 格（TIMEBASE），一格 2_352_000
+    （默认 30 fps）。原来这里写的是 `4 * 2_352_000`——四**格**，0.13 秒：在默认缩放（60 px/s）下
+    那一条片段只画 8 px 宽，于是边上的把手、针与转场牌子全挤在同一个 8 px 里。量出来的「重叠」
+    是夹具自己造的，不是界面的。夹具不许说谎，这一档量的必须是真时间线。
+    """
     made = request("/v1/projects", token, {"request_id": "shape-new", "name": "形状扫描"}, "POST")
     pid = made["project"]["id"]
+    second = 70_560_000
     commands = [
         {"op": "track.add", "track": {"id": "v", "kind": "video", "name": "画面"}},
         {"op": "asset.register", "asset": {
@@ -106,10 +113,11 @@ def seed_project(token: str) -> str:
             "op": "clip.add",
             "clip": {
                 "id": clip_id, "asset_id": "m", "track_id": "v",
-                "position_ticks": index * 4 * 2_352_000, "duration_ticks": 4 * 2_352_000,
+                "position_ticks": index * 4 * second, "duration_ticks": 4 * second,
                 "keyframes": [
                     {"property": "x", "at_ticks": 0, "value": 0.05 + index / 20},
-                    {"property": "opacity", "at_ticks": 2_352_000, "value": 0.8},
+                    {"property": "opacity", "at_ticks": second, "value": 0.8},
+                    {"property": "rotation", "at_ticks": 3 * second, "value": 12.0},
                 ],
                 "effects": {"blur": 0.04, "sharpen": 0.3},
             },
@@ -121,9 +129,8 @@ def seed_project(token: str) -> str:
          "commands": commands},
         "POST",
     )
-    # 检查器最挤的那几格不能空着量：遮罩与调色链装满之后，
-    # 「22 屏 green」才说的是同一件事。（文字层要一条文字素材；
-    # 转场量出来的那两处重叠记在 AGENTS 的 1.219 入口里。）
+    # 检查器最挤的那几格不能空着量：遮罩、调色链与转场装满之后，
+    # 「22 屏 green」才说的是同一件事。（文字层要一条文字素材，仍不在这一档里。）
     # 22 屏 green 说的必须是「装满东西时也 green」，否则这一档只是在量一张白屏。
     dense = [
         {
@@ -147,6 +154,16 @@ def seed_project(token: str) -> str:
                 {"kind": "matrix", "coefficients": [0.95, 0.03, 0.02, 0.04, 0.94, 0.02,
                                                      0.04, 0.03, 0.93]},
             ],
+        },
+        # 1.218 量到的那两处重叠就是这一条命令引出来的：转场牌子压在片段左端的针上。
+        # 留着它，「22 屏 green」才包括「转场上场时也不许有一枚针点不到」。
+        # 0.5 秒 = 15 格，是默认 30 fps 那一格的整数倍（引擎按格夹转场）。
+        {
+            "op": "transition.set",
+            "clip_id": "k2",
+            "from_clip_id": "k1",
+            "kind": "dissolve",
+            "duration_ticks": 35_280_000,
         },
     ]
     request(
@@ -270,6 +287,7 @@ def main() -> None:
         )[:400])
 
     problems: list[str] = []
+    named = 0
     print(f"{'那一屏':<26}{'视口':>12}{'字节点':>8}{'最小字':>8}{'圆角档':>18}"
           f"{'尖角':>6}{'被切':>6}{'点不到':>8}{'叠行':>6}")
     for row in screens:
@@ -302,6 +320,16 @@ def main() -> None:
                             + json.dumps(data.get("layout_boxes", {}), ensure_ascii=False)[:600])
             problems.append(f"{label}: 第一处点到的祖先链 "
                             + json.dumps(data["unreachable"][0], ensure_ascii=False)[:1200])
+        if row["screen"] == "剪辑":
+            # 夹具里那条带转场的片段，头一枚针让给了牌子那一格。少画的那一枚**必须有名字**：
+            # 「静悄悄少画一枚针」和「留一枚点不到的针」是同一类缺陷，所以这一判也进门禁。
+            marks = [str(chip.get("text")) for chip in data.get("chips", [])]
+            if data.get("chip_count", 0) < 1 or not any(mark.startswith("+") for mark in marks):
+                problems.append(
+                    f"{label}: 画不下的针没有名字（+N 牌子看见的：{marks or '一枚都没有'}）"
+                )
+            else:
+                named += 1
     if css_floor < FONT_FLOOR:
         problems.append(f"styles.css 里最小那一档字号 {css_floor}px 低于地板 {FONT_FLOOR}px")
     if problems:
@@ -312,7 +340,8 @@ def main() -> None:
     print(
         f"SUMMARY green screens={len(screens)} 地板={css_floor}px "
         f"叠行合计={sum(row['data']['hint_stack_count'] for row in screens)} "
-        f"遮罩后={sum(row['data'].get('behind_scrim_count', 0) for row in screens)}"
+        f"遮罩后={sum(row['data'].get('behind_scrim_count', 0) for row in screens)} "
+        f"缺口有名={named}"
     )
 
 

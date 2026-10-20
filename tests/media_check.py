@@ -539,6 +539,14 @@ def main():
     if finished.status == "succeeded":
         check("图片输出 2 秒", 1.8 <= probe_seconds(ffprobe, Path(finished.output_path)) <= 2.2)
 
+    # 1.219 量到并修好的那一格：`_kill` 那一手原先没有截止时间。这台机器上 `taskkill`
+    # 会不回来，于是取消一手把渲染线程钉在 `finally` 之前——其后的作业全停在
+    # 「排队等待渲染」，那半截 `.part` 也留在盘上（两遍实测：431 s 与单跑同样三条红）。
+    # 上面那几段现在能过，靠的就是那一句 `timeout=`。摘掉它，这一行先红，不用等四百秒。
+    killer = Path(__file__).resolve().parent.parent / "src/agentcut/jobs.py"
+    body = killer.read_text(encoding="utf-8").split("def _kill", 1)[1].split("\n    def ", 1)[0]
+    check("叫停 FFmpeg 那一手带截止时间", "timeout=KILL_TIMEOUT_SECONDS" in body, body[:160])
+
     if FAILURES:
         print(f"\n失败 {len(FAILURES)} 项：")
         for line in FAILURES:

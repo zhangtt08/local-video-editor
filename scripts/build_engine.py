@@ -11,6 +11,11 @@ What it does, from scratch, every run:
 1. Runs PyInstaller in an ephemeral tool environment (`uv run --with pyinstaller --no-sync`).
    The project's locked dependency set stays untouched: pyinstaller is never added to
    pyproject.toml or uv.lock.
+   1.219 measured on this machine: that ephemeral env sometimes never starts — it prints nothing,
+   uses no CPU and never returns (23 min in one run, a 75 s timeout in another, with and without
+   `UV_OFFLINE`). `--no-uv` is the way out: install PyInstaller into the project venv
+   (`uv pip install --offline pyinstaller`, 7 packages in 0.3 s from the uv cache) and let the
+   builder use the `pyinstaller` already on PATH. Same PyInstaller 6.22.3 either way.
 2. Stages the result in `desktop/resources/bin/` exactly where `desktop/electron/main.ts` looks:
    `bin/agentcut/agentcut.exe` (onedir, default) or `bin/agentcut.exe` (`--layout onefile`),
    plus `bin/ffmpeg.exe` and `bin/ffprobe.exe` copied out of `desktop/node_modules`.
@@ -51,6 +56,8 @@ DEST = ROOT / "desktop" / "resources" / "bin"
 ENGINE_NAME = "agentcut"
 
 IS_WINDOWS = os.name == "nt"
+# 收进程的那几手（taskkill、WMI）最多等各这么久：等不到就跳过，不许把构建钉在原地。
+KILL_TIMEOUT_SECONDS = 30
 EXE = ".exe" if IS_WINDOWS else ""
 
 
@@ -130,7 +137,20 @@ def build_engine(layout: str, use_uv: bool) -> Path:
             *argv,
         ]
     elif shutil.which("pyinstaller"):
-        command = [shutil.which("pyinstaller"), *argv]
+        # 1.219: `--no-uv` 优先用**当前解释器自己**那一份 PyInstaller，而不是 PATH 上那个刚写出来的
+        # 控制台壳（这台机器上装有实时杀软：新写的 `.exe` 启动子进程会卡在进程创建里，实测 13 分钟
+        # 零 CPU、连 `build/engine/` 都没建起来）。`-m PyInstaller` 走的是已经加载的解释器，
+        # 分析的仍是工程那份依赖，与壳同版本（6.22.3）。
+        module = subprocess.run(
+            [sys.executable, "-c", "import PyInstaller.__main__"],
+            capture_output=True,
+            cwd=ROOT,
+            shell=False,
+        ).returncode == 0
+        if module:
+            command = [sys.executable, "-m", "PyInstaller", *argv]
+        else:
+            command = [shutil.which("pyinstaller"), *argv]
     else:
         fail(
             "neither `uv` nor a `pyinstaller` on PATH was found; install uv "
@@ -328,8 +348,6 @@ def kill_tree(pid: int, exe: Path, engine_dir: Path) -> None:
     """Stop this verification tree, including an orphaned onefile child in its test directory."""
     if not IS_WINDOWS:
         return
-    capture = {"capture_output": True, "text": True, "encoding": "utf-8", "errors": "replace"}
-    subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], check=False, **capture)
     executable = str(exe.resolve()).replace("'", "''")
     directory = re.escape(str(engine_dir))  # Match the actual argv, including Windows short paths.
     argument = (r'--data-dir\s+"?' + directory + r'"?(?:\s|$)').replace("'", "''")
@@ -338,7 +356,22 @@ def kill_tree(pid: int, exe: Path, engine_dir: Path) -> None:
         f"$_.ExecutablePath -eq '{executable}' -and $_.CommandLine -match '{argument}' "
         "} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
     )
-    subprocess.run(["powershell", "-NoProfile", "-Command", script], check=False, **capture)
+    best_effort(["taskkill", "/PID", str(pid), "/T", "/F"])
+    best_effort(["powershell", "-NoProfile", "-Command", script])
+
+
+def best_effort(argv: list[str]) -> None:
+    """收进程的那几手的工具（`taskkill`、WMI）在这台机器上会自己卡住不动。
+
+    1.219 实测到这一格的代价：`build_check` 与随包引擎那一档都因为一处没有截止时间的
+    `subprocess.run` 而挂满整套的 2400 s 兜底——那期间没人知道它是红还是死。收尾的手打不通就
+    跳过，并把「它没回来」说在册：红的必须是产品那一件事，而不是这台机器的某一工具。
+    """
+    capture = {"capture_output": True, "text": True, "encoding": "utf-8", "errors": "replace"}
+    try:
+        subprocess.run(argv, check=False, timeout=KILL_TIMEOUT_SECONDS, **capture)
+    except subprocess.TimeoutExpired:
+        step(f"        {argv[0]} 没在 {KILL_TIMEOUT_SECONDS} s 内回来，跳过这一手")
 
 
 def kill_staged_engines() -> None:
@@ -350,14 +383,20 @@ def kill_staged_engines() -> None:
         'Get-Process | Where-Object { $_.Path -like "%s*" } | '
         "ForEach-Object { Stop-Process -Id $_.Id -Force; 'killed ' + $_.Id + ' ' + $_.Path }" % DEST
     )
-    proc = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", script],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", script],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=KILL_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        # 同样是「工具卡住」而不是「构建坏了」：说一声，继续往下清。
+        step(f"cleanup: 清点那一手没在 {KILL_TIMEOUT_SECONDS} s 内回来，跳过")
+        return
     for line in (proc.stdout or "").splitlines():
         if line.strip():
             step(f"cleanup: {line.strip()}")

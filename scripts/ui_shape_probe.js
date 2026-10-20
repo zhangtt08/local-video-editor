@@ -67,6 +67,9 @@ function measureAgentCutUi() {
   var unreachable = [];
   var scrollAway = [];
   var scrimBehind = [];
+  // 「+N」那一格：画不下的针必须有个名字。这里只收真正在屏上的那几枚牌子与它写的数目，
+  // 门禁据此判「少画了却没人说」——静悄悄少画一枚针，与点不到的那枚一样是缺陷。
+  var chips = [];
   // 有没有一层盖住整块视口的东西（帮助、导出确认那类遮罩）——只当事实报出来，
   // 不用它去裁剪量测：遮罩自己那一棵里的字同样要量。
   var scrim = null;
@@ -76,6 +79,13 @@ function measureAgentCutUi() {
     var el = all[index];
     if (!visible(el)) continue;
     byTag[el.tagName.toLowerCase()] = (byTag[el.tagName.toLowerCase()] || 0) + 1;
+    if (String(el.className).indexOf("clip-keyframe-more") >= 0) {
+      var chipBox = el.getBoundingClientRect();
+      chips.push({
+        text: textOf(el).slice(0, 8),
+        box: [Math.round(chipBox.left), Math.round(chipBox.top), Math.round(chipBox.width), Math.round(chipBox.height)],
+      });
+    }
     var style = getComputedStyle(el);
     var radius = style.borderRadius;
     if (radius && radius !== "0px") {
@@ -256,5 +266,7 @@ function measureAgentCutUi() {
     unreachable_count: unreachable.length,
     scroll_away: scrollAway.slice(0, 10),
     scroll_away_count: scrollAway.length,
+    chips: chips.slice(0, 8),
+    chip_count: chips.length,
   };
 }

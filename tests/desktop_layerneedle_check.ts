@@ -59,7 +59,7 @@ assert.equal((effectsCode.match(/`layer\$\{layer\}:\$\{[a-z]+\}`/g) ?? []).lengt
 // ⑤ 「+N」数的是**画不下的那些行**：片段自己的与层的在同一张道表里分道，谁画不下谁进牌子。
 assert.match(timeline, /const laned = \[\.\.\.visible, \.\.\.layered\];/, "层的针没有进同一张道表（分开两张就会出现两枚针叠在一起）");
 assert.match(timeline, /needleRows\(laned, laneCapacity\(NEEDLE_AREA_PIXELS\)\)/, "分道问的不是那一处容量算术");
-assert.match(timeline, /const more = hidden\.length;/, "+N 还在自己数一遍");
+assert.match(timeline, /const more = starved\.length;/, "+N 还在自己数一遍（1.219 起它数的是没画出来的那几枚针，含被转场牌子压住的）");
 assert.match(timeline, /\+\{more\}<\/button>/, "那枚牌子写的还是旧数目");
 assert.equal((timeline.match(/clip-keyframe-more/g) ?? []).length, 1, "片段条上不许出现两枚 +N");
 assert.match(timeline, /LAYER_KEY_LABEL\[row\.field\.key\] \?\? row\.field\.key/, "牌子上没有说清是第几层的哪个数");
@@ -67,7 +67,7 @@ assert.match(timeline, /`第 \$\{row\.field\.layer \+ 1\} 层 /, "牌子上的�
 assert.match(timeline, /FIELD_LABEL\[property as keyof typeof FIELD_LABEL\] \?\? property/, "牌子把片段自己的针弄丢了");
 
 // ⑥ 右端让开的是牌子自己的方子加针伸出去的那一半（1.206 量对的那笔旧账，一字不改仍要钉住）。
-assert.match(timeline, /const keep = more \? CHIP_KEEP_PIXELS \+ NEEDLE_HALF_PIXELS : 6;/, "让位的距离没跟着牌子走");
+assert.match(timeline, /const keep = more \? CHIP_KEEP_PIXELS \+ NEEDLE_HALF_PIXELS : NEEDLE_HALF_PIXELS;/, "让位的距离没跟着牌子走（1.219 起两端都按针自己的半宽夹）");
 assert.match(timeline, /Math\.min\(width - keep,/, "针的夹法还在自己算右端，不看那两个数");
 assert.match(lanes, /export const CHIP_KEEP_PIXELS = 32;/, "牌子占住的距离不在那一处下发");
 assert.match(lanes, /export const NEEDLE_HALF_PIXELS = 10;/, "针自己伸出去的那一半不在那一处下发");

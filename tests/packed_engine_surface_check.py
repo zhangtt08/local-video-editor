@@ -16,9 +16,11 @@ Assertions, each one a way this could quietly be missing from the shipped build:
 
 import json
 import os
+import queue
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -39,6 +41,39 @@ BIN = ROOT / "desktop/resources/bin"
 ENGINE = BIN / "agentcut/agentcut.exe"
 FFMPEG = BIN / "ffmpeg.exe"
 FFPROBE = BIN / "ffprobe.exe"
+
+# 包里那支 exe 从「按下」到「说出端口」最多允许这么久；超过就是红，不是等。
+# 冷启动实测 774 ms（1.218 那份），这里留的是量级的余量，不是「先等等看」。
+START_DEADLINE_SECONDS = 90
+
+
+def stop(proc):
+    """收尾只有一只手：terminate → 等 → kill → 连子树一起 taskkill。"""
+    proc.terminate()
+    try:
+        proc.wait(timeout=20)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    try:
+        subprocess.run(
+            ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+            capture_output=True,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        # 这台机器上 taskkill 会自己卡住（1.219 实测：`tasklist`、`Get-CimInstance` 与它一起不动，
+        # 而那支 exe 恰好就是起不来的那一份）。收尾不能把红的那一句换成一句 traceback——
+        # 「九十分钟到点」这一档要说的是端口没来，不是收尾失败。
+        pass
+
+
+def _wait_briefly(proc):
+    """它已经不再吐字了：给它几秒自己退出，别把「还在收尾」当成「活着」。"""
+    try:
+        proc.wait(timeout=5)
+        return True
+    except subprocess.TimeoutExpired:
+        return False
 
 
 def call(base, token, method, path, body=None):
@@ -103,17 +138,46 @@ def start(folder, token):
         errors="replace",
         env=dict(os.environ, AGENTCUT_TOKEN=token),
     )
-    deadline = time.time() + 90
+    # 那一行 ready 必须**在截止时间内**读到。以前这里是 `proc.stdout.readline()`：包里的 exe 一旦
+    # 起不来又不吐字，这一句就永远不返回——门禁不是红，是挂了 40 分钟，被整套的 2400 s 兜住才报
+    # TIMEOUT（1.219 实测到这件事：`--help` 都不回话的一份 exe，把整条验收链钉在原地）。
+    # 改成读线的线程把每一行放进队列，主线程按截止时间取；到点就是红，红的这一句里带着它真正吐出的
+    # 那几行，不用再来一次 40 分钟才知道它说了什么。
+    lines: queue.Queue[str] = queue.Queue()
+
+    def pump() -> None:
+        try:
+            for line in proc.stdout:
+                lines.put(line)
+        except (OSError, ValueError) as failure:
+            lines.put(f"the reader gave up: {failure}\n")
+        lines.put("")
+
+    threading.Thread(target=pump, daemon=True).start()
+    seen: list[str] = []
+    deadline = time.time() + START_DEADLINE_SECONDS
     while time.time() < deadline:
-        line = proc.stdout.readline()
-        if not line:
-            if proc.poll() is not None:
-                raise AssertionError(f"the packed engine died: rc={proc.returncode}")
-            continue
+        try:
+            line = lines.get(timeout=max(0.05, deadline - time.time()))
+        except queue.Empty:
+            break
+        if line == "":
+            # 字都吐完了也没有 ready：等它自己退出，别把「已经死了」读成「还在起」。
+            stopped = proc.poll() is not None or _wait_briefly(proc)
+            stop(proc)
+            raise AssertionError(
+                f"the packed engine died before reporting a port: rc={proc.returncode} "
+                f"stopped={stopped}; it said: {' | '.join(seen)[:400] or '(nothing)'}"
+            )
+        seen.append(line)
         if line.startswith("{"):
             info = json.loads(line)
             return proc, info["base_url"], info
-    raise AssertionError("the packed engine never reported a port")
+    stop(proc)
+    raise AssertionError(
+        f"the packed engine never reported a port within {START_DEADLINE_SECONDS}s; "
+        f"rc={proc.poll()}; it said: {' | '.join(seen)[:400] or '(nothing)'}"
+    )
 
 
 def main():
@@ -344,16 +408,7 @@ def main():
                 "and its refusal writes nothing"
             )
         finally:
-            proc.terminate()
-            try:
-                proc.wait(timeout=20)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-            subprocess.run(
-                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-                capture_output=True,
-                timeout=30,
-            )
+            stop(proc)
 
 
 if __name__ == "__main__":

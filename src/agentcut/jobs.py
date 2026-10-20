@@ -79,6 +79,10 @@ WINDOWS_EXCEPTIONS = {
 }
 
 
+# 叫停一支在跑的 FFmpeg，最多等这一手这么久；等不到就换一种停法（见 `_kill`）。
+KILL_TIMEOUT_SECONDS = 10
+
+
 def describe_exit(return_code: int, stderr: str) -> str:
     tail = stderr.strip()[-MAX_LOG:]
     unsigned = return_code & 0xFFFFFFFF
@@ -845,15 +849,29 @@ class JobRuntime:
 
     @staticmethod
     def _kill(process: subprocess.Popen):
+        """停掉一支在跑的 FFmpeg。
+
+        `taskkill` 这台机器上会不回来（1.219 实测到这一格的后果：取消一手钉在 `_kill` 里，
+        渲染线程走不到 `finally`，其后的作业全停在「排队等待渲染」，而那半截 `.part` 也留在那儿）。
+        所以这一手必须有截止时间；等不到就退回 `process.kill()`——要的是「它停了」，
+        不是「哪一种停法」。
+        """
         try:
             if _NO_WINDOW:
                 subprocess.run(
                     ["taskkill", "/F", "/T", "/PID", str(process.pid)],
                     capture_output=True,
                     creationflags=_NO_WINDOW,
+                    timeout=KILL_TIMEOUT_SECONDS,
                 )
-            else:
-                process.kill()
+                return
+            process.kill()
+        except subprocess.TimeoutExpired:
+            pass
+        except OSError:
+            pass
+        try:
+            process.kill()
         except OSError:
             pass
 

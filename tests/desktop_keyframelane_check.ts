@@ -16,7 +16,17 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { laneCapacity, needleRows, LANE_PITCH_PIXELS } from "../desktop/src/keyframeLanes";
+import {
+  LANE_CLIP_PAD_PIXELS,
+  LANE_PITCH_PIXELS,
+  NEEDLE_BOTTOM_PIXELS,
+  NEEDLE_HIT_PIXELS,
+  SEAM_BADGE_BOTTOM_PIXELS,
+  SEAM_BADGE_HEIGHT_PIXELS,
+  laneCapacity,
+  needleRows,
+  underSeamBadge,
+} from "../desktop/src/keyframeLanes";
 
 const key = (property: string) => ({ property: property as never });
 
@@ -44,16 +54,27 @@ assert.equal(laneCapacity(0), 1, "never zero");
 assert.equal(laneCapacity(37, LANE_PITCH_PIXELS), 3, "the pitch is the caller's knob, not a hidden literal");
 assert.equal(needleRows([], 3).lanes, 0, "no needles, no lanes");
 
+// 1.219：转场牌子占住片段底部那一条带（bottom 1、高 18），所以第 0、1 道在它那一横条里，
+// 第 2 道在它之上。横向那一判与纵向分道是同一条规矩：压在底下的那枚不画，交给「+N」说出去。
+assert.equal(underSeamBadge(0, 30, 24), true, "第一道、中心 30、牌子 24 宽：抓取盒 20..40 与牌子 0..24 相交");
+assert.equal(underSeamBadge(0, 34, 24), false, "中心让到 34（牌子右缘再加半宽）就干净了——贴着边界的那一枚必须点得到");
+assert.equal(underSeamBadge(1, 10, 24), true, "第二道也有一部分高度在牌子那一条带里");
+assert.equal(underSeamBadge(2, 10, 24), false, "第三道在牌子之上，不受这一判影响");
+assert.equal(underSeamBadge(0, 10, 0), false, "没有转场就没有牌子，一枚都不许多藏");
+assert.equal(SEAM_BADGE_BOTTOM_PIXELS + SEAM_BADGE_HEIGHT_PIXELS > NEEDLE_BOTTOM_PIXELS + LANE_PITCH_PIXELS, true,
+  "牌子那条带至少要盖住第一道，否则这一判是在管一件不存在的事");
+
 // 界面必须真的按这些数画，并且少画的那几条有出路。
 const path = ["desktop/src/views/Timeline.tsx", "src/views/Timeline.tsx"].map((part) => resolve(process.cwd(), part)).find(existsSync);
 assert.ok(path, "the timeline must be readable from the check's working directory");
 const source = readFileSync(path!, "utf8");
 assert.match(source, /needleRows\(/, "the timeline asks the shared lane splitter");
 assert.match(source, /laneCapacity\(/, "and derives how many lanes fit from pixels");
-assert.match(source, /bottom: 1 \+ \(rowOf\.get\(k\.property\) \?\? 0\) \* LANE_PITCH_PIXELS/, "each lane sits at its own bottom offset");
+assert.match(source, /bottom: NEEDLE_BOTTOM_PIXELS \+ \(rowOf\.get\(k\.property\) \?\? 0\) \* LANE_PITCH_PIXELS/, "each lane sits at its own bottom offset, counted from the shared constant");
 // 只画得了道的针：把 filter 去掉就会又叠回同一堆像素。1.119 起这一份「画出来的那几枚」还要给框选当命中集，
 // 所以它先落成一个名字，界面与框选读的都是它——断到那一行本身，去掉 filter 它就变了。
-assert.match(source, /const painted = laned\.filter\(\(k\) => rowOf\.has\(k\.property\)\);/, "needles of hidden properties must not be drawn at all");
+assert.match(source, /const painted = laned\.filter\(\(k\) => rowOf\.has\(k\.property\) && !underBadge\(k\)\);/,
+  "画出去的那一枚必须同时过了「有道」与「没压在牌子上」两判——去掉任何一个都会画出一枚点不到的针");
 // 1.208：层的针进的是**同一张**道表，所以「画不下的不画」这一句对两只手都成立——两处渲染都必须
 // 从 painted 里筛，不许有一排绕过道表自己画（那样就会有两枚针叠在同一堆像素里，正是这一档存在的理由）。
 assert.match(source, /const clipPainted = painted\.filter\(\(k\): k is Keyframe => !\("field" in k\)\);/, "片段自己那一排只能画 painted 筛出来的那些");
@@ -73,6 +94,27 @@ assert.match(source, /onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}[
 // 再加针伸出去的那一半——1.112 拿 16px 当整块牌子，是把针的 `left`（中心）当成了左边缘。
 assert.match(source, /Math\.min\(width - keep,/, "needles reserve the chip's corner");
 
+// 1.219：夹的是**中心**，所以两端都按针自己的半宽夹。写死一个比半宽小的数（原来左端是 6），
+// 贴边那一枚就有半个盒子伸出片段之外，`overflow: hidden` 当场把它裁掉——量到的是针从 329 起、
+// 片段从 330 起。这一句断的是这一行现在真的按 NEEDLE_HALF_PIXELS 夹两端。
+assert.match(source, /const keep = more \? CHIP_KEEP_PIXELS \+ NEEDLE_HALF_PIXELS : NEEDLE_HALF_PIXELS;/,
+  "the right-hand reservation is the chip's own box plus the needle's half width, never a guessed literal");
+assert.match(source, /Math\.max\(NEEDLE_HALF_PIXELS, \(at \/ clip\.duration_ticks\) \* width\)/,
+  "the left end clamps the needle's centre by its own half width, so the box stays inside the clip");
+// 那一判只钉夹针这一句：片段自己的最小宽（`Math.max(6, ...)`）是另一件事，别把它算进这笔账。
+assert.doesNotMatch(source, /Math\.max\(6, \(at \/ clip\.duration_ticks\)/,
+  "夹针的左端不许再用那个比半宽还小的字面 6");
+
+// 转场牌子压在片段左下角那一条带上：抓取盒落进那块矩形的针**不画**，改成「+N」里的一员。
+// 断的是画出去的那一行真的问了这个判（上面那一判已经在 `painted` 那一句里钉住），而不是只在模块里备着一个没人调的函数。
+assert.match(source, /underSeamBadge\(rowOf\.get\(k\.property\) \?\? 0/, "判它压没压的，是那张道表给出的道号");
+assert.match(source, /bottom: SEAM_BADGE_BOTTOM_PIXELS \+ LANE_CLIP_PAD_PIXELS,/, "牌子从片段底往上数，与针同一条尺");
+assert.match(source, /width: Math\.max\(SEAM_BADGE_MIN_WIDTH_PIXELS,/, "牌子的最小宽与那一判读同一份数");
+assert.match(source, /const more = starved\.length;/, "「+N」数的是没画出来的那几枚针，两处不各数一遍");
+assert.match(source, /const rest = \(k: \(typeof laned\)\[number\]\) =>/, "一枚针不拖的时候站哪，只有一个出处");
+assert.doesNotMatch(source, /const from = k\.at_ticks - \(clip\.animation_offset_ticks \?\? 0\);/,
+  "画的时候不许再自己减一遍偏移——那会有两份「静止位置」的算术");
+
 // 道距必须容得下针的命中盒，否则相邻两道的矩形互相盖住——那就是这次要修的叠像素缺陷的垂直版本。
 const cssPath = ["desktop/src/styles.css", "src/styles.css"].map((part) => resolve(process.cwd(), part)).find(existsSync);
 assert.ok(cssPath, "the stylesheet must be readable from the check's working directory");
@@ -83,5 +125,21 @@ const height = /height: *(\d+)px/.exec(rule[0]);
 assert.ok(height, "the needle box declares its height");
 assert.ok(Number(height[1]) <= 12, `the hit box (${height[1]}px) must not exceed the lane pitch (12px)`);
 assert.match(rule[0], /z-index: *5/, "the needle sits above the trim strip, which used to swallow it");
+// 1.219：那几个像素只许有一份。CSS 写一遍、判定再数一遍，早晚会对不上——那正是这一档要防的那一类。
+assert.equal(Number(height[1]), NEEDLE_HIT_PIXELS, "针的命中盒高度与 keyframeLanes 那个数是同一个");
+const needleBottom = /bottom: *(\d+)px/.exec(rule[0]);
+assert.ok(needleBottom, "针那一排自己声明离底多少像素");
+assert.equal(Number(needleBottom[1]), NEEDLE_BOTTOM_PIXELS, "第一道的下缘与那一判读同一个数");
+const clipRule = /\.clip\s*\{[^}]*\}/.exec(css);
+assert.ok(clipRule, "片段那一格的规则存在");
+for (const side of ["top", "bottom"] as const) {
+  const found = new RegExp(`${side}: *(\\d+)px`).exec(clipRule[0]);
+  assert.ok(found, `片段的 ${side} 内边距要写明`);
+  assert.equal(Number(found[1]), LANE_CLIP_PAD_PIXELS, "牌子从行换算到片段底，靠的就是这一个数");
+}
+const badgeRule = /\.transition-badge\s*\{[^}]*\}/.exec(css);
+assert.ok(badgeRule, "转场牌子的规则存在");
+assert.doesNotMatch(badgeRule[0], /top: /, "牌子不许再写那个照着行高猜的 top——那一行由 keyframeLanes 下发");
+assert.doesNotMatch(badgeRule[0], /height: /, "它的高度同理只许有一份");
 
-console.log("PASS: 同一秒上不同属性的针各走一道、道号按第一次出现排、画不下的明说是哪几条并给出路、容量按像素算且至少一道");
+console.log("PASS: 同一秒上不同属性的针各走一道、道号按第一次出现排、画不下的（含压在转场牌子底下的）明说是哪几条并给出路、容量按像素算且至少一道、那些像素 CSS 与判定同一份");

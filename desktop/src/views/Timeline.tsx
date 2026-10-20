@@ -6,7 +6,21 @@ import { countHidden, firstView, laneTicks, paintClips, rulerSeconds, unionRange
 import { transitionLabel } from "../engine";
 import type { Clip, Keyframe, Marker, Project, Track } from "../engine";
 import { planKeyframeDrag, planLayerNeedleDrag, planLayerNeedleRemoval, planNeedleRemoval } from "../keyframeDrag";
-import { CHIP_KEEP_PIXELS, LANE_PITCH_PIXELS, NEEDLE_AREA_PIXELS, NEEDLE_HALF_PIXELS, laneCapacity, needleId, needleRows } from "../keyframeLanes";
+import {
+  CHIP_KEEP_PIXELS,
+  LANE_CLIP_PAD_PIXELS,
+  LANE_PITCH_PIXELS,
+  NEEDLE_AREA_PIXELS,
+  NEEDLE_BOTTOM_PIXELS,
+  NEEDLE_HALF_PIXELS,
+  SEAM_BADGE_BOTTOM_PIXELS,
+  SEAM_BADGE_HEIGHT_PIXELS,
+  SEAM_BADGE_MIN_WIDTH_PIXELS,
+  laneCapacity,
+  needleId,
+  needleRows,
+  underSeamBadge,
+} from "../keyframeLanes";
 import { MARQUEE_INSET_PIXELS, type PixelBox, commitPick, draggedEnough, hitsInBand, marqueeBox, togglePick } from "../keyframeMarquee";
 import {
   addLibraryItemToTimeline,
@@ -700,7 +714,12 @@ function TrackRow({
           </div>
         ))}
         {painted.filter((clip) => clip.transition_in).map((clip) => <button key={`transition-${clip.id}`} type="button" className="transition-badge"
-          style={{ left: clip.position_ticks / TIMEBASE * px, width: Math.max(24, clip.transition_in!.duration_ticks / TIMEBASE * px) }}
+          style={{
+            left: clip.position_ticks / TIMEBASE * px,
+            width: Math.max(SEAM_BADGE_MIN_WIDTH_PIXELS, clip.transition_in!.duration_ticks / TIMEBASE * px),
+            bottom: SEAM_BADGE_BOTTOM_PIXELS + LANE_CLIP_PAD_PIXELS,
+            height: SEAM_BADGE_HEIGHT_PIXELS,
+          }}
           title={`${transitionLabel(app.caps, clip.transition_in!.kind)} · ${humanDuration(clip.transition_in!.duration_ticks)}，点击编辑`}
           aria-label={`编辑${transitionLabel(app.caps, clip.transition_in!.kind)}转场`}
           onPointerDown={(event) => event.stopPropagation()}
@@ -1120,28 +1139,40 @@ function ClipBlock({
         const layered = layerNeedles(clip);
         const laned = [...visible, ...layered];
         const { rowOf, hidden } = needleRows(laned, laneCapacity(NEEDLE_AREA_PIXELS));
-        const painted = laned.filter((k) => rowOf.has(k.property));
+        // 转场牌子占住片段左下角那一条带（那几个数在 keyframeLanes，界面画与这一判读同一份）：
+        // 抓取盒落进那块矩形的那枚针不画——「宁可少画，也不留一枚点不到的针」那条规矩的横向版本。
+        const seam = clip.transition_in
+          ? Math.min(width, Math.max(SEAM_BADGE_MIN_WIDTH_PIXELS, (clip.transition_in.duration_ticks / TIMEBASE) * px))
+          : 0;
+        // 一枚针不拖的时候站在哪：层的针按自己那份刻度，片段自己的针要减掉动画窗的偏移。
+        // 这一句是唯一的出处——画的时候、判牌子压没压的时候，都问它，不许两处各算一遍。
+        const rest = (k: (typeof laned)[number]) => ("field" in k ? k.at_ticks : k.at_ticks - (clip.animation_offset_ticks ?? 0));
+        const underBadge = (k: (typeof laned)[number]) => seam > 0
+          && underSeamBadge(rowOf.get(k.property) ?? 0, Math.min(width - NEEDLE_HALF_PIXELS, Math.max(NEEDLE_HALF_PIXELS, (rest(k) / clip.duration_ticks) * width)), seam);
+        const painted = laned.filter((k) => rowOf.has(k.property) && !underBadge(k));
+        const starved = laned.filter((k) => !painted.includes(k));
         const clipPainted = painted.filter((k): k is Keyframe => !("field" in k));
         const layerPainted = painted.filter((k): k is LayerNeedle => "field" in k);
         const laneOf = new Map(painted.map((k) => [needleId(k), rowOf.get(k.property) ?? 0]));
-        // 「+N」说的还是那一句话——画不下的属性有几个——只是这一轮起层的行也按同一张道表算：
-        // 画得下的那几行不再进牌子，画不下的才进，两处不会各数一遍。
-        const more = hidden.length;
-        const moreLabels = hidden.map((property) => {
+        // 「+N」数的是**枚**：道表画不下的那些针，加上被转场牌子压住的那些针，两处不各数一遍。
+        // 牌子里列的属性名去重——同一条属性上少了两枚针，说的是同一件事。
+        const more = starved.length;
+        const moreLabels = [...new Set([...hidden, ...starved.map((k) => k.property)])].map((property) => {
           const row = layered.find((k) => k.property === property);
           return row ? `第 ${row.field.layer + 1} 层 · ${LAYER_KEY_LABEL[row.field.key] ?? row.field.key}` : FIELD_LABEL[property as keyof typeof FIELD_LABEL] ?? property;
         });
         // 针与它的影子共用这一句夹法：贴边那枚要看得见；牌子上场时右端让开的是**它自己的方子**
         // 加针自己伸出去的那一半——1.112 那句 16px 把 left 当成了针的左边缘，量错了一整枚针的宽度。
-        const keep = more ? CHIP_KEEP_PIXELS + NEEDLE_HALF_PIXELS : 6;
-        const needleX = (at: number) => Math.min(width - keep, Math.max(6, (at / clip.duration_ticks) * width));
+        // 1.219：左端也按针自己的半宽夹（原来是字面 6，比半宽小，于是半个盒子伸出片段被裁掉）。
+        const keep = more ? CHIP_KEEP_PIXELS + NEEDLE_HALF_PIXELS : NEEDLE_HALF_PIXELS;
+        const needleX = (at: number) => Math.min(width - keep, Math.max(NEEDLE_HALF_PIXELS, (at / clip.duration_ticks) * width));
         return <>
           {painted.length ? <span className="clip-needles" style={{ left: MARQUEE_INSET_PIXELS, right: MARQUEE_INSET_PIXELS, height: NEEDLE_AREA_PIXELS }}
             title="在针道的空处拉一个框，框里的针一起挑中：整组拖就是同时改同一份时间差。按住 Shift 点一枚是加进这一组或从组里摘出去。"
             onPointerDown={startMarquee} /> : null}
           {band ? <span className="clip-marquee" style={{ left: band.x0, top: band.y0, width: Math.max(0, band.x1 - band.x0), height: Math.max(0, band.y1 - band.y0) }} aria-hidden="true" /> : null}
           {clipPainted.map((k) => {
-            const from = k.at_ticks - (clip.animation_offset_ticks ?? 0);
+            const from = rest(k);
             const id = needleId(k);
             const target = keyDrag && !keyDrag.duplicate ? keyDrag.targets.find((item) => item.id === id) : undefined;
             const refused = Boolean(keyDrag?.blocked && (keyDrag.anchor === id || keyDrag.targets.some((item) => item.id === id)));
@@ -1153,7 +1184,7 @@ function ClipBlock({
             return <button
               key={`${k.property}-${k.at_ticks}`} data-key-id={id} type="button"
               className={`clip-keyframe${target ? " dragging" : ""}${refused ? " blocked" : ""}${picked.includes(id) ? " selected" : ""}`}
-              style={{ left: needleX(at), bottom: 1 + (rowOf.get(k.property) ?? 0) * LANE_PITCH_PIXELS }}
+              style={{ left: needleX(at), bottom: NEEDLE_BOTTOM_PIXELS + (rowOf.get(k.property) ?? 0) * LANE_PITCH_PIXELS }}
               title={`${label} · ${humanDuration(from)}${keyDrag ? ` → ${humanDuration(at)}` : ` · ${hint}`}`}
               aria-label={`拖动${label}关键帧`}
               aria-disabled={track.locked || razor || !app.caps?.features?.keyframes}
@@ -1163,12 +1194,12 @@ function ClipBlock({
             const id = needleId(k);
             const target = keyDrag ? keyDrag.targets.find((item) => item.id === id) : undefined;
             const refused = Boolean(keyDrag?.blocked && keyDrag.anchor === id);
-            const at = target ? target.at : k.at_ticks;
+            const at = target ? target.at : rest(k);
             const label = `第 ${k.field.layer + 1} 层 · ${LAYER_KEY_LABEL[k.field.key] ?? k.field.key}`;
             return <button
               key={id} data-key-id={id} type="button"
               className={`clip-keyframe layer-needle${target ? " dragging" : ""}${refused ? " blocked" : ""}`}
-              style={{ left: needleX(at), bottom: 1 + (rowOf.get(k.property) ?? 0) * LANE_PITCH_PIXELS }}
+              style={{ left: needleX(at), bottom: NEEDLE_BOTTOM_PIXELS + (rowOf.get(k.property) ?? 0) * LANE_PITCH_PIXELS }}
               title={`${label} · ${humanDuration(k.at_ticks)}${keyDrag ? ` → ${humanDuration(at)}` : " · 横向拖只改这一枚的时间；按住 Alt 拖是复制一枚，按住 Alt 点一下是删掉这一枚。要改那一个数，就在右边这一层卡片下面那一排里改——◇ 那一条就是这一层的针"}`}
               aria-label={`拖动${label}关键帧`}
               aria-disabled={track.locked || razor || !app.caps?.features?.keyframes}
@@ -1176,9 +1207,9 @@ function ClipBlock({
           })}
           {keyDrag?.duplicate ? keyDrag.targets.filter((item) => item.at !== item.from).map((item) => <span
             key={item.id} className={`clip-keyframe ghost${keyDrag.blocked ? " blocked" : ""}`}
-            style={{ left: needleX(item.at), bottom: 1 + (laneOf.get(item.id) ?? 0) * LANE_PITCH_PIXELS }}
+            style={{ left: needleX(item.at), bottom: NEEDLE_BOTTOM_PIXELS + (laneOf.get(item.id) ?? 0) * LANE_PITCH_PIXELS }}
             aria-hidden="true">{keyDrag.layer ? "◈" : "◆"}</span>) : null}
-          {more ? <button type="button" className="clip-keyframe-more" aria-label={`${more} 条属性的针没有画在这里`}
+          {more ? <button type="button" className="clip-keyframe-more" aria-label={`${more} 枚针没有画在这里`}
             title={`画不下的针：${moreLabels.join("、")}——点开进动画曲线看这条片段的全部针（层上的针在这条道上能拖时间，改值与删针在那条曲线的阶梯上）`}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={() => { selectClip(clip.id); setGraphOpen(true); }}>+{more}</button> : null}

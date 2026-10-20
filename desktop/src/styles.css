@@ -310,7 +310,9 @@ textarea.input { resize: vertical; line-height: 1.5; }
 .preview-track { position: absolute; inset: 0; isolation: isolate; pointer-events: none; }
 .transition-black { position: absolute; inset: 0; background: black; pointer-events: none; }
 .transition-white { position: absolute; inset: 0; background: white; pointer-events: none; }
-.transition-badge { position: absolute; top: 33px; height: 18px; z-index: 6; background: #3b3351; color: #eee0ff; border: 1px solid #9276ba; border-radius: var(--r-xs); font-size: var(--fs-micro); overflow: hidden; white-space: nowrap; cursor: pointer; }
+/* 1.219：这一枚的 `bottom`/`height` 由 keyframeLanes 下发（内联），CSS 里不再写 `top: 33px`——
+   那个数是照着一档行高猜的，片段行高一变它就压到针道上；针与判它压没压读的是同一份数。 */
+.transition-badge { position: absolute; z-index: 6; background: #3b3351; color: #eee0ff; border: 1px solid #9276ba; border-radius: var(--r-xs); font-size: var(--fs-micro); overflow: hidden; white-space: nowrap; cursor: pointer; }
 .transition-badge:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* isolation：第二路画面只与这一段自己的画面相合，不能穿到别的轨道底下去。
    .layer-grade 是引擎下发的那一层：位置、方式与权重都照清单，界面不做第二次换算。 */
