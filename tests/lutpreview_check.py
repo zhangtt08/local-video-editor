@@ -353,19 +353,25 @@ def video_suite(folder: Path) -> dict:
          ]},
         "POST",
     )
-    early = preview_shot(pid, folder, "video-early", webgl=True, play_ms=700)[1]
-    late = preview_shot(pid, folder, "video-late", webgl=True, play_ms=1500)[1]
-    first, second = early.get("play") or {}, late.get("play") or {}
-    for label, answer in (("0.7 秒", first), ("1.5 秒", second)):
-        assert answer.get("canvas") and answer.get("width", 0) > 2, (label, answer)
-        assert max(answer["pixel"][:3]) > 20, (label, "播放中画布是黑的", answer)
-    shift = max(abs(a - b) for a, b in zip(first["pixel"][:3], second["pixel"][:3]))
-    same_frame = (
-        first.get("checksum") is not None
-        and first.get("checksum") == second.get("checksum")
+    early_png, early = preview_shot(pid, folder, "video-early", webgl=True, play_ms=700)
+    late_png, late = preview_shot(pid, folder, "video-late", webgl=True, play_ms=1500)
+    rows = {}
+    for label, info in (("0.7 秒", early), ("1.5 秒", late)):
+        play = info.get("play") or {}
+        assert play.get("canvas") and play.get("width", 0) > 2, (label, play)
+        assert play.get("checksum"), (label, "画布缓冲是空的", play)
+        assert max(play["pixel"][:3]) > 20, (label, "播放中画布是黑的", play)
+        rows[label] = play
+    early_play, late_play = rows["0.7 秒"], rows["1.5 秒"]
+    print(
+        f"   播放读数：0.7s {early_play.get('playhead')} / {early_play.get('video_time')} / "
+        f"{early_play.get('checksum')}；1.5s {late_play.get('playhead')} / "
+        f"{late_play.get('video_time')} / {late_play.get('checksum')}"
     )
-    assert not same_frame, ("画布停在第一帧没跟着播", first, second)
-    return {"early": first, "late": second, "shift": shift}
+    assert early_play["checksum"] != late_play["checksum"], (
+        "画布停在第一帧没跟着播", early_play, late_play
+    )
+    return {"early": early_play, "late": late_play}
 
 
 def main() -> None:
@@ -468,8 +474,9 @@ def main() -> None:
                 f"{info.get('width')}×{info.get('height')}（源已藏起），"
                 f"12 块板两端最差 {worst:.1f} 级（容差 {TOLERANCE}），"
                 f"成片与预览各换了 {export_changed}/12 与 {preview_changed}/12 块；"
-                f"播放中画布 0.7s 与 1.5s 两整帧不同（校验 {moving['early'].get('checksum')} / "
-                f"{moving['late'].get('checksum')}，中心像素差 {moving['shift']} 级）"
+                f"播放中画布 0.7s 与 1.5s 两整帧不同（校验 {moving['early']['checksum']} / "
+                f"{moving['late']['checksum']}，播放头 {moving['early']['playhead']} / "
+                f"{moving['late']['playhead']}）"
             )
         finally:
             process.kill()

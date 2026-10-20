@@ -967,6 +967,24 @@ def apply_commands(
                                 "把这段复制一层，在那一层上画",
                                 clip_id=clip.id,
                             )
+                        last = -1
+                        for key in extra.keys:
+                            if not 0 <= key.at_ticks <= clip.duration_ticks:
+                                raise EditorError(
+                                    "MASK_KEY_RANGE",
+                                    "框点必须落在这条片段的时间范围里",
+                                    clip_id=clip.id,
+                                    at_ticks=key.at_ticks,
+                                    duration_ticks=clip.duration_ticks,
+                                )
+                            if key.at_ticks <= last:
+                                raise EditorError(
+                                    "MASK_KEY_CLASH",
+                                    "同一块上两枚框点不能落在同一时刻，框点也要按时间从前往后排",
+                                    clip_id=clip.id,
+                                    at_ticks=key.at_ticks,
+                                )
+                            last = key.at_ticks
                     clip.extra_masks = [extra.model_copy(deep=True) for extra in command.masks]
                     if command.follow is not None:
                         clip.extra_masks_follow = command.follow

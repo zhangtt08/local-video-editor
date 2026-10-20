@@ -1094,6 +1094,7 @@ table.table tr.current td { background: var(--accent-soft); }
 .mask-stack-cell > span:first-child { flex: none; color: var(--ink-3); font-size: var(--fs-label); }
 .mask-stack-cell .input { flex: 1 1 40px; min-width: 0; width: auto; }
 .mask-stack-cell > .dim { flex: none; font-size: var(--fs-label); }
+.mask-stack-keys { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--fs-label); }
 .mask-stack-follow { display: flex; align-items: center; gap: 6px; margin: 4px 0 2px; font-size: var(--fs-label); color: var(--ink-2); }
 .mask-stack-invert { grid-column: 1 / -1; gap: 6px; color: var(--ink-2); }
 

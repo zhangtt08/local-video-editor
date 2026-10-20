@@ -176,6 +176,9 @@ class ProjectStore:
                     node.pop("mix", None)
                 if "center_x" in node and node.get("vertices") is None:
                     node.pop("vertices", None)
+                # 1.238: a box that never carried its own keys hashes as one that cannot.
+                if "center_x" in node and not node.get("keys"):
+                    node.pop("keys", None)
                 # 1.69 gave a clip a stabilisation record. A payload that never mentions one must
                 # hash as the pre-1.69 payload it was, or every receipt for a `clip.add` written
                 # before this release splits in two on retry.

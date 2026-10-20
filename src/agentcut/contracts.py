@@ -21,7 +21,9 @@ MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 
 SCHEMA_VERSION = (
 
-    26  # v26 lets those extra boxes follow the main mask's centre (a v25 row carries no flag and
+    27  # v27 lets an extra box carry its own box keys (a v26 row has none and reads as the one
+    #     static box it always was). v26 lets those extra boxes follow the main mask's centre
+    #     (a v25 row carries no flag and
     #     stays put, which is exactly what the missing field meant). v25 lets one clip carry a
     #     second box to cut with; a v24 row has none and reads
     #     as "just the one mask", which is exactly what the missing field meant.
@@ -43,7 +45,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.237.0"
+APP_VERSION = "1.238.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -566,6 +568,10 @@ MASK_SHAPE_SCHEDULE_MAX = 12
 MASK_ROTATION_SCHEDULE_MAX = 12
 
 MASK_SHAPE_KEY_LIMIT = 32
+
+# 1.238: 再叠的那一块自己最多带几枚框点。它们不是 `clip.keyframes` 里那五条曲线——
+# 一套点说的是一整块盒子的五个数（中心两个、宽高、角度），同一次窗切段里一起换。
+MASK_EXTRA_KEY_LIMIT = 24
 
 # A keyframed radius is bounded by the very same ceiling the static knob uses, so a curve
 
@@ -2172,6 +2178,26 @@ SpeedCurve = Annotated[list[SpeedPoint], Field(min_length=2, max_length=SPEED_PO
 
 
 
+class MaskBoxKey(Contract):
+
+    """再叠那块的一枚框点：整块盒子的五个数，在同一个时刻一起换。"""
+
+    at_ticks: Ticks
+
+    center_x: Annotated[float, Field(ge=0, le=1)]
+
+    center_y: Annotated[float, Field(ge=0, le=1)]
+
+    width: Annotated[float, Field(ge=0.01, le=2)]
+
+    height: Annotated[float, Field(ge=0.01, le=2)]
+
+    rotation: Annotated[float, Field(ge=-MASK_ROTATION_LIMIT, le=MASK_ROTATION_LIMIT)] = 0.0
+
+    # The five numbers step together, so the segment's interpolation is the whole transition.
+    interpolation: Literal["linear", "hold", "ease"] = "linear"
+
+
 class ShapeMask(Contract):
 
     shape: Literal["rectangle", "ellipse", "path"] = "ellipse"
@@ -2228,6 +2254,15 @@ class ShapeMask(Contract):
 
 
 
+
+
+class ExtraShapeMask(ShapeMask):
+
+    """再叠的一块：与主遮罩同一种盒子，外加它自己的框点（主遮罩的针仍在 `clip.keyframes`）。"""
+
+    keys: Annotated[list[MaskBoxKey], Field(max_length=MASK_EXTRA_KEY_LIMIT)] = Field(
+        default_factory=list
+    )
 
 
 class Keyframe(Contract):
@@ -2658,7 +2693,7 @@ class Clip(Contract):
     # 1.221：主遮罩之外再叠的几块，与主遮罩**相乘**（都留着的那一块才露出来）。
     # 关键帧仍只跟着主遮罩走——那五条 `mask_*` 曲线说的是「这一条片段的那一个洞」，
     # 一块会动的第二洞要的是另一套寻址，不在这版里；界面上这一句是明说的。
-    extra_masks: Annotated[list[ShapeMask], Field(max_length=MASK_STACK_LIMIT)] = (
+    extra_masks: Annotated[list[ExtraShapeMask], Field(max_length=MASK_STACK_LIMIT)] = (
         Field(default_factory=list)
     )
     # 1.237：再叠的这几块可以跟着主遮罩的**中心平移**一起走（大小与角度仍各自保留）。
@@ -4427,7 +4462,7 @@ class ClipMaskStackSet(Contract):
 
     op: Literal["clip.mask_stack"]
     clip_id: Identifier
-    masks: Annotated[list[ShapeMask], Field(max_length=MASK_STACK_LIMIT)]
+    masks: Annotated[list[ExtraShapeMask], Field(max_length=MASK_STACK_LIMIT)]
     # None 就是「这一笔不动那一格」，所以打开/关闭可以和整串一起交，也可以单独交。
     follow: bool | None = None
 
@@ -6987,6 +7022,7 @@ def capabilities(
             "mask_rotation": True,
             "mask_stack": True,
             "mask_stack_follow": True,
+            "extra_mask_motion": True,
 
             # 1.165: that angle accepts keyframes. Both ends execute one frame-aligned staircase
 
@@ -7279,6 +7315,7 @@ def capabilities(
 
             "mask_shape_keys": MASK_SHAPE_KEY_LIMIT,
             "extra_masks": MASK_STACK_LIMIT,
+            "extra_mask_keys": MASK_EXTRA_KEY_LIMIT,
 
             "mask_shape_schedule_segments": MASK_SHAPE_SCHEDULE_MAX,
 

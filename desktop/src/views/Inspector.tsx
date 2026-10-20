@@ -630,7 +630,32 @@ function MaskFields({ clip }: { clip: Clip }) {
  *  （那一处主人），这一格既不碰主遮罩，也不自己算合成。 */
 function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
   const app = useApp();
+  const play = usePlay();
   const limit = app.caps?.limits?.extra_masks ?? 0;
+  const keysLimit = app.caps?.limits?.extra_mask_keys ?? 0;
+  const frame = frameTicks(app.project?.settings.frame_rate ?? { numerator: 30, denominator: 1 });
+  const localTick = () => {
+    const raw = play.ticks - clip.position_ticks;
+    return Math.max(0, Math.min(clip.duration_ticks, Math.round(raw / frame) * frame));
+  };
+  // 1.238：一枚框点说的是「这一刻这块盒子的五个数」——打点就是把卡片里现在这五个数记在播放头那一帧上。
+  const stampKey = (index: number) => {
+    const item = stack[index];
+    const at = localTick();
+    const keys = (item.keys ?? []).filter((key) => key.at_ticks !== at);
+    if ((item.keys ?? []).length >= keysLimit && !(item.keys ?? []).some((key) => key.at_ticks === at)) return;
+    keys.push({
+      at_ticks: at,
+      center_x: item.center_x,
+      center_y: item.center_y,
+      width: item.width,
+      height: item.height,
+      rotation: item.rotation ?? 0,
+      interpolation: "linear",
+    });
+    keys.sort((left, right) => left.at_ticks - right.at_ticks);
+    patch(index, { keys });
+  };
   const rotationLimit = app.caps?.limits?.mask_rotation_limit;
   const stack = clip.extra_masks ?? [];
   const full = stack.length >= limit;
@@ -671,6 +696,14 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
         </label>
         <label className="mask-stack-cell mask-stack-invert"><input type="checkbox" checked={item.inverted} disabled={disabled}
           onChange={(event) => patch(index, { inverted: event.target.checked })} />反转这一块</label>
+        <div className="mask-stack-keys">
+          <button type="button" className="btn tiny subtle" disabled={disabled || keysLimit === 0 || (item.keys?.length ?? 0) >= keysLimit}
+            title={`把第 ${index + 1} 块现在的中心、大小与角度记在播放头那一帧上；打了框点的块按整帧窗一格一步地动，预览与导出读同一张表。`}
+            onClick={() => stampKey(index)}>在播放头打框点</button>
+          <span className="dim">{item.keys?.length ?? 0} / {keysLimit} 枚框点</span>
+          {item.keys?.length ? <button type="button" className="btn tiny subtle" disabled={disabled}
+            onClick={() => patch(index, { keys: [] })}>清空框点</button> : null}
+        </div>
       </div>
     </div>)}
     <div className="insp-actions"><button className="btn tiny" disabled={disabled || full || limit === 0} title={full ? `最多 ${limit} 块；要再加，先删掉一块` : "这一版引擎不认识「再叠的遮罩」这一格，出路是换一台会回的引擎"} onClick={() => write([...stack, { ...DEFAULT_MASK, shape: "rectangle", feather: 0, vertices: null }])}>再抠一块</button></div>

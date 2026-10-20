@@ -689,6 +689,52 @@ def mask_box_schedule(clip: Clip, quantum: int, limit: int | None = None) -> lis
     )
 
 
+MASK_EXTRA_FIELDS = ("center_x", "center_y", "width", "height", "rotation")
+
+
+def extra_box_at(extra, at: int) -> tuple[float, ...]:
+    """One extra box at a clip-local tick: its own keys interpolated, or the static box.
+
+    The five numbers travel together, so a segment's interpolation is one decision for the whole
+    box — there is no per-edge easing to get out of step with the others.
+    """
+    keys = extra.keys
+    if not keys:
+        return tuple(getattr(extra, name) for name in MASK_EXTRA_FIELDS)
+    if at <= keys[0].at_ticks:
+        return tuple(getattr(keys[0], name) for name in MASK_EXTRA_FIELDS)
+    if at >= keys[-1].at_ticks:
+        return tuple(getattr(keys[-1], name) for name in MASK_EXTRA_FIELDS)
+    for left, right in zip(keys, keys[1:]):
+        if left.at_ticks <= at <= right.at_ticks:
+            mix = (at - left.at_ticks) / max(1, right.at_ticks - left.at_ticks)
+            if left.interpolation == "hold":
+                mix = 0.0
+            elif left.interpolation == "ease":
+                mix = mix * mix * (3 - 2 * mix)
+            return tuple(
+                round(
+                    getattr(left, name)
+                    + (getattr(right, name) - getattr(left, name)) * mix,
+                    9,
+                )
+                for name in MASK_EXTRA_FIELDS
+            )
+    return tuple(getattr(keys[-1], name) for name in MASK_EXTRA_FIELDS)
+
+
+def extra_box_schedule(clip: Clip, extra, quantum: int, limit: int | None = None) -> list[dict]:
+    """The same frame-aligned staircase as the main box, for one extra's own keys."""
+    if not extra.keys:
+        return []
+    return frame_windows(
+        clip,
+        quantum,
+        MASK_ROTATION_SCHEDULE_MAX if limit is None else limit,
+        lambda _source, at: tuple(round(value, 9) for value in extra_box_at(extra, at)),
+    )
+
+
 def axis_steps(schedule: list[dict], index: int) -> list[dict]:
     """One number of the shared table as its own scalar schedule - same windows, one edge each."""
     return [{**window, "value": window["value"][index]} for window in schedule]
@@ -994,6 +1040,33 @@ def preview_manifest(
                 mask_image(extra, project.settings.width, project.settings.height)
                 for extra in clip.extra_masks
             ] or None,
+            # 1.238：自己带框点的那一块，按窗烘一张整画面图（中心/宽高/角度都烘进去），
+            # 浏览器按播放头挑那一窗——与导出那边同一张阶梯，一格一步。
+            "extra_mask_windows": [
+                [
+                    {
+                        "from_ticks": window["from_ticks"],
+                        "to_ticks": window["to_ticks"],
+                        "image": cover_svg_image(
+                            extra.model_copy(
+                                update={
+                                    "center_x": window["value"][0],
+                                    "center_y": window["value"][1],
+                                    "width": window["value"][2],
+                                    "height": window["value"][3],
+                                    "rotation": window["value"][4],
+                                }
+                            ),
+                            project.settings.width,
+                            project.settings.height,
+                        ),
+                    }
+                    for window in extra_box_schedule(clip, extra, quantum)
+                ]
+                or None
+                for extra in clip.extra_masks
+            ]
+            or None,
             # 1.237：这几块跟不跟主遮罩的中心一起平移——浏览器按同一份曲线平移每一层。
             "extra_masks_follow": clip.extra_masks_follow,
             "mask_curves": mask_curves or None,

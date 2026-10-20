@@ -19,6 +19,7 @@ from .animation import (
     BOX_STEPS,
     axis_steps,
     expression,
+    extra_box_schedule,
     fade_active,
     layer_schedule,
     mask_box_schedule,
@@ -1685,7 +1686,18 @@ def compile_render_plan(
                         and not path_mask
                     )
                     values = None
-                    if follow:
+                    # 1.238：自己带框点的块按自己的窗表走（五个数同一批整帧边界），
+                    # 这时不再叠「跟主遮罩」那一路——一块盒子只许有一个主人。
+                    schedule = extra_box_schedule(clip, extra, project.settings.frame_ticks)
+                    if schedule:
+                        values = {
+                            name: rotation_step_expression(
+                                axis_steps(schedule, index),
+                                project.settings.frame_ticks,
+                            )
+                            for index, name in enumerate(MASK_FIELDS)
+                        }
+                    elif follow:
                         registers = (20 + 2 * slot, 21 + 2 * slot)
                         values = {
                             "mask_x": (

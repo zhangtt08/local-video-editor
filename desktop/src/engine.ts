@@ -205,7 +205,9 @@ export const DEFAULT_CURVE_POINTS: GradeCurvePoint[] = [
   { x: 1, y: 1 },
 ];
 export type MaskVertex = { x: number; y: number; handle_out: [number, number]; handle_in: [number, number] };
-export type ShapeMask = { shape: "rectangle" | "ellipse" | "path"; center_x: number; center_y: number; width: number; height: number; rotation?: number; feather: number; inverted: boolean; vertices?: MaskVertex[] | null };
+export type MaskBoxKey = { at_ticks: number; center_x: number; center_y: number; width: number; height: number; rotation?: number; interpolation?: "linear" | "hold" | "ease" };
+export type ShapeMask = { shape: "rectangle" | "ellipse" | "path"; center_x: number; center_y: number; width: number; height: number; rotation?: number; feather: number; inverted: boolean; vertices?: MaskVertex[] | null; keys?: MaskBoxKey[] };
+export type ExtraMaskWindow = { from_ticks: number; to_ticks: number; image: string };
 
 /** The clip's own fade windows, in ticks measured from each edge. 0 means that edge is untouched.
  *  `*_shape` (1.95) is how the property approaches its resting value along that window; the engine
@@ -285,7 +287,7 @@ export type SharpenSteps = {
   curve: { offset: number; id: string | null; easing: string }[];
 };
 export type SharpenSpec = SharpenStatic | SharpenSteps;
-export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; webgl?: boolean; color_basics?: number[] | null; grade?: GradeTables | null; sharpen?: SharpenSpec | null; speed?: RampPiece[] | null; mask_image?: string | null; extra_mask_images?: string[] | null; extra_masks_follow?: boolean; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; mask_shape?: MaskShapeWindow[] | null; mask_rotation_windows?: MaskRotationWindow[] | null; spatial?: Partial<Record<SpatialProperty, Curve>> | null; edge_filter?: string | null; curves: Record<AnimatedEffect, Curve>; transition: TransitionEnvelope; fade?: Record<"opacity" | "gain", Curve> | null;
+export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; webgl?: boolean; color_basics?: number[] | null; grade?: GradeTables | null; sharpen?: SharpenSpec | null; speed?: RampPiece[] | null; mask_image?: string | null; extra_mask_images?: string[] | null; extra_mask_windows?: (ExtraMaskWindow[] | null)[] | null; extra_masks_follow?: boolean; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; mask_shape?: MaskShapeWindow[] | null; mask_rotation_windows?: MaskRotationWindow[] | null; spatial?: Partial<Record<SpatialProperty, Curve>> | null; edge_filter?: string | null; curves: Record<AnimatedEffect, Curve>; transition: TransitionEnvelope; fade?: Record<"opacity" | "gain", Curve> | null;
       layer?: { asset_id: string; mode: BlendMode; mix: number; offset_x: number; offset_y: number; scale: number; rotation?: number; windows?: LayerWindow[]; paintable: boolean; reason?: string | null }[];
       composite?: CompositeEdge | null }> };
 
@@ -679,7 +681,7 @@ export type Capabilities = {
   max_commands_per_batch: number;
   commands: string[];
   features: Record<string, boolean>;
-  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; denoise_db?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number; track_max_gap_frames?: number; track_gap_default?: number; track_min_frames?: number; track_max_frames?: number; mask_rotation_limit?: number; extra_masks?: number; mask_shape_keys?: number; mask_shape_schedule_segments?: number; blur_schedule_segments?: number; sharpen_schedule_segments?: number; layer_key_limit?: number; layer_schedule_segments?: number; attribute_paste_targets?: number };
+  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; denoise_db?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number; track_max_gap_frames?: number; track_gap_default?: number; track_min_frames?: number; track_max_frames?: number; mask_rotation_limit?: number; extra_masks?: number; extra_mask_keys?: number; mask_shape_keys?: number; mask_shape_schedule_segments?: number; blur_schedule_segments?: number; sharpen_schedule_segments?: number; layer_key_limit?: number; layer_schedule_segments?: number; attribute_paste_targets?: number };
   render_presets: Preset[];
   /** 1.137：时间码的写法与「哪两个率才有丢帧码」由引擎说，界面不许自己写一份正则。 */
   timecode_shape?: string;
@@ -937,6 +939,8 @@ export function errorHints(): Record<string, string> {
       LAYER_ASSET_UNAVAILABLE: "这一层要叠的画面现在拿不到：素材不在工程里、不是图像，或者还没有引擎验过的媒体记录。重新导入那个文件，或把这一层从链上摘掉。",
       LAYER_KEY_RANGE: "这一层的针钉在这一段外面：窗表只在片段自己的长度里采样，那一枚本来不会多画一段。把播放头挪进这一段再打点，或先把这一段加长，或删掉那一枚。",
       LAYER_KEY_CLASH: "同一格给同一条属性钉了两枚针，引擎不知道这一段该走哪一条。把其中一枚挪开，或按住 Alt 点掉那一枚。",
+      MASK_KEY_RANGE: "框点必须落在这条片段的时间范围里：把播放头挪进这一段再打点。",
+      MASK_KEY_CLASH: "同一块上两枚框点落在同一时刻，引擎不知道这一格该用哪一块盒子。把它们挪开，或先清空这一块的框点再打。",
       LAYER_KEY_LIMIT: "这一层带的针超过了引擎的额度：每多一枚就多切一段，导出要串更多的相合。少钉几枚，或者把这段切成两层各自动。",
       LAYER_CURVE_TARGET: "这一层的阶梯读不到：那一层不在这条链上（被停用或根本没有），或者格长不是一个正数，或者问的不是那五个能动的数。选中一条链上启用的层再进来。",
       COMPOSITE_LIMIT: "一条调色链最多一条「叠一层原图」：两条边叠在一起时，「链的输出」指的是哪一段说不清，所以引擎两条就拒。要两层效果，把没调色的那份放到另一条画面轨上用轨道的混合方式相合，或者拆成两段嵌套合成。",

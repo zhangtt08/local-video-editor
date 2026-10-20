@@ -350,6 +350,7 @@ async function main() {
     }
     if (PLAY > 0) {
       // 播放中读画布缓冲：画布在不在、这一帧是不是真画了（全黑就是画布没跟上播放）。
+      // 读一次可能是空的（缓冲刚被合成器清掉），隔一会儿再读，最多四次；停之前一定读到过东西。
       const started = await evaluate(`(function(){
         var b = document.querySelector('.play-btn');
         if (!b || b.disabled) return false;
@@ -358,14 +359,12 @@ async function main() {
       })()`);
       if (!started) throw new Error("播放按钮按不下去");
       await sleep(PLAY);
-      seen.play = await evaluate(`(function(){
+      const readCanvas = `(function(){
         var c = document.querySelector('.grade-canvas');
-        var b = document.querySelector('.play-btn');
-        if (b) b.click();
         if (!c) return {canvas: false};
         var gl = c.getContext('webgl2');
         var px = new Uint8Array(4);
-        var checksum = null;
+        var checksum = 0;
         if (gl) {
           gl.readPixels(Math.floor(c.width / 2), Math.floor(c.height / 2), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
           var all = new Uint8Array(c.width * c.height * 4);
@@ -374,9 +373,20 @@ async function main() {
           for (var i = 0; i < all.length; i += 61) sum = (sum + all[i] * ((i % 13) + 1)) % 1000003;
           checksum = sum;
         }
+        var v = document.querySelector('.preview-col video');
         return {canvas: true, width: c.width, height: c.height,
-          pixel: [px[0], px[1], px[2], px[3]], checksum: checksum};
-      })()`);
+          pixel: [px[0], px[1], px[2], px[3]], checksum: checksum,
+          playhead: (document.querySelector('.ph-time') || {}).textContent || null,
+          video_time: v ? v.currentTime : null};
+      })()`;
+      let seenPlay = null;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        seenPlay = await evaluate(readCanvas);
+        if (seenPlay && seenPlay.canvas && seenPlay.checksum) break;
+        await sleep(120);
+      }
+      await evaluate(`(function(){ var b = document.querySelector('.play-btn'); if (b) b.click(); return true; })()`);
+      seen.play = seenPlay;
       if (!seen.play || !seen.play.canvas) {
         throw new Error("播放中画布不见了：" + JSON.stringify(seen.play));
       }

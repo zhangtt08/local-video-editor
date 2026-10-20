@@ -41,7 +41,7 @@ assert.match(inspector, /与主遮罩取交集/, "那一格没说清叠出来的
 assert.equal((inspector.match(/setClipMaskStack\(clip\.id/g) ?? []).length, 2, "叠加那一串的写入口不止那两处，早晚一份对不上");
 
 // ③ 浏览器：叠的是引擎给的图，取交集用标准那一格，不自己再算 alpha
-assert.match(picture, /const layers = \[primaryImage, \.\.\.\(extra \?\? \[\]\)\]\.filter\(Boolean\)/,
+assert.match(picture, /const layers = \[primaryImage, \.\.\.extraPlates\.map\(\(row\) => row\.image\)\]\.filter\(Boolean\)/,
   "层的顺序变了：主遮罩必须在最下面，交集才是那两块都留着的一格");
 assert.match(picture, /maskComposite: "intersect"/, "浏览器不再取交集，预览就会比成片露得多");
 assert.match(picture, /layers\.length > 1/, "只有一块时不许把 mask-size 那几格一起改掉（会动到 1.117 起的定位）");
@@ -82,14 +82,14 @@ assert.match(picture, /const mainSize = shapeWindow/, "主遮罩那一层的尺�
 assert.match(picture, /const mainPosition = shapeWindow/, "主遮罩那一层的落位不是按自己那一支算的");
 assert.match(
   picture,
-  /maskSize: \[mainSize, \.\.\.layers\.slice\(1\)\.map\(\(\) => "100% 100%"\)\]\.join\(", "\)/,
+  /maskSize: \[mainSize, \.\.\.extraPlates\.map\(\(\) => "100% 100%"\)\]\.join\(", "\)/,
   "再叠的层的尺寸不是各自的 100%×100%",
 );
 assert.match(picture, /const followPosition =/, "「跟着主遮罩平移」没有一条自己的落位算式");
 assert.match(picture, /const extraPosition = follow \? followPosition : "0px 0px";/, "跟不跟这一格没有决定再叠层的落位");
 assert.match(
   picture,
-  /maskPosition: \[mainPosition, \.\.\.layers\.slice\(1\)\.map\(\(\) => extraPosition\)\]\.join\(", "\)/,
+  /maskPosition: \[mainPosition, \.\.\.extraPlates\.map\(\(row\) => \(row\.own \? "0px 0px" : extraPosition\)\)\]\.join\(", "\)/,
   "再叠的层的落位不是各自的 0,0 / 跟随时的主遮罩平移",
 );
 assert.match(picture, /calc\(\(var\(--mask-x\) - 0\.5\) \* var\(--mask-lw\) \* 1px\)/, "角度那一支的落位公式变了");
@@ -97,4 +97,14 @@ assert.match(picture, /calc\(\(var\(--mask-x\) - var\(--mask-w\) \/ 2\) \* var\(
 assert.doesNotMatch(picture, /maskSize: "100% 100%", maskRepeat: "no-repeat", maskComposite: "intersect"/,
   "又回到「一整串只给一个 mask-size」——再叠的块会被主遮罩的落位带跑");
 
-console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的五个数与羽化/反转都在格子里改、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、样式仍走刻度");
+// ⑧ 1.238：每一块可以带自己的框点——打点只记「这一刻这五个数」，额度听引擎，清空是同一处写。
+assert.match(inspector, /在播放头打框点/, "每一块的框点没有打点入口");
+assert.match(inspector, /extra_mask_keys/, "框点额度不在引擎那一份数上");
+assert.match(inspector, /patch\(index, \{ keys \}\)/, "框点没有走那一处 patch（第二份写入口）");
+assert.match(inspector, /patch\(index, \{ keys: \[\] \}\)/, "框点没有清空入口");
+assert.match(inspector, /Math\.round\(raw \/ frame\) \* frame/, "框点没有落在整帧上");
+assert.match(engine, /extra_mask_windows\?: \(ExtraMaskWindow\[\] \| null\)\[\] \| null/, "清单的类型里没有每块自己的窗");
+assert.match(picture, /rotationWindowAt\(windows, local\)/, "浏览器没有按播放头挑那一块自己的窗");
+assert.match(picture, /row\.own \? "0px 0px"/, "自己带框点的那一层没有按整画面图落位");
+
+console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的五个数与羽化/反转都在格子里改、每一块可以打自己的框点、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、样式仍走刻度");

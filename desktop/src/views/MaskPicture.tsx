@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from "react";
-import type { Clip, Curve, MaskProperty, MaskRotationWindow, MaskShapeWindow, MaskVertex, ShapeMask } from "../engine";
+import type { Clip, Curve, ExtraMaskWindow, MaskProperty, MaskRotationWindow, MaskShapeWindow, MaskVertex, ShapeMask } from "../engine";
 import { TIMEBASE } from "../time";
 import { appInfo, commitMaskEdit, moveMaskCentre, playhead, recordMaskShape, setClipMask, setMaskEditing, useApp, usePlay } from "../store";
 import { asCorner, asSmooth, nearestEdge, withoutVertex, withVertex } from "../maskOutline";
@@ -51,7 +51,7 @@ function outline(vertices: MaskVertex[]) {
 }
 
 /** Geometry-only handles; the server compiles the actual alpha image during a gesture. */
-export function MaskPicture({ clip, image, extra, children, editable = true, follow = false, animation, shape, rotation }: { clip: Clip; image?: string | null; extra?: string[] | null; children: ReactNode; editable?: boolean; follow?: boolean; animation?: { unit: string | null; curves: Record<MaskProperty, Curve> } | null; shape?: MaskShapeWindow[] | null; rotation?: MaskRotationWindow[] | null }) {
+export function MaskPicture({ clip, image, extra, extraWindows, children, editable = true, follow = false, animation, shape, rotation }: { clip: Clip; image?: string | null; extra?: string[] | null; extraWindows?: (ExtraMaskWindow[] | null)[] | null; children: ReactNode; editable?: boolean; follow?: boolean; animation?: { unit: string | null; curves: Record<MaskProperty, Curve> } | null; shape?: MaskShapeWindow[] | null; rotation?: MaskRotationWindow[] | null }) {
   const app = useApp(); const play = usePlay();
   const [draft, setDraft] = useState<ShapeMask | null>(null);
   const [compiled, setCompiled] = useState<{ mask: ShapeMask; image: string } | null>(null);
@@ -298,7 +298,14 @@ export function MaskPicture({ clip, image, extra, children, editable = true, fol
   // 叠在同一幅画面上，导出那一侧是同一条 alpha 上多一个括号；两端的图都出自引擎那一份
   // `mask_image`，所以「预览里那个洞」与「成片里那个洞」是同一个洞。
   const primaryImage = spun ? spun.image : shapeWindow ? shapeWindow.image : animated ? animated.unit : pictureImage;
-  const layers = [primaryImage, ...(extra ?? [])].filter(Boolean) as string[];
+  // 1.238：自己带框点的那一块，引擎把每一窗烘成一张整画面图；这里按播放头挑那一张，
+  // 与主遮罩转角的窗表同一个读法（`rotationWindowAt` 只认 from/to）。
+  const extraPlates = (extra ?? []).map((image, index) => {
+    const windows = extraWindows?.[index];
+    const window = windows ? rotationWindowAt(windows, local) : null;
+    return { image: window ? window.image : image, own: Boolean(window) };
+  });
+  const layers = [primaryImage, ...extraPlates.map((row) => row.image)].filter(Boolean) as string[];
   // 1.236：`mask-size` 与 `mask-position` 都是**按层**的。这里以前只给一个值，于是主遮罩一动，
   // `mask-position` 就按主遮罩的盒子原点把再叠的那几块一起搬走——预览里的洞与成片里的洞
   // 在中心/宽高曲线下不是同一个（`two_end` 量到过：主遮罩中心 0.515 时预览的再叠块被挪了
@@ -329,8 +336,8 @@ export function MaskPicture({ clip, image, extra, children, editable = true, fol
     ? {
         ...pictureStyle,
         maskImage: layers.join(", "),
-        maskSize: [mainSize, ...layers.slice(1).map(() => "100% 100%")].join(", "),
-        maskPosition: [mainPosition, ...layers.slice(1).map(() => extraPosition)].join(", "),
+        maskSize: [mainSize, ...extraPlates.map(() => "100% 100%")].join(", "),
+        maskPosition: [mainPosition, ...extraPlates.map((row) => (row.own ? "0px 0px" : extraPosition))].join(", "),
         maskRepeat: "no-repeat",
         maskComposite: "intersect",
       }
