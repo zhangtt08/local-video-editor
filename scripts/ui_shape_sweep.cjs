@@ -33,6 +33,8 @@ const CLIP = flag("clip", "");
 // 文字层那一屏（1.227）：检查器里那四颗色块、三个下拉与字号那几格，只有选中一条
 // **文字**片段才会画出来。以前夹具里没有文字素材，这一整片从来没进过任何一屏的取样。
 const TEXTCLIP = flag("text-clip", "");
+// 1.245：框点那一帧（`--boxkey <选择器>`）：滚进视野后读输入框的值、状态那一句与当前那一枚。
+const BOXKEY = flag("boxkey", "");
 const SIZES = (flag("sizes", "1456x808") || "").split(",");
 const OUT = path.resolve(flag("out", "ui_shape_sweep.json"));
 const EDGE = flag("edge", "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe");
@@ -237,7 +239,9 @@ async function sweepOne(size, hostPort, probeSource) {
       // 那两扇弹层各自认自己的标题：只数 `.dialog` 的话，点开一扇错的也算过。
       'div.dialog[aria-label="预合成选中片段"]', 'div.dialog[aria-label="导入 SRT 字幕"]',
       // 文字层那一屏认的是那四颗色块：字在别的屏上一样有，只有色块是这一屏独有的。
-      "input[type=color]"];
+      "input[type=color]",
+      // 1.245：框点那一帧认的是那一块输入框本身；它的值与那一句由 --boxkey 那一腿单独读。
+      "#stack-0-center_x"];
     const run = async (screen) => {
       const data = await evaluate("(function(){ " + probeSource + " return measureAgentCutUi(); })()");
       // 「点了才画」那一档必须能证明**真的画了东西**：只数文字节点的话，
@@ -442,6 +446,31 @@ async function sweepOne(size, hostPort, probeSource) {
             rowOf("点了文字片段卡之后 .clip.selected 不是它——那一屏量的是错的状态");
           } else await run("文字层");
         }
+      }
+    }
+    // 1.245：停在框点那一帧时，卡片上那五个数就是那一枚（1.243 明留的证据边界）。
+    // 起点仍是 baseState：它把播放头点进选中片段里横坐标正中；夹具 k2 的中间那枚框点正在
+    // 片段自己的 2 秒上，所以读数时播放头**正停在框点上**，不是停在两枚之间。
+    // 夹具里那一枚是 center_x 0.55、rotation 6，静止值是 0.62 与 0——读到 62/0 就是又在显示静止值。
+    if (BOXKEY) {
+      const label = "框点那一帧";
+      const trouble = await baseState();
+      if (trouble) rows.push({ screen: label, panel: flag("panel", ""), size, data: null, error: trouble });
+      else {
+        const scrolled = await evaluate("(function(){var el=document.querySelector("
+          + JSON.stringify(BOXKEY) + ");if(!el)return false;el.scrollIntoView({block:'center'});return true;})()");
+        await sleep(400);
+        const proof = await evaluate("(function(){"
+          + "var c=document.querySelector('#stack-0-center_x');var r=document.querySelector('#stack-0-rotation');"
+          + "var n=document.querySelector('.mask-stack-at');"
+          + "var cur=document.querySelector('.mask-stack-keylist li.current button');"
+          + "return {center:c?c.value:null,rotation:r?r.value:null,note:n?n.textContent.trim():null,"
+          + "current:cur?cur.textContent.trim():null,aria:cur?cur.getAttribute('aria-current'):null};})()");
+        const bad = !scrolled || !proof || Number(proof.center) !== 55 || Number(proof.rotation) !== 6
+          || !(proof.note || "").includes("改的是这一枚") || proof.aria !== "true";
+        if (bad) rows.push({ screen: label, panel: flag("panel", ""), size, data: null,
+          error: "卡片没有显示框点那一枚的数：" + JSON.stringify(proof) });
+        else await run(label);
       }
     }
     // 反方向那一判（`--drag-splitter`）：用户**自己**把那条边往上拖，时间线让不动了，
