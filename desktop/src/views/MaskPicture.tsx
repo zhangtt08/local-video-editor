@@ -311,6 +311,9 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
     return {
       image: unit ? extraUnits![index]! : window ? window.image : image,
       own: Boolean(window),
+      // 1.241：跟着转了的主遮罩烘出来的那一窗，形状已经在图里，位置仍要按中心平移；
+      // 自己带框点的那一窗（follow=false）才是 0,0。
+      follow: Boolean(window?.follow),
       unit: unit && !window,
     };
   });
@@ -361,7 +364,7 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
         maskPosition: [
           mainPosition,
           ...extraPlates.map((row, index) => {
-            if (!row.unit) return row.own ? "0px 0px" : extraPosition;
+            if (!row.unit) return row.own && !row.follow ? "0px 0px" : extraPosition;
             const extraMask = clip.extra_masks?.[index];
             if (!extraMask || !mainMask) return extraPosition;
             const ratioW = extraMask.width / mainMask.width;

@@ -664,7 +664,7 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
     write(stack.map((item, position) => (position === index ? { ...item, ...part } : item)));
   return <div className="mask-stack">
     <div className="mask-stack-head"><span>再叠的遮罩</span><span className="dim">{stack.length} / {limit} 块 · 与主遮罩取交集 · 只切不动</span></div>
-    <label className="mask-stack-follow" title="勾上之后，这几块跟着主遮罩的中心曲线一起平移；主遮罩与这几块都没转时，大小也按同一比例缩放；角度与羽化仍是自己的。主遮罩没有中心曲线时它们不动。">
+    <label className="mask-stack-follow" title="勾上之后，这几块跟着主遮罩的中心曲线一起平移；主遮罩与这几块都没转时，大小也按同一比例缩放；主遮罩转了时，角度跟着它转。羽化仍是自己的。主遮罩没有动画时它们不动。">
       <input type="checkbox" checked={clip.extra_masks_follow ?? false} disabled={disabled || stack.length === 0}
         onChange={(event) => setClipMaskStack(clip.id, stack, event.target.checked)} />跟着主遮罩平移
     </label>

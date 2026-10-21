@@ -56,6 +56,7 @@ EXTRA = {"shape": "rectangle", "center_x": 0.35, "center_y": 0.5, "width": 0.3,
 # 探针都在两块盒子的内部或外部，离边界至少 0.05（画面上十几个像素）。
 PROBES = (0.25, 0.30, 0.42, 0.55)
 WIDE_PROBES = (0.65, 0.75, 0.80, 0.90)
+ROT_PROBES = (0.62, 0.65, 0.72)
 
 
 def fail(message: str) -> None:
@@ -277,6 +278,48 @@ def make_width_project(folder: Path, follow: bool) -> str:
     return pid
 
 
+ROT_EXTRA = {"shape": "rectangle", "center_x": 0.65, "center_y": 0.5, "width": 0.1,
+             "height": 0.5, "feather": 0.0}
+ROT_MAIN = {"shape": "rectangle", "center_x": 0.5, "center_y": 0.5, "width": 0.8,
+            "height": 0.8, "feather": 0.0}
+
+
+def make_rotated_project(folder: Path, follow: bool) -> str:
+    """主遮罩只转（0→30°）：跟随时再叠那块跟着转，不跟就一直是正的。"""
+    made = request(
+        "/v1/projects",
+        {"request_id": f"mf-rot-{follow}",
+         "name": "主遮罩在转" + ("（跟）" if follow else "（不跟）"),
+         "settings": {"width": WIDTH, "height": HEIGHT,
+                      "frame_rate": {"numerator": 30, "denominator": 1}}},
+        "POST",
+    )
+    pid = made["project"]["id"]
+    probe = request("/v1/media/import", {"path": str(folder / "white.png")}, "POST")
+    request(
+        f"/v1/projects/{pid}/edits",
+        {"request_id": f"mf-rot-seed-{follow}", "expected_revision": made["project"]["revision"],
+         "commands": [
+             {"op": "track.add", "track": {"id": "v", "kind": "video", "name": "画面"}},
+             {"op": "asset.import", "asset_id": "w", "label": "白板",
+              "probe_id": probe["id"], "verified": probe["verified"]},
+             {"op": "clip.add", "clip": {"id": "c", "asset_id": "w", "track_id": "v",
+                                         "position_ticks": 0, "duration_ticks": 2 * SECOND}},
+             {"op": "clip.mask", "clip_id": "c", "mask": ROT_MAIN},
+             {"op": "clip.mask_stack", "clip_id": "c", "masks": [ROT_EXTRA],
+              "follow": follow},
+             {"op": "keyframe.set", "clip_id": "c",
+              "keyframe": {"property": "mask_rotation", "at_ticks": 0, "value": 0.0,
+                           "interpolation": "linear"}},
+             {"op": "keyframe.set", "clip_id": "c",
+              "keyframe": {"property": "mask_rotation", "at_ticks": 2 * SECOND, "value": 60.0,
+                           "interpolation": "linear"}},
+         ]},
+        "POST",
+    )
+    return pid
+
+
 def readings(pid: str, folder: Path, key: str) -> dict:
     revision = request(f"/v1/projects/{pid}")["revision"]
     early, late = export_frames(pid, revision, key, folder)
@@ -310,12 +353,20 @@ def main() -> None:
             following = readings(make_project(folder, True, True), folder, "following")
             growing = readings(make_width_project(folder, True), folder, "growing")
             fixed = readings(make_width_project(folder, False), folder, "fixed")
+            turning = readings(make_rotated_project(folder, True), folder, "turning")
+            still = readings(make_rotated_project(folder, False), folder, "still")
             # 两块盒子是相乘的：亮 = 同时在主遮罩与再叠那块里面。
             # 主遮罩 [0.2,0.8] 随中心曲线右移；再叠那块 [0.2,0.5] 不动。
             #   静止：任何时刻都亮在 [0.2,0.5]；
             #   主遮罩 0.2s（[0.215,0.815]）：亮在 [0.215,0.5]；
             #   主遮罩 1.8s（[0.335,0.935]）：亮在 [0.335,0.5]。
             expected = {
+                # 1.241：主遮罩只转（0→30°）。跟随时那一块跟着转，t=1.8s 时 x=0.72 落进它的
+                # 洞里；不跟的那一趟它一直是正的，x=0.72 始终在洞外。
+                ("turning", "t0"): (True, True, False),
+                ("turning", "t18"): (True, True, True),
+                ("still", "t0"): (True, True, False),
+                ("still", "t18"): (True, True, False),
                 # 1.240：主遮罩只长宽（0.6→1.2）。跟随时那一块按同一比例从 0.14 长到 0.28，
                 # 右缘从 ~0.68 走到 ~0.84；x=0.80 由暗转亮。不跟的那一趟右缘一直是 0.77。
                 ("growing", "t0"): (True, True, False, False),
@@ -332,14 +383,17 @@ def main() -> None:
                 ("following", "t18"): (False, False, True, True),
             }
             names = {"static": "静止", "moving": "主遮罩在动", "following": "跟着主遮罩平移",
-                     "growing": "主遮罩在长大（跟）", "fixed": "主遮罩在长大（不跟）"}
+                     "growing": "主遮罩在长大（跟）", "fixed": "主遮罩在长大（不跟）",
+                     "turning": "主遮罩在转（跟）", "still": "主遮罩在转（不跟）"}
             cases = (("static", static), ("moving", moving), ("following", following),
-                     ("growing", growing), ("fixed", fixed))
+                     ("growing", growing), ("fixed", fixed),
+                     ("turning", turning), ("still", still))
             for name, data in cases:
                 for side in ("export", "preview"):
                     for when in ("t0", "t18"):
                         image = data[side][when]
-                        probes = WIDE_PROBES if name in ("growing", "fixed") else PROBES
+                        probes = (WIDE_PROBES if name in ("growing", "fixed")
+                                  else ROT_PROBES if name in ("turning", "still") else PROBES)
                         actual = tuple(bright(image, x, 0.5) for x in probes)
                         want = expected[(name, when)]
                         label = f"{names[name]} / {side} / {when}"
@@ -348,7 +402,8 @@ def main() -> None:
             # 两端逐点一致（这一档的核心：同一份工程的两个「洞」）。
             for name, data in cases:
                 for when in ("t0", "t18"):
-                    probes = WIDE_PROBES if name in ("growing", "fixed") else PROBES
+                    probes = (WIDE_PROBES if name in ("growing", "fixed")
+                              else ROT_PROBES if name in ("turning", "still") else PROBES)
                     for x in probes:
                         left = bright(data["export"][when], x, 0.5)
                         right = bright(data["preview"][when], x, 0.5)
@@ -356,10 +411,9 @@ def main() -> None:
                             f"{name} {when} x={x}: 成片 {left} 预览 {right}——两端的洞不一样"
                         )
             print(
-                "PASS: 主遮罩右移之后，不跟随的再叠块仍在原地"
-                "（x=0.42 都亮、x=0.55 都暗），跟随的那一块跟着右移（x=0.55 由暗转亮）；"
-                "主遮罩自己也在动（x=0.30 由亮转暗），静止那一趟两端不动；"
-                "三趟两个时刻四个探针两端逐点一致"
+                "PASS: 七趟都对——不跟随的再叠块原地不动，跟随的跟着主遮罩平移、长大与转角"
+                "（x=0.55 / 0.80 / 0.72 三处由暗转亮），主遮罩自己在动，静止那一趟两端不动；"
+                "七趟 × 两个时刻逐点一致"
             )
         finally:
             process.kill()

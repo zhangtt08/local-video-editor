@@ -1712,9 +1712,29 @@ def compile_render_plan(
                                 f"+{extra.center_y - clip.mask.center_y:.9f})"
                             ),
                         }
+                        # 1.241：转了的主遮罩按自己那张窗表把角度与两条边一起给这一块
+                        # （预览那一头是同一张窗表每窗一张烘好的图）。
+                        if box_schedule:
+                            for name, pick in (
+                                ("mask_rotation",
+                                 lambda w: extra.rotation + (w["value"][0] - clip.mask.rotation)),
+                                ("mask_width",
+                                 lambda w: extra.width * (w["value"][1] / clip.mask.width)),
+                                ("mask_height",
+                                 lambda w: extra.height * (w["value"][2] / clip.mask.height)),
+                            ):
+                                steps = [
+                                    {"from_ticks": window["from_ticks"],
+                                     "to_ticks": window["to_ticks"],
+                                     "value": pick(window)}
+                                    for window in box_schedule
+                                ]
+                                values[name] = rotation_step_expression(
+                                    steps, project.settings.frame_ticks
+                                )
                         # 1.240：不转的主遮罩与不转的那一块，尺寸按主遮罩的同两个比例走
                         # （预览那一头是同一对比例乘在 `--mask-w/--mask-h` 上）。
-                        if (
+                        elif (
                             not clip.mask.rotation
                             and not curve_points(clip, "mask_rotation")
                             and not extra.rotation

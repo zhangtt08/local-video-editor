@@ -87,11 +87,7 @@ assert.match(
 );
 assert.match(picture, /const followPosition =/, "「跟着主遮罩平移」没有一条自己的落位算式");
 assert.match(picture, /const extraPosition = follow \? followPosition : "0px 0px";/, "跟不跟这一格没有决定再叠层的落位");
-assert.match(
-  picture,
-  /if \(!row\.unit\) return row\.own \? "0px 0px" : extraPosition;/,
-  "再叠的层的落位不是各自的 0,0 / 跟随时的主遮罩平移",
-);
+
 assert.match(picture, /calc\(\(var\(--mask-x\) - 0\.5\) \* var\(--mask-lw\) \* 1px\)/, "角度那一支的落位公式变了");
 assert.match(picture, /calc\(\(var\(--mask-x\) - var\(--mask-w\) \/ 2\) \* var\(--mask-lw\) \* 1px\)/, "中心/宽高那一支的落位公式变了");
 assert.doesNotMatch(picture, /maskSize: "100% 100%", maskRepeat: "no-repeat", maskComposite: "intersect"/,
@@ -105,7 +101,7 @@ assert.match(inspector, /patch\(index, \{ keys: \[\] \}\)/, "框点没有清空�
 assert.match(inspector, /Math\.round\(raw \/ frame\) \* frame/, "框点没有落在整帧上");
 assert.match(engine, /extra_mask_windows\?: \(ExtraMaskWindow\[\] \| null\)\[\] \| null/, "清单的类型里没有每块自己的窗");
 assert.match(picture, /rotationWindowAt\(windows, local\)/, "浏览器没有按播放头挑那一块自己的窗");
-assert.match(picture, /row\.own \? "0px 0px"/, "自己带框点的那一层没有按整画面图落位");
+assert.match(picture, /row\.own && !row\.follow \? "0px 0px"/, "自己带框点的那一层没有按整画面图落位");
 // 1.239：每一枚框点在卡片里有名字——时刻可跳、插值可改（贝塞尔不在这一档）、删除只走那一处 patch。
 assert.match(inspector, /className="mask-stack-keylist"/, "框点没有一张看得见的表");
 assert.match(inspector, /timecode\(key\.at_ticks, app\.project\?\.settings\.frame_rate/, "框点的时刻不是时间码");
@@ -120,5 +116,10 @@ assert.match(picture, /const unit = Boolean\(follow && extraUnits\?\.\[index\]/,
 assert.match(picture, /calc\(var\(--mask-w\) \* \$\{ratioW\.toFixed\(6\)\} \* var\(--mask-lw\) \* 1px\)/, "单位图没有按主遮罩的宽度比例缩放");
 assert.match(picture, /calc\(\(var\(--mask-x\) \$\{px\} - 0\.5 \* var\(--mask-w\)/, "单位图的落位没有减掉缩放后的一半");
 assert.match(inspector, /大小也按同一比例缩放/, "悬停里没说大小也跟");
+assert.match(inspector, /主遮罩转了时，角度跟着它转/, "悬停里没说角度也跟");
+// 1.241：转了的主遮罩烘出来的窗带 follow——形状在图里，位置仍跟着中心平移。
+assert.match(engine, /image: string; follow\?: boolean/, "窗的行里没有「跟不跟」这一格");
+assert.match(picture, /follow: Boolean\(window\?\.follow\)/, "视图没有读那一格");
+assert.match(picture, /if \(!row\.unit\) return row\.own && !row\.follow \? "0px 0px" : extraPosition;/, "跟随时那一窗没有按中心平移落位");
 
 console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的五个数与羽化/反转都在格子里改、每一块可以打自己的框点、跟随时大小按同一比例缩放、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、样式仍走刻度");

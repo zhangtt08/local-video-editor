@@ -1032,6 +1032,56 @@ def preview_manifest(
         # 1.240：跟随时，不转的主遮罩与不转的再叠块共享「中心 + 大小」——预览把形状烘成
         # 一张单位图（填满盒子），用 `--mask-w/--mask-h` 的同两个比例缩放；导出把同一对比例
         # 乘进尺寸表达式。转了的主遮罩、自己带框点或自己转了的那一块不在这条路上。
+        # 1.238：自己带框点的那一块按自己的窗表烘图；1.241：跟着一个**转了**的主遮罩时，
+        # 按主遮罩的每一窗把这一块的角度与两条边一起烘进去（中心仍由 CSS 跟着平移）。
+        extra_windows_list = []
+        for extra in clip.extra_masks:
+            own = extra_box_schedule(clip, extra, quantum) if extra.keys else []
+            rows = []
+            if own:
+                rows = [
+                    {
+                        "from_ticks": window["from_ticks"],
+                        "to_ticks": window["to_ticks"],
+                        "follow": False,
+                        "image": cover_svg_image(
+                            extra.model_copy(
+                                update={
+                                    "center_x": window["value"][0],
+                                    "center_y": window["value"][1],
+                                    "width": window["value"][2],
+                                    "height": window["value"][3],
+                                    "rotation": window["value"][4],
+                                }
+                            ),
+                            project.settings.width,
+                            project.settings.height,
+                        ),
+                    }
+                    for window in own
+                ]
+            elif clip.extra_masks_follow and box_schedule and clip.mask is not None:
+                for window in box_schedule:
+                    angle, width, height = window["value"]
+                    scaled = extra.model_copy(
+                        update={
+                            "width": extra.width * (width / clip.mask.width),
+                            "height": extra.height * (height / clip.mask.height),
+                            "rotation": extra.rotation + (angle - clip.mask.rotation),
+                        }
+                    )
+                    rows.append(
+                        {
+                            "from_ticks": window["from_ticks"],
+                            "to_ticks": window["to_ticks"],
+                            "follow": True,
+                            "image": cover_svg_image(
+                                scaled, project.settings.width, project.settings.height
+                            ),
+                        }
+                    )
+            extra_windows_list.append(rows or None)
+        extra_windows_list = extra_windows_list or None
         extra_units = None
         if clip.extra_masks_follow:
             extra_units = [
@@ -1068,31 +1118,7 @@ def preview_manifest(
             "extra_mask_units": extra_units,
             # 1.238：自己带框点的那一块，按窗烘一张整画面图（中心/宽高/角度都烘进去），
             # 浏览器按播放头挑那一窗——与导出那边同一张阶梯，一格一步。
-            "extra_mask_windows": [
-                [
-                    {
-                        "from_ticks": window["from_ticks"],
-                        "to_ticks": window["to_ticks"],
-                        "image": cover_svg_image(
-                            extra.model_copy(
-                                update={
-                                    "center_x": window["value"][0],
-                                    "center_y": window["value"][1],
-                                    "width": window["value"][2],
-                                    "height": window["value"][3],
-                                    "rotation": window["value"][4],
-                                }
-                            ),
-                            project.settings.width,
-                            project.settings.height,
-                        ),
-                    }
-                    for window in extra_box_schedule(clip, extra, quantum)
-                ]
-                or None
-                for extra in clip.extra_masks
-            ]
-            or None,
+            "extra_mask_windows": extra_windows_list,
             # 1.237：这几块跟不跟主遮罩的中心一起平移——浏览器按同一份曲线平移每一层。
             "extra_masks_follow": clip.extra_masks_follow,
             "mask_curves": mask_curves or None,
