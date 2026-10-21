@@ -70,6 +70,7 @@ import {
   prefs,
   setClipMask,
   setClipMaskStack,
+  selectMaskExtra,
   editAtRevision,
   setMaskEditing,
   updateTrack,
@@ -687,6 +688,7 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
     {stack.map((item, index) => {
       const atKey = boxKeyForPlayhead(item, exact, at);
       const active = atKey?.at_ticks ?? at;
+      const pickedExtra = app.maskExtraSel?.clipId === clip.id && app.maskExtraSel.index === index;
       return <div className="mask-stack-row" key={`stack-${index}`}>
       <div className="mask-stack-title">
         <span className="mask-stack-n">第 {index + 1} 块</span>
@@ -694,6 +696,16 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
           onChange={(event) => patch(index, { shape: event.target.value as ShapeMask["shape"] })}>
           <option value="rectangle">矩形</option><option value="ellipse">椭圆</option>
         </select>
+        <button type="button" className={`icon-btn tiny${pickedExtra ? " active" : ""}`}
+          disabled={disabled || Boolean(clip.extra_masks_follow)}
+          aria-pressed={pickedExtra}
+          aria-label={`${pickedExtra ? "取消选中" : "在画面里选中"}第 ${index + 1} 块叠加遮罩`}
+          title={clip.extra_masks_follow
+            ? "勾了「跟着主遮罩平移」的块这一版不在画面里摆柄；先在检查器里改"
+            : item.keys?.length && !atKey
+              ? "这一帧不在这一块的框点上：挪到框点那一帧，画面上才会画出框"
+              : "选中它，画面里会画出这一块的虚线框与拖动柄；再按一次取消"}
+          onClick={() => { if (!pickedExtra) setMaskEditing(true); selectMaskExtra(clip.id, pickedExtra ? null : index); }}>◎</button>
         <button type="button" className="icon-btn tiny" disabled={disabled || full || limit === 0}
           aria-label={`复制第 ${index + 1} 块叠加遮罩`}
           title={full ? `最多 ${limit} 块；要复制，先删掉一块` : "把这一块整份复制一份（框点也带走），新的一块往右下挪一点"}

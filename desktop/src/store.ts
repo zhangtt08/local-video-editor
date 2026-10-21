@@ -141,6 +141,9 @@ export type AppState = {
   editorPanel: (typeof EDITOR_PANELS)[number];
   graphOpen: boolean;
   maskEditing: boolean;
+  /** 1.252：画面里正在编辑的再叠遮罩块（片段 id + 该块序号）；不在任何一块上就是 null。
+   *  只活在这一次界面状态里，不进工程——它是一次选择，不是作品的一部分。 */
+  maskExtraSel: { clipId: string; index: number } | null;
   /** 这一屏那条时间线的高度是不是**用户自己**拖/键出来的。
    *  「窗口太矮」那一句只在有人真要过那个数时才是实话；应用自己那个默认数装不下，
    *  是应用该让位，不是该抱怨（1.225 在 1040×660 量到的就是这一条）。 */
@@ -199,6 +202,7 @@ let state: AppState = {
   editorPanel: "inspect",
   graphOpen: false,
   maskEditing: false,
+  maskExtraSel: null,
   splitterTouched: false,
   monitorMode: "timeline",
   sourceCursorTicks: 0,
@@ -290,6 +294,9 @@ export function openEditorPanel(editorPanel: AppState["editorPanel"]) {
 
 export function setGraphOpen(graphOpen: boolean) { set({ graphOpen }); }
 export function setMaskEditing(maskEditing: boolean) { playhead.pause(); setMonitorMode("timeline"); set({ maskEditing }); }
+export function selectMaskExtra(clipId: string, index: number | null) {
+  set({ maskExtraSel: index === null ? null : { clipId, index } });
+}
 export function useApp(): AppState {
   return useSyncExternalStore(
     (fn) => {
@@ -1346,7 +1353,7 @@ export function openSequence(id: string | null) {
   const path = id ? previous < 0 ? [...state.sequencePath, id] : state.sequencePath.slice(0, previous + 1) : [];
   playhead.pause(); playhead.set(0);
   // Switching the read projection is not a project mutation; history remains global.
-  state = { ...state, sequenceId: id, sequencePath: path, project: sequenceView(state.rootProject, id), candidate: null, rootCandidate: null, selectedClip: null, selectedClips: [], selectedAsset: null, targetTrack: null, sourcePlaying: false, monitorMode: "timeline", graphOpen: false, maskEditing: false };
+  state = { ...state, sequenceId: id, sequencePath: path, project: sequenceView(state.rootProject, id), candidate: null, rootCandidate: null, selectedClip: null, selectedClips: [], selectedAsset: null, targetTrack: null, sourcePlaying: false, monitorMode: "timeline", graphOpen: false, maskEditing: false, maskExtraSel: null };
   listeners.forEach((fn) => fn());
 }
 

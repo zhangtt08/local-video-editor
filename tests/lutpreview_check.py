@@ -353,8 +353,20 @@ def video_suite(folder: Path) -> dict:
          ]},
         "POST",
     )
-    early_png, early = preview_shot(pid, folder, "video-early", webgl=True, play_ms=700)
-    late_png, late = preview_shot(pid, folder, "video-late", webgl=True, play_ms=1500)
+    # 播放中的画布偶尔会在「清屏与画下一帧之间」被读到（读到全 0）：这不是产品停在第一帧，
+    # 是取样撞上了清屏。重拍一次整格，判据一条都不放软——两次都空照样红。
+    def shot(name: str, ms: int):
+        for attempt in range(2):
+            png, info = preview_shot(pid, folder, name, webgl=True, play_ms=ms)
+            if (info.get("play") or {}).get("checksum"):
+                if attempt:
+                    print(f"   播放腿 {name} 重拍了 1 次才读到非空画布")
+                return png, info
+            time.sleep(1.0)
+        return png, info
+
+    early_png, early = shot("video-early", 700)
+    late_png, late = shot("video-late", 1500)
     rows = {}
     for label, info in (("0.7 秒", early), ("1.5 秒", late)):
         play = info.get("play") or {}

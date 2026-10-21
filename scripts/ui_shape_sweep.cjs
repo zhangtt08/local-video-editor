@@ -53,6 +53,13 @@ const engineGet = async (path) => {
   if (!response.ok) throw new Error(path + " -> " + response.status);
   return await response.json();
 };
+const enginePost = async (path, payload) => {
+  const response = await fetch(new URL(path, ENGINE), { method: "POST",
+    headers: { Authorization: "Bearer " + TOKEN, "Content-Type": "application/json" },
+    body: JSON.stringify(payload) });
+  if (!response.ok) throw new Error(path + " -> " + response.status + " " + (await response.text()).slice(0, 200));
+  return await response.json();
+};
 
 if (!ENGINE || !TOKEN || !PROJECT) {
   console.error("usage: --engine --token --project are required");
@@ -253,7 +260,9 @@ async function sweepOne(size, hostPort, probeSource) {
       // 1.246：调色节点那一屏认的是第二张卡展开后的那一格矩阵系数。
       "#grade-matrix-0-0",
       // 1.251：复制出来的第三块，它的宽度那一格画出来了才算这一屏画了东西。
-      "#stack-2-width"];
+      "#stack-2-width",
+      // 1.252：选中那一块的虚线框。
+      ".mask-extra-outline"];
     const run = async (screen) => {
       const data = await evaluate("(function(){ " + probeSource + " return measureAgentCutUi(); })()");
       // 「点了才画」那一档必须能证明**真的画了东西**：只数文字节点的话，
@@ -509,6 +518,26 @@ async function sweepOne(size, hostPort, probeSource) {
         else await run(label);
       }
     }
+    // 反方向那一判（`--drag-splitter`）：用户**自己**把那条边往上拖，时间线让不动了，
+    // 那句「窗口太矮」必须出现。只判「开机不许说」会把它写成「永远不说」——两只手都要钉。
+    if (flag("drag-splitter", "") !== "") {
+      const grip = await evaluate("(() => { const el = document.querySelector('.splitter.horizontal');"
+        + "if (!el) return null; const r = el.getBoundingClientRect();"
+        + "return {x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2)}; })()");
+      if (!grip) {
+        rows.push({ screen: "拖高时间线", panel: flag("panel", ""), size, data: null,
+          error: "找不到那条边 .splitter.horizontal——反方向那一判没量到" });
+      } else {
+        await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: grip.x, y: grip.y, button: "left", clickCount: 1 });
+        for (let step = 1; step <= 4; step += 1) {
+          await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: grip.x, y: grip.y - step * 40, button: "left" });
+          await sleep(60);
+        }
+        await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: grip.x, y: grip.y - 160, button: "left" });
+        await sleep(700);
+        await run("拖高时间线");
+      }
+    }
     // 1.251：真点一次「复制第 1 块」，再回引擎数块数与框点——这个按钮不该只有源码断言。
     if (flag("dup-extra", "") !== "") {
       const label = "复制再叠遮罩";
@@ -540,28 +569,76 @@ async function sweepOne(size, hostPort, probeSource) {
           if (!ok) rowOf("复制没有按预期落进工程：before=" + was.length + " after=" + now.length
             + " copy=" + JSON.stringify(copy ? [copy.center_x, copy.center_y, (copy.keys ?? []).length] : null)
             + " src=" + JSON.stringify([src.center_x, src.center_y, (src.keys ?? []).length]));
-          else await run(label);
+          else {
+            await run(label);
+            // 这一腿会改共享的夹具：量完把它放回去，下一档窗口与后面的屏看到的还是原样。
+            await enginePost(`/v1/projects/${PROJECT}/edits`, { request_id: `shape-dup-restore-${size}`,
+              expected_revision: after.revision, commands: [{ op: "clip.mask_stack", clip_id: "k2", masks: was }] });
+            // 这次放回绕过了界面：重载一次，让页面的 project.revision 跟上引擎，后面的写才不会被 409 拒。
+            await cdp.send("Page.reload", {}, 30000);
+            await sleep(2500);
+          }
         }
       }
     }
-    // 反方向那一判（`--drag-splitter`）：用户**自己**把那条边往上拖，时间线让不动了，
-    // 那句「窗口太矮」必须出现。只判「开机不许说」会把它写成「永远不说」——两只手都要钉。
-    if (flag("drag-splitter", "") !== "") {
-      const grip = await evaluate("(() => { const el = document.querySelector('.splitter.horizontal');"
-        + "if (!el) return null; const r = el.getBoundingClientRect();"
-        + "return {x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2)}; })()");
-      if (!grip) {
-        rows.push({ screen: "拖高时间线", panel: flag("panel", ""), size, data: null,
-          error: "找不到那条边 .splitter.horizontal——反方向那一判没量到" });
-      } else {
-        await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: grip.x, y: grip.y, button: "left", clickCount: 1 });
-        for (let step = 1; step <= 4; step += 1) {
-          await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: grip.x, y: grip.y - step * 40, button: "left" });
-          await sleep(60);
+    // 1.252：选中一块，在画面里拖它那颗柄，回引擎读「改的是哪一枚」。
+    if (flag("drag-extra", "") !== "") {
+      const label = "画面拖再叠遮罩";
+      const rowOf = (error) => rows.push({ screen: label, panel: flag("panel", ""), size, data: null, error });
+      const trouble = await baseState();
+      if (trouble) rowOf(trouble);
+      else {
+        const pick = await evaluate("(function(){var el=document.querySelector('[aria-label=\"在画面里选中第 1 块叠加遮罩\"]');"
+          + "if(!el)return null;el.scrollIntoView({block:'center'});var r=el.getBoundingClientRect();"
+          + "return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
+        if (!pick) rowOf("找不到「在画面里选中第 1 块叠加遮罩」");
+        else {
+          await click(pick.x, pick.y);
+          await sleep(700);
+          const before = await engineGet(`/v1/projects/${PROJECT}`);
+          const spot = await evaluate("(function(){var el=document.querySelector('.mask-extra-handle');"
+            + "if(!el)return null;var r=el.getBoundingClientRect();"
+            + "return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
+          if (!spot) rowOf("选中之后画面里没有 .mask-extra-handle");
+          else {
+            await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: spot.x, y: spot.y, button: "left", clickCount: 1 });
+            for (let step = 1; step <= 4; step += 1) {
+              await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: spot.x + step * 12, y: spot.y, button: "left" });
+              await sleep(60);
+            }
+            await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: spot.x + 48, y: spot.y, button: "left" });
+            await sleep(900);
+            const after = await engineGet(`/v1/projects/${PROJECT}`);
+            const was = before.clips["k2"].extra_masks[0];
+            const now = after.clips["k2"].extra_masks[0];
+            const keyAt = 141_120_000;
+            const wasKey = (was.keys ?? []).find((k) => k.at_ticks === keyAt);
+            const nowKey = (now.keys ?? []).find((k) => k.at_ticks === keyAt);
+            const screen = await evaluate("(function(){var el=document.querySelector('.mask-extra-handle');"
+              + "if(!el)return null;var r=el.getBoundingClientRect();"
+              + "return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
+            const followed = screen && Math.abs(screen.x - (spot.x + 48)) <= 4 && Math.abs(screen.y - spot.y) <= 3;
+            const movedKey = wasKey && nowKey
+              && Math.hypot(nowKey.center_x - wasKey.center_x, nowKey.center_y - wasKey.center_y) > 0.02;
+            const staticSame = Math.abs(now.center_x - was.center_x) < 1e-9
+              && Math.abs(now.center_y - was.center_y) < 1e-9;
+            const other = JSON.stringify(after.clips["k2"].extra_masks[1]) === JSON.stringify(before.clips["k2"].extra_masks[1]);
+            if (!followed || !movedKey || !staticSame || !other) rowOf("拖动没有按预期："
+              + "key=" + JSON.stringify([wasKey && [wasKey.center_x, wasKey.center_y], nowKey && [nowKey.center_x, nowKey.center_y]])
+              + " static=" + JSON.stringify([was.center_x, was.center_y, now.center_x, now.center_y])
+              + " screen=" + JSON.stringify(screen) + " spot=" + JSON.stringify(spot));
+            else {
+              await run(label);
+              // 拖动改的是共享夹具里的那一枚；量完按拖动前的整串放回去。
+              await enginePost(`/v1/projects/${PROJECT}/edits`, { request_id: `shape-drag-restore-${size}`,
+                expected_revision: after.revision, commands: [{ op: "clip.mask_stack", clip_id: "k2", masks: before.clips["k2"].extra_masks }] });
+            }
+            // 量完再取消选中：后面的屏不该挂着这颗柄。
+            await evaluate("(function(){var el=document.querySelector('[aria-label=\"取消选中第 1 块叠加遮罩\"]');"
+              + "if(el)el.click();return !!el;})()");
+            await sleep(300);
+          }
         }
-        await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: grip.x, y: grip.y - 160, button: "left" });
-        await sleep(700);
-        await run("拖高时间线");
       }
     }
     cdp.close();

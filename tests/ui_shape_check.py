@@ -77,6 +77,8 @@ PAINTED = {
     "调色节点": "#grade-matrix-0-0",
     # 1.251：真点「复制第 1 块」之后画出来的第三块（它的宽度那一格）。
     "复制再叠遮罩": "#stack-2-width",
+    # 1.252：选中一块之后画面里那颗柄拖出来的虚线框。
+    "画面拖再叠遮罩": ".mask-extra-outline",
 }
 # 反过来：某一屏**不许**出现的那一行。「重置布局」按下去之后还挂着「窗口太矮」，
 # 说的是应用自己要了一个这一屏装不下的数，再回头抱怨用户——那一行在别的屏上是诚实
@@ -282,7 +284,8 @@ def run_engine(data_dir: Path) -> subprocess.Popen:
 
 def sweep(pid: str, folder: Path, panel: str, extras: tuple[str, ...] = (),
           drag: bool = False, text_clip: str = "", boxkey: str = "",
-          gradecard: str = "", dup_extra: bool = False) -> list[dict]:
+          gradecard: str = "", dup_extra: bool = False,
+          drag_extra: bool = False) -> list[dict]:
     out = folder / f"ui_shape_sweep-{panel}.json"
     shots = os.environ.get("AGENTCUT_SHAPE_SHOTS", "")
     node = subprocess.run(
@@ -303,6 +306,7 @@ def sweep(pid: str, folder: Path, panel: str, extras: tuple[str, ...] = (),
             *(["--boxkey", boxkey] if boxkey else []),
             *(["--gradecard", gradecard] if gradecard else []),
             *(["--dup-extra", "1"] if dup_extra else []),
+            *(["--drag-extra", "1"] if drag_extra else []),
             *(["--shots", shots] if shots else []),
         ],
         capture_output=True,
@@ -350,7 +354,8 @@ def main() -> None:
                                  text_clip="t1" if panel == "inspect" else "",
                                  boxkey="#stack-0-center_x" if panel == "inspect" else "",
                                  gradecard="2" if panel == "inspect" else "",
-                                 dup_extra=panel == "inspect")
+                                 dup_extra=panel == "inspect",
+                                 drag_extra=panel == "inspect")
             ]
         finally:
             engine.terminate()
@@ -374,7 +379,7 @@ def main() -> None:
              + json.dumps(missed, ensure_ascii=False)[:600])
     # 每一档窗口 22 屏：启动 + 展开 + 其余页签 + 浮层那几颗 + 文字层 + 拖高 + 框点 + 调色节点
     # + 复制再叠遮罩。这个数只是地板——真正的判据是上面那条「每一行都必须量到」；加一屏时一起加。
-    needed = 22 * len(SIZES)
+    needed = 23 * len(SIZES)
     if len(screens) < needed:
         fail(f"只量到 {len(screens)} 屏（至少该有 {needed} 屏）")
 

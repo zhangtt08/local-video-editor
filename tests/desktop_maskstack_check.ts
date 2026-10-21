@@ -210,4 +210,18 @@ assert.match(inspector, /const nudge = \(value: number\) => Math\.min\(1, value 
 assert.match(inspector, /write\(\[\.\.\.stack, \{ \.\.\.item,/, "复制没有走那一条整串写入");
 assert.match(inspector, /center_x: nudge\(item\.center_x\), center_y: nudge\(item\.center_y\)/, "静止的中心没有挪");
 assert.match(inspector, /keys: \(item\.keys \?\? \[\]\)\.map\(\(key\) => \(\{ \.\.\.key,/, "框点没有随着复制");
+// ⑯ 1.252：画面里先选中一块，再拖它那一颗柄——只画选中那一块，且拓取期间在 window 上听。
+assert.match(store, /maskExtraSel: \{ clipId: string; index: number \} \| null;/, "应用状态里没有画面选中的那一块");
+assert.match(store, /export function selectMaskExtra\(clipId: string, index: number \| null\)/, "没有选中那一块的写口");
+assert.match(inspector, /selectMaskExtra\(clip\.id, pickedExtra \? null : index\)/, "检查器没有把选中交出去");
+assert.match(inspector, /if \(!pickedExtra\) setMaskEditing\(true\);/, "选中时没有把画面中编辑打开");
+assert.match(picture, /const selectedIndex = app\.maskExtraSel\?\.clipId === clip\.id \? app\.maskExtraSel\.index : null;/, "画面没有认选中的那一块");
+assert.match(picture, /boxKeyForPlayhead\(selectedExtra, localAt, Math\.round\(localAt \/ frame\) \* frame\)/, "画面没有用那一处键的选择");
+assert.match(picture, /const extraDrawable = Boolean\(visible && selectedExtra && extraBox && !follow && !disabled/, "可拖的条件不对");
+assert.match(picture, /window\.addEventListener\("pointermove", move\);/, "拓取期间没有在 window 上听");
+assert.match(picture, /const box = draft\?\.index === gesture\.index \? draft\.box : null;/, "松手没有读最后一次草稿");
+assert.match(picture, /if \(gesture\.keyTick !== null\) return \{ \.\.\.row,/, "停在框点上时没有写回那一枚");
+assert.match(picture, /setClipMaskStack\(clip\.id, masks, follow, gesture\.projectId, gesture\.revision\)/, "松手没有走那一条写入");
+assert.match(picture, /y=\{cy - ry - hs\.y \/ 2\}/, "柄不在盒子的上边中点");
+assert.match(css, /\.mask-extra-handle\s*\{[^}]*cursor: move/, "柄没有自己的命中与指针");
 console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的五个数与羽化/反转都在格子里改、每一块可以打自己的框点、跟随时大小按同一比例缩放、框点的时间在条顶上看得见且不接指针、每一块都写明自己怎么动、停在框点上时五个数改的就是那一枚、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、样式仍走刻度");
