@@ -47,6 +47,12 @@ const PROBE = path.resolve(flag("probe", path.join(__dirname, "ui_shape_probe.js
 // 与「有一屏量不到」是同一类红。
 const leaked = [];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// 读引擎那一份状态：界面点过之后，「画出来了」与「写进去了」是两件事。
+const engineGet = async (path) => {
+  const response = await fetch(new URL(path, ENGINE), { headers: { Authorization: "Bearer " + TOKEN } });
+  if (!response.ok) throw new Error(path + " -> " + response.status);
+  return await response.json();
+};
 
 if (!ENGINE || !TOKEN || !PROJECT) {
   console.error("usage: --engine --token --project are required");
@@ -245,7 +251,9 @@ async function sweepOne(size, hostPort, probeSource) {
       // 1.245：框点那一帧认的是那一块输入框本身；它的值与那一句由 --boxkey 那一腿单独读。
       "#stack-0-center_x",
       // 1.246：调色节点那一屏认的是第二张卡展开后的那一格矩阵系数。
-      "#grade-matrix-0-0"];
+      "#grade-matrix-0-0",
+      // 1.251：复制出来的第三块，它的宽度那一格画出来了才算这一屏画了东西。
+      "#stack-2-width"];
     const run = async (screen) => {
       const data = await evaluate("(function(){ " + probeSource + " return measureAgentCutUi(); })()");
       // 「点了才画」那一档必须能证明**真的画了东西**：只数文字节点的话，
@@ -499,6 +507,41 @@ async function sweepOne(size, hostPort, probeSource) {
         if (bad) rows.push({ screen: label, panel: flag("panel", ""), size, data: null,
           error: "点了第二张卡，展开的不是矩阵那一格：" + JSON.stringify({ clicked, proof }) });
         else await run(label);
+      }
+    }
+    // 1.251：真点一次「复制第 1 块」，再回引擎数块数与框点——这个按钮不该只有源码断言。
+    if (flag("dup-extra", "") !== "") {
+      const label = "复制再叠遮罩";
+      const rowOf = (error) => rows.push({ screen: label, panel: flag("panel", ""), size, data: null, error });
+      const trouble = await baseState();
+      if (trouble) rowOf(trouble);
+      else {
+        const before = await engineGet(`/v1/projects/${PROJECT}`);
+        const spot = await evaluate("(function(){var el=document.querySelector('[aria-label=\"复制第 1 块叠加遮罩\"]');"
+          + "if(!el)return null;el.scrollIntoView({block:'center'});var r=el.getBoundingClientRect();"
+          + "return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2),disabled:el.disabled};})()");
+        if (!spot) rowOf("检查器里找不到「复制第 1 块叠加遮罩」");
+        else if (spot.disabled) rowOf("那一颗是灰的（块数上限或只读），按不下去");
+        else {
+          await click(spot.x, spot.y);
+          await sleep(900);
+          const after = await engineGet(`/v1/projects/${PROJECT}`);
+          const was = before.clips["k2"].extra_masks;
+          const now = after.clips["k2"].extra_masks;
+          const src = was[0];
+          const copy = now[now.length - 1];
+          await evaluate("(function(){var el=document.querySelector('#stack-2-width');"
+            + "if(el)el.scrollIntoView({block:'center'});return !!el;})()");
+          await sleep(400);
+          const ok = now.length === was.length + 1
+            && copy && (copy.keys ?? []).length === (src.keys ?? []).length
+            && Math.abs(copy.center_x - Math.min(1, src.center_x + 0.04)) < 1e-9
+            && Math.abs(copy.center_y - Math.min(1, src.center_y + 0.04)) < 1e-9;
+          if (!ok) rowOf("复制没有按预期落进工程：before=" + was.length + " after=" + now.length
+            + " copy=" + JSON.stringify(copy ? [copy.center_x, copy.center_y, (copy.keys ?? []).length] : null)
+            + " src=" + JSON.stringify([src.center_x, src.center_y, (src.keys ?? []).length]));
+          else await run(label);
+        }
       }
     }
     // 反方向那一判（`--drag-splitter`）：用户**自己**把那条边往上拖，时间线让不动了，
