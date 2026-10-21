@@ -55,6 +55,7 @@ EXTRA = {"shape": "rectangle", "center_x": 0.35, "center_y": 0.5, "width": 0.3,
          "height": 0.6, "feather": 0.0}
 # 探针都在两块盒子的内部或外部，离边界至少 0.05（画面上十几个像素）。
 PROBES = (0.25, 0.30, 0.42, 0.55)
+WIDE_PROBES = (0.65, 0.75, 0.80, 0.90)
 
 
 def fail(message: str) -> None:
@@ -236,6 +237,46 @@ def make_project(folder: Path, animate: bool, follow: bool = False) -> str:
     return pid
 
 
+WIDE_EXTRA = {"shape": "rectangle", "center_x": 0.7, "center_y": 0.5, "width": 0.14,
+              "height": 0.6, "feather": 0.0}
+
+
+def make_width_project(folder: Path, follow: bool) -> str:
+    """主遮罩只动宽度（0.6→1.2）：跟随时再叠那块按同一比例长，不跟就原地不动。"""
+    made = request(
+        "/v1/projects",
+        {"request_id": f"mf-wide-{follow}",
+         "name": "主遮罩在长大" + ("（跟）" if follow else "（不跟）"),
+         "settings": {"width": WIDTH, "height": HEIGHT,
+                      "frame_rate": {"numerator": 30, "denominator": 1}}},
+        "POST",
+    )
+    pid = made["project"]["id"]
+    probe = request("/v1/media/import", {"path": str(folder / "white.png")}, "POST")
+    request(
+        f"/v1/projects/{pid}/edits",
+        {"request_id": f"mf-wide-seed-{follow}", "expected_revision": made["project"]["revision"],
+         "commands": [
+             {"op": "track.add", "track": {"id": "v", "kind": "video", "name": "画面"}},
+             {"op": "asset.import", "asset_id": "w", "label": "白板",
+              "probe_id": probe["id"], "verified": probe["verified"]},
+             {"op": "clip.add", "clip": {"id": "c", "asset_id": "w", "track_id": "v",
+                                         "position_ticks": 0, "duration_ticks": 2 * SECOND}},
+             {"op": "clip.mask", "clip_id": "c", "mask": PRIMARY},
+             {"op": "clip.mask_stack", "clip_id": "c", "masks": [WIDE_EXTRA],
+              "follow": follow},
+             {"op": "keyframe.set", "clip_id": "c",
+              "keyframe": {"property": "mask_width", "at_ticks": 0, "value": 0.6,
+                           "interpolation": "linear"}},
+             {"op": "keyframe.set", "clip_id": "c",
+              "keyframe": {"property": "mask_width", "at_ticks": 2 * SECOND, "value": 1.2,
+                           "interpolation": "linear"}},
+         ]},
+        "POST",
+    )
+    return pid
+
+
 def readings(pid: str, folder: Path, key: str) -> dict:
     revision = request(f"/v1/projects/{pid}")["revision"]
     early, late = export_frames(pid, revision, key, folder)
@@ -267,12 +308,20 @@ def main() -> None:
             static = readings(make_project(folder, False), folder, "static")
             moving = readings(make_project(folder, True), folder, "moving")
             following = readings(make_project(folder, True, True), folder, "following")
+            growing = readings(make_width_project(folder, True), folder, "growing")
+            fixed = readings(make_width_project(folder, False), folder, "fixed")
             # 两块盒子是相乘的：亮 = 同时在主遮罩与再叠那块里面。
             # 主遮罩 [0.2,0.8] 随中心曲线右移；再叠那块 [0.2,0.5] 不动。
             #   静止：任何时刻都亮在 [0.2,0.5]；
             #   主遮罩 0.2s（[0.215,0.815]）：亮在 [0.215,0.5]；
             #   主遮罩 1.8s（[0.335,0.935]）：亮在 [0.335,0.5]。
             expected = {
+                # 1.240：主遮罩只长宽（0.6→1.2）。跟随时那一块按同一比例从 0.14 长到 0.28，
+                # 右缘从 ~0.68 走到 ~0.84；x=0.80 由暗转亮。不跟的那一趟右缘一直是 0.77。
+                ("growing", "t0"): (True, True, False, False),
+                ("growing", "t18"): (True, True, True, False),
+                ("fixed", "t0"): (True, True, False, False),
+                ("fixed", "t18"): (True, True, False, False),
                 ("static", "t0"): (True, True, True, False),
                 ("static", "t18"): (True, True, True, False),
                 ("moving", "t0"): (True, True, True, False),
@@ -282,20 +331,25 @@ def main() -> None:
                 ("following", "t0"): (True, True, True, False),
                 ("following", "t18"): (False, False, True, True),
             }
-            names = {"static": "静止", "moving": "主遮罩在动", "following": "跟着主遮罩平移"}
-            for name, data in (("static", static), ("moving", moving), ("following", following)):
+            names = {"static": "静止", "moving": "主遮罩在动", "following": "跟着主遮罩平移",
+                     "growing": "主遮罩在长大（跟）", "fixed": "主遮罩在长大（不跟）"}
+            cases = (("static", static), ("moving", moving), ("following", following),
+                     ("growing", growing), ("fixed", fixed))
+            for name, data in cases:
                 for side in ("export", "preview"):
                     for when in ("t0", "t18"):
                         image = data[side][when]
-                        actual = tuple(bright(image, x, 0.5) for x in PROBES)
+                        probes = WIDE_PROBES if name in ("growing", "fixed") else PROBES
+                        actual = tuple(bright(image, x, 0.5) for x in probes)
                         want = expected[(name, when)]
                         label = f"{names[name]} / {side} / {when}"
                         print(f"   {label}：{actual}（期望 {want}）")
                         assert actual == want, (label, actual, want)
             # 两端逐点一致（这一档的核心：同一份工程的两个「洞」）。
-            for name, data in (("static", static), ("moving", moving), ("following", following)):
+            for name, data in cases:
                 for when in ("t0", "t18"):
-                    for x in PROBES:
+                    probes = WIDE_PROBES if name in ("growing", "fixed") else PROBES
+                    for x in probes:
                         left = bright(data["export"][when], x, 0.5)
                         right = bright(data["preview"][when], x, 0.5)
                         assert left == right, (

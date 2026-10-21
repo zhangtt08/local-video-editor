@@ -51,7 +51,7 @@ function outline(vertices: MaskVertex[]) {
 }
 
 /** Geometry-only handles; the server compiles the actual alpha image during a gesture. */
-export function MaskPicture({ clip, image, extra, extraWindows, children, editable = true, follow = false, animation, shape, rotation }: { clip: Clip; image?: string | null; extra?: string[] | null; extraWindows?: (ExtraMaskWindow[] | null)[] | null; children: ReactNode; editable?: boolean; follow?: boolean; animation?: { unit: string | null; curves: Record<MaskProperty, Curve> } | null; shape?: MaskShapeWindow[] | null; rotation?: MaskRotationWindow[] | null }) {
+export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, children, editable = true, follow = false, animation, shape, rotation }: { clip: Clip; image?: string | null; extra?: string[] | null; extraWindows?: (ExtraMaskWindow[] | null)[] | null; extraUnits?: (string | null)[] | null; children: ReactNode; editable?: boolean; follow?: boolean; animation?: { unit: string | null; curves: Record<MaskProperty, Curve> } | null; shape?: MaskShapeWindow[] | null; rotation?: MaskRotationWindow[] | null }) {
   const app = useApp(); const play = usePlay();
   const [draft, setDraft] = useState<ShapeMask | null>(null);
   const [compiled, setCompiled] = useState<{ mask: ShapeMask; image: string } | null>(null);
@@ -300,10 +300,19 @@ export function MaskPicture({ clip, image, extra, extraWindows, children, editab
   const primaryImage = spun ? spun.image : shapeWindow ? shapeWindow.image : animated ? animated.unit : pictureImage;
   // 1.238：自己带框点的那一块，引擎把每一窗烘成一张整画面图；这里按播放头挑那一张，
   // 与主遮罩转角的窗表同一个读法（`rotationWindowAt` 只认 from/to）。
+  const mainMask = clip.mask;
   const extraPlates = (extra ?? []).map((image, index) => {
     const windows = extraWindows?.[index];
     const window = windows ? rotationWindowAt(windows, local) : null;
-    return { image: window ? window.image : image, own: Boolean(window) };
+    const extraMask = clip.extra_masks?.[index];
+    // 1.240：跟随时，不转的那一块用一张单位图，按主遮罩的 `--mask-w/--mask-h` 同比例缩放；
+    // 位置 = 主遮罩中心 + 这一块的静止偏移 − 缩放后的一半。转了的那一块不走这一支。
+    const unit = Boolean(follow && extraUnits?.[index] && mainMask && extraMask && !extraMask.rotation);
+    return {
+      image: unit ? extraUnits![index]! : window ? window.image : image,
+      own: Boolean(window),
+      unit: unit && !window,
+    };
   });
   const layers = [primaryImage, ...extraPlates.map((row) => row.image)].filter(Boolean) as string[];
   // 1.236：`mask-size` 与 `mask-position` 都是**按层**的。这里以前只给一个值，于是主遮罩一动，
@@ -336,8 +345,37 @@ export function MaskPicture({ clip, image, extra, extraWindows, children, editab
     ? {
         ...pictureStyle,
         maskImage: layers.join(", "),
-        maskSize: [mainSize, ...extraPlates.map(() => "100% 100%")].join(", "),
-        maskPosition: [mainPosition, ...extraPlates.map((row) => (row.own ? "0px 0px" : extraPosition))].join(", "),
+        maskSize: [
+          mainSize,
+          ...extraPlates.map((row, index) => {
+            const extraMask = clip.extra_masks?.[index];
+            if (!row.unit || !extraMask || !mainMask) return "100% 100%";
+            const ratioW = extraMask.width / mainMask.width;
+            const ratioH = extraMask.height / mainMask.height;
+            return (
+              `calc(var(--mask-w) * ${ratioW.toFixed(6)} * var(--mask-lw) * 1px) ` +
+              `calc(var(--mask-h) * ${ratioH.toFixed(6)} * var(--mask-lh) * 1px)`
+            );
+          }),
+        ].join(", "),
+        maskPosition: [
+          mainPosition,
+          ...extraPlates.map((row, index) => {
+            if (!row.unit) return row.own ? "0px 0px" : extraPosition;
+            const extraMask = clip.extra_masks?.[index];
+            if (!extraMask || !mainMask) return extraPosition;
+            const ratioW = extraMask.width / mainMask.width;
+            const ratioH = extraMask.height / mainMask.height;
+            const dx = extraMask.center_x - mainMask.center_x;
+            const dy = extraMask.center_y - mainMask.center_y;
+            const px = dx >= 0 ? `+ ${dx.toFixed(6)}` : `- ${(-dx).toFixed(6)}`;
+            const py = dy >= 0 ? `+ ${dy.toFixed(6)}` : `- ${(-dy).toFixed(6)}`;
+            return (
+              `calc((var(--mask-x) ${px} - 0.5 * var(--mask-w) * ${ratioW.toFixed(6)}) * var(--mask-lw) * 1px) ` +
+              `calc((var(--mask-y) ${py} - 0.5 * var(--mask-h) * ${ratioH.toFixed(6)}) * var(--mask-lh) * 1px)`
+            );
+          }),
+        ].join(", "),
         maskRepeat: "no-repeat",
         maskComposite: "intersect",
       }

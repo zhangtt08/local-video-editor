@@ -82,14 +82,14 @@ assert.match(picture, /const mainSize = shapeWindow/, "主遮罩那一层的尺�
 assert.match(picture, /const mainPosition = shapeWindow/, "主遮罩那一层的落位不是按自己那一支算的");
 assert.match(
   picture,
-  /maskSize: \[mainSize, \.\.\.extraPlates\.map\(\(\) => "100% 100%"\)\]\.join\(", "\)/,
-  "再叠的层的尺寸不是各自的 100%×100%",
+  /if \(!row\.unit \|\| !extraMask \|\| !mainMask\) return "100% 100%";/,
+  "不跟随/不转的那几层不是 100%×100%",
 );
 assert.match(picture, /const followPosition =/, "「跟着主遮罩平移」没有一条自己的落位算式");
 assert.match(picture, /const extraPosition = follow \? followPosition : "0px 0px";/, "跟不跟这一格没有决定再叠层的落位");
 assert.match(
   picture,
-  /maskPosition: \[mainPosition, \.\.\.extraPlates\.map\(\(row\) => \(row\.own \? "0px 0px" : extraPosition\)\)\]\.join\(", "\)/,
+  /if \(!row\.unit\) return row\.own \? "0px 0px" : extraPosition;/,
   "再叠的层的落位不是各自的 0,0 / 跟随时的主遮罩平移",
 );
 assert.match(picture, /calc\(\(var\(--mask-x\) - 0\.5\) \* var\(--mask-lw\) \* 1px\)/, "角度那一支的落位公式变了");
@@ -113,4 +113,12 @@ assert.match(inspector, /playhead\.set\(clip\.position_ticks \+ key\.at_ticks\)/
 assert.match(inspector, /value !== "bezier"/, "框点里出现了这一档不支持的贝塞尔插值");
 assert.match(inspector, /row\.at_ticks !== key\.at_ticks/, "删除一枚框点没有走同一处 patch");
 
-console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的五个数与羽化/反转都在格子里改、每一块可以打自己的框点、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、样式仍走刻度");
+// ⑨ 1.240：跟随时「不转的主遮罩 + 不转的那一块」共享中心与大小——单位图按同一对比例缩放。
+assert.match(engine, /extra_mask_units\?: \(string \| null\)\[\] \| null/, "清单的类型里没有单位图");
+assert.match(preview, /extraUnits=\{plan\?\.extra_mask_units\}/, "预览没把单位图交给画面层");
+assert.match(picture, /const unit = Boolean\(follow && extraUnits\?\.\[index\]/, "单位图那一支的判据不在");
+assert.match(picture, /calc\(var\(--mask-w\) \* \$\{ratioW\.toFixed\(6\)\} \* var\(--mask-lw\) \* 1px\)/, "单位图没有按主遮罩的宽度比例缩放");
+assert.match(picture, /calc\(\(var\(--mask-x\) \$\{px\} - 0\.5 \* var\(--mask-w\)/, "单位图的落位没有减掉缩放后的一半");
+assert.match(inspector, /大小也按同一比例缩放/, "悬停里没说大小也跟");
+
+console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的五个数与羽化/反转都在格子里改、每一块可以打自己的框点、跟随时大小按同一比例缩放、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、样式仍走刻度");

@@ -30,6 +30,9 @@ from .animation import (
     sound_enabled,
     spatial_schedule,
 )
+from .animation import (
+    points as curve_points,
+)
 from .compositing import blend_track
 from .contracts import (
     BLUR_RADIUS_LIMIT_PX,
@@ -1709,6 +1712,22 @@ def compile_render_plan(
                                 f"+{extra.center_y - clip.mask.center_y:.9f})"
                             ),
                         }
+                        # 1.240：不转的主遮罩与不转的那一块，尺寸按主遮罩的同两个比例走
+                        # （预览那一头是同一对比例乘在 `--mask-w/--mask-h` 上）。
+                        if (
+                            not clip.mask.rotation
+                            and not curve_points(clip, "mask_rotation")
+                            and not extra.rotation
+                        ):
+                            for prop, ratio in (
+                                ("mask_width", extra.width / clip.mask.width),
+                                ("mask_height", extra.height / clip.mask.height),
+                            ):
+                                if curve_points(clip, prop):
+                                    values[prop] = (
+                                        f"({expression(clip, prop, 'T', registers)}"
+                                        f"*{ratio:.9f})"
+                                    )
                     alpha.append(f"({alpha_expression(extra, values, mask_box)})")
                 if (
                     clip.effects.opacity != 1

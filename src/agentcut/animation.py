@@ -1029,6 +1029,28 @@ def preview_manifest(
                 if rotation_windows
                 else animated_mask_image(clip.mask, project.settings.width, project.settings.height)
             )
+        # 1.240：跟随时，不转的主遮罩与不转的再叠块共享「中心 + 大小」——预览把形状烘成
+        # 一张单位图（填满盒子），用 `--mask-w/--mask-h` 的同两个比例缩放；导出把同一对比例
+        # 乘进尺寸表达式。转了的主遮罩、自己带框点或自己转了的那一块不在这条路上。
+        extra_units = None
+        if clip.extra_masks_follow:
+            extra_units = [
+                animated_mask_image(
+                    extra.model_copy(
+                        update={"center_x": 0.5, "center_y": 0.5,
+                                "width": 1.0, "height": 1.0}
+                    ),
+                    project.settings.width,
+                    project.settings.height,
+                )
+                if clip.mask is not None
+                and not clip.mask.rotation
+                and not points(clip, "mask_rotation")
+                and not extra.rotation
+                and not extra.keys
+                else None
+                for extra in clip.extra_masks
+            ] or None
         clips[clip.id] = {
             "spatial": spatial or None,
             "mask_image": mask_image(clip.mask, project.settings.width, project.settings.height)
@@ -1040,6 +1062,10 @@ def preview_manifest(
                 mask_image(extra, project.settings.width, project.settings.height)
                 for extra in clip.extra_masks
             ] or None,
+            # 1.240：跟随时，不转的主遮罩与不转的再叠块共享「中心 + 大小」——预览把形状烘成
+            # 一张单位图（填满盒子），用 `--mask-w/--mask-h` 的同两个比例缩放；导出把同一对比例
+            # 乘进尺寸表达式。转了的主遮罩或自己带框点/自己转了的那一块不在这条路上。
+            "extra_mask_units": extra_units,
             # 1.238：自己带框点的那一块，按窗烘一张整画面图（中心/宽高/角度都烘进去），
             # 浏览器按播放头挑那一窗——与导出那边同一张阶梯，一格一步。
             "extra_mask_windows": [
