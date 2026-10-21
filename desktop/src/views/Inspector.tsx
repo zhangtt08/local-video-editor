@@ -633,7 +633,8 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
   const play = usePlay();
   const limit = app.caps?.limits?.extra_masks ?? 0;
   const keysLimit = app.caps?.limits?.extra_mask_keys ?? 0;
-  const frame = frameTicks(app.project?.settings.frame_rate ?? { numerator: 30, denominator: 1 });
+  const rate = app.project?.settings.frame_rate ?? { numerator: 30, denominator: 1 };
+  const frame = frameTicks(rate);
   const localTick = () => {
     const raw = play.ticks - clip.position_ticks;
     return Math.max(0, Math.min(clip.duration_ticks, Math.round(raw / frame) * frame));
@@ -736,8 +737,13 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
         {item.keys?.length ? <ul className="mask-stack-keylist">
           {item.keys.map((key) => <li key={key.at_ticks} className={key.at_ticks === active ? "current" : undefined}>
             <button type="button" className="btn tiny mono" aria-current={key.at_ticks === active ? "true" : undefined}
-              title="把播放头移到这一帧" onClick={() => { playhead.pause(); playhead.set(clip.position_ticks + key.at_ticks); }}>
-              {timecode(key.at_ticks, app.project?.settings.frame_rate ?? { numerator: 30, denominator: 1 })}
+              title={key.at_ticks % frame
+                ? `把播放头移到这一枚——它在 ${timecode(key.at_ticks, rate)} 之后 ${offsetWords(key.at_ticks % frame, rate)}，不在整帧上`
+                : "把播放头移到这一帧"}
+              onClick={() => { playhead.pause(); playhead.set(clip.position_ticks + key.at_ticks); }}>
+              {timecode(key.at_ticks, rate)}
+              {/* 1.248：两枚框点都显示同一个时间码时，人要能看出它们不是同一刻——差多少写在同一格里。 */}
+              {key.at_ticks % frame ? <span className="mask-stack-sub"> +{offsetWords(key.at_ticks % frame, rate)}</span> : null}
             </button>
             <select className="input tiny" aria-label="这一段框点的插值" value={key.interpolation ?? "linear"}
               disabled={disabled}

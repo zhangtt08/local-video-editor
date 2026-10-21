@@ -9,6 +9,7 @@ import { resolve } from "node:path";
 
 import { boxKeyAt, boxKeyForPlayhead } from "../desktop/src/effects";
 import type { ShapeMask } from "../desktop/src/engine";
+import { offsetWords } from "../desktop/src/time";
 
 declare const REPO_ROOT: string;
 
@@ -110,7 +111,7 @@ assert.match(picture, /rotationWindowAt\(windows, local\)/, "浏览器没有按�
 assert.match(picture, /row\.own && !row\.follow \? "0px 0px"/, "自己带框点的那一层没有按整画面图落位");
 // 1.239：每一枚框点在卡片里有名字——时刻可跳、插值可改（贝塞尔不在这一档）、删除只走那一处 patch。
 assert.match(inspector, /className="mask-stack-keylist"/, "框点没有一张看得见的表");
-assert.match(inspector, /timecode\(key\.at_ticks, app\.project\?\.settings\.frame_rate/, "框点的时刻不是时间码");
+assert.match(inspector, /timecode\(key\.at_ticks, rate\)/, "框点的时刻不是时间码");
 assert.match(inspector, /playhead\.set\(clip\.position_ticks \+ key\.at_ticks\)/, "点时刻没有把播放头挪过去");
 assert.match(inspector, /value !== "bezier"/, "框点里出现了这一档不支持的贝塞尔插值");
 assert.match(inspector, /row\.at_ticks !== key\.at_ticks/, "删除一枚框点没有走同一处 patch");
@@ -196,4 +197,10 @@ assert.match(inspector, /const active = atKey\?\.at_ticks \?\? at;/, "当前那�
 assert.match(inspector, /className=\{key\.at_ticks === active \? "current" : undefined\}/, "表里当前那一枚的标记没跟着变");
 assert.match(inspector, /aria-current=\{key\.at_ticks === active \? "true" : undefined\}/, "读屏那一格没跟着变");
 
+// ⑬ 1.248：同一帧里的两枚框点时间码一样，表里要能看出它们不是同一刻。
+assert.equal(offsetWords(1_176_000, { numerator: 30, denominator: 1 }), "16.7 毫秒", "半帧的字面数不对");
+assert.match(inspector, /key\.at_ticks % frame\s*\?/, "非整帧的框点没有标出差的这一点");
+assert.match(inspector, /offsetWords\(key\.at_ticks % frame, rate\)/, "差的那一点没有用已有的字面化工具");
+assert.match(inspector, /className="mask-stack-sub"/, "那一点没有自己的样式");
+assert.match(css, /\.mask-stack-sub\s*\{[^}]*color: var\(--ink-3\)/, "那一点没有退一档颜色");
 console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的五个数与羽化/反转都在格子里改、每一块可以打自己的框点、跟随时大小按同一比例缩放、框点的时间在条顶上看得见且不接指针、每一块都写明自己怎么动、停在框点上时五个数改的就是那一枚、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、样式仍走刻度");

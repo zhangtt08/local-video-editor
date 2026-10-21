@@ -1106,6 +1106,8 @@ table.table tr.current td { background: var(--accent-soft); }
    与它是同一件事的两种说法。窄了就省略号，整句在悬停里。 */
 .mask-stack-at { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mask-stack-keylist li.current .btn { border-color: var(--accent); color: var(--accent-deep); background: var(--accent-soft); }
+/* 1.248：同一帧里的两枚框点，时间码一样；差的那一点写在同一个按钮里，颜色退一档。 */
+.mask-stack-sub { color: var(--ink-3); font-size: var(--fs-label); font-weight: 400; }
 .mask-stack-keylist { grid-column: 1 / -1; list-style: none; margin: 2px 0 0; padding: 0; display: grid; gap: 4px; max-height: 132px; overflow: auto; }
 .mask-stack-keylist li { display: flex; align-items: center; gap: 6px; }
 .mask-stack-follow { display: flex; align-items: center; gap: 6px; margin: 4px 0 2px; font-size: var(--fs-label); color: var(--ink-2); }
