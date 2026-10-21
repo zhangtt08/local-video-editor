@@ -109,7 +109,7 @@ assert.equal(rotationWindowAt([], 5), null, "没有窗表时不许猜一个角�
 
 // ③ 接线：走的是引擎那张等比图，界面自己不再算角度
 const picture = read("desktop/src/views/MaskPicture.tsx");
-assert.ok(picture.includes('import { rotateAngleFromPointer, rotatedCorners, rotatedEdgeMids, rotationWindowAt } from "../maskGeometry"'),
+assert.match(picture, /import \{[^}]*rotateAngleFromPointer[^}]*rotatedCorners[^}]*rotatedEdgeMids[^}]*rotationWindowAt[^}]*\} from "\.\.\/maskGeometry"/,
   "向导没读那份几何（角度落位只许有一处实现：参考线、窗表、那颗旋转手柄同出一源）");
 assert.ok(picture.includes('const spun = draft ? null : rotation ? rotationWindowAt(rotation, local) : null'),
   "向导没按播放头去引擎那份窗表里取此刻那一窗");

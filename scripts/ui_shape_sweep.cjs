@@ -572,7 +572,7 @@ async function sweepOne(size, hostPort, probeSource) {
           else {
             await run(label);
             // 这一腿会改共享的夹具：量完把它放回去，下一档窗口与后面的屏看到的还是原样。
-            await enginePost(`/v1/projects/${PROJECT}/edits`, { request_id: `shape-dup-restore-${size}`,
+            await enginePost(`/v1/projects/${PROJECT}/edits`, { request_id: `shape-dup-restore-${size}-${Date.now()}`,
               expected_revision: after.revision, commands: [{ op: "clip.mask_stack", clip_id: "k2", masks: was }] });
             // 这次放回绕过了界面：重载一次，让页面的 project.revision 跟上引擎，后面的写才不会被 409 拒。
             await cdp.send("Page.reload", {}, 30000);
@@ -614,6 +614,7 @@ async function sweepOne(size, hostPort, probeSource) {
             const keyAt = 141_120_000;
             const wasKey = (was.keys ?? []).find((k) => k.at_ticks === keyAt);
             const nowKey = (now.keys ?? []).find((k) => k.at_ticks === keyAt);
+            const midKey = nowKey;
             const screen = await evaluate("(function(){var el=document.querySelector('.mask-extra-handle');"
               + "if(!el)return null;var r=el.getBoundingClientRect();"
               + "return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
@@ -628,10 +629,38 @@ async function sweepOne(size, hostPort, probeSource) {
               + " static=" + JSON.stringify([was.center_x, was.center_y, now.center_x, now.center_y])
               + " screen=" + JSON.stringify(screen) + " spot=" + JSON.stringify(spot));
             else {
-              await run(label);
-              // 拖动改的是共享夹具里的那一枚；量完按拖动前的整串放回去。
-              await enginePost(`/v1/projects/${PROJECT}/edits`, { request_id: `shape-drag-restore-${size}`,
-                expected_revision: after.revision, commands: [{ op: "clip.mask_stack", clip_id: "k2", masks: before.clips["k2"].extra_masks }] });
+              // 同一块再拖右下角：两条边与中心一起变，静止值仍然不动。
+              const corner = await evaluate("(function(){var el=document.querySelector("
+                + "'[aria-label=\"缩放选中的再叠遮罩（第 1 块·右下）\"]');"
+                + "if(!el)return null;var r=el.getBoundingClientRect();"
+                + "return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
+              if (!corner) rowOf("选中之后没有右下的缩放手柄");
+              else {
+                await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: corner.x, y: corner.y, button: "left", clickCount: 1 });
+                for (let step = 1; step <= 3; step += 1) {
+                  await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: corner.x + step * 10, y: corner.y, button: "left" });
+                  await sleep(60);
+                }
+                await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: corner.x + 30, y: corner.y, button: "left" });
+                await sleep(900);
+                const resized = await engineGet(`/v1/projects/${PROJECT}`);
+                const resizedKey = ((resized.clips["k2"].extra_masks[0].keys) ?? []).find((k) => k.at_ticks === keyAt);
+                const grew = midKey && resizedKey
+                  && (Math.abs(resizedKey.width - midKey.width) > 0.02
+                    || Math.abs(resizedKey.height - midKey.height) > 0.02);
+                const staticSize = Math.abs(resized.clips["k2"].extra_masks[0].width - was.width) < 1e-9
+                  && Math.abs(resized.clips["k2"].extra_masks[0].height - was.height) < 1e-9;
+                const other2 = JSON.stringify(resized.clips["k2"].extra_masks[1]) === JSON.stringify(before.clips["k2"].extra_masks[1]);
+                if (!grew || !staticSize || !other2) rowOf("缩放手柄没有按预期："
+                  + "key=" + JSON.stringify(midKey && [midKey.width, midKey.height, resizedKey && resizedKey.width, resizedKey && resizedKey.height])
+                  + " static=" + JSON.stringify([was.width, was.height]));
+                else {
+                  await run(label);
+                  // 两笔都改的是共享夹具里那一枚；量完按拖动前的整串放回去。
+                  await enginePost(`/v1/projects/${PROJECT}/edits`, { request_id: `shape-drag-restore-${size}-${Date.now()}`,
+                    expected_revision: resized.revision, commands: [{ op: "clip.mask_stack", clip_id: "k2", masks: before.clips["k2"].extra_masks }] });
+                }
+              }
             }
             // 量完再取消选中：后面的屏不该挂着这颗柄。
             await evaluate("(function(){var el=document.querySelector('[aria-label=\"取消选中第 1 块叠加遮罩\"]');"

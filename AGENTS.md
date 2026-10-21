@@ -98,7 +98,51 @@
 才有上面那张绿表。「动画曲线编辑器」那一档起初 `.curve-plot` 不在 DOM，是因为要**先点一颗片段**
 再点那颗分段按钮——而且必须是真 `pointerdown`（`element.click()` 不算选中，片段的选中写在 `onPointerDown` 里），不是那一屏不画画布。
 
-## 当前停放点（1.252：在画面里选中一块再叠遮罩，拖它那颗柄搬中心——选择模型落地）
+## 当前停放点（1.253：选中那一块也能在画面里改大小——四颗角柄按未转的盒算）
+
+- **这一轮做的是 1.252 留下的那颗柄只会搬中心**：选中一块之后，画面里画**一颗中心柄 + 四颗角柄**，
+  角柄改的是这一块的宽与高；仍停在框点上写那一枚、否则写静止值，仍只走一条 `clip.mask_stack`，
+  一次抓取一个版本。
+- **第一版的画法是错的，而且是量出来才发现的**：那一圈先写成 `<g transform="rotate(θ cx cy)">`，
+  指针用各向同性的 `cos/sin` 折回盒坐标。这张导引是 `viewBox="0 0 100 100" preserveAspectRatio="none"`
+  ——**按画面比例非均匀拉伸**，屏幕上的直角在这个坐标系里不是直角（1.181/1.182 为旋转遮罩量过同一件事）。
+  改成与主遮罩共用 `maskGeometry` 那一份换算：新增 `rotatedBoxPoints`（`rotatedCorners` 现在就是从它
+  折出字符串，四个角一处算完）与 `boxVectorFromPointer`（同一条式子的逆，带 `k`）；向导里 `Math.cos`
+  一个字都没有，`desktop_maskrot_check` 那句「向导里出现了第二份三角换算」仍然咬得住。
+- **门禁先按行为验换算，再钉接线**：`desktop_maskstack_check.ts` 第⑰节四个角逐个断
+  「正方向 = 同一条带 k 的式子」（<1e-12）与「`boxVectorFromPointer` 折回未转的盒 = 原角」，
+  并**证那条修正是承重的**：拿少了 k 的各向同性逆去折，误差必须 >0.01——不然这一档只是在自证。
+  接线钉的是 `rotatedBoxPoints(box, pictureRatio, angle)`、中心柄落在 `rotatedEdgeMids(...).top`、
+  四颗角柄落在那四个角、抓取那一刻记下 `angle` 与 `k`、`...(gesture.corner ? { width, height } : {})`、
+  不许再出现 `transform={`rotate(`、角柄 `cursor: crosshair`（盒转着时不指方向）。
+- **一处旧针按本意收窄**：`desktop_maskrot_check` 那句钉的是**整行 import 的字面量**，
+  名单变长就红；改成「这一条 import 里必须有那四个名字」。旧针钉旧形状是这一档自己记过的账。
+- **真页面证据**（随包引擎 1.253.0，1456×808）：`--drag-extra` 那一腿现在拖两下——中心柄 +48 px
+  （屏幕跟手、写的是停在 2 秒那一枚框点、静止值一字不动、另一块逐字段相同），再拖**右下那颗角柄** +30 px
+  （那一枚的宽/高至少一条涨过 0.02，静止的宽高与另一块仍不动）。截图
+  `AgentCut演示/shots-1253b/inspect-画面拖再叠遮罩-1456x808.png`：转过的虚线盒 + 一颗中心柄 + 四颗角柄，
+  检查器 75.0／41.4、宽 39.4／高 28.4、角度 6.0。形状扫描两档共 **46 屏 green**
+  （地板 12.5px、0 尖角、0 被切、0 点不到、0 叠行、0 字压字）。
+- **实测账**：tsc 干净；`build_engine --verify --no-uv` 自报 **1.253.0**（staged 298.8 MB、冷启动
+  **1268 ms**、裸启动 949 ms）；`npm run dist` 后根 exe 与便携版 `cmp` 逐字节相同
+  （**185,149,465 B**，sha256 前缀 `4bce8a3d310e01a7`），安装版 185,310,180 B（前缀 `fd8b142495ce49c2`）；
+  `released_package_check` 绿（asar 1.253.0、84 个文件、63 句人话）；`packed_engine_surface_check` 绿；
+  空闲机单跑 `tests/suite_check.py` **139/139 checks passed**（`suite_1253.log`；其中 `ui_shape_check`
+  126.4 s、46 屏 green，`desktop_ts_check` 22.4 s、80 档壳检绿）。
+- **构建踩到的一条，记下来别再踩**：`python scripts/build_engine.py --verify --no-uv` 用的是**当前解释器**。
+  从 git bash 直接 `python` 拿到的是 `C:\Program Files\Python312`（PyInstaller 6.21.0，**没装 mcp**），
+  冻结出来的 exe 在 `--verify` 的 `mcp` 那一档当场 `ModuleNotFoundError: No module named 'mcp'`。
+  必须 `.venv\Scripts\python.exe scripts/build_engine.py --verify --no-uv`（PyInstaller 6.22.3）。
+- **下一轮（1.254）的具体入口**：
+  1. 选中那一块还缺一颗**角度柄**：主遮罩那套手法（`rotatedEdgeMids(...).out` 外法线上摆柄、
+     `rotateAngleFromPointer` 读回）已经在同一份几何里，接过来仍按「一次抓取一条命令、屏幕跟手、
+     引擎回读」三条量；停在框点上写的仍是那一枚。
+  2. 框点的贝塞尔与条上可拖：`MaskBoxKey.interpolation` 现在只有 linear/hold/ease，要贝塞尔是
+     契约 + `extra_box_schedule` 采样两处一起动，先把语义定死再动手。
+  3. 「跟主遮罩」与自己框点叠加的顺序仍要先量；遮罩跟踪估旋转仍被 NCC 在近平坦角上选不动挡着；
+     DCI-P3 仍被 γ2.6 挡着；五十万段仍未量。
+
+## 上一轮停放点（1.252：在画面里选中一块再叠遮罩，拖它那颗柄搬中心——选择模型落地）
 
 - **设计**：每一块的 `◎` 把「画面里编辑的是哪一块」写进应用状态（`AppState.maskExtraSel`，片段 id +
   序号，**不进工程**）。选中后画面里**只画这一块**：一条虚线框 + **一颗柄在上边中点**；主遮罩的抓取区

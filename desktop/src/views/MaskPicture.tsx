@@ -3,11 +3,11 @@ import type { Clip, Curve, ExtraMaskWindow, MaskProperty, MaskRotationWindow, Ma
 import { TIMEBASE, frameTicks } from "../time";
 import { appInfo, commitMaskEdit, moveMaskCentre, playhead, recordMaskShape, setClipMask, setClipMaskStack, setMaskEditing, useApp, usePlay } from "../store";
 import { asCorner, asSmooth, nearestEdge, withoutVertex, withVertex } from "../maskOutline";
-import { rotateAngleFromPointer, rotatedCorners, rotatedEdgeMids, rotationWindowAt } from "../maskGeometry";
+import { boxVectorFromPointer, rotateAngleFromPointer, rotatedBoxPoints, rotatedCorners, rotatedEdgeMids, rotationWindowAt } from "../maskGeometry";
 import { morphArmed, outlineAt, shapeVariables, shapeWindowAt, shapeWindowIndex } from "../maskShape";
 import { boxKeyForPlayhead } from "../effects";
 
-const CORNERS = [[-1,-1,"左上"],[1,-1,"右上"],[-1,1,"左下"],[1,1,"右下"]] as const;
+const CORNERS = [[-1,-1,"左上"],[1,-1,"右上"],[1,1,"右下"],[-1,1,"左下"]] as const;
 // 只有盒子的四个数靠 CSS 变量动。角度不动变量——它动的是引擎下发的整张图（每段窗一张），
 // 因为 `mask-image` 不吃图层的 `transform`（1.164 量的），阶梯两端同表才是真的同一件事。
 type MaskBoxProperty = Exclude<MaskProperty, "mask_rotation">;
@@ -64,6 +64,7 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
   // 松手那一刻 React 的状态可能还没追上最后一次 move；落库读的是这个 ref（主遮罩那一手也是同一课）。
   const extraDraftRef = useRef<{ index: number; box: ShapeMask } | null>(null);
   const extraDrag = useRef<{ index: number; keyTick: number | null; x: number; y: number; box: ShapeMask;
+    corner: [number, number] | null; angle: number; k: number;
     pointerId: number; element: SVGElement; captured: boolean; inverse: DOMMatrix;
     projectId: string; revision: number; moved: boolean; detach: () => void } | null>(null);
   const draftRef = useRef(draft); draftRef.current = draft;
@@ -282,13 +283,15 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
   const selectedExtra = selectedIndex === null ? undefined : clip.extra_masks?.[selectedIndex];
   const selectedKey = selectedExtra
     ? boxKeyForPlayhead(selectedExtra, localAt, Math.round(localAt / frame) * frame) : undefined;
+  // 这一张画框按画面比例非均匀拉伸：角度换算的唯一那个 k（与主遮罩那一圈读的是同一个数）。
+  const pictureRatio = (app.project?.settings.height ?? 9) / (app.project?.settings.width ?? 16);
   const extraBox: ShapeMask | null = selectedExtra
     ? (selectedKey ? { ...selectedExtra, center_x: selectedKey.center_x, center_y: selectedKey.center_y,
         width: selectedKey.width, height: selectedKey.height, rotation: selectedKey.rotation ?? 0 } : selectedExtra)
     : null;
   const extraDrawable = Boolean(visible && selectedExtra && extraBox && !follow && !disabled
     && (!(selectedExtra.keys?.length) || selectedKey));
-  const beginExtra = (event: PointerEvent<SVGElement>) => {
+  const beginExtra = (event: PointerEvent<SVGElement>, corner: [number, number] | null) => {
     event.stopPropagation(); event.preventDefault();
     const matrix = svg.current?.getScreenCTM();
     if (!extraDrawable || !selectedExtra || !extraBox || !app.project || !matrix) return;
@@ -298,7 +301,8 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
     let captured = true;
     try { element.setPointerCapture(event.pointerId); } catch { captured = false; }
     const gesture = { index: selectedIndex!, keyTick: selectedKey?.at_ticks ?? null,
-      x: point.x / 100, y: point.y / 100, box: extraBox, pointerId: event.pointerId,
+      x: point.x / 100, y: point.y / 100, box: extraBox, corner,
+      angle: extraBox.rotation ?? 0, k: pictureRatio, pointerId: event.pointerId,
       element, captured, inverse: matrix.inverse(), projectId: app.project.id,
       revision: app.project.revision, moved: false, detach: () => {} };
     // 捕获在 SVG 的 rect 上不稳（这个盒子的根是 pointer-events:none）；抓取期间直接在 window 上听，
@@ -330,9 +334,26 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
     const point = new DOMPoint(clientX, clientY).matrixTransform(gesture.inverse);
     const dx = point.x / 100 - gesture.x, dy = point.y / 100 - gesture.y;
     if (Math.abs(dx) + Math.abs(dy) > .002) gesture.moved = true;
-    const next = { index: gesture.index, box: { ...gesture.box,
-      center_x: clamp(gesture.box.center_x + dx, 0, 1),
-      center_y: clamp(gesture.box.center_y + dy, 0, 1) } };
+    let box: ShapeMask;
+    if (!gesture.corner) {
+      box = { ...gesture.box,
+        center_x: clamp(gesture.box.center_x + dx, 0, 1),
+        center_y: clamp(gesture.box.center_y + dy, 0, 1) };
+    } else {
+      // 盒自己的角度：先把指针折回未转的盒坐标系（k 那一步也除回来），再按对角那一点算中心与两条边。
+      const at = boxVectorFromPointer(point.x / 100 - gesture.box.center_x,
+        point.y / 100 - gesture.box.center_y, gesture.angle, gesture.k);
+      const ux = gesture.box.center_x + at.x, uy = gesture.box.center_y + at.y;
+      const [sx, sy] = gesture.corner;
+      const ax = gesture.box.center_x - sx * gesture.box.width / 2;
+      const ay = gesture.box.center_y - sy * gesture.box.height / 2;
+      box = { ...gesture.box,
+        center_x: clamp((ax + ux) / 2, 0, 1),
+        center_y: clamp((ay + uy) / 2, 0, 1),
+        width: clamp(Math.abs(ux - ax), .01, 2),
+        height: clamp(Math.abs(uy - ay), .01, 2) };
+    }
+    const next = { index: gesture.index, box };
     extraDraftRef.current = next;
     setExtraDraft(next);
   };
@@ -347,12 +368,14 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
     setExtraDraft(null);
     if (!gesture.moved || !box) return;
     // 一次抓取一条命令；停在一枚框点上就写回那一枚，否则写静止值。
+    const values = { center_x: box.center_x, center_y: box.center_y,
+      ...(gesture.corner ? { width: box.width, height: box.height } : {}) };
     const masks = (clip.extra_masks ?? []).map((row, index) => {
       if (index !== gesture.index) return row;
       if (gesture.keyTick !== null) return { ...row,
         keys: (row.keys ?? []).map((key) => key.at_ticks === gesture.keyTick
-          ? { ...key, center_x: box.center_x, center_y: box.center_y } : key) };
-      return { ...row, center_x: box.center_x, center_y: box.center_y };
+          ? { ...key, ...values } : key) };
+      return { ...row, ...values };
     });
     setClipMaskStack(clip.id, masks, follow, gesture.projectId, gesture.revision);
   };
@@ -570,16 +593,27 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
         const cx = box.center_x * 100, cy = box.center_y * 100;
         const rx = box.width * 50, ry = box.height * 50;
         const hs = { x: Math.max(handleSize.x, 10), y: Math.max(handleSize.y, 10) };
+        const angle = box.rotation ?? 0;
+        // 这一圈与主遮罩那一圈同一套换算：画框是拉伸的，直接把角度加上去画出来的不是人设的那个盒。
+        const points = rotatedBoxPoints(box, pictureRatio, angle);
+        const top = rotatedEdgeMids(box, pictureRatio, angle).top;
         return <g className="mask-extra">
-          {box.shape === "ellipse"
+          {box.shape === "ellipse" && !angle
             ? <ellipse className="mask-extra-outline" cx={cx} cy={cy} rx={rx} ry={ry} />
-            : <rect className="mask-extra-outline" x={cx - rx} y={cy - ry} width={rx * 2} height={ry * 2} />}
-          <rect className="mask-extra-handle" x={cx - hs.x / 2} y={cy - ry - hs.y / 2}
+            : <polygon className="mask-extra-outline"
+                points={points.map((point) => `${(point.x * 100).toFixed(3)} ${(point.y * 100).toFixed(3)}`).join(", ")} />}
+          <rect className="mask-extra-handle" x={top.x * 100 - hs.x / 2} y={top.y * 100 - hs.y / 2}
             width={hs.x} height={hs.y} role="button" tabIndex={0}
             aria-label={`拖动选中的再叠遮罩（第 ${selectedIndex! + 1} 块）`} aria-disabled={disabled}
-            onPointerDown={beginExtra}>
-            <title>拖这颗柄搬这一块的中心；停在框点上时改的是那一枚，否则改静止值。大小与羽化在检查器。</title>
+            onPointerDown={(event) => beginExtra(event, null)}>
+            <title>拖这颗柄搬这一块的中心；拖四个角改大小（盒自己转着时按未转的盒算）。停在框点上时改的是那一枚，否则改静止值。</title>
           </rect>
+          {CORNERS.map(([sx, sy, label], index) => <rect key={label} className="mask-extra-handle corner"
+            x={points[index].x * 100 - hs.x / 2} y={points[index].y * 100 - hs.y / 2} width={hs.x} height={hs.y}
+            role="button" tabIndex={0} aria-label={`缩放选中的再叠遮罩（第 ${selectedIndex! + 1} 块·${label}）`}
+            aria-disabled={disabled} onPointerDown={(event) => beginExtra(event, [sx, sy])}>
+            <title>拖这一角改这一块的大小（盒自己转着时按未转的盒算）；停在框点上时改的是那一枚。</title>
+          </rect>)}
         </g>;
       })() : null}
     </svg> : null}

@@ -10,17 +10,41 @@
 
 import type { ShapeMask } from "./engine";
 
-/** 转过角度的遮罩盒，四个角在 0..100 画框里的位置（左上、右上、右下、左下）。
- *  `angle` 不给就用遮罩自己那一格；有窗表时调用方给的是此刻那一窗的角度。 */
-export const rotatedCorners = (mask: ShapeMask, k: number, angle?: number) => {
-  const rad = (angle ?? mask.rotation ?? 0) * Math.PI / 180;
+/** 一个盒的四个角在 0..100 画框里的位置（左上、右上、右下、左下）。
+ *  `k` 是画面高/宽——这张画框是按比例非均匀拉伸的，直接把角度加上去量出来的就不是人设的那一个。
+ *  再叠的遮罩那一圈、主遮罩那一圈都从这里取点，谁都不另写一份三角换算。 */
+export const rotatedBoxPoints = (
+  mask: { center_x: number; center_y: number; width: number; height: number },
+  k: number, angle: number,
+) => {
+  const rad = angle * Math.PI / 180;
   const cos = Math.cos(rad), sin = Math.sin(rad);
   return [[-1, -1], [1, -1], [1, 1], [-1, 1]]
     .map(([sx, sy]) => {
       const fx = sx * mask.width / 2, fy = sy * mask.height / 2;
-      return `${((mask.center_x + fx * cos - fy * k * sin) * 100).toFixed(3)} ${((mask.center_y + fx * sin / k + fy * cos) * 100).toFixed(3)}`;
-    })
+      return {
+        x: mask.center_x + fx * cos - fy * k * sin,
+        y: mask.center_y + fx * sin / k + fy * cos,
+      };
+    });
+};
+
+/** 转过角度的遮罩盒，四个角在 0..100 画框里的位置（左上、右上、右下、左下）。
+ *  `angle` 不给就用遮罩自己那一格；有窗表时调用方给的是此刻那一窗的角度。 */
+export const rotatedCorners = (mask: ShapeMask, k: number, angle?: number) =>
+  rotatedBoxPoints(mask, k, angle ?? mask.rotation ?? 0)
+    .map((point) => `${(point.x * 100).toFixed(3)} ${(point.y * 100).toFixed(3)}`)
     .join(", ");
+
+/** 指针相对盒心的偏移（0..100 画框里的比例）-> 未转的盒自己的坐标。
+ *
+ *  这是 `rotatedBoxPoints` 的逆：正方向先按 k 把横向挪量变形再转，所以读回来要先反着转、
+ *  再把 k 那一步除回去。少了 k 这一项，方画幅上看着没事，16:9 里拖角就会上下跑偏。
+ */
+export const boxVectorFromPointer = (dx: number, dy: number, angle: number, k: number) => {
+  const rad = -angle * Math.PI / 180;
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  return { x: dx * cos - dy * k * sin, y: dx * sin / k + dy * cos };
 };
 
 /** 播放头落在哪一窗，就画哪一窗的那张图。
