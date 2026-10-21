@@ -396,6 +396,11 @@ canvas.composite-raw { width: 100%; height: 100%; object-fit: contain; display: 
 /* 针道空处是框选的手：左右让开修剪柄（最外 7px）与淡角柄（9..18px），高度就是留给针的那 37px。
    这两个数由 keyframeMarquee.ts / keyframeLanes.ts 下发到内联样式，这里只留不可移动的那一半。 */
 .clip-needles { position: absolute; bottom: 0; z-index: 1; cursor: crosshair; }
+/* 1.242：再叠的那几块遮罩自己的框点只**标时间**——卡片顶边一排 3px 的点，左右让开修剪柄。
+   这一层不接指针：它没有可拖的东西，而一个 3px 高的命中带只会在片段顶上挖出一块拖不动的死区。
+   读屏走 aria-label，鼠标悬停时整段那句 title 会把每一块的时间列出来。 */
+.clip-boxkeys { position: absolute; left: 7px; right: 7px; top: 2px; height: 3px; z-index: 4; pointer-events: none; }
+.clip-boxkey { position: absolute; top: 0; width: 3px; height: 3px; margin-left: -1.5px; border-radius: var(--r-xs); background: var(--accent); box-shadow: 0 0 0 1px rgba(0, 0, 0, .35); }
 .clip-marquee { position: absolute; border: 1px dashed var(--accent); background: #50c9c41f; pointer-events: none; z-index: 2; }
 .clip-keyframe-more { position: absolute; right: 8px; bottom: 1px; z-index: 5; font-size: var(--fs-micro); color: #ffe3a3; background: transparent; border: 0; cursor: pointer; padding: 2px 3px; min-width: 24px; text-align: center; }
 .key-readout { position: absolute; top: 1px; left: 50%; transform: translateX(-50%); font-size: var(--fs-micro); padding: 1px 5px; border-radius: var(--r-xs); color: var(--accent-deep); background: var(--accent-soft); white-space: nowrap; z-index: 5; pointer-events: none; }
@@ -1089,6 +1094,8 @@ table.table tr.current td { background: var(--accent-soft); }
 .mask-stack-title { display: flex; align-items: center; gap: 7px; }
 .mask-stack-n { flex: 1 1 auto; min-width: 0; font-weight: 600; }
 .mask-stack-title .input { flex: none; width: 82px; }
+/* 1.242：这一块此刻怎么动（自己走 / 跟随 / 静止）——一行状态，窄了就省略，不折成第二行小字。 */
+.mask-stack-state { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-label); }
 .mask-stack-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; align-items: center; }
 .mask-stack-cell { display: flex; align-items: center; gap: 5px; min-width: 0; }
 .mask-stack-cell > span:first-child { flex: none; color: var(--ink-3); font-size: var(--fs-label); }

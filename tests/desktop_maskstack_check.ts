@@ -17,6 +17,7 @@ const read = (...parts: string[]) => {
 
 const store = read("desktop/src/store.ts", "../../desktop/src/store.ts");
 const inspector = read("desktop/src/views/Inspector.tsx", "../../desktop/src/views/Inspector.tsx");
+const timeline = read("desktop/src/views/Timeline.tsx", "../../desktop/src/views/Timeline.tsx");
 const picture = read("desktop/src/views/MaskPicture.tsx", "../../desktop/src/views/MaskPicture.tsx");
 const preview = read("desktop/src/views/Preview.tsx", "../../desktop/src/views/Preview.tsx");
 const engine = read("desktop/src/engine.ts", "../../desktop/src/engine.ts");
@@ -32,7 +33,9 @@ assert.equal((store.match(/op: "clip\.mask_stack"/g) ?? []).length, 1, "clip.mas
 // ② 检查器：列表、加一块、删一块，额度听引擎的，做不到的那件事明说
 assert.match(inspector, /<MaskStack clip=\{clip\} disabled=\{disabled\} \/>/, "叠加那一格没接进遮罩区");
 assert.match(inspector, /app\.caps\?\.limits\?\.extra_masks/, "「最多几块」不在引擎那一份数上");
-assert.match(inspector, /只切不动/, "关键帧只跟主遮罩走这件事必须写在格子里，不是藏在帮助里");
+// 1.242：这一句是 1.237/1.238 之前的实话（那时这几块确实只切不动）。框点与跟随都交付之后
+// 它已经是假话，而 1.221 那条断言还在替它说话——留着一个不许删的假句子比没有句子更坏。
+assert.doesNotMatch(inspector, /只切不动/, "「只切不动」早就不成立了：框点与跟随都能让这几块动起来");
 // 1.237：那一格旁边多了一个「跟着主遮罩平移」的开关，勾上之后它们跟着中心曲线走。
 assert.match(inspector, /跟着主遮罩平移/, "「跟着主遮罩平移」这一格不在检查器里");
 assert.match(inspector, /setClipMaskStack\(clip\.id, stack, event\.target\.checked\)/, "那个勾没有把 follow 交出去");
@@ -122,4 +125,20 @@ assert.match(engine, /image: string; follow\?: boolean/, "窗的行里没有「�
 assert.match(picture, /follow: Boolean\(window\?\.follow\)/, "视图没有读那一格");
 assert.match(picture, /if \(!row\.unit\) return row\.own && !row\.follow \? "0px 0px" : extraPosition;/, "跟随时那一窗没有按中心平移落位");
 
-console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的五个数与羽化/反转都在格子里改、每一块可以打自己的框点、跟随时大小按同一比例缩放、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、样式仍走刻度");
+// ⑩ 1.242：框点的时间要**在条上看得见**，而每一块此刻怎么动也要写在它自己那一行。
+// 这一节同时钉住「只切不动」那句假话的消失——那一条不是加了一句新说明，是删掉一句旧的。
+assert.doesNotMatch(timeline, /只切不动/, "时间线上也在说「只切不动」");
+assert.match(inspector, /打了框点的块走自己的窗，勾这里不会删掉那些框点/, "悬停里没写清框点与跟随谁说了算");
+assert.match(inspector, /className="mask-stack-state dim"/, "每一块没有写它此刻怎么动");
+assert.match(inspector, /\? `自己走 · \$\{item\.keys\.length\} 枚框点`/, "带框点的那一块没有写明它自己走");
+assert.match(inspector, /: clip\.extra_masks_follow \? "跟随主遮罩" : "静止"/, "没打框点的那一块没有写它跟不跟");
+assert.match(timeline, /const boxKeyRows = \(clip\.extra_masks \?\? \[\]\)/, "条上没有从再叠的遮罩取框点");
+assert.match(timeline, /className="clip-boxkeys" role="img"/, "条顶上那一排点没有画");
+assert.match(timeline, /\(at \/ clip\.duration_ticks\) \* 100/, "点的位置不是按片段本地刻度折的");
+assert.match(timeline, /再叠的遮罩框点：\$\{boxKeyWords\}/, "整段的悬停里没有列出框点的时间");
+assert.match(timeline, /打点、改插值与删除在检查器「再叠的遮罩」那一格/, "悬停里没有指一条真走得通的编辑路");
+assert.match(css, /\.clip-boxkeys\s*\{[^}]*pointer-events: none/, "那一排点接了指针——片段顶上会多出一块拖不动的死区");
+assert.match(css, /\.clip-boxkey\s*\{[^}]*background: var\(--accent\)/, "点不用主题色");
+assert.match(css, /\.clip-boxkeys\s*\{[^}]*left: 7px; right: 7px/, "那一排点没有让开两头的修剪柄");
+
+console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的五个数与羽化/反转都在格子里改、每一块可以打自己的框点、跟随时大小按同一比例缩放、框点的时间在条顶上看得见且不接指针、每一块都写明自己怎么动、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、样式仍走刻度");

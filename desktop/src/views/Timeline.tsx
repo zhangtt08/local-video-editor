@@ -1164,6 +1164,13 @@ function ClipBlock({
   const seamWidth = clip.transition_in
     ? Math.min(width, Math.max(SEAM_BADGE_MIN_WIDTH_PIXELS, (clip.transition_in.duration_ticks / TIMEBASE) * px))
     : 0;
+  // 1.242：再叠的那几块遮罩自己的框点不在针道里（针道说的是片段与第二路画面那一层的属性），
+  // 但它们的**时间**得在条上看得见：卡片顶边排一串 3px 的点，只标时间、不接指针——
+  // 接了就等于在片段顶上挖出一块拖不动的死区，而这里没有可拖的东西。
+  const boxKeyRows = (clip.extra_masks ?? [])
+    .map((mask, index) => ({ index, times: (mask.keys ?? []).map((key) => key.at_ticks) }))
+    .filter((row) => row.times.length);
+  const boxKeyWords = boxKeyRows.map((row) => `第 ${row.index + 1} 块 ${row.times.map((at) => humanDuration(at)).join("、")}`).join("；");
 
   return (
     <div
@@ -1176,7 +1183,7 @@ function ClipBlock({
       aria-label={`选择片段 ${clip.text?.body ?? asset?.label ?? clip.asset_id}`}
       aria-pressed={selected}
       onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); event.stopPropagation(); selectClip(clip.id, event.ctrlKey || event.metaKey || event.shiftKey, event.altKey); } }}
-      title={`${asset?.label ?? clip.asset_id}\n时长 ${humanDuration(duration)}\n位置 ${position.toLocaleString("en-US")} tick`}
+      title={`${asset?.label ?? clip.asset_id}\n时长 ${humanDuration(duration)}\n位置 ${position.toLocaleString("en-US")} tick${boxKeyRows.length ? `\n再叠的遮罩框点：${boxKeyWords}（条顶上那排小点；打点、改插值与删除在检查器「再叠的遮罩」那一格）` : ""}`}
       onPointerDown={(event) => start(event, "move")}
       onDoubleClick={() => { if (asset?.sequence_id && !razor) openSequence(asset.sequence_id); }}
       onClick={(event) => {
@@ -1242,6 +1249,10 @@ function ClipBlock({
           {painted.length ? <span className="clip-needles" style={{ left: MARQUEE_INSET_PIXELS, right: MARQUEE_INSET_PIXELS, height: NEEDLE_AREA_PIXELS }}
             title="在针道的空处拉一个框，框里的针一起挑中：整组拖就是同时改同一份时间差。按住 Shift 点一枚是加进这一组或从组里摘出去。"
             onPointerDown={startMarquee} /> : null}
+          {boxKeyRows.length ? <span className="clip-boxkeys" role="img" aria-label={`再叠的遮罩框点：${boxKeyWords}`}>
+            {boxKeyRows.flatMap((row) => row.times.map((at) => <span key={`${row.index}-${at}`} className="clip-boxkey"
+              style={{ left: `${(at / clip.duration_ticks) * 100}%` }} />))}
+          </span> : null}
           {band ? <span className="clip-marquee" style={{ left: band.x0, top: band.y0, width: Math.max(0, band.x1 - band.x0), height: Math.max(0, band.y1 - band.y0) }} aria-hidden="true" /> : null}
           {clipPainted.map((k) => {
             const from = rest(k);

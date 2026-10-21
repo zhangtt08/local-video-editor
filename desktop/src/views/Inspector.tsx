@@ -663,8 +663,8 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
   const patch = (index: number, part: Partial<ShapeMask>) =>
     write(stack.map((item, position) => (position === index ? { ...item, ...part } : item)));
   return <div className="mask-stack">
-    <div className="mask-stack-head"><span>再叠的遮罩</span><span className="dim">{stack.length} / {limit} 块 · 与主遮罩取交集 · 只切不动</span></div>
-    <label className="mask-stack-follow" title="勾上之后，这几块跟着主遮罩的中心曲线一起平移；主遮罩与这几块都没转时，大小也按同一比例缩放；主遮罩转了时，角度跟着它转。羽化仍是自己的。主遮罩没有动画时它们不动。">
+    <div className="mask-stack-head"><span>再叠的遮罩</span><span className="dim">{stack.length} / {limit} 块 · 与主遮罩取交集</span></div>
+    <label className="mask-stack-follow" title="勾上之后，没打框点的块跟着主遮罩的中心曲线一起平移；主遮罩与它都没转时，大小也按同一比例缩放；主遮罩转了时，角度跟着它转。打了框点的块走自己的窗，勾这里不会删掉那些框点。羽化仍是自己的。主遮罩没有动画时，跟随的块不动。">
       <input type="checkbox" checked={clip.extra_masks_follow ?? false} disabled={disabled || stack.length === 0}
         onChange={(event) => setClipMaskStack(clip.id, stack, event.target.checked)} />跟着主遮罩平移
     </label>
@@ -676,6 +676,9 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
           <option value="rectangle">矩形</option><option value="ellipse">椭圆</option>
         </select>
         <button type="button" className="btn tiny subtle" disabled={disabled} aria-label={`删掉第 ${index + 1} 块叠加遮罩`} onClick={() => write(stack.filter((_, position) => position !== index))}>删掉</button>
+        {/* 1.242：这一块此刻怎么动，写在它自己那一行——勾没勾「跟着主遮罩」与有没有框点，
+            是两个各自决定它走哪条路的事实，过去只在地下的合成规则里，界面上谁都没说。 */}
+        <span className="mask-stack-state dim">{item.keys?.length ? `自己走 · ${item.keys.length} 枚框点` : clip.extra_masks_follow ? "跟随主遮罩" : "静止"}</span>
       </div>
       <div className="mask-stack-grid">
         {MASK_ROWS.map(([field, label, min, max]) => <label className="mask-stack-cell" key={field}>
@@ -724,7 +727,7 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
       </div>
     </div>)}
     <div className="insp-actions"><button className="btn tiny" disabled={disabled || full || limit === 0} title={full ? `最多 ${limit} 块；要再加，先删掉一块` : "这一版引擎不认识「再叠的遮罩」这一格，出路是换一台会回的引擎"} onClick={() => write([...stack, { ...DEFAULT_MASK, shape: "rectangle", feather: 0, vertices: null }])}>再抠一块</button></div>
-    {stack.length ? <p className="hint" title="再叠的这几块写的是静态的洞：那五条关键帧说的都是主遮罩">再叠的这几块只切不动；要让它跟着画面走，把这段复制一层，在那一层上画。</p> : null}
+    {stack.length ? <p className="hint" title="框点按整帧窗一格一步地走，导出与预览读同一张表；打点、改插值与删除在每一块自己那一行。条顶上那排小点就是这些框点的时间。">再叠的这几块与主遮罩取交集；打了框点的块按自己的窗走，其余的可以跟着主遮罩。</p> : null}
   </div>;
 }
 

@@ -109,6 +109,14 @@ RENDERER_SENTENCES = (
     "层不是同一个画面",
     "引擎没报那一层的针数额度",
     "跟当前这一行不是同一条曲线",
+    # 1.242：再叠遮罩的那几块在条上与检查器里各有一句实话——顶边那排小点是什么、每一块怎么动、
+    # 以及框点与「跟着主遮罩」谁说了算。模板字面量只钉它静态的那两段。
+    "自己走 · ",
+    " 枚框点",
+    "跟随主遮罩",
+    "再叠的这几块与主遮罩取交集",
+    "打了框点的块走自己的窗，勾这里不会删掉那些框点",
+    "条顶上那排小点就是这些框点的时间",
 )
 RENDERER_LITERALS = (
     "clip.color_manage",
@@ -237,6 +245,10 @@ def main() -> None:
         assert sentence in body, f"the shipped renderer never says: {sentence}"
     for literal in RENDERER_LITERALS:
         assert literal in body, f"the shipped renderer never carries: {literal}"
+    # 1.242：这句话在 1.237/1.238 之后就是假话（框点与跟随都能让那几块动起来）。源码里由
+    # desktop_maskstack_check 钉着它不许回来；这里钉的是**装进包的那一份**里也没有它——
+    # 一句过时的实话比没有句子更坏，因为它会替一条已经不存在的限制做主。
+    assert "只切不动" not in body, "the shipped renderer still says the extra masks never move"
     assert "待补" not in body, "the shipped renderer still says 'not measured yet'"
 
     main_js = files.get("/dist-electron/main.js")
