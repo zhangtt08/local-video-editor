@@ -42,9 +42,11 @@ from agentcut.contracts import (
     ClipColor,
     EditBatch,
     EditorError,
+    ExtraShapeMask,
     FrameRate,
     GradeLevels,
     Keyframe,
+    MaskBoxKey,
     MaskShapeKeyframe,
     Project,
     SequenceSettings,
@@ -425,6 +427,106 @@ def mask_suite() -> dict:
     return {"ops": ops}
 
 
+def extra_mask_suite() -> dict:
+    """1.244：再叠的那几块跟着「遮罩」这一类一起走——连框点与跟随。
+
+    目标更短时，落在段尾之后的框点**不搬**（引擎不允许框点停在段尾之后），而块的其余部分照搬；
+    回执把丢了几枚说在一个自己的数上。主遮罩仍在同一类里。
+    """
+    project = fixture()
+    src = project.clips["src"]
+    key_at = (36 * T) // 10  # 3.6 秒：a 只有 3 秒，b 有 6 秒
+    src.extra_masks = [
+        ExtraShapeMask(
+            shape="rectangle", center_x=0.2, center_y=0.3, width=0.2, height=0.2,
+            feather=0.05, inverted=False,
+        ),
+        ExtraShapeMask(
+            shape="ellipse", center_x=0.7, center_y=0.7, width=0.3, height=0.2,
+            feather=0.0, inverted=False,
+            keys=[
+                MaskBoxKey(
+                    at_ticks=0, center_x=0.7, center_y=0.7, width=0.3, height=0.2,
+                    rotation=0, interpolation="linear",
+                ),
+                MaskBoxKey(
+                    at_ticks=key_at, center_x=0.6, center_y=0.6, width=0.25, height=0.25,
+                    rotation=10, interpolation="ease",
+                ),
+            ],
+        ),
+    ]
+    src.extra_masks_follow = True
+    plan = attribute_plan(project, "src", ["a", "b"], ["mask"])
+    stacks = {
+        command["clip_id"]: command
+        for command in plan["commands"]
+        if command["op"] == "clip.mask_stack"
+    }
+    assert set(stacks) == {"a", "b"}, f"两段各该有一条框点链的写入：{sorted(stacks)}"
+    assert stacks["b"]["follow"] is True, "跟随那一格没跟着走"
+    assert [len(mask["keys"]) for mask in stacks["b"]["masks"]] == [0, 2], (
+        f"长的那一段该把两枚框点都带上：{stacks['b']['masks']}"
+    )
+    assert [len(mask["keys"]) for mask in stacks["a"]["masks"]] == [0, 1], (
+        f"3 秒那一段不该带上 3.6 秒的框点：{stacks['a']['masks']}"
+    )
+    assert plan["dropped_extra_keys"] == 1, f"丢了几枚框点没照实说：{plan['dropped_extra_keys']}"
+    assert "clip.mask" in [command["op"] for command in plan["commands"]], "主遮罩不在同一类里"
+    moved = apply_commands(
+        project,
+        EditBatch.model_validate(
+            {"request_id": "em", "expected_revision": 0, "commands": plan["commands"]}
+        ).commands,
+    )
+    after_a, after_b = moved.clips["a"], moved.clips["b"]
+    assert len(after_a.extra_masks) == 2 and after_a.extra_masks_follow is True, (
+        "两块的形状与跟随没有落到 3 秒那一段上"
+    )
+    assert [k.at_ticks for k in after_a.extra_masks[1].keys] == [0], (
+        f"3 秒那一段带上了越尾的框点：{[k.at_ticks for k in after_a.extra_masks[1].keys]}"
+    )
+    assert [k.at_ticks for k in after_b.extra_masks[1].keys] == [0, key_at], (
+        f"6 秒那一段的框点不全：{[k.at_ticks for k in after_b.extra_masks[1].keys]}"
+    )
+    assert after_b.extra_masks[1].keys[1].interpolation == "ease", "插值没有跟着走"
+    assert after_a.mask is not None and after_a.mask.shape == "ellipse", "主遮罩没有跟着换"
+    rows = {row["category"]: row for row in category_content(src)}
+    assert rows["mask"]["extras"] == 2 and rows["mask"]["extra_keys"] == 2, (
+        f"回执没把再叠的几块数进去：{rows['mask']}"
+    )
+    assert rows["mask"]["follow"] is True and rows["mask"]["has_content"] is True
+
+    # 反方向：来源没有那几块、目标有——这一类要能把目标清干净并把跟随关掉。
+    cleared = fixture()
+    cleared.clips["a"].extra_masks = [
+        ExtraShapeMask(
+            shape="rectangle", center_x=0.5, center_y=0.5, width=0.2, height=0.2,
+            feather=0.0, inverted=False,
+        )
+    ]
+    cleared.clips["a"].extra_masks_follow = True
+    plan2 = attribute_plan(cleared, "src", ["a"], ["mask"])
+    clear_command = next(
+        command for command in plan2["commands"] if command["op"] == "clip.mask_stack"
+    )
+    assert clear_command["masks"] == [] and clear_command["follow"] is False, (
+        f"来源没有那几块时，这一类没有清空目标：{clear_command}"
+    )
+    again = apply_commands(
+        cleared,
+        EditBatch.model_validate(
+            {"request_id": "em2", "expected_revision": 0, "commands": plan2["commands"]}
+        ).commands,
+    ).clips["a"]
+    assert again.extra_masks == [] and again.extra_masks_follow is False, "清空没有落库"
+    return {
+        "stacks": sorted(stacks),
+        "dropped": plan["dropped_extra_keys"],
+        "after_keys": [len(after_a.extra_masks[1].keys), len(after_b.extra_masks[1].keys)],
+    }
+
+
 def text_suite() -> dict:
     """文字样式只搬样式：每段自己打的那行字留着。"""
     project = fixture()
@@ -659,6 +761,7 @@ def main() -> None:
         "stabilize": stabilize_suite(),
         "fade": fade_suite(),
         "mask": mask_suite(),
+        "extra_mask": extra_mask_suite(),
         "text": text_suite(),
         "unchanged": unchanged_suite(),
         "determinism": determinism_suite(),

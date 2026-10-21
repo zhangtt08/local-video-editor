@@ -40,7 +40,14 @@ from agentcut.contracts import (  # noqa: E402
 )
 from agentcut.timeline import apply_commands  # noqa: E402
 
-FIELDS = ("commands", "written", "unchanged", "refusals", "beyond_tail_keyframes")
+FIELDS = (
+    "commands",
+    "written",
+    "unchanged",
+    "refusals",
+    "beyond_tail_keyframes",
+    "dropped_extra_keys",
+)
 
 
 @contextmanager
@@ -69,6 +76,7 @@ def reference(project, source_id: str, target_ids: list[str], categories: list[s
     unchanged: list[str] = []
     refusals: list[dict] = []
     beyond_tail = 0
+    dropped_keys = 0
 
     def commit(commands: list[dict]) -> dict | None:
         nonlocal accepted
@@ -84,29 +92,35 @@ def reference(project, source_id: str, target_ids: list[str], categories: list[s
 
     targets = [item for item in dict.fromkeys(target_ids) if item != source_id]
     for clip_id in sorted(targets, key=lambda item: root.clips[item].position_ticks):
-        groups: list[tuple[str, list[dict], int]] = []
+        groups: list[tuple[str, list[dict], int, int]] = []
         for category in categories:
-            commands, beyond = _category_commands(category, source, root.clips[clip_id])
+            commands, beyond, dropped = _category_commands(
+                category, source, root.clips[clip_id]
+            )
             if commands:
-                groups.append((category, commands, beyond))
+                groups.append((category, commands, beyond, dropped))
         if not groups:
             unchanged.append(clip_id)
             continue
-        whole = [command for _, commands, _ in groups for command in commands]
+        whole = [command for _, commands, _, _ in groups for command in commands]
         if len(accepted) + len(whole) > attributes.MAX_COMMANDS_PER_BATCH:
             refusals.append(attributes._over_limit(clip_id, len(whole), len(accepted)))
             continue
         error = commit(whole)
         if error is None:
-            beyond_tail += sum(beyond for _, _, beyond in groups)
-            written.append({"clip_id": clip_id, "categories": [name for name, _, _ in groups]})
+            beyond_tail += sum(beyond for _, _, beyond, _ in groups)
+            dropped_keys += sum(dropped for _, _, _, dropped in groups)
+            written.append(
+                {"clip_id": clip_id, "categories": [name for name, _, _, _ in groups]}
+            )
             continue
         landed: list[str] = []
-        for category, commands, beyond in groups:
+        for category, commands, beyond, dropped in groups:
             error = commit(commands)
             if error is None:
                 landed.append(category)
                 beyond_tail += beyond
+                dropped_keys += dropped
             else:
                 refusals.append({**error, "clip_id": clip_id, "category": category})
         if landed:
@@ -117,6 +131,7 @@ def reference(project, source_id: str, target_ids: list[str], categories: list[s
         "unchanged": unchanged,
         "refusals": refusals,
         "beyond_tail_keyframes": beyond_tail,
+        "dropped_extra_keys": dropped_keys,
     }
 
 

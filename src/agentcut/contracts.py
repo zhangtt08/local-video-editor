@@ -45,7 +45,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.243.0"
+APP_VERSION = "1.244.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -5237,7 +5237,7 @@ ATTRIBUTE_CATEGORIES: tuple[dict[str, str], ...] = (
 
         "label": "遮罩",
 
-        "note": "形状、柔边、反相，加上遮罩那四条曲线的针与路径轮廓的关键帧。",
+        "note": "整条遮罩链：主遮罩、再叠的那几块（连各自的框点与跟随）、四条曲线的针与轮廓帧。",
 
     },
 

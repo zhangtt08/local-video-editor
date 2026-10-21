@@ -113,18 +113,29 @@ def _keyframe_commands(source: Any, target: Any, props: list[str]) -> tuple[list
     return commands, beyond
 
 
-def _category_commands(category: str, source: Any, target: Any) -> tuple[list[dict], int]:
-    """What this category writes into one target, and how many pasted points sit past its tail."""
+def _category_commands(category: str, source: Any, target: Any) -> tuple[list[dict], int, int]:
+    """What a category writes into one target; past-tail points; extra-mask keys left out.
+
+    The second number is the one the receipt calls `beyond_tail_keyframes` (curve points stay in
+    the project and simply stop rendering). The third is different: an extra mask's box key past
+    the target's tail cannot be stored at all (`MASK_KEY_RANGE`), so it is not copied and the
+    report has to say so in its own words.
+    """
     if category == "color":
         if _dump(source.color) == _dump(target.color):
-            return [], 0
-        return [{"op": "clip.color", "clip_id": target.id, "color": _dump(source.color)}], 0
+            return [], 0, 0
+        return [{"op": "clip.color", "clip_id": target.id, "color": _dump(source.color)}], 0, 0
     if category == "effects":
         if _dump(source.effects) == _dump(target.effects):
-            return [], 0
-        return [{"op": "clip.effects", "clip_id": target.id, "effects": _dump(source.effects)}], 0
+            return [], 0, 0
+        return (
+            [{"op": "clip.effects", "clip_id": target.id, "effects": _dump(source.effects)}],
+            0,
+            0,
+        )
     if category == "animation":
-        return _keyframe_commands(source, target, EFFECT_PROPERTIES)
+        commands, beyond = _keyframe_commands(source, target, EFFECT_PROPERTIES)
+        return commands, beyond, 0
     if category == "mask":
         commands: list[dict] = []
         if _dump(source.mask) != _dump(target.mask):
@@ -145,7 +156,28 @@ def _category_commands(category: str, source: Any, target: Any) -> tuple[list[di
                 commands.append(
                     {"op": "mask.shape.remove", "clip_id": target.id, "at_ticks": key.at_ticks}
                 )
-        return commands, beyond
+        # 1.244：再叠的那几块也是遮罩的一部分——形状、框点与跟随一起搬。目标段更短时，
+        # 落在段尾之后的框点**不搬**：框点不像曲线针那样能「留在工程里但不渲染」，引擎会
+        # 按 `MASK_KEY_RANGE` 拒掉整条写入；块的其余部分照搬，丢了几枚交给回执去说。
+        dropped = 0
+        masks: list[dict] = []
+        for extra in source.extra_masks:
+            kept = [key for key in extra.keys if key.at_ticks <= target.duration_ticks]
+            dropped += len(extra.keys) - len(kept)
+            masks.append(_dump(extra.model_copy(update={"keys": kept})))
+        if (
+            masks != _dump(target.extra_masks)
+            or source.extra_masks_follow != target.extra_masks_follow
+        ):
+            commands.append(
+                {
+                    "op": "clip.mask_stack",
+                    "clip_id": target.id,
+                    "masks": masks,
+                    "follow": source.extra_masks_follow,
+                }
+            )
+        return commands, beyond, dropped
     if category == "fade":
         commands = []
         for prop in FADE_PROPERTIES:
@@ -165,7 +197,7 @@ def _category_commands(category: str, source: Any, target: Any) -> tuple[list[di
                 if shape is not None:
                     command["shape"] = shape
                 commands.append(command)
-        return commands, 0
+        return commands, 0, 0
     if category == "speed":
         commands = []
         if source.speed_percent != target.speed_percent:
@@ -189,16 +221,16 @@ def _category_commands(category: str, source: Any, target: Any) -> tuple[list[di
             )
         elif target.speed_curve is not None:
             commands.append({"op": "clip.speed_curve", "clip_id": target.id, "points": None})
-        return commands, 0
+        return commands, 0, 0
     if category == "text":
         if source.text is None or target.text is None:
-            return [], 0
+            return [], 0, 0
         # 「文字样式」搬的是这一行长什么样，不搬它写了什么字：覆盖别人打的字不是样式，那是内容，
         # 而内容有自己的命令（`clip.text` 的 `body`）。所以来源的 body 在这里被目标自己的顶回去。
         style = {**_dump(source.text), "body": target.text.body}
         if style == _dump(target.text):
-            return [], 0
-        return [{"op": "clip.text", "clip_id": target.id, "text": style}], 0
+            return [], 0, 0
+        return [{"op": "clip.text", "clip_id": target.id, "text": style}], 0, 0
     raise EditorError(
         "UNKNOWN_ATTRIBUTE_CATEGORY",
         f"这一类属性不在这张表里；可选的是 {'、'.join(ATTRIBUTE_IDS)}"
@@ -248,7 +280,13 @@ def category_content(clip: Any) -> list[dict]:
             counts["shape"] = clip.mask.shape if clip.mask else None
             counts["curves"] = len(props)
             counts["outlines"] = len(clip.mask_shape_keys)
-            counts["has_content"] = bool(clip.mask or props or clip.mask_shape_keys)
+            # 1.244：再叠的那几块也在这张名单里——「遮罩」这一类搬的是整条链。
+            counts["extras"] = len(clip.extra_masks)
+            counts["extra_keys"] = sum(len(extra.keys) for extra in clip.extra_masks)
+            counts["follow"] = clip.extra_masks_follow
+            counts["has_content"] = bool(
+                clip.mask or props or clip.mask_shape_keys or clip.extra_masks
+            )
         elif category == "fade":
             windows = {prop: _fade_window(clip, prop)[:2] for prop in FADE_PROPERTIES}
             counts["windows"] = [list(pair) for pair in windows.values()]
@@ -276,12 +314,13 @@ def category_content(clip: Any) -> list[dict]:
     return rows
 
 
-# 一个目标要搬的那几类，按类别表里的顺序排好：(类别, 那几条命令, 越过目标尾巴的针数)。
-_TargetGroups = list[tuple[str, list[dict], int]]
+# 一个目标要搬的那几类，按类别表里的顺序排好：
+# (类别, 那几条命令, 越过目标尾巴的针数, 因落在段尾之后而没搬的框点数)。
+_TargetGroups = list[tuple[str, list[dict], int, int]]
 
 
 def _flattened(groups: _TargetGroups) -> list[dict]:
-    return [command for _, commands, _ in groups for command in commands]
+    return [command for _, commands, _, _ in groups for command in commands]
 
 
 def _over_limit(clip_id: str, whole: int, so_far: int) -> dict:
@@ -383,6 +422,7 @@ def attribute_plan(
     unchanged: list[str] = []
     refusals: list[dict] = []
     beyond_tail = 0
+    dropped_keys = 0
 
     def commit(commands: list[dict]) -> dict | None:
         """None when the reducer accepts everything chosen so far, with these commands appended.
@@ -402,9 +442,9 @@ def attribute_plan(
     for clip_id in sorted(targets, key=lambda item: root.clips[item].position_ticks):
         groups: _TargetGroups = []
         for category in wanted:
-            commands, beyond = _category_commands(category, source, root.clips[clip_id])
+            commands, beyond, dropped = _category_commands(category, source, root.clips[clip_id])
             if commands:
-                groups.append((category, commands, beyond))
+                groups.append((category, commands, beyond, dropped))
         if not groups:
             unchanged.append(clip_id)
             continue
@@ -425,10 +465,11 @@ def attribute_plan(
     fast = bool(chosen) and commit(chosen) is None
     if fast:
         written = [
-            {"clip_id": clip_id, "categories": [name for name, _, _ in groups]}
+            {"clip_id": clip_id, "categories": [name for name, _, _, _ in groups]}
             for clip_id, groups in batched
         ]
-        beyond_tail = sum(beyond for _, groups in batched for _, _, beyond in groups)
+        beyond_tail = sum(beyond for _, groups in batched for _, _, beyond, _ in groups)
+        dropped_keys = sum(dropped for _, groups in batched for _, _, _, dropped in groups)
     else:
         # 慢路：整串里有一步过不去，人要知道是哪一段的哪一类，以及它后面那些还进不进得去。
         # 上限那条读的是真正落进去的条数，所以这一趟从空的 `accepted` 重新数，上面预筛时
@@ -442,18 +483,22 @@ def attribute_plan(
                 continue
             error = commit(whole)
             if error is None:
-                beyond_tail += sum(beyond for _, _, beyond in groups)
-                written.append({"clip_id": clip_id, "categories": [name for name, _, _ in groups]})
+                beyond_tail += sum(beyond for _, _, beyond, _ in groups)
+                dropped_keys += sum(dropped for _, _, _, dropped in groups)
+                written.append(
+                    {"clip_id": clip_id, "categories": [name for name, _, _, _ in groups]}
+                )
                 continue
             # 整段粘不进去时拆开重问：人要知道是哪一类过不去，而不是看见整段被跳过。
             # 每一类仍按表里的顺序单独过同一个 reducer，落进去的那几类就是最终那批命令，
             # 所以「计划」与「提交」仍然对得上——只是类别之间不再互相连坐。
             landed: list[str] = []
-            for category, commands, beyond in groups:
+            for category, commands, beyond, dropped in groups:
                 error = commit(commands)
                 if error is None:
                     landed.append(category)
                     beyond_tail += beyond
+                    dropped_keys += dropped
                 else:
                     refusals.append({**error, "clip_id": clip_id, "category": category})
             if landed:
@@ -470,6 +515,7 @@ def attribute_plan(
         "unchanged": unchanged,
         "refusals": refusals,
         "beyond_tail_keyframes": beyond_tail,
+        "dropped_extra_keys": dropped_keys,
         "target_limit": ATTRIBUTE_PASTE_TARGET_LIMIT,
         "command_limit": MAX_COMMANDS_PER_BATCH,
     }

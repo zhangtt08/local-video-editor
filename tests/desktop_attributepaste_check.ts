@@ -111,6 +111,7 @@ const plan: AttributePlan = {
     { clip_id: "c", category: "fade", code: "INVALID_MASK", message: "masks require a picture track", details: {} },
   ],
   beyond_tail_keyframes: 2,
+  dropped_extra_keys: 3,
   target_limit: 64,
   command_limit: 2500,
 };
@@ -128,6 +129,13 @@ assert.ok(
 assert.ok(pasteSaid(plan, 3).title.includes("1 段（选了 3 段）"), "标题里的段数不是回执里那两个数");
 assert.ok(pasteSaid(plan, 3).detail.includes("1 段本来就是这份数"), "「已经一样」那段没被如实报出");
 assert.ok(pasteSaid(plan, 3).detail.includes("2 枚针"), "落在段尾之外的针数没照实报");
+// 1.244：框点与曲线针不是一回事——越尾的框点没有搬过来，句子要这么说，不能套用「仍在工程里」。
+assert.ok(pasteSaid(plan, 3).detail.includes("3 枚再叠遮罩的框点"), "没搬过来的框点数没照实报");
+assert.ok(pasteSaid(plan, 3).detail.includes("框点不能停在段尾之后"), "没搬框点的原因没说出来");
+assert.ok(
+  !pasteSaid({ ...plan, dropped_extra_keys: 0 }, 3).detail.includes("再叠遮罩的框点"),
+  "一枚框点都没丢时也说了一句丢框点",
+);
 assert.ok(
   pasteSaid({ ...plan, written: [], unchanged: ["a", "b", "c"], refusals: [] }, 3).title.includes("已经和来源一样"),
   "什么都没写时标题不该说成已粘贴",

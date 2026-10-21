@@ -147,5 +147,11 @@ export function pasteSaid(plan: AttributePlan, targets: number): { title: string
       `另有 ${plan.beyond_tail_keyframes} 枚针落在那段自己的长度之外——仍在工程里，只是那一帧之后不渲染`,
     );
   }
+  // 1.244：框点不是曲线针——停在段尾之后的那一枚存不进工程，所以它没搬过来这件事要说清。
+  if (plan.dropped_extra_keys) {
+    parts.push(
+      `另有 ${plan.dropped_extra_keys} 枚再叠遮罩的框点落在那段自己的长度之外——没有搬过来（框点不能停在段尾之后）`,
+    );
+  }
   return { title, detail: `${parts.join("。")}。一次写入只涨一个版本，撤销一步整批回来。` };
 }

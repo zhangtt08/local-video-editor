@@ -724,6 +724,8 @@ export type AttributePlan = {
     details: Record<string, unknown>;
   }[];
   beyond_tail_keyframes: number;
+  /** 1.244：落在目标段尾之后、因而没有搬过来的再叠遮罩框点数（框点不能留在段尾之后）。 */
+  dropped_extra_keys: number;
   target_limit: number;
   command_limit: number;
 };
