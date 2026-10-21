@@ -974,6 +974,7 @@ table.table tr.current td { background: var(--accent-soft); }
 .mask-outline, .mask-cross { fill: none; stroke: #f5d58a; stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
 /* 1.252：画面里选中那一块再叠遮罩的虚线框与它的一颗柄（只有选中时才有，不跟主遮罩抢命中）。 */
 .mask-extra-outline { fill: none; stroke: #f5d58a; stroke-width: 1; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; pointer-events: none; opacity: .9; }
+.mask-extra-outline.ghost { opacity: .4; stroke-dasharray: 2 3; }
 .mask-extra-handle { fill: #f5d58a; stroke: #282828; stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: all; cursor: move; }
 /* 盒可能转着，四个角不跟屏幕方向对齐，所以用不指方向的十字而不是 nwse/nesw。 */
 .mask-extra-handle.corner { cursor: crosshair; }

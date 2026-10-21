@@ -60,12 +60,13 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
   const [shift, setShift] = useState({ tx: 0, ty: 0, sx: 1, sy: 1 });
   const [active, setActive] = useState<number | null>(null);
   // 1.252：画面里选中的那一块再叠遮罩。只画选中那一块，且只有一颗柄——两种控件不再抢同一片区域。
-  const [extraDraft, setExtraDraft] = useState<{ index: number; box: ShapeMask } | null>(null);
+  const [extraDraft, setExtraDraft] = useState<{ index: number; box: ShapeMask; duplicate?: boolean } | null>(null);
   // 松手那一刻 React 的状态可能还没追上最后一次 move；落库读的是这个 ref（主遮罩那一手也是同一课）。
-  const extraDraftRef = useRef<{ index: number; box: ShapeMask } | null>(null);
+  const extraDraftRef = useRef<{ index: number; box: ShapeMask; duplicate?: boolean } | null>(null);
   const extraDrag = useRef<{ index: number; keyTick: number | null; insertAt: number | null;
     insertInterp: MaskBoxKey["interpolation"]; x: number; y: number; box: ShapeMask;
     corner: [number, number] | null; angle: number; k: number; rotate: boolean; angle0: number | null;
+    duplicate: boolean;
     pointerId: number; element: SVGElement; captured: boolean; inverse: DOMMatrix;
     projectId: string; revision: number; moved: boolean; detach: () => void } | null>(null);
   const draftRef = useRef(draft); draftRef.current = draft;
@@ -295,6 +296,9 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
   const executedBox = selectedWindow?.box ?? null;
   const extraKeyLimit = app.caps?.limits?.extra_mask_keys ?? 0;
   const canInsert = Boolean(executedBox) && (selectedExtra?.keys?.length ?? 0) < extraKeyLimit;
+  // Alt 拖那一手是「复制这一块再拖副本」——块数到顶就许不出这一只手（不是偷偷退回普通拖动）。
+  const extraStackLimit = app.caps?.limits?.extra_masks ?? 0;
+  const canDuplicate = Boolean(selectedExtra) && (clip.extra_masks?.length ?? 0) < extraStackLimit;
   // 新那一枚接着这一窗的节奏走：插值抄这一窗起点那一枚，不自己编一个。
   const windowOwner = selectedExtra && selectedWindow
     ? boxKeyAt(selectedExtra, selectedWindow.from_ticks) ?? selectedExtra.keys?.[0] : null;
@@ -324,6 +328,7 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
     const gesture = { index: selectedIndex!, keyTick: selectedKey?.at_ticks ?? null,
       insertAt: selectedKey || !canInsert ? null : selectedFrameTick,
       insertInterp: windowOwner?.interpolation ?? "linear",
+      duplicate: rotate ? false : event.altKey && canDuplicate,
       x: point.x / 100, y: point.y / 100, box: extraBox, corner, rotate,
       angle0: rotate ? extraPointerAngle(extraBox, inverse, event.clientX, event.clientY) : null,
       angle: extraBox.rotation ?? 0, k: pictureRatio, pointerId: event.pointerId,
@@ -349,7 +354,7 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", up);
     extraDrag.current = gesture;
-    extraDraftRef.current = { index: selectedIndex!, box: extraBox };
+    extraDraftRef.current = { index: selectedIndex!, box: extraBox, duplicate: event.altKey && canDuplicate };
     setExtraDraft(extraDraftRef.current);
   };
   const moveExtraAt = (clientX: number, clientY: number) => {
@@ -387,7 +392,7 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
         width: clamp(Math.abs(ux - ax), .01, 2),
         height: clamp(Math.abs(uy - ay), .01, 2) };
     }
-    const next = { index: gesture.index, box };
+    const next = { index: gesture.index, box, duplicate: gesture.duplicate };
     extraDraftRef.current = next;
     setExtraDraft(next);
   };
@@ -405,6 +410,7 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
     const values = gesture.rotate ? { rotation: box.rotation ?? 0 }
       : { center_x: box.center_x, center_y: box.center_y,
         ...(gesture.corner ? { width: box.width, height: box.height } : {}) };
+    const mode = gesture.duplicate ? "append" : "replace";
     if (gesture.insertAt !== null) {
       // 停在两枚框点之间：这一拖就是在播放头那一帧**新打一枚**框点，五个数一起带走，
       // 插值抄这一窗起点那一枚——原来那几枚一字不动。
@@ -413,24 +419,29 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
         keys: [...(row.keys ?? []), { at_ticks: at, center_x: box.center_x, center_y: box.center_y,
           width: box.width, height: box.height, rotation: box.rotation ?? 0,
           interpolation: gesture.insertInterp }].sort((a, b) => a.at_ticks - b.at_ticks) }),
-      gesture.projectId, gesture.revision);
+      gesture.projectId, gesture.revision, mode);
       return;
     }
-    writeExtra(gesture.index, gesture.keyTick, values, gesture.projectId, gesture.revision);
+    writeExtra(gesture.index, gesture.keyTick, values, gesture.projectId, gesture.revision, mode);
   };
   // 那一块的写入只有一处主人：拖（松手）、停在两枚之间新打一枚、键盘微调，交的都是同一条 `clip.mask_stack`。
   const applyExtra = (index: number, mutate: (row: ShapeMask) => ShapeMask,
-    projectId: string, revision: number) => {
-    setClipMaskStack(clip.id, (clip.extra_masks ?? []).map((row, position) =>
-      position === index ? mutate(row) : row), follow, projectId, revision);
+    projectId: string, revision: number, mode: "replace" | "append" = "replace") => {
+    const stack = clip.extra_masks ?? [];
+    const source = stack[index];
+    if (!source) return;
+    // 「append」就是 Alt 那一手：原来那一串一个不动，副本带着改完的数排在末尾。
+    const masks = mode === "append" ? [...stack, mutate(source)]
+      : stack.map((row, position) => position === index ? mutate(row) : row);
+    setClipMaskStack(clip.id, masks, follow, projectId, revision);
   };
   const writeExtra = (index: number, keyTick: number | null, values: Partial<ShapeMask>,
-    projectId: string, revision: number) => applyExtra(index, (row) => {
+    projectId: string, revision: number, mode: "replace" | "append" = "replace") => applyExtra(index, (row) => {
       if (keyTick !== null) return { ...row,
         keys: (row.keys ?? []).map((key) => key.at_ticks === keyTick
           ? { ...key, ...values } : key) };
       return { ...row, ...values };
-    }, projectId, revision);
+    }, projectId, revision, mode);
   const applyVertex = (next: ShapeMask | null) => {
     if (!next || disabled) return;
     write(next);
@@ -641,7 +652,8 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
         }} />)}
       </>}
       {extraDrawable && extraBox ? (() => {
-        const box = extraDraft?.index === selectedIndex ? extraDraft.box : extraBox;
+        const dragging = extraDraft?.index === selectedIndex ? extraDraft : null;
+        const box = dragging ? dragging.box : extraBox;
         const cx = box.center_x * 100, cy = box.center_y * 100;
         const rx = box.width * 50, ry = box.height * 50;
         const hs = { x: Math.max(handleSize.x, 10), y: Math.max(handleSize.y, 10) };
@@ -653,7 +665,13 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
         // 那颗角度柄沿同一根向外法线摆出去，与主遮罩那颗同一档留白。
         const gap = Math.min(0.14, Math.max(0.03, box.height * 0.3));
         const rx2 = (top.x + mid.out.x * gap) * 100, ry2 = (top.y + mid.out.y * gap) * 100;
+        // Alt 那一手在拖的是副本：原来那一框留在原地（淡一档），副本带着柄走。
+        const ghost = dragging?.duplicate && extraBox
+          ? rotatedBoxPoints(extraBox, pictureRatio, extraBox.rotation ?? 0)
+            .map((point) => `${(point.x * 100).toFixed(3)} ${(point.y * 100).toFixed(3)}`).join(", ")
+          : null;
         return <g className="mask-extra">
+          {ghost ? <polygon className="mask-extra-outline ghost" points={ghost} /> : null}
           <line className="mask-extra-stem" x1={top.x * 100} y1={top.y * 100} x2={rx2} y2={ry2} />
           {box.shape === "ellipse" && !angle
             ? <ellipse className="mask-extra-outline" cx={cx} cy={cy} rx={rx} ry={ry} />
@@ -663,7 +681,9 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
             width={hs.x} height={hs.y} role="button" tabIndex={0}
             aria-label={`拖动选中的再叠遮罩（第 ${selectedIndex! + 1} 块）`} aria-disabled={disabled}
             onPointerDown={(event) => beginExtra(event, null)}>
-            <title>拖这颗柄搬这一块的中心；拖四个角改大小（盒自己转着时按未转的盒算）。停在框点上时改的是那一枚，否则改静止值。</title>
+            <title>{"拖这颗柄搬这一块的中心；拖四个角改大小（盒自己转着时按未转的盒算）。停在框点上时改的是那一枚，否则改静止值。"
+              + (canDuplicate ? "按住 Alt 拖 = 先复制这一块，再拖那一副本。"
+                : `已到 ${extraStackLimit} 块上限，Alt 这一手用不了：先在检查器删掉一块。`)}</title>
           </rect>
           <rect className="mask-extra-handle rotate-handle" x={rx2 - hs.x / 2} y={ry2 - hs.y / 2}
             width={hs.x} height={hs.y} role="button" tabIndex={0}

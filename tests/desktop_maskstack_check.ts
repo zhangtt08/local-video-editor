@@ -223,7 +223,7 @@ assert.match(picture, /const extraDrawable = Boolean\(visible && selectedExtra &
 assert.match(picture, /window\.addEventListener\("pointermove", move\);/, "拓取期间没有在 window 上听");
 assert.match(picture, /const box = draft\?\.index === gesture\.index \? draft\.box : null;/, "松手没有读最后一次草稿");
 assert.match(picture, /if \(keyTick !== null\) return \{ \.\.\.row,/, "停在框点上时没有写回那一枚");
-assert.match(picture, /setClipMaskStack\(clip\.id, \(clip\.extra_masks \?\? \[\]\)\.map\(/, "松手没有走那一条写入");
+assert.match(picture, /setClipMaskStack\(clip\.id, masks, follow, projectId, revision\)/, "松手没有走那一条写入");
 assert.match(picture, /follow, projectId, revision\);\s*\};/, "写入没有用按下那一刻记下的那份工程与版本");
 assert.match(picture, /y=\{top\.y \* 100 - hs\.y \/ 2\}/, "柄不在盒子的上边中点");
 assert.match(css, /\.mask-extra-handle\s*\{[^}]*cursor: move/, "柄没有自己的命中与指针");
@@ -307,4 +307,17 @@ assert.match(picture, /\.sort\(\(a, b\) => a\.at_ticks - b\.at_ticks\)/, "插进
 assert.match(picture, /\) \|\| selectedKey \|\| canInsert\)/, "可拖的条件没给「停在两枚之间」这一格让路");
 assert.match(inspector, /拖它会在这一帧新打一枚框点/, "检查器那一句没说清拖画面里那一框会发生什么");
 assert.equal((picture.match(/setClipMaskStack\(/g) ?? []).length, 1, "插入这一手又长出第二个写入口");
+// ⑳ 1.256：按住 Alt 拖那一框 = 先复制这一块再拖副本（AE 的那一只手）。
+// 块数到顶时这一只手**不摆出来**，而不是偷偷退回普通拖动；拖的过程中原来那一框留在原地。
+assert.match(picture, /const extraStackLimit = app\.caps\?\.limits\?\.extra_masks \?\? 0;/, "块数上限不是引擎下发的那一份");
+assert.match(picture, /const canDuplicate = Boolean\(selectedExtra\) && \(clip\.extra_masks\?\.length \?\? 0\) < extraStackLimit;/, "到顶时这一只手没有被收掉");
+assert.match(picture, /duplicate: rotate \? false : event\.altKey && canDuplicate,/, "按下那一刻没有记下「这是 Alt 那一手」（中途换 Alt 会改语义）");
+assert.match(picture, /const mode = gesture\.duplicate \? "append" : "replace";/, "松手没有按按下那一刻定下来的那一种写法走");
+assert.match(picture, /const masks = mode === "append" \? \[\.\.\.stack, mutate\(source\)\]/, "副本没有带着改完的数排在末尾");
+assert.match(picture, /if \(!source\) return;/, "副本那一手在没有这一块时也会发一笔写入");
+assert.match(picture, /\{ghost \? <polygon className="mask-extra-outline ghost" points=\{ghost\} \/> : null\}/, "拖副本时原来那一框没有留在原地");
+assert.match(picture, /按住 Alt 拖 = 先复制这一块，再拖那一副本。/, "那颗柄没说 Alt 这一只手");
+assert.match(picture, /块上限，Alt 这一手用不了：先在检查器删掉一块。/, "到顶时没说清这一只手为什么没有");
+assert.match(css, /\.mask-extra-outline\.ghost\s*\{[^}]*opacity: \.4/, "副本那一框没有自己的淡档（与真身分不清）");
+assert.equal((picture.match(/setClipMaskStack\(/g) ?? []).length, 1, "Alt 这一手又长出第二个写入口");
 console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的五个数与羽化/反转都在格子里改、每一块可以打自己的框点、跟随时大小按同一比例缩放、框点的时间在条顶上看得见且不接指针、每一块都写明自己怎么动、停在框点上时五个数改的就是那一枚、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、选中的那一块拖着中心走、转着的那一块按未转的盒缩放四个角、那颗角度柄与主遮罩共用同一份换算与同一个写入口、样式仍走刻度");

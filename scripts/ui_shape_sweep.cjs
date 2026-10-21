@@ -817,6 +817,88 @@ async function sweepOne(size, hostPort, probeSource) {
         }
       }
     }
+    if (flag("alt-dup", "") !== "") {
+      // 1.256：按住 Alt 拖那一框 = 先复制这一块再拖副本。判四件事：
+      // 拖的**途中**画面里有两圈（原框留在原地）、块数 +1、副本带着拖完的中心、
+      // 原来那一块与它的框点一字不动。
+      const label = "画面Alt拖出副本";
+      const rowOf = (error) => rows.push({ screen: label, panel: flag("panel", ""), size, data: null, error });
+      const trouble = await baseState();
+      if (trouble) rowOf(trouble);
+      else {
+        const pick = await evaluate("(function(){var el=document.querySelector(\"[aria-label='在画面里选中第 1 块叠加遮罩']\");"
+          + "if(!el)return null;el.scrollIntoView({block:'center'});var r=el.getBoundingClientRect();"
+          + "return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
+        if (!pick) rowOf("找不到「在画面里选中第 1 块叠加遮罩」");
+        else {
+          await click(pick.x, pick.y);
+          await sleep(700);
+          const before = await engineGet(`/v1/projects/${PROJECT}`);
+          const restore = async () => {
+            const latest = await engineGet(`/v1/projects/${PROJECT}`);
+            await enginePost(`/v1/projects/${PROJECT}/edits`, {
+              request_id: `shape-altdup-restore-${size}-${Date.now()}`,
+              expected_revision: latest.revision,
+              commands: [{ op: "clip.mask_stack", clip_id: "k2", masks: before.clips["k2"].extra_masks }],
+            });
+            await cdp.send("Page.reload", {}, 30000);
+            await sleep(1200);
+          };
+          const fail = async (message) => { rowOf(message); await restore(); };
+          const spot = await evaluate("(function(){var el=document.querySelector('.mask-extra-handle');"
+            + "if(!el)return null;var r=el.getBoundingClientRect();"
+            + "return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
+          if (!spot) await fail("选中之后画面里没有那颗柄");
+          else {
+            const alt = 1; // CDP 的 modifiers 位掩码：Alt = 1
+            await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: spot.x, y: spot.y,
+              button: "left", clickCount: 1, modifiers: alt });
+            for (let step = 1; step <= 4; step += 1) {
+              await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: spot.x + step * 10, y: spot.y,
+                button: "left", modifiers: alt });
+              await sleep(60);
+            }
+            const during = await evaluate("(function(){var rings=document.querySelectorAll('.mask-extra-outline');"
+              + "var ghost=document.querySelector('.mask-extra-outline.ghost');"
+              + "return {rings:rings.length, ghost:Boolean(ghost)};})()");
+            await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: spot.x + 40, y: spot.y,
+              button: "left", modifiers: alt });
+            await sleep(900);
+            const after = await engineGet(`/v1/projects/${PROJECT}`);
+            const was = before.clips["k2"].extra_masks;
+            const now = after.clips["k2"].extra_masks;
+            const copy = now[now.length - 1];
+            const source = was[0];
+            const grew = now.length === was.length + 1;
+            // 播放头停在 2 秒那一枚框点上：拖的是**那一枚**，静止值照旧是模板值——
+            // 所以比的是副本那一枚与原来那一枚，不是两个静止中心。
+            const copyKey = copy && (copy.keys ?? []).find((k) => k.at_ticks === 141_120_000);
+            const sourceKey = (source.keys ?? []).find((k) => k.at_ticks === 141_120_000);
+            const moved = Boolean(copyKey && sourceKey)
+              && Math.abs(copyKey.center_x - sourceKey.center_x) > 0.02;
+            const untouched = JSON.stringify(now[0]) === JSON.stringify(source);
+            const carried = copy && (copy.keys ?? []).length === (source.keys ?? []).length
+              && copy.shape === source.shape && Math.abs(copy.width - source.width) < 1e-9
+              && Math.abs(copy.height - source.height) < 1e-9
+              && Math.abs(copy.rotation - source.rotation) < 1e-9;
+            const twoRings = during && during.rings === 2 && during.ghost;
+            if (!grew || !moved || !untouched || !carried || !twoRings) {
+              await fail("Alt 拖副本没有按预期：块数 " + JSON.stringify([was.length, now.length])
+                + " 副本那枚 " + JSON.stringify(copyKey && [copyKey.center_x, (copy.keys ?? []).length])
+                + " 原来那枚 " + JSON.stringify(sourceKey && sourceKey.center_x)
+                + " 原块没动=" + JSON.stringify(untouched) + " 尺寸带过来=" + JSON.stringify(Boolean(carried))
+                + " 途中两圈=" + JSON.stringify(during));
+            } else {
+              await run(label);
+              await restore();
+            }
+            await evaluate("(function(){var el=document.querySelector('[aria-label=\"取消选中第 1 块叠加遮罩\"]');"
+              + "if(el)el.click();return !!el;})()");
+            await sleep(300);
+          }
+        }
+      }
+    }
     cdp.close();
   } finally {
     // Windows 上 SIGTERM 打不穿 msedge 那一棵树：留着它，下一档扫描就会撞上同一个 profile
