@@ -203,4 +203,11 @@ assert.match(inspector, /key\.at_ticks % frame\s*\?/, "非整帧的框点没有�
 assert.match(inspector, /offsetWords\(key\.at_ticks % frame, rate\)/, "差的那一点没有用已有的字面化工具");
 assert.match(inspector, /className="mask-stack-sub"/, "那一点没有自己的样式");
 assert.match(css, /\.mask-stack-sub\s*\{[^}]*color: var\(--ink-3\)/, "那一点没有退一档颜色");
+// ⑮ 1.250：一块可以整份复制一份（框点也带走），新那块往右下挪一点。
+assert.match(inspector, /aria-label=\{`复制第 \$\{index \+ 1\} 块叠加遮罩`\}/, "没有复制一块的入口");
+assert.match(inspector, /disabled=\{disabled \|\| full \|\| limit === 0\}/, "复制那一颗的灰掉条件不对");
+assert.match(inspector, /const nudge = \(value: number\) => Math\.min\(1, value \+ 0\.04\)/, "新一块没有挪一点");
+assert.match(inspector, /write\(\[\.\.\.stack, \{ \.\.\.item,/, "复制没有走那一条整串写入");
+assert.match(inspector, /center_x: nudge\(item\.center_x\), center_y: nudge\(item\.center_y\)/, "静止的中心没有挪");
+assert.match(inspector, /keys: \(item\.keys \?\? \[\]\)\.map\(\(key\) => \(\{ \.\.\.key,/, "框点没有随着复制");
 console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的五个数与羽化/反转都在格子里改、每一块可以打自己的框点、跟随时大小按同一比例缩放、框点的时间在条顶上看得见且不接指针、每一块都写明自己怎么动、停在框点上时五个数改的就是那一枚、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、样式仍走刻度");

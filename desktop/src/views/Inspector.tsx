@@ -694,6 +694,16 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
           onChange={(event) => patch(index, { shape: event.target.value as ShapeMask["shape"] })}>
           <option value="rectangle">矩形</option><option value="ellipse">椭圆</option>
         </select>
+        <button type="button" className="icon-btn tiny" disabled={disabled || full || limit === 0}
+          aria-label={`复制第 ${index + 1} 块叠加遮罩`}
+          title={full ? `最多 ${limit} 块；要复制，先删掉一块` : "把这一块整份复制一份（框点也带走），新的一块往右下挪一点"}
+          onClick={() => {
+            const nudge = (value: number) => Math.min(1, value + 0.04);
+            write([...stack, { ...item,
+              center_x: nudge(item.center_x), center_y: nudge(item.center_y),
+              keys: (item.keys ?? []).map((key) => ({ ...key,
+                center_x: nudge(key.center_x), center_y: nudge(key.center_y) })) }]);
+          }}>⧉</button>
         <button type="button" className="btn tiny subtle" disabled={disabled} aria-label={`删掉第 ${index + 1} 块叠加遮罩`} onClick={() => write(stack.filter((_, position) => position !== index))}>删掉</button>
         {/* 1.242：这一块此刻怎么动，写在它自己那一行——勾没勾「跟着主遮罩」与有没有框点，
             是两个各自决定它走哪条路的事实，过去只在地下的合成规则里，界面上谁都没说。 */}
