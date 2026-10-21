@@ -7,7 +7,7 @@ import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionCh
 import { Icon, Modal } from "../ui";
 import { GradeFields } from "./GradeFields";
 import { SpeedFields } from "./SpeedFields";
-import { blurMaxPercent, boxKeyAt, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeAdoptHint, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, fitSpeedPercent, INTERPOLATIONS, maskAnimFields, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackGroup, trackingKnobs, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
+import { blurMaxPercent, boxKeyForPlayhead, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeAdoptHint, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, fitSpeedPercent, INTERPOLATIONS, maskAnimFields, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackGroup, trackingKnobs, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
 import { frameTicks, TIMEBASE, align, humanDuration, offsetWords, seconds, timecode, ticks } from "../time";
 import {
   DISPLAY_PRIMARIES,
@@ -662,6 +662,8 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
   const rotationLimit = app.caps?.limits?.mask_rotation_limit;
   const stack = clip.extra_masks ?? [];
   const at = localTick();
+  // 1.247：Agent 写在两帧之间的框点，点开它时播放头精确落在它的 tick 上；按取整后的帧去找会落空。
+  const exact = Math.max(0, Math.min(clip.duration_ticks, play.ticks - clip.position_ticks));
   const full = stack.length >= limit;
   const write = (masks: ShapeMask[]) => setClipMaskStack(clip.id, masks);
   const patch = (index: number, part: Partial<ShapeMask>) =>
@@ -682,7 +684,8 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
         onChange={(event) => setClipMaskStack(clip.id, stack, event.target.checked)} />跟着主遮罩平移
     </label>
     {stack.map((item, index) => {
-      const atKey = boxKeyAt(item, at);
+      const atKey = boxKeyForPlayhead(item, exact, at);
+      const active = atKey?.at_ticks ?? at;
       return <div className="mask-stack-row" key={`stack-${index}`}>
       <div className="mask-stack-title">
         <span className="mask-stack-n">第 {index + 1} 块</span>
@@ -731,8 +734,8 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
             onClick={() => patch(index, { keys: [] })}>清空框点</button> : null}
         </div>
         {item.keys?.length ? <ul className="mask-stack-keylist">
-          {item.keys.map((key) => <li key={key.at_ticks} className={key.at_ticks === at ? "current" : undefined}>
-            <button type="button" className="btn tiny mono" aria-current={key.at_ticks === at ? "true" : undefined}
+          {item.keys.map((key) => <li key={key.at_ticks} className={key.at_ticks === active ? "current" : undefined}>
+            <button type="button" className="btn tiny mono" aria-current={key.at_ticks === active ? "true" : undefined}
               title="把播放头移到这一帧" onClick={() => { playhead.pause(); playhead.set(clip.position_ticks + key.at_ticks); }}>
               {timecode(key.at_ticks, app.project?.settings.frame_rate ?? { numerator: 30, denominator: 1 })}
             </button>

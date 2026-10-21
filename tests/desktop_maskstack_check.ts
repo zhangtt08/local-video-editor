@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { boxKeyAt } from "../desktop/src/effects";
+import { boxKeyAt, boxKeyForPlayhead } from "../desktop/src/effects";
 import type { ShapeMask } from "../desktop/src/engine";
 
 declare const REPO_ROOT: string;
@@ -158,7 +158,8 @@ assert.equal(boxKeyAt(stacked, 0)?.width, 0.2, "停在第一枚框点上，交�
 assert.equal(boxKeyAt(stacked, 70_560_000)?.center_x, 0.6, "停在第二枚框点上，交回的不是那一枚");
 assert.equal(boxKeyAt(stacked, 70_560_001), undefined, "两枚之间也交回了一枚——卡片会显示一个并不在这一帧上的数");
 assert.equal(boxKeyAt({ ...stacked, keys: [] }, 0), undefined, "没有框点时交回了一枚不存在的针");
-assert.match(inspector, /const atKey = boxKeyAt\(item, at\);/, "检查器没有用那一处选择（自己又 find 一遍就是第二个主人）");
+// 1.247：选择仍是同一处，只是现在收「播放头原刻度」与「取整到的那一帧」两把尺子。
+assert.match(inspector, /const atKey = boxKeyForPlayhead\(item, exact, at\);/, "检查器没有用那一处选择（自己又 find 一遍就是第二个主人）");
 assert.match(inspector, /value=\{\(atKey \?\? item\)\[field\] \* 100\}/, "五个数没有按「停在这一枚就用这一枚」显示");
 assert.match(inspector, /value=\{atKey \? atKey\.rotation \?\? 0 : item\.rotation \?\? 0\}/, "角度那一格没有跟着框点走");
 assert.match(inspector, /const commitBox = \(index: number, atKey: MaskBoxKey \| undefined, field: BoxField, value: number\)/,
@@ -170,9 +171,29 @@ assert.match(inspector, /\|\| Boolean\(atKey\)\}/, "这一帧已有框点时，�
 assert.match(inspector, /这一帧已有框点/, "按钮没有把「这一帧已经有了」写在眼前");
 assert.match(inspector, /上面五个数改的是这一枚/, "没有说清上面五个数此刻改的是哪一枚");
 assert.match(inspector, /上面五个数是模板值/, "停在两枚之间时没有说清那五个数此刻只是模板");
-assert.match(inspector, /className=\{key\.at_ticks === at \? "current" : undefined\}/, "当前那一枚框点在表里没有标出来");
-assert.match(inspector, /aria-current=\{key\.at_ticks === at \? "true" : undefined\}/, "当前那一枚对读屏没有交代");
+assert.match(inspector, /className=\{key\.at_ticks === active \? "current" : undefined\}/, "当前那一枚框点在表里没有标出来");
+assert.match(inspector, /aria-current=\{key\.at_ticks === active \? "true" : undefined\}/, "当前那一枚对读屏没有交代");
 assert.match(css, /\.mask-stack-at\s*\{[^}]*text-overflow: ellipsis/, "那一句窄了不省略，会把那一行挤成第二行");
 assert.match(css, /\.mask-stack-keylist li\.current \.btn\s*\{[^}]*border-color: var\(--accent\)/, "当前那一枚没有自己在表里亮起来");
+
+// ⑫ 1.247：框点可以落在两帧之间（引擎只查范围与次序）。点开这样一枚时播放头精确落在它的 tick 上，
+// 按取整后的帧去找会落空——那正是「点了一枚，卡片却在显示静止值」。两把尺子一起问。
+const between: ShapeMask = {
+  ...stacked,
+  keys: [
+    { at_ticks: 0, center_x: 0.4, center_y: 0.4, width: 0.2, height: 0.2, rotation: 0, interpolation: "linear" },
+    { at_ticks: 100, center_x: 0.45, center_y: 0.4, width: 0.25, height: 0.2, rotation: 3, interpolation: "ease" },
+    { at_ticks: 70_560_000, center_x: 0.6, center_y: 0.6, width: 0.4, height: 0.4, rotation: 10, interpolation: "ease" },
+  ],
+};
+assert.equal(boxKeyForPlayhead(between, 100, 0)?.center_x, 0.45, "点开两帧之间那一枚时没有认出它");
+assert.equal(boxKeyForPlayhead(between, 0, 0)?.center_x, 0.4, "整帧上那一枚反而认不出来了");
+assert.equal(boxKeyForPlayhead(stacked, 100, 35_280_000), undefined, "两把尺子都落空时也交回了一枚键");
+assert.equal(boxKeyForPlayhead(between, 100, 70_560_000)?.center_x, 0.45, "精确刻度优先于整帧刻度这一条被弄反了");
+assert.match(inspector, /const atKey = boxKeyForPlayhead\(item, exact, at\);/, "检查器没有用两把尺子那一处");
+assert.match(inspector, /const exact = Math\.max\(0, Math\.min\(clip\.duration_ticks, play\.ticks - clip\.position_ticks\)\);/, "没有取播放头的原刻度");
+assert.match(inspector, /const active = atKey\?\.at_ticks \?\? at;/, "当前那一枚没有按真正的键刻度算");
+assert.match(inspector, /className=\{key\.at_ticks === active \? "current" : undefined\}/, "表里当前那一枚的标记没跟着变");
+assert.match(inspector, /aria-current=\{key\.at_ticks === active \? "true" : undefined\}/, "读屏那一格没跟着变");
 
 console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的五个数与羽化/反转都在格子里改、每一块可以打自己的框点、跟随时大小按同一比例缩放、框点的时间在条顶上看得见且不接指针、每一块都写明自己怎么动、停在框点上时五个数改的就是那一枚、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、样式仍走刻度");

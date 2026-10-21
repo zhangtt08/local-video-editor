@@ -118,6 +118,19 @@ export const maskAnimFields = (mask?: ShapeMask | null, caps?: Capabilities | nu
 export const boxKeyAt = (mask: ShapeMask, at: number): MaskBoxKey | undefined =>
   (mask.keys ?? []).find((key) => key.at_ticks === at);
 
+/**
+ * 1.247：框点可以落在两帧之间——引擎只查范围与次序（`MASK_KEY_RANGE` / `MASK_KEY_CLASH`），
+ * Agent 写进来的 `at_ticks` 不必对齐帧。检查器的播放头平时按帧取整，于是点开这样一枚框点的
+ * 时刻（`playhead.set` 精确落在它的 tick 上）时，按取整后的帧去找就找不到它。
+ * 两把尺子一起问：**播放头此刻的原刻度优先**，其次才是取整到的那一帧——前者让「点开哪一枚」
+ * 与「卡片改哪一枚」是同一枚，后者保留平常拖播放头时对整帧框点的识别。
+ */
+export const boxKeyForPlayhead = (
+  mask: ShapeMask,
+  exact: number,
+  frameTick: number,
+): MaskBoxKey | undefined => boxKeyAt(mask, exact) ?? boxKeyAt(mask, frameTick);
+
 /** Label lookup for the keyframe list, which mixes effect and mask properties. */
 /** 插值的名字也只从一张表出去：曲线编辑器的两个下拉、轮廓帧那一行、任何将来要说「这一帧怎么过渡」的地方。 */
 export const INTERPOLATIONS = { linear: "线性", ease: "缓入缓出", hold: "保持", bezier: "贝塞尔" } as const;
