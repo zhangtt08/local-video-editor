@@ -207,9 +207,9 @@ export const DEFAULT_CURVE_POINTS: GradeCurvePoint[] = [
 export type MaskVertex = { x: number; y: number; handle_out: [number, number]; handle_in: [number, number] };
 /** 1.257：那一枚框点也能带贝塞尔——柄与曲线编辑器那两个下拉读的是同一份 `Bezier` 形状，
  *  而「有哪几种缓动可选」由 `capabilities.mask_box_interpolations` 说，界面不许自己滤掉某一种。 */
-export type MaskBoxKey = { at_ticks: number; center_x: number; center_y: number; width: number; height: number; rotation?: number; interpolation?: "linear" | "hold" | "ease" | "bezier"; bezier?: Bezier | null };
+export type MaskBoxKey = { at_ticks: number; center_x: number; center_y: number; width: number; height: number; rotation?: number; feather?: number | null; interpolation?: "linear" | "hold" | "ease" | "bezier"; bezier?: Bezier | null };
 export type ShapeMask = { shape: "rectangle" | "ellipse" | "path"; center_x: number; center_y: number; width: number; height: number; rotation?: number; feather: number; inverted: boolean; vertices?: MaskVertex[] | null; keys?: MaskBoxKey[] };
-export type ExtraMaskBox = { center_x: number; center_y: number; width: number; height: number; rotation: number };
+export type ExtraMaskBox = { center_x: number; center_y: number; width: number; height: number; rotation: number; feather?: number };
 export type ExtraMaskWindow = { from_ticks: number; to_ticks: number; image: string; follow?: boolean; box?: ExtraMaskBox | null };
 
 /** The clip's own fade windows, in ticks measured from each edge. 0 means that edge is untouched.

@@ -55,6 +55,16 @@ PROBES = (0.25, 0.30, 0.42, 0.50, 0.60)
 # 1.257：框点也能带贝塞尔。这一对柄把进度顶到 1 之外（中段冲出终点再回来），
 # 所以「窗表按三次曲线走」这件事是看得见的，而不是又一条只在端点不同的式子。
 BEZIER_HANDS = {"x1": 1 / 3, "y1": 2.0, "x2": 2 / 3, "y2": 2.0}
+# 1.258：羽化也能跟着框点换。斜坡是从边往里量的一条 `clip((1-x)/feather,0,1)`，
+# 所以同一格在硬边时亮、在宽斜坡时暗——量的就是这一对。0.60 那一格留在斜坡内侧不动，
+# 它是「只有软边在动，别的一个数都没被牵连」的对照。
+SOFT = {"shape": "rectangle", "center_x": 0.5, "center_y": 0.5, "width": 0.3,
+        "height": 0.6, "feather": 0.0}
+SOFT_FIRST = {"center_x": 0.5, "center_y": 0.5, "width": 0.3, "height": 0.6,
+              "rotation": 0.0, "feather": 0.0}
+SOFT_LAST = {"center_x": 0.5, "center_y": 0.5, "width": 0.3, "height": 0.6,
+             "rotation": 0.0, "feather": 0.25}
+SOFT_PROBES = (0.60, 0.64)
 
 
 def cubic(p1: float, p2: float, u: float) -> float:
@@ -229,12 +239,16 @@ def key(at: int, box: dict, interpolation: str = "linear", handles: dict | None 
     return row
 
 
-def make_project(folder: Path, moving: bool, bezier: bool = False) -> str:
-    tag = "bezier" if bezier else ("moving" if moving else "static")
+def make_project(folder: Path, moving: bool, bezier: bool = False, soft: bool = False,
+                 inherit: bool = False, plain: bool = False) -> str:
+    tag = ("soft" if soft else "inherit" if inherit else "plain" if plain
+           else "bezier" if bezier else ("moving" if moving else "static"))
     made = request(
         "/v1/projects",
         {"request_id": f"em-new-{tag}",
-         "name": "再叠的块自己会动" + {"bezier": "（贝塞尔）", "moving": "（动）"}.get(tag, ""),
+         "name": "再叠的块自己会动" + {"bezier": "（贝塞尔）", "moving": "（动）",
+                                      "soft": "（软边）", "inherit": "（羽化不写）",
+                                      "plain": "（静止软边）"}.get(tag, ""),
          "settings": {"width": WIDTH, "height": HEIGHT,
                       "frame_rate": {"numerator": 30, "denominator": 1}}},
         "POST",
@@ -249,6 +263,17 @@ def make_project(folder: Path, moving: bool, bezier: bool = False) -> str:
             0, {"center_x": EXTRA["center_x"], "center_y": EXTRA["center_y"],
                 "width": EXTRA["width"], "height": EXTRA["height"], "rotation": 0.0})
         extra = {**EXTRA, "keys": [first, key(2 * SECOND, MOVED)]}
+    if soft:
+        extra = {**SOFT, "keys": [key(0, SOFT_FIRST), key(2 * SECOND, SOFT_LAST)]}
+    if inherit:
+        # 1.257 那一版的框点里根本没有羽化这一格：写了框点而没写羽化，读进来就必须仍是
+        # 这一块自己静止的那一个数——这里让静止值是 0.2，两枚框点只报几何的那五个数。
+        still = {**SOFT, "feather": 0.2}
+        box = {**SOFT_FIRST, "feather": None}
+        box.pop("feather")
+        extra = {**still, "keys": [key(0, box), key(2 * SECOND, box)]}
+    if plain:
+        extra = {**SOFT, "feather": 0.2}
     request(
         f"/v1/projects/{pid}/edits",
         {"request_id": f"em-seed-{tag}", "expected_revision": made["project"]["revision"],
@@ -281,6 +306,28 @@ def readings(pid: str, folder: Path, key_name: str, early: int = 6, late: int = 
     }
 
 
+def feather_terms() -> None:
+    """那条斜坡在编译串里怎么说：一个数就写那个数，只有式子才带那个下限。
+
+    这一条不是给「画面对不对」补证据（那一头有像素），它守的是旧工程那一路的字——窗表里
+    那一格若被化成 `0.200000000` 而产品又照字面抄进串里，静止那一路的串就改了形。
+    """
+    from agentcut.contracts import ShapeMask
+    from agentcut.masks import alpha_expression
+
+    still = ShapeMask(shape="rectangle", center_x=0.5, center_y=0.5, width=0.3,
+                      height=0.6, feather=0.2)
+    literal = alpha_expression(still)
+    assert "/0.2," in literal and "max(" not in literal, ("静止那一路换了写法", literal)
+    padded = alpha_expression(still, {"mask_feather": "0.200000000"})
+    assert padded == literal, ("窗表里那个数没有化成同一个字面量", padded, literal)
+    stepped = alpha_expression(still, {"mask_feather": "if(lt(T,1.000000000),0.0,0.2)"})
+    assert "max(if(lt(" in stepped, ("一条式子没有那个下限", stepped)
+    hard = still.model_copy(update={"feather": 0.0})
+    assert alpha_expression(hard) == alpha_expression(hard, {"mask_feather": "0.0"}), (
+        "一个零羽化在两条路上不再是同一条边")
+
+
 def refusal_suite(pid: str) -> list[str]:
     revision = request(f"/v1/projects/{pid}")["revision"]
     seen = []
@@ -308,12 +355,19 @@ def refusal_suite(pid: str) -> list[str]:
     attempt([{"op": "clip.mask_stack", "clip_id": "c", "masks": [{**EXTRA, "keys": [
         key(0, {**body, "center_x": 0.95}, "bezier", {"x1": 0.5, "y1": 4.0, "x2": 0.5, "y2": 4.0}),
         key(SECOND, {**body, "center_x": 1.0})]}]}], "overshoot")
+    # 1.258：软边也有自己那条带（0..1）——0.9 → 1.0 那一段被同一对柄甩过 1 也必须拒。
+    attempt([{"op": "clip.mask_stack", "clip_id": "c", "masks": [{**EXTRA, "keys": [
+        key(0, {**SOFT_FIRST, "feather": 0.9}, "bezier",
+            {"x1": 0.5, "y1": 4.0, "x2": 0.5, "y2": 4.0}),
+        key(SECOND, {**SOFT_FIRST, "feather": 1.0})]}]}], "softovershoot")
     joined = " | ".join(seen)
     assert "MASK_KEY_RANGE" in joined, seen
     assert "MASK_KEY_CLASH" in joined, seen
     assert "INVALID_REQUEST" in joined or "INVALID_MASK" in joined, seen
     assert "bezier controls require" in joined, seen
-    assert "bezier curve exceeds" in joined, seen
+    # 那两条各自要点名自己那一格：`bezier curve exceeds` 是两条的公共后缀，只判它等于没判。
+    assert "center_x bezier curve exceeds" in joined, seen
+    assert "feather bezier curve exceeds" in joined, seen
     after = request(f"/v1/projects/{pid}")["revision"]
     assert after == revision, ("被拒的写入涨了版本", revision, after)
     return seen
@@ -393,11 +447,13 @@ def main() -> None:
             assert windows[0]["image"] != windows[-1]["image"], (
                 "两端窗里的图一模一样——框点没被烘进去"
             )
-            # 1.255：每一窗带着它**执行的那五个数**。界面画那一框、拖那一框读的就是这一份，
+            # 1.255：每一窗带着它**执行的那串数**。界面画那一框、拖那一框读的就是这一份，
             # 不在浏览器里再插一次值。期望由夹具自己那两枚框点按线性算法现算，不从产品 import。
+            # 1.258：这一串多了羽化——没写在框点上的那一格交回的就是这一块自己静止的那个数。
             assert windows[0]["box"] == {
                 "center_x": EXTRA["center_x"], "center_y": EXTRA["center_y"],
                 "width": EXTRA["width"], "height": EXTRA["height"], "rotation": 0.0,
+                "feather": EXTRA["feather"],
             }, ("第一窗交回的盒不是起点那一枚框点", windows[0].get("box"))
             span = MOVED["center_x"] - EXTRA["center_x"]
             for window in windows:
@@ -405,9 +461,9 @@ def main() -> None:
                 assert abs(window["box"]["center_x"] - wanted) < 1e-6, (
                     "那一窗交回的盒中心不等于这一格该执行的那一个",
                     window["from_ticks"], window["box"]["center_x"], wanted)
-                for name in ("center_y", "width", "height"):
+                for name in ("center_y", "width", "height", "feather"):
                     assert abs(window["box"][name] - EXTRA[name]) < 1e-9, (
-                        "只有中心在动，其余三个数不该跟着变", name, window["box"])
+                        "只有中心在动，其余几个数不该跟着变", name, window["box"])
             assert windows[0]["box"] != windows[-1]["box"], (
                 "两窗交回同一个盒——那一框就不可能跟着动")
             # 亮 = 同时在主遮罩 [0.2,0.8] 与那一块里面；主遮罩不动，动的只有再叠的那一块。
@@ -477,9 +533,61 @@ def main() -> None:
                     assert left == right, (
                         f"贝塞尔 {when} x={x}: 成片 {left} 预览 {right}——两端的洞不一样"
                     )
+            soft_pid = make_project(folder, False, soft=True)
+            soft_rows = request(f"/v1/projects/{soft_pid}/preview-manifest")["clips"]["c"]
+            soft_windows = (soft_rows.get("extra_mask_windows") or [None])[0] or []
+            assert len(soft_windows) >= 2, ("羽化那两枚框点没切成窗", soft_windows)
+            edges = [window["box"]["feather"] for window in soft_windows]
+            assert edges[0] == 0.0, ("第一窗的羽化不是起点那一枚框点的那一个", edges[:2])
+            assert edges == sorted(edges) and len(set(edges)) > 1, (
+                "羽化没有一窗一窗地涨上去", edges)
+            # 每一窗的那一格就是**这一窗起点**按线性该执行的那一个数（窗宽由段数上限决定，
+            # 所以不能拿终点那一枚当最后一窗的读数——那正是 1.182 立下的那条规矩）。
+            for window in soft_windows:
+                wanted = SOFT_LAST["feather"] * window["from_ticks"] / (2 * SECOND)
+                assert abs(window["box"]["feather"] - wanted) < 1e-6, (
+                    "那一窗的羽化不等于它起点该执行的那一个",
+                    window["from_ticks"], window["box"]["feather"], wanted)
+            assert soft_windows[0]["image"] != soft_windows[-1]["image"], (
+                "软边变了，烘出来的那张图却没变")
+            soft = readings(soft_pid, folder, "soft")
+            want_soft = {("export", "t0"): (True, True), ("export", "t18"): (True, False),
+                         ("preview", "t0"): (True, True), ("preview", "t18"): (True, False)}
+            for side in ("export", "preview"):
+                for when in ("t0", "t18"):
+                    actual = tuple(bright(soft[side][when], x, 0.5) for x in SOFT_PROBES)
+                    label = f"软边 / {side} / {when}"
+                    print(f"   {label}：{actual}（期望 {want_soft[(side, when)]}）")
+                    assert actual == want_soft[(side, when)], (label, actual)
+            for when in ("t0", "t18"):
+                for x in SOFT_PROBES:
+                    left = bright(soft["export"][when], x, 0.5)
+                    right = bright(soft["preview"][when], x, 0.5)
+                    assert left == right, (
+                        f"软边 {when} x={x}: 成片 {left} 预览 {right}——两端的斜坡不是同一条")
+            # 1.257 那份载荷（框点里没这一格）读进来必须与静止那一路一模一样。
+            inherit_pid = make_project(folder, False, inherit=True)
+            plain_pid = make_project(folder, False, plain=True)
+            inherit_rows = (request(f"/v1/projects/{inherit_pid}/preview-manifest")
+                            ["clips"]["c"].get("extra_mask_windows") or [None])[0] or []
+            assert {window["box"]["feather"] for window in inherit_rows} == {0.2}, (
+                "没写羽化的框点改掉了这一块静止的那个数",
+                [window["box"]["feather"] for window in inherit_rows])
+            with_feather = readings(inherit_pid, folder, "inherit")
+            without = readings(plain_pid, folder, "plain")
+            for side in ("export", "preview"):
+                for when in ("t0", "t18"):
+                    actual = tuple(bright(with_feather[side][when], x, 0.5)
+                                   for x in SOFT_PROBES)
+                    assert actual == tuple(bright(without[side][when], x, 0.5)
+                                           for x in SOFT_PROBES), (
+                        f"没写羽化的框点把画面改了：{side} {when} {actual}")
+                    assert actual == (True, False), (
+                        f"静止 0.2 的软边该是 {side} {when} (True, False)，读到 {actual}")
+            feather_terms()
             contract_suite(moving_pid)
             refusals = refusal_suite(moving_pid)
-            names = "越界／同刻两枚／主遮罩带框点／带柄没选贝塞尔／甩出自己那条带"
+            names = "越界／同刻两枚／主遮罩带框点／带柄没选贝塞尔／甩出自己那条带／甩出软边那条带"
             print(f"   拒绝：{len(refusals)} 条各自点名（{names}）")
             print(
                 "PASS: 带框点的那一块在 t=1.8s 从 [0.2,0.35] 移到 [0.37,0.52]——"
@@ -487,7 +595,9 @@ def main() -> None:
 "不带框点的那一趟两个时刻不动；越界/同刻两枚/主遮罩带框点都被点名拒绝且不涨版本；"
                 "贝塞尔那一趟中段冲出终点再回来：每一窗的盒中心等于量具自己二分算出"
                 "的那条三次曲线（容差 2e-3），两个时刻成片与预览逐点一致；同一笔载荷"
-                "显式写了 bezier:null 仍命中 1.256 那份回执（replayed 真、版本不涨）"
+                "显式写了 bezier:null 仍命中 1.256 那份回执（replayed 真、版本不涨）；"
+                "软边那一趟涨在窗表的每一格上：x=0.64 由亮转暗而斜坡内侧的 x=0.60 一直亮，"
+                "成片与预览逐点一致；没写软边的框点与不带框点的那一块读出同一对数"
             )
         finally:
             process.kill()

@@ -23,6 +23,7 @@ from .contracts import (
     MaskVertex,
     Project,
     Track,
+    box_value,
 )
 from .grade import composite_stages, layer_stages, preview_grade
 from .masks import animated_mask_image, cover_svg_image, fit_box, mask_image
@@ -688,22 +689,25 @@ def mask_box_schedule(clip: Clip, quantum: int, limit: int | None = None) -> lis
     )
 
 
-MASK_EXTRA_FIELDS = ("center_x", "center_y", "width", "height", "rotation")
+MASK_EXTRA_FIELDS = ("center_x", "center_y", "width", "height", "rotation", "feather")
 
 
 def extra_box_at(extra, at: int) -> tuple[float, ...]:
     """One extra box at a clip-local tick: its own keys interpolated, or the static box.
 
-    The five numbers travel together, so a segment's interpolation is one decision for the whole
-    box — there is no per-edge easing to get out of step with the others.
+    The numbers travel together, so a segment's interpolation is one decision for the whole
+    box — there is no per-edge easing to get out of step with the others. 1.258: the feather rides
+    in this same tuple, so it changes on the very same frame boundaries; a key that does not state
+    one answers with the box's own still feather (`box_value` is the only place that question is
+    asked).
     """
     keys = extra.keys
     if not keys:
         return tuple(getattr(extra, name) for name in MASK_EXTRA_FIELDS)
     if at <= keys[0].at_ticks:
-        return tuple(getattr(keys[0], name) for name in MASK_EXTRA_FIELDS)
+        return tuple(box_value(extra, keys[0], name) for name in MASK_EXTRA_FIELDS)
     if at >= keys[-1].at_ticks:
-        return tuple(getattr(keys[-1], name) for name in MASK_EXTRA_FIELDS)
+        return tuple(box_value(extra, keys[-1], name) for name in MASK_EXTRA_FIELDS)
     for left, right in zip(keys, keys[1:]):
         if left.at_ticks <= at <= right.at_ticks:
             # 1.257：这一串五个数走的缓动与轮廓形变是同一条式子——把区间两端交给 `_interpolate`，
@@ -714,13 +718,13 @@ def extra_box_at(extra, at: int) -> tuple[float, ...]:
             )
             return tuple(
                 round(
-                    getattr(left, name)
-                    + (getattr(right, name) - getattr(left, name)) * progress,
+                    (start := box_value(extra, left, name))
+                    + (box_value(extra, right, name) - start) * progress,
                     9,
                 )
                 for name in MASK_EXTRA_FIELDS
             )
-    return tuple(getattr(keys[-1], name) for name in MASK_EXTRA_FIELDS)
+    return tuple(box_value(extra, keys[-1], name) for name in MASK_EXTRA_FIELDS)
 
 
 def extra_box_schedule(clip: Clip, extra, quantum: int, limit: int | None = None) -> list[dict]:

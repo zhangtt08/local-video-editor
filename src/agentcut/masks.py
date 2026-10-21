@@ -27,6 +27,15 @@ def _is_number(text: str) -> bool:
     return True
 
 
+def _feather_term(feather: str) -> str:
+    """斜坡的宽怎么说：一个数就写那个数（化成 `float` 再印，0.200000000 与 0.2 是同一个数），
+    一条式子则带上一个极窄的下限——式子在某一窗真的是 0 时不能拿它除。
+
+    下限是 1e-4 个盒子：硬边与这条窄斜坡之间差不到一个像素的千分之一，而这一判不必知道帧时间。
+    """
+    return f"{float(feather)}" if _is_number(feather) else f"max({feather},1e-4)"
+
+
 RASTER_WIDTH = 512
 SUB_ROWS = 4
 FLATNESS = 0.2
@@ -82,11 +91,16 @@ def alpha_expression(
     else:
         x = f"abs(({nx}-({taken['mask_x']}))*2/({taken['mask_width']}))"
         y = f"abs(({ny}-({taken['mask_y']}))*2/({taken['mask_height']}))"
+    # 1.258：羽化也可以跟着那一串框点换——`mask_feather` 带来的可能是一个数（那一窗与别窗同值，
+    # 化成常数，与静止那一路逐字节相同），也可能是窗表那条式子。
+    feather = (values or {}).get("mask_feather") or f"{mask.feather}"
+    ramp = not _is_number(feather) or float(feather) > 0
+    wide = _feather_term(feather)
     if mask.shape == "ellipse":
         radius = f"sqrt(pow({x},2)+pow({y},2))"
-        value = f"clip((1-{radius})/{mask.feather},0,1)" if mask.feather else f"lte({radius},1)"
-    elif mask.feather:
-        value = f"clip((1-{x})/{mask.feather},0,1)*clip((1-{y})/{mask.feather},0,1)"
+        value = f"clip((1-{radius})/{wide},0,1)" if ramp else f"lte({radius},1)"
+    elif ramp:
+        value = f"clip((1-{x})/{wide},0,1)*clip((1-{y})/{wide},0,1)"
     else:
         value = f"lte({x},1)*lte({y},1)"
     return f"(1-({value}))" if mask.inverted else value

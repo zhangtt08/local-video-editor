@@ -485,11 +485,15 @@ async function sweepOne(size, hostPort, probeSource) {
         await sleep(400);
         const proof = await evaluate("(function(){"
           + "var c=document.querySelector('#stack-0-center_x');var r=document.querySelector('#stack-0-rotation');"
+          + "var f=document.querySelector('#stack-0-feather');"
           + "var n=document.querySelector('.mask-stack-at');"
           + "var cur=document.querySelector('.mask-stack-keylist li.current button');"
-          + "return {center:c?c.value:null,rotation:r?r.value:null,note:n?n.textContent.trim():null,"
+          + "return {center:c?c.value:null,rotation:r?r.value:null,feather:f?f.value:null,"
+          + "note:n?n.textContent.trim():null,"
           + "current:cur?cur.textContent.trim():null,aria:cur?cur.getAttribute('aria-current'):null};})()");
+        // 1.258：那一枚框点自己写着羽化 12%，而这一块静止的是 5%——卡片读的是哪一个，量得出来。
         const bad = !scrolled || !proof || Number(proof.center) !== 55 || Number(proof.rotation) !== 6
+          || Number(proof.feather) !== 12
           || !(proof.note || "").includes("改的是这一枚") || proof.aria !== "true";
         if (bad) rows.push({ screen: label, panel: flag("panel", ""), size, data: null,
           error: "卡片没有显示框点那一枚的数：" + JSON.stringify(proof) });

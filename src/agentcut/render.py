@@ -38,6 +38,7 @@ from .contracts import (
     BLUR_RADIUS_LIMIT_PX,
     DENOISE_FLOOR_DB,
     GBLUR_STEPS,
+    MASK_BOX_VALUES,
     MASK_FIELDS,
     MASK_SHAPE_SCHEDULE_MAX,
     OUTPUT_COLOUR_TAGS,
@@ -1698,7 +1699,7 @@ def compile_render_plan(
                                 axis_steps(schedule, index),
                                 project.settings.frame_ticks,
                             )
-                            for index, name in enumerate(MASK_FIELDS)
+                            for index, name in enumerate(MASK_BOX_VALUES)
                         }
                     elif follow:
                         registers = (20 + 2 * slot, 21 + 2 * slot)

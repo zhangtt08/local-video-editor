@@ -170,6 +170,10 @@ class ProjectStore:
             if isinstance(node, dict):
                 if "interpolation" in node and "at_ticks" in node and node.get("bezier") is None:
                     node.pop("bezier", None)
+                    # 1.258：没写的羽化就是「这一块自己静止的那个数」。把 null 也剥掉，1.257 那份
+                    # 载荷显式写了 feather: null 重发时仍命中自己那一份回执，不裂成两笔。
+                    if node.get("feather") is None:
+                        node.pop("feather", None)
                 if "exposure" in node and not node.get("grade"):
                     node.pop("grade", None)
                 if "kind" in node and node.get("mix") == 1.0:

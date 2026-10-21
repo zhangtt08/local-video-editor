@@ -645,6 +645,9 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
   // 1.238：一枚框点说的是「这一刻这块盒子的五个数」——打点就是把卡片里现在这五个数记在播放头那一帧上。
   // 1.243：这一帧**已经有**框点时不打点也不覆盖——卡片上那五个数此刻显示的就是那一枚，
   // 再拿静止值盖上去不是「打点」，是把它抹掉。界面把按钮灰掉并写明，函数这里也守一道。
+  const featherOnKey = Boolean(app.caps?.features?.extra_mask_feather);
+  // 「上面那几个数」到底是几个，由引擎那一格认不认得说了算——界面不许自己数一个数出来。
+  const keyCells = featherOnKey ? 6 : 5;
   const stampKey = (index: number) => {
     const item = stack[index];
     const at = localTick();
@@ -658,6 +661,9 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
       width: item.width,
       height: item.height,
       rotation: item.rotation ?? 0,
+      // 1.258：打点记的是「这一块现在长什么样」，软边也是它的一部分——不认识这一格的引擎
+      // 会把整条写入拒掉，所以这一格跟着 capabilities 说。
+      ...(featherOnKey ? { feather: item.feather } : {}),
       interpolation: "linear",
     });
     keys.sort((left, right) => left.at_ticks - right.at_ticks);
@@ -736,8 +742,14 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
           <span className="dim">°</span>
         </label>}
         <label className="mask-stack-cell"><span>羽化</span>
-          <EffectInput id={`stack-${index}-feather`} value={item.feather * 100} min={0} max={100} step={1}
-            onCommit={(value) => patch(index, { feather: value / 100 })} />
+          {/* 1.258：停在框点那一帧时，软边改的也是这一枚——静止那一路照旧整块改。
+              引擎没报这一格的开关时，写进框点的 `feather` 会被连整条写入一起拒，所以那时只改块。 */}
+          <EffectInput id={`stack-${index}-feather`}
+            value={(atKey && featherOnKey ? atKey.feather ?? item.feather : item.feather) * 100}
+            min={0} max={100} step={1}
+            onCommit={(value) => atKey && featherOnKey
+              ? patchKey(index, atKey.at_ticks, { feather: value / 100 })
+              : patch(index, { feather: value / 100 })} />
           <span className="dim">%</span>
         </label>
         <label className="mask-stack-cell mask-stack-invert"><input type="checkbox" checked={item.inverted} disabled={disabled}
@@ -745,15 +757,15 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
         <div className="mask-stack-keys">
           <button type="button" className="btn tiny subtle" disabled={disabled || keysLimit === 0 || (item.keys?.length ?? 0) >= keysLimit || Boolean(atKey)}
             title={atKey
-              ? "这一帧已经有一枚框点——上面五个数改的就是它。要在别的时刻再打一枚，先把播放头挪开。"
-              : `把第 ${index + 1} 块现在的中心、大小与角度记在播放头那一帧上；打了框点的块按整帧窗一格一步地动，预览与导出读同一张表。`}
+              ? `这一帧已经有一枚框点——上面 ${keyCells} 个数改的就是它。要在别的时刻再打一枚，先把播放头挪开。`
+              : `把第 ${index + 1} 块现在的中心、大小、角度与软边记在播放头那一帧上；打了框点的块按整帧窗一格一步地动，预览与导出读同一张表。`}
             onClick={() => stampKey(index)}>{atKey ? "这一帧已有框点" : "在播放头打框点"}</button>
           <span className="dim mask-stack-at" title={atKey
-            ? "播放头正停在一枚框点上：上面五个数就是这一枚，改哪一个都写回这一枚。"
+            ? `播放头正停在一枚框点上：上面 ${keyCells} 个数就是这一枚，改哪一个都写回这一枚。`
             : item.keys?.length
-              ? "播放头不在这块的任何一枚框点上：上面五个数此刻不参与渲染，它们是下一次「在播放头打框点」会记下的值。在画面里选中这一块时，那一框画的就是这一格真正执行的窗；拖它会在这一帧新打一枚框点。"
-              : "这块还没有框点：上面五个数就是它在整段里的静止值。"}>
-            {item.keys?.length ?? 0} / {keysLimit} 枚框点{atKey ? " · 上面五个数改的是这一枚" : item.keys?.length ? " · 上面五个数是模板值" : ""}
+              ? `播放头不在这块的任何一枚框点上：上面 ${keyCells} 个数此刻不参与渲染，它们是下一次「在播放头打框点」会记下的值。在画面里选中这一块时，那一框画的就是这一格真正执行的窗；拖它会在这一帧新打一枚框点。`
+              : `这块还没有框点：上面 ${keyCells} 个数就是它在整段里的静止值。`}>
+            {item.keys?.length ?? 0} / {keysLimit} 枚框点{atKey ? ` · 上面 ${keyCells} 个数改的是这一枚` : item.keys?.length ? ` · 上面 ${keyCells} 个数是模板值` : ""}
           </span>
           {item.keys?.length ? <button type="button" className="btn tiny subtle" disabled={disabled}
             onClick={() => patch(index, { keys: [] })}>清空框点</button> : null}

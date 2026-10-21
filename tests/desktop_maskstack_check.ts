@@ -76,7 +76,7 @@ assert.match(inspector, /MASK_ROWS\.map\(\(\[field, label, min, max\]\)/,
   "叠加那几块的中心/大小行不是从同一张 MASK_ROWS 折出来的（第二张标签表迟早对不上）");
 assert.match(inspector, /id=\{`stack-\$\{index\}-\$\{field\}`\}/, "每一块的输入框没有按块编号");
 assert.match(inspector, /id=\{`stack-\$\{index\}-rotation`\}/, "叠加的块改不了角度");
-assert.match(inspector, /value=\{item\.feather \* 100\}/, "叠加的块改不了羽化");
+assert.match(inspector, /id=\{`stack-\$\{index\}-feather`\}/, "叠加的块改不了羽化");
 assert.match(inspector, /inverted: event\.target\.checked/, "叠加的块改不了反转");
 assert.match(inspector, /const patch = \(index: number, part: Partial<ShapeMask>\)/,
   "改一个数要经一处 patch——四处各拼一遍整串，早晚有一处只改了主遮罩");
@@ -176,8 +176,8 @@ assert.match(inspector, /const patchKey = \(index: number, atTick: number, part:
 assert.match(inspector, /if \(keys\.some\(\(key\) => key\.at_ticks === at\)\) return;/, "这一帧已有框点时，「打点」仍会拿静止值把它盖掉");
 assert.match(inspector, /\|\| Boolean\(atKey\)\}/, "这一帧已有框点时，那颗打点按钮没有灰掉");
 assert.match(inspector, /这一帧已有框点/, "按钮没有把「这一帧已经有了」写在眼前");
-assert.match(inspector, /上面五个数改的是这一枚/, "没有说清上面五个数此刻改的是哪一枚");
-assert.match(inspector, /上面五个数是模板值/, "停在两枚之间时没有说清那五个数此刻只是模板");
+assert.match(inspector, /上面 \$\{keyCells\} 个数改的是这一枚/, "没有说清那几个数此刻改的是哪一枚");
+assert.match(inspector, /上面 \$\{keyCells\} 个数是模板值/, "停在两枚之间时没有说清那几个数此刻只是模板");
 assert.match(inspector, /className=\{key\.at_ticks === active \? "current" : undefined\}/, "当前那一枚框点在表里没有标出来");
 assert.match(inspector, /aria-current=\{key\.at_ticks === active \? "true" : undefined\}/, "当前那一枚对读屏没有交代");
 assert.match(css, /\.mask-stack-at\s*\{[^}]*text-overflow: ellipsis/, "那一句窄了不省略，会把那一行挤成第二行");
@@ -360,4 +360,51 @@ assert.match(css, /\.mask-stack-bezier \{[^}]*font-size: var\(--fs-label\)/,
 assert.match(css, /\.mask-stack-keylist li \{[^}]*flex-wrap: wrap/,
   "那一格不换行——四格挤在同一个不换行的 flex 里会被切（1.210 同一类）");
 
-console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的五个数与羽化/反转都在格子里改、每一块可以打自己的框点、跟随时大小按同一比例缩放、框点的时间在条顶上看得见且不接指针、每一块都写明自己怎么动、停在框点上时五个数改的就是那一枚、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、选中的那一块拖着中心走、转着的那一块按未转的盒缩放四个角、那颗角度柄与主遮罩共用同一份换算与同一个写入口、Alt 拖出来的是副本、框点那几种缓动与那四格的带只有一处主人、样式仍走刻度");
+// ㉒ 1.258：那一串框点也可以带软边——两端读的是同一张窗表里的那一格。
+const contractsSrc = read("src/agentcut/contracts.py", "../../src/agentcut/contracts.py");
+const animationSrc = read("src/agentcut/animation.py", "../../src/agentcut/animation.py");
+const renderSrc = read("src/agentcut/render.py", "../../src/agentcut/render.py");
+const masksSrc = read("src/agentcut/masks.py", "../../src/agentcut/masks.py");
+const projectsSrc = read("src/agentcut/projects.py", "../../src/agentcut/projects.py");
+assert.match(contractsSrc, /feather: Annotated\[float \| None, Field\(ge=0, le=1\)\] = None/,
+  "框点没有软边这一格，或它不是「没写就用这一块静止的那个数」那个意思");
+assert.match(contractsSrc, /def box_value\(extra, key, name: str\)/,
+  "「没写的那一格归谁」没有一处主人");
+assert.match(contractsSrc, /MASK_BOX_VALUES = \(\*MASK_FIELDS, "mask_feather"\)/,
+  "那一串数的名字不是从主遮罩那五个数折出来的");
+assert.match(contractsSrc, /start = box_value\(self, left, name\)/,
+  "越界那一条没问 box_value，自己在判羽化写没写");
+assert.match(engine, /feather\?: number \| null/, "渲染层的框点类型不认识软边这一格");
+assert.match(engine, /rotation: number; feather\?: number/, "窗表那一行的类型没有软边");
+assert.match(animationSrc, /MASK_EXTRA_FIELDS = \("center_x", "center_y", "width", "height", "rotation", "feather"\)/,
+  "窗表那一串数不是那六个");
+assert.match(animationSrc, /box_value\(extra, left, name\)/,
+  "采样那一路没问 box_value");
+assert.doesNotMatch(animationSrc, /extra\.feather if|key\.feather is not None/,
+  "animation 里又写了一遍「没写就用静止值」——那一句只能有一个主人");
+assert.match(renderSrc, /for index, name in enumerate\(MASK_BOX_VALUES\)/,
+  "导出那一步还在按主遮罩那五个数取值名");
+assert.match(masksSrc, /def _feather_term\(feather: str\)/, "那条斜坡的写法没有一处主人");
+assert.match(masksSrc, /if _is_number\(feather\) else f"max\(\{feather\},1e-4\)"/,
+  "一个数没化成字面量，或一条式子没带那个下限");
+assert.match(masksSrc, /\(values or \{\}\)\.get\("mask_feather"\)/, "alpha 那一路没读窗表里的软边");
+assert.match(projectsSrc, /node\.pop\("feather", None\)/,
+  "没写软边的旧回执会被这一版裂成两笔");
+assert.match(inspector, /const featherOnKey = Boolean\(app\.caps\?\.features\?\.extra_mask_feather\)/,
+  "那一句「上面几个数」不是引擎那一格认不认得决定的");
+assert.match(inspector, /const keyCells = featherOnKey \? 6 : 5/,
+  "那一格数的是几个数是界面自己写死的");
+assert.match(inspector, /\.\.\.\(featherOnKey \? \{ feather: item\.feather \} : \{\}\)/,
+  "「在播放头打框点」没有把这一块现在的软边一起记进去");
+assert.match(inspector, /atKey && featherOnKey \? atKey\.feather \?\? item\.feather : item\.feather/,
+  "停在框点那一帧时，羽化那一格显示的不是这一枚");
+assert.match(inspector, /patchKey\(index, atKey\.at_ticks, \{ feather: value \/ 100 \}\)/,
+  "停在框点那一帧改羽化时没写回这一枚");
+assert.match(picture, /featherOnKey && typeof selectedKey\.feather === "number"/,
+  "画面上那一框停在框点时没有读这一枚的软边");
+assert.match(picture, /feather: box\.feather \?\? row\.feather/,
+  "画面里新打的那一枚没有带走这一窗的软边");
+assert.equal((inspector.match(/op: "clip\.mask_stack"/g) ?? []).length, 0,
+  "检查器不许绕过那一处写入口");
+
+console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的那几个数与反转都在格子里改、每一块可以打自己的框点、跟随时大小按同一比例缩放、框点的时间在条顶上看得见且不接指针、每一块都写明自己怎么动、停在框点上时那几个数改的就是那一枚且软边也在其中、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、选中的那一块拖着中心走、转着的那一块按未转的盒缩放四个角、那颗角度柄与主遮罩共用同一份换算与同一个写入口、Alt 拖出来的是副本、框点那几种缓动与那四格的带只有一处主人、样式仍走刻度");

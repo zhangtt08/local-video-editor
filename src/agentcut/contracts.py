@@ -21,7 +21,11 @@ MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 
 SCHEMA_VERSION = (
 
-    28  # v28 lets one of those box keys ride a bezier curve: a v27 row names only
+    29  # v29 lets one of those box keys carry its own feather: a v28 row's key has no such field
+
+    #     and `Contract` forbids unknown ones, so an older engine fails the row rather than quietly
+
+    #     rendering a hard edge. v28 lets a box key ride a bezier curve: a v27 row names only
 
     #     linear/hold/ease, so an older engine must fail that literal rather than invent an easing.
 
@@ -49,7 +53,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.257.0"
+APP_VERSION = "1.258.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -432,6 +436,10 @@ MASK_FIELDS = {
 }
 
 MASK_SIZE_FIELDS = {"mask_width", "mask_height"}
+# 1.258：再叠那一块的窗表多带一个数——羽化也跟着换。这张名字表就是「第几列叫什么」唯一的一处：
+# 次序必须与 `animation.MASK_EXTRA_FIELDS` 逐位相同（有门禁按位对），导出那一步靠它取值名。
+
+MASK_BOX_VALUES = (*MASK_FIELDS, "mask_feather")
 # 1.221：一条片段可以再叠几块**矩形/椭圆**的遮罩，与主遮罩相乘（交集）。
 # 上限 4 是把「两端的图都要各出一张」这件事收在一个能预算的数上：导出那条 alpha 是
 # `alpha(X,Y)*A*B*C*D`，浏览器那一侧是 `mask-composite: intersect` 叠同样几层。
@@ -2198,6 +2206,11 @@ class MaskBoxKey(Contract):
 
     rotation: Annotated[float, Field(ge=-MASK_ROTATION_LIMIT, le=MASK_ROTATION_LIMIT)] = 0.0
 
+    # 1.258：羽化可以不管——没写这一格就是「这一块自己静止的那个数」，所以 1.257 之前写下的框点
+    #     读进来画面一字不改。写了才跟着这一枚一起换，与那五个数同一批整帧边界。
+
+    feather: Annotated[float | None, Field(ge=0, le=1)] = None
+
     # The five numbers step together, so the segment's interpolation is the whole transition.
     interpolation: Literal["linear", "hold", "ease", "bezier"] = "linear"
 
@@ -2227,6 +2240,17 @@ MASK_BOX_BANDS = {
 # 框点那几种缓动的名单也只由这里说一次：从契约那条 Literal 读出来，不抄第二份。
 
 MASK_BOX_INTERPOLATIONS = tuple(get_args(MaskBoxKey.model_fields["interpolation"].annotation))
+
+# 1.258：框点可以**不管**羽化（没写就是这一块自己静止的那个数）。这一格归谁，只在这一个主人问一次
+#     ——采样那一手与越界那一条都问它，不许各自再判一次 `is None`。
+
+MASK_EXTRA_INHERITED = ("feather",)
+
+
+def box_value(extra, key, name: str) -> float:
+    """这一枚框点在那一个数上的值；没写的那一格交回这一块盒子自己静止的那一个。"""
+    got = getattr(key, name)
+    return getattr(extra, name) if got is None and name in MASK_EXTRA_INHERITED else got
 
 
 class ShapeMask(Contract):
@@ -2297,9 +2321,10 @@ class ExtraShapeMask(ShapeMask):
 
     @model_validator(mode="after")
     def bezier_stays_in_band(self):
-        """一条贝塞尔段能把五个数各自甩到两端之外——每一格有自己的那条带，越界就是拒。
+        """一条贝塞尔段能把这一串的数各自甩到两端之外——每一格有自己的那条带，越界就是拒。
 
-        带的两个数不在这里再抄一份：就是 `MaskBoxKey` 那五个字段自己声明的 `ge`/`le`。
+        带的两个数不在这里再抄一份：就是 `MaskBoxKey` 那些字段自己声明的 `ge`/`le`。
+        没写的那一格（目前只有羽化）走的仍是 `box_value` 那一个主人，不是这里再判一次。
         """
         from .animation import bezier_extrema, bezier_value
 
@@ -2309,11 +2334,11 @@ class ExtraShapeMask(ShapeMask):
                 continue
             controls = left.bezier or Bezier()
             for name, (low, high) in MASK_BOX_BANDS.items():
-                start = getattr(left, name)
+                start = box_value(self, left, name)
                 for u in bezier_extrema(controls.y1, controls.y2):
-                    value = start + (getattr(right, name) - start) * bezier_value(
-                        controls.y1, controls.y2, u
-                    )
+                    value = start + (
+                        box_value(self, right, name) - start
+                    ) * bezier_value(controls.y1, controls.y2, u)
                     if not low - 1e-10 <= value <= high + 1e-10:
                         raise ValueError(f"{name} bezier curve exceeds [{low}, {high}]")
         return self
@@ -7081,6 +7106,9 @@ def capabilities(
             "mask_stack": True,
             "mask_stack_follow": True,
             "extra_mask_motion": True,
+            # 1.258：那一串框点里也可以带羽化。界面据此决定「停在框点上改羽化」写的是这一枚
+            # 还是这一块自己——不认识这一格的引擎会连整条写入一起拒。
+            "extra_mask_feather": True,
 
             # 1.165: that angle accepts keyframes. Both ends execute one frame-aligned staircase
 

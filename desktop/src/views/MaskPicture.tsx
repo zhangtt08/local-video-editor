@@ -304,9 +304,12 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
   // 新那一枚接着这一窗的节奏走：插值抄这一窗起点那一枚，不自己编一个。
   const windowOwner = selectedExtra && selectedWindow
     ? boxKeyAt(selectedExtra, selectedWindow.from_ticks) ?? selectedExtra.keys?.[0] : null;
+  const featherOnKey = Boolean(app.caps?.features?.extra_mask_feather);
   const extraBox: ShapeMask | null = selectedExtra
     ? (selectedKey ? { ...selectedExtra, center_x: selectedKey.center_x, center_y: selectedKey.center_y,
-        width: selectedKey.width, height: selectedKey.height, rotation: selectedKey.rotation ?? 0 }
+        width: selectedKey.width, height: selectedKey.height, rotation: selectedKey.rotation ?? 0,
+        // 1.258：那一枚框点没写软边时，画的仍是这一块静止的那个数——与引擎那一路同一个说法。
+        ...(featherOnKey && typeof selectedKey.feather === "number" ? { feather: selectedKey.feather } : {}) }
       : executedBox && canInsert ? { ...selectedExtra, ...executedBox } : selectedExtra)
     : null;
   const extraDrawable = Boolean(visible && selectedExtra && extraBox && !follow && !disabled
@@ -422,6 +425,8 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
       applyExtra(gesture.index, (row) => ({ ...row,
         keys: [...(row.keys ?? []), { at_ticks: at, center_x: box.center_x, center_y: box.center_y,
           width: box.width, height: box.height, rotation: box.rotation ?? 0,
+          // 1.258：软边也抄这一窗那一个（引擎没报这一格就不写，写了会被连整条写入一起拒）。
+          ...(gesture.rotate || !featherOnKey ? {} : { feather: box.feather ?? row.feather }),
           interpolation: gesture.insertInterp,
           bezier: gesture.insertInterp === "bezier" ? gesture.insertBezier ?? DEFAULT_BEZIER : null,
         }].sort((a, b) => a.at_ticks - b.at_ticks) }),
