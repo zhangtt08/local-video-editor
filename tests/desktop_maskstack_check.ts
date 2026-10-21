@@ -7,8 +7,8 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { boxKeyAt, boxKeyForPlayhead } from "../desktop/src/effects";
-import type { ShapeMask } from "../desktop/src/engine";
+import { BEZIER_AXES, boxKeyAt, boxKeyForPlayhead, bezierBand, DEFAULT_BEZIER, maskBoxInterpolations } from "../desktop/src/effects";
+import type { Capabilities, ShapeMask } from "../desktop/src/engine";
 import { boxVectorFromPointer, rotateAngleFromPointer, rotatedBoxPoints, stemAngleFromUser } from "../desktop/src/maskGeometry";
 import { offsetWords } from "../desktop/src/time";
 
@@ -27,6 +27,8 @@ const picture = read("desktop/src/views/MaskPicture.tsx", "../../desktop/src/vie
 const preview = read("desktop/src/views/Preview.tsx", "../../desktop/src/views/Preview.tsx");
 const engine = read("desktop/src/engine.ts", "../../desktop/src/engine.ts");
 const css = read("desktop/src/styles.css", "../../desktop/src/styles.css");
+const effects = read("desktop/src/effects.ts", "../../desktop/src/effects.ts");
+const curve = read("desktop/src/views/CurveEditor.tsx", "../../desktop/src/views/CurveEditor.tsx");
 
 // ① 写的那一手：一次交回整串，与 `clip.mask`、`clip.grade` 同一个规矩
 const writer = /export function setClipMaskStack\([\s\S]*?\n\}/.exec(store);
@@ -110,11 +112,14 @@ assert.match(inspector, /Math\.round\(raw \/ frame\) \* frame/, "框点没有落
 assert.match(engine, /extra_mask_windows\?: \(ExtraMaskWindow\[\] \| null\)\[\] \| null/, "清单的类型里没有每块自己的窗");
 assert.match(picture, /rotationWindowAt\(windows, local\)/, "浏览器没有按播放头挑那一块自己的窗");
 assert.match(picture, /row\.own && !row\.follow \? "0px 0px"/, "自己带框点的那一层没有按整画面图落位");
-// 1.239：每一枚框点在卡片里有名字——时刻可跳、插值可改（贝塞尔不在这一档）、删除只走那一处 patch。
+// 1.239：每一枚框点在卡片里有名字——时刻可跳、插值可改、删除只走那一处 patch。
 assert.match(inspector, /className="mask-stack-keylist"/, "框点没有一张看得见的表");
 assert.match(inspector, /timecode\(key\.at_ticks, rate\)/, "框点的时刻不是时间码");
 assert.match(inspector, /playhead\.set\(clip\.position_ticks \+ key\.at_ticks\)/, "点时刻没有把播放头挪过去");
-assert.match(inspector, /value !== "bezier"/, "框点里出现了这一档不支持的贝塞尔插值");
+// 1.257 把贝塞尔这一档给了框点：原来那枚针钉的是「下拉里没有贝塞尔」——那是被换掉的旧形状。
+// 按本意收窄成「名单只能由引擎点名，界面不许自己滤掉某一种」。
+assert.doesNotMatch(inspector, /INTERPOLATIONS\)\.filter/, "框点那一格又开始自己滤某一种缓动（第二份名单）");
+assert.match(inspector, /const boxInterpolations = maskBoxInterpolations\(app\.caps\);/, "缓动名单不是引擎交下来的那一份");
 assert.match(inspector, /row\.at_ticks !== key\.at_ticks/, "删除一枚框点没有走同一处 patch");
 
 // ⑨ 1.240：跟随时「不转的主遮罩 + 不转的那一块」共享中心与大小——单位图按同一对比例缩放。
@@ -320,4 +325,39 @@ assert.match(picture, /按住 Alt 拖 = 先复制这一块，再拖那一副本�
 assert.match(picture, /块上限，Alt 这一手用不了：先在检查器删掉一块。/, "到顶时没说清这一只手为什么没有");
 assert.match(css, /\.mask-extra-outline\.ghost\s*\{[^}]*opacity: \.4/, "副本那一框没有自己的淡档（与真身分不清）");
 assert.equal((picture.match(/setClipMaskStack\(/g) ?? []).length, 1, "Alt 这一手又长出第二个写入口");
-console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的五个数与羽化/反转都在格子里改、每一块可以打自己的框点、跟随时大小按同一比例缩放、框点的时间在条顶上看得见且不接指针、每一块都写明自己怎么动、停在框点上时五个数改的就是那一枚、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、选中的那一块拖着中心走、转着的那一块按未转的盒缩放四个角、那颗角度柄与主遮罩共用同一份换算与同一个写入口、样式仍走刻度");
+
+// ㉑ 1.257：框点也能带贝塞尔——名单、那四格的带、默认柄，都只有一处主人；两端读的是同一张窗表。
+assert.deepEqual(maskBoxInterpolations(null), ["linear", "hold", "ease"],
+  "没回名单的旧引擎那一头，兜底必须是它当时认的那三种");
+assert.deepEqual(maskBoxInterpolations({ mask_box_interpolations: ["linear", "bezier"] } as unknown as Capabilities),
+  ["linear", "bezier"], "引擎点了名还被界面自己改了一份——那张名单就不是唯一的主人");
+assert.deepEqual(BEZIER_AXES.map((axle) => axle.axis), ["x1", "y1", "x2", "y2"],
+  "那四格的名字或次序变了：曲线编辑器与检查器是在读同一张表");
+assert.deepEqual([...bezierBand("y1")], [-4, 4], "数值那两格的带不对");
+assert.deepEqual([...bezierBand("x2")], [0, 1], "时间那两格的带不对");
+assert.equal(DEFAULT_BEZIER.x1, 1 / 3, "默认柄与契约那一份不是同一个数");
+assert.equal((effects.match(/export const DEFAULT_BEZIER/g) ?? []).length, 1, "默认柄有第二处主人");
+assert.doesNotMatch(curve, /const DEFAULT_BEZIER/, "曲线编辑器又自己抄了一份默认柄");
+assert.doesNotMatch(curve, /startsWith\("x"\)/, "曲线编辑器里还留着「x 就是 0..1」那份第二处判断");
+assert.match(curve, /BEZIER_AXES\.map/, "曲线编辑器那四格没有读那张表");
+assert.match(curve, /bezierBand\(control\[0\]\)/, "拖动落回时没有按那张表夹");
+assert.match(effects, /caps\?\.mask_box_interpolations\?\.length/, "名单没有读引擎那一份");
+assert.equal((effects.match(/\["linear", "hold", "ease"\]/g) ?? []).length, 1, "旧引擎的兜底名单写了第二份");
+assert.match(inspector, /boxInterpolations\.map\(\(value\) => <option key=\{value\} value=\{value\}>/,
+  "那一格没有按引擎点名的名单排选项");
+assert.match(inspector, /bezier: next === "bezier" \? row\.bezier \?\? DEFAULT_BEZIER : null/,
+  "换缓动时柄没跟着走（选了贝塞尔却没有柄、换走了还留着柄都是第二种状态）");
+assert.match(inspector, /key\.interpolation === "bezier" \? <div className="mask-stack-bezier"/,
+  "选了贝塞尔却没把那四格画出来——人能选档却不能调，等于只有一端会执行");
+assert.match(inspector, /\[axle\.axis\]: percent \/ 100/,
+  "那一格写的不是百分数换算后的那一个数（界面自己再造一套刻度）");
+assert.match(picture, /insertBezier: windowOwner\?\.bezier \?\? null,/,
+  "画面里新打那一枚没有带走这一窗起点那一段的柄");
+assert.match(picture, /bezier: gesture\.insertInterp === "bezier" \? gesture\.insertBezier \?\? DEFAULT_BEZIER : null,/,
+  "新打那一枚在贝塞尔那档写了空柄");
+assert.match(css, /\.mask-stack-bezier \{[^}]*font-size: var\(--fs-label\)/,
+  "那一行的小字没有走刻度");
+assert.match(css, /\.mask-stack-keylist li \{[^}]*flex-wrap: wrap/,
+  "那一格不换行——四格挤在同一个不换行的 flex 里会被切（1.210 同一类）");
+
+console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的五个数与羽化/反转都在格子里改、每一块可以打自己的框点、跟随时大小按同一比例缩放、框点的时间在条顶上看得见且不接指针、每一块都写明自己怎么动、停在框点上时五个数改的就是那一枚、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、选中的那一块拖着中心走、转着的那一块按未转的盒缩放四个角、那颗角度柄与主遮罩共用同一份换算与同一个写入口、Alt 拖出来的是副本、框点那几种缓动与那四格的带只有一处主人、样式仍走刻度");

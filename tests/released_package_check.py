@@ -125,6 +125,11 @@ RENDERER_SENTENCES = (
     "播放头正停在一枚框点上",
     # 1.244：框点越尾时那句自己的话——不能套用曲线针那句「仍在工程里」。
     "枚再叠遮罩的框点落在那段自己的长度之外——没有搬过来（框点不能停在段尾之后）",
+    # 1.257：框点选了贝塞尔，眼前就得有那四格——名字与那句「写回的仍是同一条命令」是
+    # 人与 Agent 共用的说法，藏在悬停里等于没有。
+    "这一枚框点到下一枚之间按贝塞尔走",
+    "出点数值",
+    "入点时间",
 )
 RENDERER_LITERALS = (
     "clip.color_manage",
@@ -137,7 +142,8 @@ RENDERER_LITERALS = (
     "COMPOSITE_LIMIT",
     "attribute-plan",
     "attribute_categories",
-    "ATTRIBUTE_PASTE_LIMIT"
+    "ATTRIBUTE_PASTE_LIMIT",
+    "mask-stack-bezier",
 )
 
 

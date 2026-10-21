@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type PointerEvent } from "react";
 
-import { type AnimationGraph, type Clip, type Keyframe, type LayerKeyframe, type Property, type Bezier } from "../engine";
-import { EFFECT_FIELDS, FIELD_LABEL, INTERPOLATIONS, LAYER_KEY_LABEL, curveBase, layerCurveBase, layerCurveFields, layerKeyCommand, layerKeysOf, layerStepAt, maskAnimFields, spatialAnimFields, type LayerCurveField } from "../effects";
+import { type AnimationGraph, type Clip, type Keyframe, type LayerKeyframe, type Property } from "../engine";
+import { EFFECT_FIELDS, FIELD_LABEL, INTERPOLATIONS, LAYER_KEY_LABEL, BEZIER_AXES, DEFAULT_BEZIER, bezierBand, curveBase, layerCurveBase, layerCurveFields, layerKeyCommand, layerKeysOf, layerStepAt, maskAnimFields, spatialAnimFields, type LayerCurveField } from "../effects";
 import { TIMEBASE, timecode } from "../time";
 import { keyframeTick } from "../keyframeSnap";
 import { applyShift, bandEdges, bandEntry, groupShift, quantizeToBand } from "../curveDrag";
@@ -10,7 +10,6 @@ import { appInfo, clearBatch, commitBatch, editAtRevision, playhead, prefs, quan
 
 const LEFT = 58, TOP = 12, WIDTH = 924, HEIGHT = 166;
 
-const DEFAULT_BEZIER: Bezier = { x1: 1 / 3, y1: 0, x2: 2 / 3, y2: 1 };
 const interpolationPoint = (point: Keyframe, interpolation: Keyframe["interpolation"]): Keyframe => ({ ...point, interpolation, bezier: interpolation === "bezier" ? point.bezier ?? DEFAULT_BEZIER : null });
 const keySignature = (keys: Keyframe[]) => JSON.stringify([...keys].sort((a,b) => a.property.localeCompare(b.property) || a.at_ticks-b.at_ticks).map((k) => [k.property,k.at_ticks,k.value,k.interpolation,k.bezier ? [k.bezier.x1,k.bezier.y1,k.bezier.x2,k.bezier.y2] : null]));
 
@@ -216,7 +215,13 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
       const control = gesture.handle === 0 ? ["x1", "y1"] as const : ["x2", "y2"] as const;
       const at = start + (position.x - LEFT) / WIDTH * span;
       const value = high - (position.y - TOP) / HEIGHT * valueSpan;
-      const next = { ...(gesture.point.bezier ?? DEFAULT_BEZIER), [control[0]]: Math.max(0, Math.min(1, (at - gesture.point.at_ticks) / (gesture.right.at_ticks - gesture.point.at_ticks))), [control[1]]: Math.max(-4, Math.min(4, (value - gesture.point.value) / (gesture.right.value - gesture.point.value))) };
+      const timeBand = bezierBand(control[0]);
+      const valueBand = bezierBand(control[1]);
+      const next = { ...(gesture.point.bezier ?? DEFAULT_BEZIER),
+        [control[0]]: Math.max(timeBand[0], Math.min(timeBand[1],
+          (at - gesture.point.at_ticks) / (gesture.right.at_ticks - gesture.point.at_ticks))),
+        [control[1]]: Math.max(valueBand[0], Math.min(valueBand[1],
+          (value - gesture.point.value) / (gesture.right.value - gesture.point.value))) };
       gesture.moved ||= Math.abs(event.clientX - gesture.clientX) + Math.abs(event.clientY - gesture.clientY) > 3;
       return [{ ...gesture.point, bezier: next }];
     }
@@ -373,7 +378,7 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
               onPointerMove={(e) => { if (drag.current?.handle !== handle || !e.currentTarget.hasPointerCapture(e.pointerId)) return; setDrafts(proposedPoint(e)); }}
               onPointerUp={(e) => { const gesture = drag.current; if (!gesture || gesture.handle !== handle) return; const next = proposedPoint(e)[0]; const moved = gesture.moved; cancel(); if (moved) commit(gesture.point.at_ticks, next, gesture.revision, gesture.projectId); }}
               onPointerCancel={cancel} onLostPointerCapture={() => { if (drag.current) cancel(); }}
-              onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cancel(); return; } if (!disabled && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) { e.preventDefault(); e.stopPropagation(); const axis = e.key === "ArrowLeft" || e.key === "ArrowRight" ? handle === 0 ? "x1" : "x2" : handle === 0 ? "y1" : "y2"; const step = (e.shiftKey ? .1 : .01) * (e.key === "ArrowLeft" || e.key === "ArrowDown" ? -1 : 1); commit(point.at_ticks, { ...point, bezier: { ...controls, [axis]: Math.max(axis.startsWith("x") ? 0 : -4, Math.min(axis.startsWith("x") ? 1 : 4, controls[axis] + step)) } }); } }} />
+              onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cancel(); return; } if (!disabled && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) { e.preventDefault(); e.stopPropagation(); const axis = e.key === "ArrowLeft" || e.key === "ArrowRight" ? handle === 0 ? "x1" : "x2" : handle === 0 ? "y1" : "y2"; const step = (e.shiftKey ? .1 : .01) * (e.key === "ArrowLeft" || e.key === "ArrowDown" ? -1 : 1); const band = bezierBand(axis); commit(point.at_ticks, { ...point, bezier: { ...controls, [axis]: Math.max(band[0], Math.min(band[1], controls[axis] + step)) } }); } }} />
           </g>;
         }) : null}
         {drafts?.map((k, i) => <circle key={i} className={`curve-draft${collision ? " collision" : ""}`} cx={x(k.at_ticks)} cy={y(k.value)} r={7} />)}
@@ -383,7 +388,7 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
     </div>
     <fieldset disabled={disabled || Boolean(draft)} className="curve-bezier-fields">{selectedKeys.length === 1 && selected?.interpolation === "bezier" ? <>
       <span>当前点 → 下一点</span>
-      {(["x1", "y1", "x2", "y2"] as const).map((axis) => <label key={axis}>{({ x1: "出点时间", y1: "出点数值", x2: "入点时间", y2: "入点数值" })[axis]} <CurveNumber label={`贝塞尔${axis}`} value={(selected.bezier ?? DEFAULT_BEZIER)[axis]*100} step={1} min={axis.startsWith("x") ? 0 : -400} max={axis.startsWith("x") ? 100 : 400} onCommit={(value) => commit(selected.at_ticks, { ...selected, bezier: { ...(selected.bezier ?? DEFAULT_BEZIER), [axis]: value/100 } })} />%</label>)}
+      {BEZIER_AXES.map((axle) => <label key={axle.axis}>{axle.label} <CurveNumber label={`贝塞尔${axle.axis}`} value={(selected.bezier ?? DEFAULT_BEZIER)[axle.axis]*100} step={1} min={axle.min*100} max={axle.max*100} onCommit={(value) => commit(selected.at_ticks, { ...selected, bezier: { ...(selected.bezier ?? DEFAULT_BEZIER), [axle.axis]: value/100 } })} />%</label>)}
       <span className="hint">{!nextPoint ? "末点暂无后续区间" : nextPoint.value === selected.value ? "两点数值相同，此段保持不变" : "拖动控制柄调整节奏；越界曲线会拒绝保存"}</span>
     </> : <span className="hint">{selectedKeys.length > 1 ? `已选 ${selectedKeys.length} 个关键帧 · 拖动或输入时间/数值整体平移，插值会应用到全部选中点。` : "Shift 点选 / 拖空白框选 / Ctrl+A 全选；单选贝塞尔点可编辑控制柄。"}</span>}</fieldset>
     <div className="curve-footer">

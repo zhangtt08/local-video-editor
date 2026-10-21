@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from "react";
-import type { Clip, Curve, ExtraMaskWindow, MaskBoxKey, MaskProperty, MaskRotationWindow, MaskShapeWindow, MaskVertex, ShapeMask } from "../engine";
+import type { Bezier, Clip, Curve, ExtraMaskWindow, MaskBoxKey, MaskProperty, MaskRotationWindow, MaskShapeWindow, MaskVertex, ShapeMask } from "../engine";
+import { DEFAULT_BEZIER } from "../effects";
 import { TIMEBASE, frameTicks } from "../time";
 import { appInfo, commitMaskEdit, moveMaskCentre, playhead, recordMaskShape, setClipMask, setClipMaskStack, setMaskEditing, useApp, usePlay } from "../store";
 import { asCorner, asSmooth, nearestEdge, withoutVertex, withVertex } from "../maskOutline";
@@ -64,7 +65,8 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
   // 松手那一刻 React 的状态可能还没追上最后一次 move；落库读的是这个 ref（主遮罩那一手也是同一课）。
   const extraDraftRef = useRef<{ index: number; box: ShapeMask; duplicate?: boolean } | null>(null);
   const extraDrag = useRef<{ index: number; keyTick: number | null; insertAt: number | null;
-    insertInterp: MaskBoxKey["interpolation"]; x: number; y: number; box: ShapeMask;
+    insertInterp: MaskBoxKey["interpolation"]; insertBezier: Bezier | null;
+    x: number; y: number; box: ShapeMask;
     corner: [number, number] | null; angle: number; k: number; rotate: boolean; angle0: number | null;
     duplicate: boolean;
     pointerId: number; element: SVGElement; captured: boolean; inverse: DOMMatrix;
@@ -328,6 +330,8 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
     const gesture = { index: selectedIndex!, keyTick: selectedKey?.at_ticks ?? null,
       insertAt: selectedKey || !canInsert ? null : selectedFrameTick,
       insertInterp: windowOwner?.interpolation ?? "linear",
+      // 抄的那一窗要是贝塞尔，柄也一起带走——新那枚接的是同一段节奏，不是界面编的一个默认。
+      insertBezier: windowOwner?.bezier ?? null,
       duplicate: rotate ? false : event.altKey && canDuplicate,
       x: point.x / 100, y: point.y / 100, box: extraBox, corner, rotate,
       angle0: rotate ? extraPointerAngle(extraBox, inverse, event.clientX, event.clientY) : null,
@@ -418,7 +422,9 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
       applyExtra(gesture.index, (row) => ({ ...row,
         keys: [...(row.keys ?? []), { at_ticks: at, center_x: box.center_x, center_y: box.center_y,
           width: box.width, height: box.height, rotation: box.rotation ?? 0,
-          interpolation: gesture.insertInterp }].sort((a, b) => a.at_ticks - b.at_ticks) }),
+          interpolation: gesture.insertInterp,
+          bezier: gesture.insertInterp === "bezier" ? gesture.insertBezier ?? DEFAULT_BEZIER : null,
+        }].sort((a, b) => a.at_ticks - b.at_ticks) }),
       gesture.projectId, gesture.revision, mode);
       return;
     }

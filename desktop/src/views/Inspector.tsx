@@ -7,7 +7,7 @@ import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionCh
 import { Icon, Modal } from "../ui";
 import { GradeFields } from "./GradeFields";
 import { SpeedFields } from "./SpeedFields";
-import { blurMaxPercent, boxKeyForPlayhead, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeAdoptHint, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, fitSpeedPercent, INTERPOLATIONS, maskAnimFields, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackGroup, trackingKnobs, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
+import { blurMaxPercent, boxKeyForPlayhead, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeAdoptHint, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, fitSpeedPercent, INTERPOLATIONS, maskAnimFields, maskBoxInterpolations, BEZIER_AXES, DEFAULT_BEZIER, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackGroup, trackingKnobs, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
 import { frameTicks, TIMEBASE, align, humanDuration, offsetWords, seconds, timecode, ticks } from "../time";
 import {
   DISPLAY_PRIMARIES,
@@ -634,6 +634,8 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
   const play = usePlay();
   const limit = app.caps?.limits?.extra_masks ?? 0;
   const keysLimit = app.caps?.limits?.extra_mask_keys ?? 0;
+  // 1.257：那几种缓动由引擎点名，界面只负责把名字翻成中文（INTERPOLATIONS 是唯一那张表）。
+  const boxInterpolations = maskBoxInterpolations(app.caps);
   const rate = app.project?.settings.frame_rate ?? { numerator: 30, denominator: 1 };
   const frame = frameTicks(rate);
   const localTick = () => {
@@ -769,13 +771,37 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
             </button>
             <select className="input tiny" aria-label="这一段框点的插值" value={key.interpolation ?? "linear"}
               disabled={disabled}
-              onChange={(event) => patch(index, { keys: (item.keys ?? []).map((row) => row.at_ticks === key.at_ticks
-                ? { ...row, interpolation: event.target.value as MaskBoxKey["interpolation"] } : row) })}>
-              {Object.entries(INTERPOLATIONS).filter(([value]) => value !== "bezier").map(([value, label]) =>
-                <option key={value} value={value}>{label}</option>)}
+              onChange={(event) => {
+                // 选了贝塞尔就带上默认柄（与曲线编辑器那一条同一个式子）；换回别的就清掉柄。
+                const next = event.target.value as MaskBoxKey["interpolation"];
+                patch(index, { keys: (item.keys ?? []).map((row) => row.at_ticks === key.at_ticks
+                  ? {
+                    ...row, interpolation: next,
+                    bezier: next === "bezier" ? row.bezier ?? DEFAULT_BEZIER : null,
+                  }
+                  : row) });
+              }}>
+              {boxInterpolations.map((value) => <option key={value} value={value}>
+                {INTERPOLATIONS[value as keyof typeof INTERPOLATIONS]}
+              </option>)}
             </select>
             <button type="button" className="btn tiny subtle" disabled={disabled} title="删掉这一枚框点"
               onClick={() => patch(index, { keys: (item.keys ?? []).filter((row) => row.at_ticks !== key.at_ticks) })}>删除</button>
+            {key.interpolation === "bezier" ? <div className="mask-stack-bezier"
+              title="这一枚框点到下一枚之间按贝塞尔走：四个数就是那两根柄，写回的仍是那一条 clip.mask_stack。导出与预览读的是同一张窗表。">
+              {BEZIER_AXES.map((axle) => <label key={axle.axis} htmlFor={`stack-${index}-bezier-${key.at_ticks}-${axle.axis}`}>
+                {axle.label}
+                <EffectInput id={`stack-${index}-bezier-${key.at_ticks}-${axle.axis}`}
+                  value={(key.bezier ?? DEFAULT_BEZIER)[axle.axis] * 100}
+                  min={axle.min * 100} max={axle.max * 100} step={1}
+                  onCommit={(percent) => patch(index, {
+                    keys: (item.keys ?? []).map((row) => row.at_ticks === key.at_ticks
+                      ? { ...row, bezier: { ...(row.bezier ?? DEFAULT_BEZIER), [axle.axis]: percent / 100 } }
+                      : row),
+                  })} />
+                <span className="dim">%</span>
+              </label>)}
+            </div> : null}
           </li>)}
         </ul> : null}
       </div>

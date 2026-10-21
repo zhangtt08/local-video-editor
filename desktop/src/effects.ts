@@ -1,5 +1,5 @@
 import type { GradeCapacity } from "./engine";
-import type { AnimatedEffect, Asset, BlendMode, Capabilities, Clip, Command, Curve, Effects, LayerKeyframe, LayerProperty, LayerWindow, MaskBoxKey, MaskProperty, Project, SharpenSpec, SharpenStatic, SharpenSteps, ShapeMask, SpatialProperty, WipeChannel } from "./engine";
+import type { AnimatedEffect, Asset, Bezier, BlendMode, Capabilities, Clip, Command, Curve, Effects, Keyframe, LayerKeyframe, LayerProperty, LayerWindow, MaskBoxKey, MaskProperty, Project, SharpenSpec, SharpenStatic, SharpenSteps, ShapeMask, SpatialProperty, WipeChannel } from "./engine";
 import { DEFAULT_EFFECTS } from "./engine";
 import { TIMEBASE } from "./time";
 
@@ -134,6 +134,27 @@ export const boxKeyForPlayhead = (
 /** Label lookup for the keyframe list, which mixes effect and mask properties. */
 /** 插值的名字也只从一张表出去：曲线编辑器的两个下拉、轮廓帧那一行、任何将来要说「这一帧怎么过渡」的地方。 */
 export const INTERPOLATIONS = { linear: "线性", ease: "缓入缓出", hold: "保持", bezier: "贝塞尔" } as const;
+
+/** 1.257：贝塞尔那一档的四个数——名字、那条带与默认柄只在这里写一次。曲线编辑器那四格与
+ *  检查器框点行那四格读的都是这张表；谁再抄一份数字，壳检就红在「有第二处」。 */
+export const BEZIER_AXES = [
+  { axis: "x1", label: "出点时间", min: 0, max: 1 },
+  { axis: "y1", label: "出点数值", min: -4, max: 4 },
+  { axis: "x2", label: "入点时间", min: 0, max: 1 },
+  { axis: "y2", label: "入点数值", min: -4, max: 4 },
+] as const;
+export const bezierBand = (axis: string): readonly [number, number] => {
+  const row = BEZIER_AXES.find((item) => item.axis === axis);
+  return [row?.min ?? 0, row?.max ?? 1];
+};
+export const DEFAULT_BEZIER: Bezier = { x1: 1 / 3, y1: 0, x2: 2 / 3, y2: 1 };
+
+/** 1.257：框点那一格能选哪几种缓动，只由引擎交下来的那张名单说（界面不许自己滤掉某一种）。
+ *  没回这个字段的旧引擎就是它当时认的那三种——这是唯一的兜底，不是第二份判断。 */
+export const maskBoxInterpolations = (caps?: Capabilities | null): Keyframe["interpolation"][] =>
+  caps?.mask_box_interpolations?.length
+    ? caps.mask_box_interpolations
+    : ["linear", "hold", "ease"];
 
 export const FIELD_LABEL: Record<string, string> = Object.fromEntries([
   ...[...EFFECT_FIELDS, ...MASK_ANIM_FIELDS].map((field) => [field.property, field.label]),

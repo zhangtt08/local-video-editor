@@ -591,16 +591,15 @@ def outline_keys(clip: Clip) -> list[MaskShapeKeyframe]:
 
 
 class _Ease:
-    """One outline end, wearing the outfit `_interpolate` reads: a time, an easing, and an endpoint.
+    """一枚针穿着 `_interpolate` 认的那身衣服：一个时刻、一种缓动、一个端点。
 
-    A morph is a vector, and this project has exactly one piecewise easing walker. Rather than
-    repeat the cubic and the bezier inversion for six numbers per vertex, each end of an interval is
-    handed to that walker as the pair 0 and 1, so what comes back is the eased progress itself.
+    轮廓形变是六个数、再叠那块是五个数，而这个项目只有一条分段缓动的走法。与其为每种向量各抄一遍
+    三次式和贝塞尔反解，不如把区间两端当成 0 与 1 交给这条走法——回来的就是那一份进度本身。
     """
 
     __slots__ = ("at_ticks", "value", "interpolation", "bezier")
 
-    def __init__(self, key: MaskShapeKeyframe, value: float):
+    def __init__(self, key, value: float):
         self.at_ticks = key.at_ticks
         self.value = value
         self.interpolation = key.interpolation
@@ -707,15 +706,16 @@ def extra_box_at(extra, at: int) -> tuple[float, ...]:
         return tuple(getattr(keys[-1], name) for name in MASK_EXTRA_FIELDS)
     for left, right in zip(keys, keys[1:]):
         if left.at_ticks <= at <= right.at_ticks:
-            mix = (at - left.at_ticks) / max(1, right.at_ticks - left.at_ticks)
-            if left.interpolation == "hold":
-                mix = 0.0
-            elif left.interpolation == "ease":
-                mix = mix * mix * (3 - 2 * mix)
+            # 1.257：这一串五个数走的缓动与轮廓形变是同一条式子——把区间两端交给 `_interpolate`，
+            # 回来的就是那一份进度。这里不再自己写第二遍 hold/ease，贝塞尔因此也不必写第三遍。
+            span = right.at_ticks - left.at_ticks
+            progress = (
+                0.0 if span <= 0 else _interpolate(_Ease(left, 0.0), _Ease(right, 1.0), at)
+            )
             return tuple(
                 round(
                     getattr(left, name)
-                    + (getattr(right, name) - getattr(left, name)) * mix,
+                    + (getattr(right, name) - getattr(left, name)) * progress,
                     9,
                 )
                 for name in MASK_EXTRA_FIELDS

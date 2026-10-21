@@ -21,7 +21,11 @@ MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 
 SCHEMA_VERSION = (
 
-    27  # v27 lets an extra box carry its own box keys (a v26 row has none and reads as the one
+    28  # v28 lets one of those box keys ride a bezier curve: a v27 row names only
+
+    #     linear/hold/ease, so an older engine must fail that literal rather than invent an easing.
+
+    #     v27 lets an extra box carry its own box keys (a v26 row has none and reads as the one
     #     static box it always was). v26 lets those extra boxes follow the main mask's centre
     #     (a v25 row carries no flag and
     #     stays put, which is exactly what the missing field meant). v25 lets one clip carry a
@@ -45,7 +49,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.256.0"
+APP_VERSION = "1.257.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -2195,7 +2199,34 @@ class MaskBoxKey(Contract):
     rotation: Annotated[float, Field(ge=-MASK_ROTATION_LIMIT, le=MASK_ROTATION_LIMIT)] = 0.0
 
     # The five numbers step together, so the segment's interpolation is the whole transition.
-    interpolation: Literal["linear", "hold", "ease"] = "linear"
+    interpolation: Literal["linear", "hold", "ease", "bezier"] = "linear"
+
+    # 1.257：那五个数一起走同一条缓动，所以这一格只需要一份控制柄——不是每条边各一对。
+
+    bezier: Bezier | None = None
+
+    @model_validator(mode="after")
+    def controls_need_the_curve(self):
+        if self.bezier is not None and self.interpolation != "bezier":
+            raise ValueError("bezier controls require bezier interpolation")
+        return self
+
+
+# 1.257：那五个数各自的那条带只有一个主人——`MaskBoxKey` 自己声明的 `ge`/`le`，
+#     这里把它读出来给拒绝那一手用，不抄第二份数。
+
+MASK_BOX_BANDS = {
+    name: (
+        next(item.ge for item in info.metadata if hasattr(item, "ge")),
+        next(item.le for item in info.metadata if hasattr(item, "le")),
+    )
+    for name, info in MaskBoxKey.model_fields.items()
+    if name not in ("at_ticks", "interpolation", "bezier")
+}
+
+# 框点那几种缓动的名单也只由这里说一次：从契约那条 Literal 读出来，不抄第二份。
+
+MASK_BOX_INTERPOLATIONS = tuple(get_args(MaskBoxKey.model_fields["interpolation"].annotation))
 
 
 class ShapeMask(Contract):
@@ -2263,6 +2294,29 @@ class ExtraShapeMask(ShapeMask):
     keys: Annotated[list[MaskBoxKey], Field(max_length=MASK_EXTRA_KEY_LIMIT)] = Field(
         default_factory=list
     )
+
+    @model_validator(mode="after")
+    def bezier_stays_in_band(self):
+        """一条贝塞尔段能把五个数各自甩到两端之外——每一格有自己的那条带，越界就是拒。
+
+        带的两个数不在这里再抄一份：就是 `MaskBoxKey` 那五个字段自己声明的 `ge`/`le`。
+        """
+        from .animation import bezier_extrema, bezier_value
+
+        ordered = sorted(self.keys, key=lambda key: key.at_ticks)
+        for left, right in zip(ordered, ordered[1:]):
+            if left.interpolation != "bezier":
+                continue
+            controls = left.bezier or Bezier()
+            for name, (low, high) in MASK_BOX_BANDS.items():
+                start = getattr(left, name)
+                for u in bezier_extrema(controls.y1, controls.y2):
+                    value = start + (getattr(right, name) - start) * bezier_value(
+                        controls.y1, controls.y2, u
+                    )
+                    if not low - 1e-10 <= value <= high + 1e-10:
+                        raise ValueError(f"{name} bezier curve exceeds [{low}, {high}]")
+        return self
 
 
 class Keyframe(Contract):
@@ -6732,6 +6786,10 @@ def capabilities(
         "fade_shapes": [dict(item) for item in FADE_SHAPES],
 
         "color_spaces": list(COLOR_SPACES),
+
+        # 1.257：框点那几种缓动由引擎交下来——界面不许自己滤掉某一种，也不许自备第二份名单。
+
+        "mask_box_interpolations": list(MASK_BOX_INTERPOLATIONS),
 
         # 1.150: the translation `clip.color_manage`'s `auto_source` actually uses. A renderer that
 

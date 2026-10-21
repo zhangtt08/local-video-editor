@@ -1118,7 +1118,11 @@ table.table tr.current td { background: var(--accent-soft); }
 /* 1.248：同一帧里的两枚框点，时间码一样；差的那一点写在同一个按钮里，颜色退一档。 */
 .mask-stack-sub { color: var(--ink-3); font-size: var(--fs-label); font-weight: 400; }
 .mask-stack-keylist { grid-column: 1 / -1; list-style: none; margin: 2px 0 0; padding: 0; display: grid; gap: 4px; max-height: 132px; overflow: auto; }
-.mask-stack-keylist li { display: flex; align-items: center; gap: 6px; }
+.mask-stack-keylist li { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+/* 1.257：选中贝塞尔那一档，四个柄排在同一格里另起一行——不是再挤进那一排，也不是第二种小字。 */
+.mask-stack-bezier { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: var(--fs-label); color: var(--ink-2); }
+.mask-stack-bezier label { display: inline-flex; align-items: center; gap: 4px; }
+.mask-stack-bezier input { width: 62px; }
 .mask-stack-follow { display: flex; align-items: center; gap: 6px; margin: 4px 0 2px; font-size: var(--fs-label); color: var(--ink-2); }
 .mask-stack-invert { grid-column: 1 / -1; gap: 6px; color: var(--ink-2); }
 

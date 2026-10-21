@@ -205,7 +205,9 @@ export const DEFAULT_CURVE_POINTS: GradeCurvePoint[] = [
   { x: 1, y: 1 },
 ];
 export type MaskVertex = { x: number; y: number; handle_out: [number, number]; handle_in: [number, number] };
-export type MaskBoxKey = { at_ticks: number; center_x: number; center_y: number; width: number; height: number; rotation?: number; interpolation?: "linear" | "hold" | "ease" };
+/** 1.257：那一枚框点也能带贝塞尔——柄与曲线编辑器那两个下拉读的是同一份 `Bezier` 形状，
+ *  而「有哪几种缓动可选」由 `capabilities.mask_box_interpolations` 说，界面不许自己滤掉某一种。 */
+export type MaskBoxKey = { at_ticks: number; center_x: number; center_y: number; width: number; height: number; rotation?: number; interpolation?: "linear" | "hold" | "ease" | "bezier"; bezier?: Bezier | null };
 export type ShapeMask = { shape: "rectangle" | "ellipse" | "path"; center_x: number; center_y: number; width: number; height: number; rotation?: number; feather: number; inverted: boolean; vertices?: MaskVertex[] | null; keys?: MaskBoxKey[] };
 export type ExtraMaskBox = { center_x: number; center_y: number; width: number; height: number; rotation: number };
 export type ExtraMaskWindow = { from_ticks: number; to_ticks: number; image: string; follow?: boolean; box?: ExtraMaskBox | null };
@@ -673,6 +675,8 @@ export type Capabilities = {
   transition_kinds?: TransitionChoice[];
   /** 1.95：淡的形状（线性 / 缓入 / 缓出 / 缓入缓出）。下拉列的是这份表；老引擎不回就没有这一行。 */
   fade_shapes?: TransitionChoice[];
+  /** 1.257：框点那几种缓动的名单。界面按它排下拉，不许自己滤掉某一种，也不许自备第二份名字。 */
+  mask_box_interpolations?: Keyframe["interpolation"][];
   /** 本机装着的文字字体（id / 中文名 / CSS family）；选择器列的是这份表。 */
   text_fonts?: TextFont[];
   /** 引擎自身的构建号；旧引擎不回这个字段，界面按空字符串处理。 */

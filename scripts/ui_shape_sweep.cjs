@@ -261,6 +261,8 @@ async function sweepOne(size, hostPort, probeSource) {
       "#grade-matrix-0-0",
       // 1.251：复制出来的第三块，它的宽度那一格画出来了才算这一屏画了东西。
       "#stack-2-width",
+      // 1.257：框点选了贝塞尔之后，那一行的四格画出来才算这一屏画了东西。
+      "div.mask-stack-bezier",
       // 1.252：选中那一块的虚线框。
       ".mask-extra-outline"];
     const run = async (screen) => {
@@ -899,6 +901,100 @@ async function sweepOne(size, hostPort, probeSource) {
         }
       }
     }
+    if (flag("mask-bezier", "") !== "") {
+      // 1.257：把框点换成贝塞尔，再在检查器那一格里拧一根柄。判四件事：
+      // 那一行真的画出四个格子（画不出就是「人能选档却不能调」——只有一端会执行的那种）、
+      // 写进引擎的是那一条 clip.mask_stack、没动的那三个柄仍是默认那一份、别的一块一字不动。
+      // 判据不看那颗 select 的 value（它是被命令式设上去的，说了不算），只看「画没画出那四格」
+      // 与「引擎里那一枚变成什么」——这两样才是界面与引擎各自的回答。
+      const label = "框点带贝塞尔";
+      const rowOf = (error) => rows.push({ screen: label, panel: flag("panel", ""), size, data: null, error });
+      const trouble = await baseState();
+      if (trouble) { rowOf(trouble); } else {
+        const before = await engineGet(`/v1/projects/${PROJECT}`);
+        const restore = async () => {
+          const latest = await engineGet(`/v1/projects/${PROJECT}`);
+          await enginePost(`/v1/projects/${PROJECT}/edits`, {
+            request_id: `shape-bezier-restore-${size}-${Date.now()}`,
+            expected_revision: latest.revision,
+            commands: [{ op: "clip.mask_stack", clip_id: "k2", masks: before.clips["k2"].extra_masks }],
+          });
+          await cdp.send("Page.reload", {}, 30000);
+          await sleep(1200);
+        };
+        const key0 = (doc) => ((doc.clips["k2"].extra_masks[0].keys) ?? [])[0] ?? null;
+        const fail = async (message) => { rowOf(message); await restore(); };
+        const probe = "(function(){var want='这一段框点的插值';"
+          + "var hit=Array.from(document.querySelectorAll('select'))"
+          + ".find(function(n){return (n.getAttribute('aria-label')||'')===want;});"
+          + "if(!hit)return {seen:'no-select'};"
+          + "return {options:Array.from(hit.options).map(function(o){return o.value}),"
+          + " disabled:hit.disabled};})()";
+        let seen = { options: [] };
+        for (let tryNo = 0; tryNo < 14; tryNo += 1) {
+          seen = await evaluate(probe);
+          if ((seen.options ?? []).indexOf("bezier") >= 0) break;
+          await sleep(400);
+        }
+        if ((seen.options ?? []).indexOf("bezier") < 0) {
+          const declared = await engineGet("/v1/capabilities");
+          await fail("界面那一格排不出贝塞尔这一档：引擎声明 "
+            + JSON.stringify(declared.mask_box_interpolations ?? null)
+            + "，页面读到 " + JSON.stringify(seen));
+        } else if (seen.disabled) {
+          await fail("那一格是灰的（画出来但按不动）：" + JSON.stringify(seen));
+        } else {
+          await evaluate("(function(){var want='这一段框点的插值';"
+            + "var hit=Array.from(document.querySelectorAll('select'))"
+            + ".find(function(n){return (n.getAttribute('aria-label')||'')===want;});"
+            + "var set=Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set;"
+            + "set.call(hit,'bezier');hit.dispatchEvent(new Event('change',{bubbles:true}));"
+            + "return 'sent';})()");
+          let fields = { count: 0, ids: [] };
+          for (let tryNo = 0; tryNo < 12 && fields.count !== 4; tryNo += 1) {
+            await sleep(400);
+            fields = await evaluate("(function(){var list=Array.from(document.querySelectorAll('input'));"
+              + "list=list.filter(function(n){return (n.id||'').indexOf('stack-0-bezier-')===0;});"
+              + "var any=Array.from(document.querySelectorAll('input'))"
+              + ".filter(function(n){return (n.id||'').indexOf('bezier')>=0;})"
+              + ".map(function(n){return n.id;});"
+              + "if(!list.length)return {count:0,ids:any.slice(0,8)};"
+              + "list[0].scrollIntoView({block:'center'});"
+              + "return {count:list.length,ids:list.map(function(n){return n.id;})};})()");
+          }
+          const mid = await engineGet(`/v1/projects/${PROJECT}`);
+          if (fields.count !== 4) {
+            await fail("选了贝塞尔却没有那四格：" + JSON.stringify([fields, seen, key0(mid)]));
+          } else {
+            const typed = await evaluate("(function(){var hit=document.querySelector('input[id$=\"-y1\"]');"
+              + "if(!hit)return 'no-input';hit.focus();"
+              + "var set=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;"
+              + "set.call(hit,'150');hit.dispatchEvent(new Event('input',{bubbles:true}));hit.blur();"
+              + "return 'ok';})()");
+            await sleep(1300);
+            const after = await engineGet(`/v1/projects/${PROJECT}`);
+            const key = key0(after) ?? {};
+            const handles = key.bezier ?? null;
+            const wrote = key.interpolation === "bezier"
+              && handles && Math.abs(handles.y1 - 1.5) < 1e-9;
+            const defaults = handles && Math.abs(handles.x1 - 1 / 3) < 1e-9
+              && Math.abs(handles.x2 - 2 / 3) < 1e-9 && Math.abs(handles.y2 - 1) < 1e-9;
+            const others = JSON.stringify((after.clips["k2"].extra_masks[0].keys ?? []).slice(1))
+              === JSON.stringify((before.clips["k2"].extra_masks[0].keys ?? []).slice(1));
+            const otherBlock = JSON.stringify(after.clips["k2"].extra_masks[1])
+              === JSON.stringify(before.clips["k2"].extra_masks[1]);
+            if (typed !== "ok" || !wrote || !defaults || !others || !otherBlock) {
+              await fail("那四格没有按预期写进引擎：" + JSON.stringify([typed,
+                { interpolation: key.interpolation, bezier: handles }, { others, otherBlock }]));
+            } else {
+              await run(label);
+              await restore();
+            }
+          }
+        }
+      }
+    }
+
     cdp.close();
   } finally {
     // Windows 上 SIGTERM 打不穿 msedge 那一棵树：留着它，下一档扫描就会撞上同一个 profile
