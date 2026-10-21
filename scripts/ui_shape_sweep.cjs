@@ -35,6 +35,8 @@ const CLIP = flag("clip", "");
 const TEXTCLIP = flag("text-clip", "");
 // 1.245：框点那一帧（`--boxkey <选择器>`）：滚进视野后读输入框的值、状态那一句与当前那一枚。
 const BOXKEY = flag("boxkey", "");
+// 1.246：调色节点那一屏（`--gradecard <第几张卡>`）：点第二张卡，量它展开的那一格。
+const GRADECARD = flag("gradecard", "");
 const SIZES = (flag("sizes", "1456x808") || "").split(",");
 const OUT = path.resolve(flag("out", "ui_shape_sweep.json"));
 const EDGE = flag("edge", "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe");
@@ -241,7 +243,9 @@ async function sweepOne(size, hostPort, probeSource) {
       // 文字层那一屏认的是那四颗色块：字在别的屏上一样有，只有色块是这一屏独有的。
       "input[type=color]",
       // 1.245：框点那一帧认的是那一块输入框本身；它的值与那一句由 --boxkey 那一腿单独读。
-      "#stack-0-center_x"];
+      "#stack-0-center_x",
+      // 1.246：调色节点那一屏认的是第二张卡展开后的那一格矩阵系数。
+      "#grade-matrix-0-0"];
     const run = async (screen) => {
       const data = await evaluate("(function(){ " + probeSource + " return measureAgentCutUi(); })()");
       // 「点了才画」那一档必须能证明**真的画了东西**：只数文字节点的话，
@@ -470,6 +474,30 @@ async function sweepOne(size, hostPort, probeSource) {
           || !(proof.note || "").includes("改的是这一枚") || proof.aria !== "true";
         if (bad) rows.push({ screen: label, panel: flag("panel", ""), size, data: null,
           error: "卡片没有显示框点那一枚的数：" + JSON.stringify(proof) });
+        else await run(label);
+      }
+    }
+    // 1.246：调色节点那一屏——卡片是「点了才画」：点第二张卡，它下面那几格才换成矩阵。
+    // 夹具 k2 的链是 [色阶, 矩阵]，第二张卡的第一格系数是 0.95；点错了卡这一格就不会出现。
+    if (GRADECARD) {
+      const label = "调色节点";
+      const trouble = await baseState();
+      if (trouble) rows.push({ screen: label, panel: flag("panel", ""), size, data: null, error: trouble });
+      else {
+        const clicked = await evaluate("(function(){"
+          + "var cards=document.querySelectorAll('.gg-card .gg-pick');"
+          + "var hit=cards[" + String(Math.max(0, Number(GRADECARD) - 1)) + "];"
+          + "if(!hit)return null;hit.scrollIntoView({block:'center'});hit.click();"
+          + "return {cards:cards.length,text:(hit.textContent||'').trim()};})()");
+        await sleep(500);
+        const proof = await evaluate("(function(){"
+          + "var el=document.querySelector('#grade-matrix-0-0');if(el)el.scrollIntoView({block:'center'});"
+          + "var active=document.querySelector('.gg-card.active .gg-pick b');"
+          + "return {value:el?el.value:null,active:active?active.textContent.trim():null};})()");
+        const bad = !clicked || !proof || !(proof.active || "").includes("通道混合")
+          || Math.abs(Number(proof.value) - 0.95) > 1e-9;
+        if (bad) rows.push({ screen: label, panel: flag("panel", ""), size, data: null,
+          error: "点了第二张卡，展开的不是矩阵那一格：" + JSON.stringify({ clicked, proof }) });
         else await run(label);
       }
     }

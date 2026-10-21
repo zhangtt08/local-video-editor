@@ -73,6 +73,8 @@ PAINTED = {
     # 1.245：停在框点那一帧时，卡片上那五个数就是那一枚——认的是那块输入框真的画了出来，
     # 值与那一句由 --boxkey 那一腿在扫描里读（读不到就记成没量到）。
     "框点那一帧": "#stack-0-center_x",
+    # 1.246：点第二张调色卡才展开的那一格（矩阵系数）。
+    "调色节点": "#grade-matrix-0-0",
 }
 # 反过来：某一屏**不许**出现的那一行。「重置布局」按下去之后还挂着「窗口太矮」，
 # 说的是应用自己要了一个这一屏装不下的数，再回头抱怨用户——那一行在别的屏上是诚实
@@ -277,7 +279,8 @@ def run_engine(data_dir: Path) -> subprocess.Popen:
 
 
 def sweep(pid: str, folder: Path, panel: str, extras: tuple[str, ...] = (),
-          drag: bool = False, text_clip: str = "", boxkey: str = "") -> list[dict]:
+          drag: bool = False, text_clip: str = "", boxkey: str = "",
+          gradecard: str = "") -> list[dict]:
     out = folder / f"ui_shape_sweep-{panel}.json"
     shots = os.environ.get("AGENTCUT_SHAPE_SHOTS", "")
     node = subprocess.run(
@@ -296,6 +299,7 @@ def sweep(pid: str, folder: Path, panel: str, extras: tuple[str, ...] = (),
             *(["--drag-splitter", "1"] if drag else []),
             *(["--text-clip", text_clip] if text_clip else []),
             *(["--boxkey", boxkey] if boxkey else []),
+            *(["--gradecard", gradecard] if gradecard else []),
             *(["--shots", shots] if shots else []),
         ],
         capture_output=True,
@@ -341,7 +345,8 @@ def main() -> None:
                                  OVERLAYS if panel == "inspect" else (),
                                  drag=panel == "inspect",
                                  text_clip="t1" if panel == "inspect" else "",
-                                 boxkey="#stack-0-center_x" if panel == "inspect" else "")
+                                 boxkey="#stack-0-center_x" if panel == "inspect" else "",
+                                 gradecard="2" if panel == "inspect" else "")
             ]
         finally:
             engine.terminate()
@@ -363,9 +368,9 @@ def main() -> None:
     if missed:
         fail(f"{len(missed)} 行没量到（每一屏都得量到，不许用别的屏抵数）："
              + json.dumps(missed, ensure_ascii=False)[:600])
-    # 每屏四档（启动那一屏 + 展开 + 其余三颗页签）+ 浮层那几颗 + 文字层那一屏
-    # + 反方向那一拖 + 框点那一帧（后三档都只在 inspect 那趟）
-    needed = (len(PANELS) * 4 + len(OVERLAYS) + 3) * len(SIZES)
+    # 每一档窗口 21 屏：启动 + 展开 + 其余页签 + 浮层那几颗 + 文字层 + 拖高 + 框点 + 调色节点。
+    # 这个数只是地板——真正的判据是上面那条「每一行都必须量到」；加一屏时这里要一起加。
+    needed = 21 * len(SIZES)
     if len(screens) < needed:
         fail(f"只量到 {len(screens)} 屏（至少该有 {needed} 屏）")
 
