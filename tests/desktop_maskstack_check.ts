@@ -9,7 +9,7 @@ import { resolve } from "node:path";
 
 import { boxKeyAt, boxKeyForPlayhead } from "../desktop/src/effects";
 import type { ShapeMask } from "../desktop/src/engine";
-import { boxVectorFromPointer, rotatedBoxPoints } from "../desktop/src/maskGeometry";
+import { boxVectorFromPointer, rotateAngleFromPointer, rotatedBoxPoints, stemAngleFromUser } from "../desktop/src/maskGeometry";
 import { offsetWords } from "../desktop/src/time";
 
 declare const REPO_ROOT: string;
@@ -221,8 +221,8 @@ assert.match(picture, /boxKeyForPlayhead\(selectedExtra, localAt, Math\.round\(l
 assert.match(picture, /const extraDrawable = Boolean\(visible && selectedExtra && extraBox && !follow && !disabled/, "可拖的条件不对");
 assert.match(picture, /window\.addEventListener\("pointermove", move\);/, "拓取期间没有在 window 上听");
 assert.match(picture, /const box = draft\?\.index === gesture\.index \? draft\.box : null;/, "松手没有读最后一次草稿");
-assert.match(picture, /if \(gesture\.keyTick !== null\) return \{ \.\.\.row,/, "停在框点上时没有写回那一枚");
-assert.match(picture, /setClipMaskStack\(clip\.id, masks, follow, gesture\.projectId, gesture\.revision\)/, "松手没有走那一条写入");
+assert.match(picture, /if \(keyTick !== null\) return \{ \.\.\.row,/, "停在框点上时没有写回那一枚");
+assert.match(picture, /setClipMaskStack\(clip\.id, masks, follow, projectId, revision\)/, "松手没有走那一条写入");
 assert.match(picture, /y=\{top\.y \* 100 - hs\.y \/ 2\}/, "柄不在盒子的上边中点");
 assert.match(css, /\.mask-extra-handle\s*\{[^}]*cursor: move/, "柄没有自己的命中与指针");
 // ⑰ 1.253：转过角度的那一块照**画面里**那个角度画，四个角各有一颗缩放柄——拖动按未转的盒算，
@@ -248,10 +248,10 @@ const naive = { x: dx * Math.cos(-rad) - dy * Math.sin(-rad), y: dx * Math.sin(-
 assert.ok(Math.abs(naive.x - plan.width / 2) + Math.abs(naive.y - plan.height / 2) > .01,
   "少了 k 那一项也能折回原处——这一档就证明不了那条修正是承重的");
 assert.match(picture, /const points = rotatedBoxPoints\(box, pictureRatio, angle\);/, "那一圈没有用画面比例折出来的四个角");
-assert.match(picture, /const top = rotatedEdgeMids\(box, pictureRatio, angle\)\.top;/, "搬中心那颗柄没有落在看见的那条上边中点");
+assert.match(picture, /const mid = rotatedEdgeMids\(box, pictureRatio, angle\);/, "搬中心那颗柄没有落在看见的那条上边中点");
 assert.match(picture, /x=\{points\[index\]\.x \* 100 - hs\.x \/ 2\}/, "四颗角柄没有落在那四个角上");
 assert.doesNotMatch(picture, /transform=\{`rotate\(/, "那一圈仍靠 SVG 的 rotate 画——画框是拉伸的，画出来不是那个盒");
-assert.match(picture, /const beginExtra = \(event: PointerEvent<SVGElement>, corner: \[number, number\] \| null\) =>/, "按下那一刻没有收「抓的是哪一角」");
+assert.match(picture, /const beginExtra = \(event: PointerEvent<SVGElement>, corner: \[number, number\] \| null, rotate = false\) =>/, "按下那一刻没有收「抓的是哪一角」");
 assert.match(picture, /onPointerDown=\{\(event\) => beginExtra\(event, \[sx, sy\]\)\}/, "四颗角柄没有把抓的是哪一角交出去");
 assert.match(picture, /aria-label=\{`缩放选中的再叠遮罩（第 \$\{selectedIndex! \+ 1\} 块·\$\{label\}）`\}/, "角柄没有自己的名字");
 assert.match(picture, /const at = boxVectorFromPointer\(point\.x \/ 100 - gesture\.box\.center_x,/, "缩放的指针没有折回未转的盒坐标系");
@@ -259,6 +259,35 @@ assert.match(picture, /angle: extraBox\.rotation \?\? 0, k: pictureRatio,/, "抓
 assert.match(picture, /const ax = gesture\.box\.center_x - sx \* gesture\.box\.width \/ 2;/, "对角那一点不是按未转的盒算的");
 assert.match(picture, /width: clamp\(Math\.abs\(ux - ax\), \.01, 2\),/, "两条边没有按对角现算");
 assert.match(picture, /\.\.\.\(gesture\.corner \? \{ width: box\.width, height: box\.height \} : \{\}\)/, "中心柄松手也写了宽高——只搬中心那一手会顺手改大小");
-assert.match(picture, /if \(gesture\.keyTick !== null\) return \{ \.\.\.row,/, "缩放没有落到停着的那一枚框点上");
+assert.match(picture, /if \(keyTick !== null\) return \{ \.\.\.row,/, "缩放没有落到停着的那一枚框点上");
 assert.match(css, /\.mask-extra-handle\.corner\s*\{[^}]*cursor: crosshair/, "角柄的指针没有跟「盒可能转着」的说法对上");
-console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的五个数与羽化/反转都在格子里改、每一块可以打自己的框点、跟随时大小按同一比例缩放、框点的时间在条顶上看得见且不接指针、每一块都写明自己怎么动、停在框点上时五个数改的就是那一枚、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、选中的那一块拖着中心走、转着的那一块按未转的盒缩放四个角、样式仍走刻度");
+// ⑱ 1.254：选中那一块也有一颗角度柄——写的仍是那一处，但角度读的是**画框坐标系里**指针的方向。
+// 第一版按屏幕像素除 a、d 读角（主遮罩那条式子），量到的正是：屏幕拖 +20°、引擎落 +11.8°、
+// 柄停在指针后面 8°——因为这一层挂着片段自己的旋转。茎的用户坐标方向恒为 (k·sinθ, −cosθ)，
+// 所以 atan2(dx/k, −dy) 才是它的精确逆；轴对齐的那一层上，这一条与 `rotateAngleFromPointer` 同一个数。
+for (const angle of [0, 12.5, 37, -80]) {
+  const rad = angle * Math.PI / 180;
+  const ux = (9 / 16) * Math.sin(rad), uy = -Math.cos(rad);
+  assert.ok(Math.abs(stemAngleFromUser(ux, uy, 9 / 16) - angle) < 1e-9,
+    `盒转 ${angle}° 时那根茎的方向读回来不是它自己`);
+  // 同一支针在轴对齐的那一层上：两条式子必须给同一个数（主遮罩那颗手柄的签收账不许被改坏）。
+  const a = 4.19, d = 2.35;
+  assert.ok(Math.abs(rotateAngleFromPointer(ux * a * 100, uy * d * 100, a, d, 9 / 16)
+    - stemAngleFromUser(ux, uy, 9 / 16)) < 1e-9, "两条式子在轴对齐的层上分家了");
+}
+assert.match(picture, /const extraPointerAngle = \(box: ShapeMask, inverse: DOMMatrix, clientX: number, clientY: number\) =>/, "那颗柄没有先落回画框坐标");
+assert.match(picture, /return stemAngleFromUser\(point\.x \/ 100 - box\.center_x, point\.y \/ 100 - box\.center_y, pictureRatio\);/, "盒角不是从茎的那条精确逆读回来的");
+assert.match(picture, /angle0: rotate \? extraPointerAngle\(extraBox, inverse, event\.clientX, event\.clientY\) : null/, "按下那一刻没有用**按下时那份逆矩阵**记起始角");
+assert.match(picture, /const angle = extraPointerAngle\(gesture\.box, gesture\.inverse, clientX, clientY\);/, "拖动中途换了坐标系（这一层挂着片段自己的旋转/缩放）");
+assert.match(picture, /onPointerDown=\{\(event\) => beginExtra\(event, null, true\)\}/, "那颗角度柄没有把「这是旋转」交出去");
+assert.match(picture, /aria-label=\{`旋转选中的再叠遮罩（第 \$\{selectedIndex! \+ 1\} 块·此刻 \$\{angle\.toFixed\(1\)\}°）`\}/, "那颗柄没把「此刻是多少度」写在名字里");
+assert.match(picture, /if \(delta > 180\) delta -= 360; else if \(delta < -180\) delta \+= 360;/, "转过 180° 时那一笔会跳一整圈");
+assert.match(picture, /rotation: Math\.round\(clamp\(gesture\.angle \+ delta, -rotationLimit, rotationLimit\) \* 10\) \/ 10/, "角度没有按 0.1° 落笔、也没夹在引擎下发的上限里");
+assert.match(picture, /const values = gesture\.rotate \? \{ rotation: box\.rotation \?\? 0 \}/, "那颗柄松手写的不是角度那一格");
+assert.match(picture, /const writeExtra = \(index: number, keyTick: number \| null, values: Partial<ShapeMask>,/, "那一块的写入没有一处共同的主人");
+assert.equal((picture.match(/setClipMaskStack\(/g) ?? []).length, 1, "再叠那一格出现了第二个写入口");
+assert.match(picture, /writeExtra\(selectedIndex!, selectedKey\?\.at_ticks \?\? null, \{ rotation: next \}/, "那颗柄没有键盘孪生（±1°／Shift ±15°）");
+assert.match(picture, /<line className="mask-extra-stem"/, "那颗柄与它那一圈之间没有一根茎（摆在哪看不出来）");
+assert.match(css, /\.mask-extra-handle\.rotate-handle\s*\{[^}]*cursor: grab/, "那颗柄的指针没有跟「可以拖着转」的说法对上");
+assert.match(css, /\.mask-extra-stem\s*\{[^}]*pointer-events: none/, "那根茎接了指针——它会吞掉它底下那一片的抓取");
+console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的五个数与羽化/反转都在格子里改、每一块可以打自己的框点、跟随时大小按同一比例缩放、框点的时间在条顶上看得见且不接指针、每一块都写明自己怎么动、停在框点上时五个数改的就是那一枚、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、选中的那一块拖着中心走、转着的那一块按未转的盒缩放四个角、那颗角度柄与主遮罩共用同一份换算与同一个写入口、样式仍走刻度");

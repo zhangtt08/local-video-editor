@@ -596,6 +596,20 @@ async function sweepOne(size, hostPort, probeSource) {
           await click(pick.x, pick.y);
           await sleep(700);
           const before = await engineGet(`/v1/projects/${PROJECT}`);
+          // 这一腿三下手都改的是共享夹具里那一枚。不管量成没量成都要放回去——
+          // 上一版只在成功那一支放回，一次红就把脏状态带进了下一档窗口（连着两屏假红）。
+          const restore = async () => {
+            const latest = await engineGet(`/v1/projects/${PROJECT}`);
+            await enginePost(`/v1/projects/${PROJECT}/edits`, {
+              request_id: `shape-drag-restore-${size}-${Date.now()}`,
+              expected_revision: latest.revision,
+              commands: [{ op: "clip.mask_stack", clip_id: "k2", masks: before.clips["k2"].extra_masks }],
+            });
+            // 裸 HTTP 放回绕过界面，页面的 revision 会落后一拍；不重载，下一笔就是 409 被静默拒。
+            await cdp.send("Page.reload", {}, 30000);
+            await sleep(1200);
+          };
+          const fail = async (message) => { rowOf(message); await restore(); };
           const spot = await evaluate("(function(){var el=document.querySelector('.mask-extra-handle');"
             + "if(!el)return null;var r=el.getBoundingClientRect();"
             + "return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
@@ -624,7 +638,7 @@ async function sweepOne(size, hostPort, probeSource) {
             const staticSame = Math.abs(now.center_x - was.center_x) < 1e-9
               && Math.abs(now.center_y - was.center_y) < 1e-9;
             const other = JSON.stringify(after.clips["k2"].extra_masks[1]) === JSON.stringify(before.clips["k2"].extra_masks[1]);
-            if (!followed || !movedKey || !staticSame || !other) rowOf("拖动没有按预期："
+            if (!followed || !movedKey || !staticSame || !other) await fail("拖动没有按预期："
               + "key=" + JSON.stringify([wasKey && [wasKey.center_x, wasKey.center_y], nowKey && [nowKey.center_x, nowKey.center_y]])
               + " static=" + JSON.stringify([was.center_x, was.center_y, now.center_x, now.center_y])
               + " screen=" + JSON.stringify(screen) + " spot=" + JSON.stringify(spot));
@@ -634,7 +648,7 @@ async function sweepOne(size, hostPort, probeSource) {
                 + "'[aria-label=\"缩放选中的再叠遮罩（第 1 块·右下）\"]');"
                 + "if(!el)return null;var r=el.getBoundingClientRect();"
                 + "return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
-              if (!corner) rowOf("选中之后没有右下的缩放手柄");
+              if (!corner) await fail("选中之后没有右下的缩放手柄");
               else {
                 await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: corner.x, y: corner.y, button: "left", clickCount: 1 });
                 for (let step = 1; step <= 3; step += 1) {
@@ -651,14 +665,66 @@ async function sweepOne(size, hostPort, probeSource) {
                 const staticSize = Math.abs(resized.clips["k2"].extra_masks[0].width - was.width) < 1e-9
                   && Math.abs(resized.clips["k2"].extra_masks[0].height - was.height) < 1e-9;
                 const other2 = JSON.stringify(resized.clips["k2"].extra_masks[1]) === JSON.stringify(before.clips["k2"].extra_masks[1]);
-                if (!grew || !staticSize || !other2) rowOf("缩放手柄没有按预期："
+                if (!grew || !staticSize || !other2) await fail("缩放手柄没有按预期："
                   + "key=" + JSON.stringify(midKey && [midKey.width, midKey.height, resizedKey && resizedKey.width, resizedKey && resizedKey.height])
                   + " static=" + JSON.stringify([was.width, was.height]));
                 else {
-                  await run(label);
-                  // 两笔都改的是共享夹具里那一枚；量完按拖动前的整串放回去。
-                  await enginePost(`/v1/projects/${PROJECT}/edits`, { request_id: `shape-drag-restore-${size}-${Date.now()}`,
-                    expected_revision: resized.revision, commands: [{ op: "clip.mask_stack", clip_id: "k2", masks: before.clips["k2"].extra_masks }] });
+                  // 第三下手：那颗角度柄。判三件事——① 引擎里那一枚的 rotation 真的跟着转（符号与量级），
+                  // ② 柄落在**松手那一点**上（1.182 定的「拖多少就是看见多少」，不按屏幕角=盒角猜），
+                  // ③ 那块静止的角度与另一块一个字不动。
+                  const read = await evaluate("(function(){var corners=document.querySelectorAll('.mask-extra-handle.corner');"
+                    + "var rot=document.querySelector('[aria-label^=\"旋转选中的再叠遮罩\"]');"
+                    + "if(corners.length!==4||!rot)return null;"
+                    + "var sx=0,sy=0;Array.prototype.forEach.call(corners,function(el){var r=el.getBoundingClientRect();"
+                    + "sx+=r.left+r.width/2;sy+=r.top+r.height/2;});var cx=sx/4,cy=sy/4;"
+                    + "var q=rot.getBoundingClientRect();var hx=q.left+q.width/2,hy=q.top+q.height/2;"
+                    + "return {cx:cx,cy:cy,hx:hx,hy:hy};})()");
+                  if (!read) await fail("没有四颗角柄或那颗角度柄");
+                  else {
+                    const vector = [read.hx - read.cx, read.hy - read.cy];
+                    const sweep = 20 * Math.PI / 180;
+                    const target = { x: read.cx + vector[0] * Math.cos(sweep) - vector[1] * Math.sin(sweep),
+                      y: read.cy + vector[0] * Math.sin(sweep) + vector[1] * Math.cos(sweep) };
+                    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed",
+                      x: Math.round(read.hx), y: Math.round(read.hy), button: "left", clickCount: 1 });
+                    for (let step = 1; step <= 5; step += 1) {
+                      const part = step / 5;
+                      await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved",
+                        x: Math.round(read.hx + (target.x - read.hx) * part),
+                        y: Math.round(read.hy + (target.y - read.hy) * part), button: "left" });
+                      await sleep(60);
+                    }
+                    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased",
+                      x: Math.round(target.x), y: Math.round(target.y), button: "left" });
+                    await sleep(900);
+                    const turned = await engineGet(`/v1/projects/${PROJECT}`);
+                    const turnedKey = ((turned.clips["k2"].extra_masks[0].keys) ?? []).find((k) => k.at_ticks === keyAt);
+                    const delta = turnedKey && midKey ? turnedKey.rotation - midKey.rotation : null;
+                    const probe = "(function(){var corners=document.querySelectorAll('.mask-extra-handle.corner');"
+                      + "var rot=document.querySelector('[aria-label^=\"旋转选中的再叠遮罩\"]');"
+                      + "if(corners.length!==4||!rot)return null;"
+                      + "var sx=0,sy=0;Array.prototype.forEach.call(corners,function(el){var r=el.getBoundingClientRect();"
+                      + "sx+=r.left+r.width/2;sy+=r.top+r.height/2;});var cx=sx/4,cy=sy/4;"
+                      + "var q=rot.getBoundingClientRect();var hx=q.left+q.width/2,hy=q.top+q.height/2;"
+                      + "var a=function(dx,dy){var deg=Math.atan2(dx,-dy)*180/Math.PI;return deg<0?deg+360:deg;};"
+                      + "return {got:a(hx-cx,hy-cy),want:a(" + target.x + "-cx," + target.y + "-cy),"
+                      + "label:rot.getAttribute('aria-label')};})()";
+                    const after = await evaluate(probe);
+                    const turnedEngine = delta !== null && Math.abs(delta) > 3 && Math.abs(delta) < 90 && Math.sign(delta) === 1;
+                    const screenFollows = after && Math.abs(after.got - after.want) <= 3;
+                    const labelSays = Boolean(after && turnedKey && after.label
+                      && after.label.indexOf("此刻 " + turnedKey.rotation.toFixed(1) + "°") >= 0);
+                    const staticAngle = Math.abs(turned.clips["k2"].extra_masks[0].rotation - was.rotation) < 1e-9;
+                    const other3 = JSON.stringify(turned.clips["k2"].extra_masks[1]) === JSON.stringify(before.clips["k2"].extra_masks[1]);
+                    if (!turnedEngine || !screenFollows || !labelSays || !staticAngle || !other3) await fail("角度柄没有按预期："
+                      + "delta=" + JSON.stringify(delta) + " mid=" + JSON.stringify(midKey && midKey.rotation)
+                      + " turned=" + JSON.stringify(turnedKey && turnedKey.rotation)
+                      + " screen=" + JSON.stringify(after) + " static=" + JSON.stringify(was.rotation));
+                    else {
+                      await run(label);
+                      await restore();
+                    }
+                  }
                 }
               }
             }

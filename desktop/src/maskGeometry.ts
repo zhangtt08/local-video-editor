@@ -47,6 +47,16 @@ export const boxVectorFromPointer = (dx: number, dy: number, angle: number, k: n
   return { x: dx * cos - dy * k * sin, y: dx * sin / k + dy * cos };
 };
 
+/** 指针在**画框坐标系**里相对盒心的偏移 -> 这一盒该写成多少度：`rotatedEdgeMids` 那根茎的精确逆。
+ *
+ *  茎的用户坐标方向恒为 (k·sinθ, −cosθ)（`out` 就是它的单位向量，所以加不加那段留白同一条方向），
+ *  因此 atan2(dx/k, −dy) 就是它的逆——与 `rotateAngleFromPointer` 在轴对齐的那一层上同一个数，
+ *  但这一条走的是**按下那一刻那份完整逆矩阵**落回来的坐标：导引挂在片段自己的旋转/缩放那一摞里，
+ *  只除 a、d 会把那一摞的转动当成没有（量到的正是：屏幕拖 +20°，引擎落 +11.8°、柄停在指针后面 8°）。
+ */
+export const stemAngleFromUser = (dx: number, dy: number, k: number) =>
+  Math.atan2(dx / k, -dy) * 180 / Math.PI;
+
 /** 播放头落在哪一窗，就画哪一窗的那张图。
  *
  * 阶梯是引擎算的（`animation.mask_rotation_schedule`），这里只按 `to_ticks` 找格子——

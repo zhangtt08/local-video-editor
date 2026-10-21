@@ -977,6 +977,9 @@ table.table tr.current td { background: var(--accent-soft); }
 .mask-extra-handle { fill: #f5d58a; stroke: #282828; stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: all; cursor: move; }
 /* 盒可能转着，四个角不跟屏幕方向对齐，所以用不指方向的十字而不是 nwse/nesw。 */
 .mask-extra-handle.corner { cursor: crosshair; }
+.mask-extra-stem { stroke: rgba(245,213,138,.55); stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
+.mask-extra-handle.rotate-handle { fill: #8fd3a8; cursor: grab; }
+.mask-extra-handle.rotate-handle:active { cursor: grabbing; }
 .mask-hit { fill: transparent; pointer-events: all; cursor: move; }
 .mask-handle { fill: #f5d58a; stroke: #282828; stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: all; cursor: nwse-resize; }
 .mask-handle:nth-last-child(2), .mask-handle:nth-last-child(3) { cursor: nesw-resize; }

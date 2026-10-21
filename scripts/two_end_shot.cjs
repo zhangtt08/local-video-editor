@@ -350,7 +350,10 @@ async function main() {
     }
     if (PLAY > 0) {
       // 播放中读画布缓冲：画布在不在、这一帧是不是真画了（全黑就是画布没跟上播放）。
-      // 读一次可能是空的（缓冲刚被合成器清掉），隔一会儿再读，最多四次；停之前一定读到过东西。
+      // 读要落在**帧里**：界面那一支在 requestAnimationFrame 里画，回调按登记顺序跑，
+      // 所以量具把 readPixels 也放进一次 rAF（排在它之后登记的那一帧）——
+      // 在两个任务之间读会撞上「清完屏还没画」那一格（1.252/1.254 各红过一次，重试也救不回来）。
+      // 仍然要求读到非空：帧对齐之后还是空，就是画布真没画。
       const started = await evaluate(`(function(){
         var b = document.querySelector('.play-btn');
         if (!b || b.disabled) return false;
@@ -359,7 +362,7 @@ async function main() {
       })()`);
       if (!started) throw new Error("播放按钮按不下去");
       await sleep(PLAY);
-      const readCanvas = `(function(){
+      const readCanvas = `(new Promise(function(resolve){requestAnimationFrame(function(){resolve((function(){
         var c = document.querySelector('.grade-canvas');
         if (!c) return {canvas: false};
         var gl = c.getContext('webgl2');
@@ -378,7 +381,7 @@ async function main() {
           pixel: [px[0], px[1], px[2], px[3]], checksum: checksum,
           playhead: (document.querySelector('.ph-time') || {}).textContent || null,
           video_time: v ? v.currentTime : null};
-      })()`;
+      })());});}))`;
       let seenPlay = null;
       for (let attempt = 0; attempt < 4; attempt += 1) {
         seenPlay = await evaluate(readCanvas);

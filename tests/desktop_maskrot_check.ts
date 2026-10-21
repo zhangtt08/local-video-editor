@@ -258,8 +258,8 @@ assert.ok(pictureSrc.includes("旋转遮罩（此刻") && pictureSrc.includes(".
 assert.ok(pictureSrc.includes("if (gesture.rotate) {"), "proposed 里不认 rotate 这一笔（按下拖动都不转）");
 assert.ok(pictureSrc.includes("angle0: target.rotate ? angleOf(event) ?? undefined : undefined"),
   "按下时没记住起始那个屏幕角（一转就跳到指针上）");
-assert.ok(pictureSrc.includes("rotateAngleFromPointer(event.clientX"),
-  "读回的角与茎的落位不再互逆（1.181：直接对屏幕像素取 atan2，拖多少与看见多少就分家）");
+assert.equal((pictureSrc.match(/rotateAngleFromPointer\(/g) ?? []).length, 1,
+  "读回的角与茎的落位不再互逆（1.181：直接对屏幕像素取 atan2，拖多少与看见多少就分家）——换算在向导里也只能有一处");
 assert.ok(!pictureSrc.includes("Math.atan2(px, -py)"),
   "旧的屏幕角式子还在：那颗框是拉伸的，屏幕角不等于画框里的角度");
 assert.ok(pictureSrc.includes('if (disabled || !["ArrowLeft", "ArrowRight"].includes(e.key)) return;'),
