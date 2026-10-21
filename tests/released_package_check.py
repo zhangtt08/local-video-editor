@@ -132,6 +132,7 @@ RENDERER_SENTENCES = (
     "入点时间",
     # 1.258：打点那颗按钮把「记的是哪几个数」写在眼前——软边现在也在这一串里。
     "中心、大小、角度与软边",
+    "遮罩羽化",
 )
 RENDERER_LITERALS = (
     "clip.color_manage",

@@ -11,7 +11,7 @@ import { boxKeyAt, boxKeyForPlayhead } from "../effects";
 const CORNERS = [[-1,-1,"左上"],[1,-1,"右上"],[1,1,"右下"],[-1,1,"左下"]] as const;
 // 只有盒子的四个数靠 CSS 变量动。角度不动变量——它动的是引擎下发的整张图（每段窗一张），
 // 因为 `mask-image` 不吃图层的 `transform`（1.164 量的），阶梯两端同表才是真的同一件事。
-type MaskBoxProperty = Exclude<MaskProperty, "mask_rotation">;
+type MaskBoxProperty = Exclude<MaskProperty, "mask_rotation" | "mask_feather">;
 const MASK_VARIABLE: Record<MaskBoxProperty, string> = { mask_x: "x", mask_y: "y", mask_width: "w", mask_height: "h" };
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 // The engine publishes the real cap through capabilities; this only covers the first paint
@@ -113,7 +113,7 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
     observer.observe(element);
     if (!animated) return () => { observer.disconnect(); };
     const duration = clip.duration_ticks / TIMEBASE * 1000;
-    maskAnimations.current = (Object.keys(animated.curves) as MaskProperty[]).filter((property) => property !== "mask_rotation").map((property) => {
+    maskAnimations.current = (Object.keys(animated.curves) as MaskProperty[]).filter((property) => property !== "mask_rotation" && property !== "mask_feather").map((property) => {
       const effect = element.animate(animated.curves[property].map((point) => ({
         [`--mask-${MASK_VARIABLE[property as MaskBoxProperty]}`]: String(point.value), offset: point.offset, easing: point.easing,
       })), { duration, fill: "both" });

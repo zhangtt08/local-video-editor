@@ -6,7 +6,7 @@
 显示 28.8°）。改成段起点之后两端仍然共用同一份表，只是每窗带哪个数变了。
 
 钉四件事，逐条可反证：
-* **每窗 == 该窗起点的采样**：三数（角度、宽、高）逐窗对 `sample(clip, from_ticks)`。
+* **每窗 == 该窗起点的采样**：四数（角度、宽、高、软边）逐窗对 `sample(clip, from_ticks)`。
 * **针帧被执行**：每一枚针在它自己那一帧上，点表给的就是它自己的值（这是这一档的全部动机）。
 * **合并没丢**：曲线前半段摊平成常值时，窗数要掉下来而不是照样一格一窗。
 * **柔焦共用同一条规矩**：`spatial_schedule` 也按段起点取值——一把尺量两个消费者。
@@ -19,11 +19,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from agentcut.animation import mask_box_schedule, sample, spatial_schedule
+from agentcut.animation import BOX_STEPS, mask_box_schedule, sample, spatial_schedule
 from agentcut.contracts import TIMEBASE, Clip, Keyframe, ShapeMask
 
 F = TIMEBASE // 30
-PROPS = ("mask_rotation", "mask_width", "mask_height")
+# 1.259：那条窗表从三个数长成四个（软边进来了）。这一档量的就是「每窗带自己起点那一格」，
+# 所以轴名单直接取产品那一处的主人——但它的**内容**仍要钉住：少一格就是少一个被量的数。
+PROPS = BOX_STEPS
 
 
 def box_clip() -> Clip:
@@ -33,6 +35,7 @@ def box_clip() -> Clip:
         keys.append(Keyframe(property="mask_rotation", at_ticks=tick * F, value=10.0 * index))
         keys.append(Keyframe(property="mask_width", at_ticks=tick * F, value=0.30 + 0.05 * index))
         keys.append(Keyframe(property="mask_height", at_ticks=tick * F, value=0.20 + 0.03 * index))
+        keys.append(Keyframe(property="mask_feather", at_ticks=tick * F, value=0.02 + 0.04 * index))
     return Clip(
         id="c",
         asset_id="a",
@@ -70,13 +73,13 @@ def start_sampled(schedule: list[dict], clip: Clip, props: tuple[str, ...], labe
 
 
 def needles_execute(clip: Clip, schedule: list[dict], label: str) -> None:
+    """每一枚针在它自己那一帧上给的就是它自己的值——四个数都按这一条判。"""
     bad = []
     for key in clip.keyframes:
-        if key.property != "mask_rotation":
-            continue
         got = executing(schedule, key.at_ticks)
-        if got is None or abs(got[0] - key.value) > 1e-9:
-            bad.append((key.at_ticks // F, key.value, got[0] if got else None))
+        axis = PROPS.index(key.property)
+        if got is None or abs(got[axis] - key.value) > 1e-9:
+            bad.append((key.property, key.at_ticks // F, key.value, got[axis] if got else None))
     assert not bad, f"{label}：这些针在它自己那一帧没被执行（执行的是别格的数）：{bad}"
 
 
@@ -134,6 +137,7 @@ def both_ends_one_table() -> None:
 
 
 def main() -> None:
+    assert PROPS == ("mask_rotation", "mask_width", "mask_height", "mask_feather"), PROPS
     clip = box_clip()
     schedule = mask_box_schedule(clip, F)
     start_sampled(schedule, clip, PROPS, "转过的那一路")

@@ -77,13 +77,16 @@ export const EFFECT_FIELDS: { property: AnimatedEffect; label: string; unit: str
 
 
 /** Rectangle and ellipse masks keyframe their own box; values stay in the mask's normalized units. */
-export const MASK_ANIM_FIELDS: { property: MaskProperty; label: string; unit: string; min: number; max: number; step: number; factor: number; field: "center_x" | "center_y" | "width" | "height" | "rotation" }[] = [
+export const MASK_ANIM_FIELDS: { property: MaskProperty; label: string; unit: string; min: number; max: number; step: number; factor: number; field: "center_x" | "center_y" | "width" | "height" | "rotation" | "feather" }[] = [
   { property: "mask_x", label: "遮罩中心 X", unit: "%", min: 0, max: 100, step: 1, factor: 100, field: "center_x" },
   { property: "mask_y", label: "遮罩中心 Y", unit: "%", min: 0, max: 100, step: 1, factor: 100, field: "center_y" },
   { property: "mask_width", label: "遮罩宽度", unit: "%", min: 1, max: 200, step: 1, factor: 100, field: "width" },
   { property: "mask_height", label: "遮罩高度", unit: "%", min: 1, max: 200, step: 1, factor: 100, field: "height" },
   // 1.165: 单位是度、factor 1 —— 这条曲线在人眼前就是那个屏幕角，不是一套比例。
   { property: "mask_rotation", label: "遮罩角度", unit: "°", min: -360, max: 360, step: 1, factor: 1, field: "rotation" },
+  // 1.259: 软边也是百分数，但它不是 CSS 量能表达的量——斜坡烘在引擎那张板里，所以这一条
+  // 曲线走的是按窗换图那一路（与角度同族），不是 `--mask-*` 那种连续量。
+  { property: "mask_feather", label: "遮罩羽化", unit: "%", min: 0, max: 100, step: 1, factor: 100, field: "feather" },
 ];
 
 /** Any non-inverted mask can be keyframed; a free-form outline only moves (see `maskAnimFields`). */
@@ -101,10 +104,14 @@ export const maskAnimFields = (mask?: ShapeMask | null, caps?: Capabilities | nu
   // 摆上去就是一条老引擎会点名拒绝的曲线。
   const curves = Boolean(caps?.features.mask_rotation_curves);
   const sizeCurves = Boolean(caps?.features.mask_rotation_size_curves);
+  // 1.259：软边那一行也只在这一版引擎报了开关时出现——它烘在板子里，老引擎没有这张窗表。
+  const featherCurves = Boolean(caps?.features.mask_feather_curves);
   const moveOnly = mask.shape === "path" || (Boolean(mask.rotation) && !sizeCurves);
   return MASK_ANIM_FIELDS.filter((row) => row.property === "mask_rotation"
     ? curves && mask.shape !== "path"
-    : !moveOnly || row.property === "mask_x" || row.property === "mask_y");
+    : row.property === "mask_feather"
+      ? featherCurves && mask.shape !== "path"
+      : !moveOnly || row.property === "mask_x" || row.property === "mask_y");
 };
 
 /**

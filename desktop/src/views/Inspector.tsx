@@ -519,7 +519,7 @@ function EffectInput({ id, value, min, max, step, onCommit }: { id: string; valu
 }
 
 /** Numeric mask rows: field, label, min, max, keyframe property. */
-const MASK_ROWS = [['center_x', '中心 X', 0, 100, 'mask_x'], ['center_y', '中心 Y', 0, 100, 'mask_y'], ['width', '宽度', 1, 200, 'mask_width'], ['height', '高度', 1, 200, 'mask_height']] as const;
+const MASK_ROWS = [['center_x', '中心 X', 0, 100, 'mask_x'], ['center_y', '中心 Y', 0, 100, 'mask_y'], ['width', '宽度', 1, 200, 'mask_width'], ['height', '高度', 1, 200, 'mask_height'], ['feather', '向内羽化', 0, 100, 'mask_feather']] as const;
 
 /** A free-form outline is positioned by its vertices, and its box is always the drawn bounds, so
  * there is no numeric box to edit — the centre curves come from 跟踪主体 or the curve editor.
@@ -586,20 +586,24 @@ function MaskFields({ clip }: { clip: Clip }) {
   const perFrame = project ? frameTicks(project.settings.frame_rate) : 1;
   const runOn = trackWindow(Math.floor((clip.duration_ticks - at) / perFrame), at === 0, app.caps?.limits);
   const runAll = trackWindow(Math.floor(clip.duration_ticks / perFrame), true, app.caps?.limits);
+  const boxRows = mask && canAnimateMask(mask) ? maskRows(mask, app.caps) : [];
+  // 那一格不进曲线的那一版（路径遮罩、或引擎没报 `mask_feather_curves`）仍要能改静止的软边：
+  // 不是把行藏掉，而是退回没有 ◇ 的那一种。
+  const staticFeather = Boolean(mask) && !boxRows.some((row) => row[0] === "feather");
   return <details className="insp-section mask-section"><summary className="panel-label">遮罩{mask ? ` · ${{ ellipse: "椭圆", rectangle: "矩形", path: "路径" }[mask.shape]}` : ""}</summary>
     <fieldset className="effects-fields" disabled={disabled}>
       <label className="mask-shape">形状 <select className="input" aria-label="遮罩形状" value={mask?.shape ?? "none"} onChange={(e) => { const shape = e.target.value; if (shape === "none") { setClipMask(clip.id, null); return; } const base = { ...(mask ?? DEFAULT_MASK), shape: shape as ShapeMask["shape"] }; setClipMask(clip.id, shape === "path" ? { ...base, vertices: base.vertices?.length ? base.vertices : DEFAULT_PATH.map((vertex) => ({ ...vertex, handle_out: [...vertex.handle_out] as [number, number], handle_in: [...vertex.handle_in] as [number, number] })) } : { ...base, vertices: null }); }}><option value="none">无</option><option value="ellipse">椭圆</option><option value="rectangle">矩形</option><option value="path">路径</option></select></label>
       {mask ? <>
         {mask.shape === "path" ? <p className="hint">路径顶点 {mask.vertices?.length ?? 0} 个：画面里拖顶点改形状，双击最近那条边加一个点。{app.caps?.features.path_shape_keys ? "轮廓本身也能随时间变形：先记一帧。" : "形状还不能随时间变化。"}</p> : null}
         {mask.shape === "path" && app.caps?.features.path_shape_keys ? <MaskShapeKeys clip={clip} mask={mask} disabled={disabled} at={at} /> : null}
-        {(canAnimateMask(mask) ? maskRows(mask, app.caps) : []).map(([field, label, min, max, property]) => {
+        {boxRows.map(([field, label, min, max, property]) => {
           const frame = frames.find((k) => k.property === property && k.at_ticks === at + (clip.animation_offset_ticks ?? 0));
           const animated = (clip.keyframes ?? []).some((k) => k.property === property);
           return <div className="effect-row" key={field}><label htmlFor={`mask-${field}`}>{label}</label><EffectInput id={`mask-${field}`} value={(frame?.value ?? mask[field]) * 100} min={min} max={max} step={1} onCommit={(value) => animated ? setKeyframe(clip.id, { property, at_ticks: at, value: value / 100, interpolation: frame?.interpolation ?? "linear" }) : setClipMask(clip.id, { ...mask, [field]: value / 100 })} /><span className="dim">%</span>
             {animatable ? <button type="button" className={`keyframe-btn${frame ? " active" : ""}`} aria-label={frame ? `删除${label}关键帧` : `添加${label}关键帧`} title={`${frame ? "删除" : "添加"}当前位置的${label}关键帧`} disabled={disabled} onClick={() => frame ? removeKeyframe(clip.id, property, at + (clip.animation_offset_ticks ?? 0)) : setKeyframe(clip.id, { property, at_ticks: at, value: mask[field], interpolation: "linear" })}>◇</button> : null}
           </div>;
         })}
-        <div className="effect-row"><label htmlFor="mask-feather">向内羽化</label><EffectInput id="mask-feather" value={mask.feather * 100} min={0} max={100} step={1} onCommit={(value) => setClipMask(clip.id, { ...mask, feather: value / 100 })} /><span className="dim">%</span></div>
+        {staticFeather && mask ? <div className="effect-row"><label htmlFor="mask-feather">向内羽化</label><EffectInput id="mask-feather" value={mask.feather * 100} min={0} max={100} step={1} onCommit={(value) => setClipMask(clip.id, { ...mask, feather: value / 100 })} /><span className="dim">%</span></div> : null}
         {mask.shape === "path" ? null : rotationLimit === undefined ? <p className="hint">这一版引擎没有遮罩角度这一格。</p> : <div className="effect-row"><label htmlFor="mask-rotation">遮罩角度</label><EffectInput id="mask-rotation" value={angleKey?.value ?? mask.rotation ?? 0} min={-rotationLimit} max={rotationLimit} step={1} onCommit={(value) => angleKey ? setKeyframe(clip.id, { property: "mask_rotation", at_ticks: at, value, interpolation: angleKey.interpolation ?? "linear" }) : setClipMask(clip.id, { ...mask, rotation: value })} /><span className="dim">°</span>{rotationCurves && animatable ? <button type="button" className={`keyframe-btn${angleKey ? " active" : ""}`} aria-label={angleKey ? "删除遮罩角度关键帧" : "添加遮罩角度关键帧"} title={angleKey ? "删掉这一刻的遮罩角度关键帧" : "在播放头记一格遮罩角度。导出与预览走同一份按帧对齐的阶梯：引擎把曲线切成几段窗，每窗一张图、一格一步"} disabled={disabled} onClick={() => angleKey ? removeKeyframe(clip.id, "mask_rotation", at + (clip.animation_offset_ticks ?? 0)) : setKeyframe(clip.id, { property: "mask_rotation", at_ticks: at, value: mask.rotation ?? 0, interpolation: "linear" })}>◇</button> : null}</div>}
         <MaskStack clip={clip} disabled={disabled} />
         <label><input type="checkbox" checked={mask.inverted} onChange={(e) => setClipMask(clip.id, { ...mask, inverted: e.target.checked })} />反转遮罩</label>
@@ -730,7 +734,8 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
         <span className="mask-stack-state dim">{item.keys?.length ? `自己走 · ${item.keys.length} 枚框点` : clip.extra_masks_follow ? "跟随主遮罩" : "静止"}</span>
       </div>
       <div className="mask-stack-grid">
-        {MASK_ROWS.map(([field, label, min, max]) => <label className="mask-stack-cell" key={field}>
+        {/* 这一格自己管「停在哪一枚就改哪一枚」，所以不走 MASK_ROWS 那条通用行（软边在框点上是可缺省的）。 */}
+        {MASK_ROWS.filter((row) => row[0] !== "feather").map(([field, label, min, max]) => <label className="mask-stack-cell" key={field}>
           <span>{label}</span>
           <EffectInput id={`stack-${index}-${field}`} value={(atKey ?? item)[field] * 100} min={min} max={max} step={1}
             onCommit={(value) => commitBox(index, atKey, field, value / 100)} />

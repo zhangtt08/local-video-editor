@@ -645,7 +645,7 @@ def _mix_vertex(a: MaskVertex, b: MaskVertex, progress: float) -> MaskVertex:
     )
 
 
-BOX_STEPS = ("mask_rotation", "mask_width", "mask_height")
+BOX_STEPS = ("mask_rotation", "mask_width", "mask_height", "mask_feather")
 
 
 def rotated_box(clip: Clip) -> bool:
@@ -665,24 +665,26 @@ def rotated_box(clip: Clip) -> bool:
 def mask_box_schedule(clip: Clip, quantum: int, limit: int | None = None) -> list[dict]:
     """The windows one turning box actually executes — the same list at both ends.
 
-    A step's `value` is the triple `(angle, width, height)`, so the angle and the two edges swap on
-    the *same* frame boundary at both ends: one table, three numbers. `geq` could evaluate an angle
+    A step's `value` is the tuple `(angle, width, height, feather)`, so those numbers swap on the
+    *same* frame boundary at both ends: one table, four numbers. `geq` could evaluate an angle
     every frame, but the preview cannot, and a continuous angle on one side and a staircase on the
     other is exactly the split this project refuses. One `frame_windows` pass decides the steps;
     the exporter folds that list into its expressions and the preview ships one isotropic image
     per window. A clip shorter than `limit` frames is therefore exact at the frame level, and a
     longer one coarsens by a number both ends can be checked against.
+
+    1.259: the soft edge joins that tuple. It is not a CSS quantity at all - the ramp lives inside
+    the baked plate (`masks.svg_image`'s gradient stops) - so a keyed feather needs the plate
+    machinery even for a box that never turns. A box with no feather keys keeps the continuous
+    curves it always had, byte for byte.
     """
-    if not rotated_box(clip) or not any(
-        points(clip, prop) for prop in ("mask_rotation", "mask_width", "mask_height")
-    ):
+    if not rotated_box(clip) and not points(clip, "mask_feather"):
+        return []
+    if not any(points(clip, prop) for prop in BOX_STEPS):
         return []
 
     def value_at(source: Clip, at: int):
-        return tuple(
-            round(sample(source, prop, at), 9)
-            for prop in ("mask_rotation", "mask_width", "mask_height")
-        )
+        return tuple(round(sample(source, prop, at), 9) for prop in BOX_STEPS)
 
     return frame_windows(
         clip, quantum, MASK_ROTATION_SCHEDULE_MAX if limit is None else limit, value_at
@@ -1002,14 +1004,18 @@ def preview_manifest(
                     "angle": window["value"][0],
                     "width": window["value"][1],
                     "height": window["value"][2],
+                    # 1.259：这一窗执行的那一条软边也写在这一行上——界面画那一框时读的
+                    # 就是这一份，不在浏览器里再插一次值。
+                    "feather": window["value"][3],
                     # One plate per window: the isotropic canvas already carries that window's own
-                    # angle and edges, so the browser's only job stays translating it.
+                    # angle, edges and ramp, so the browser's only job stays translating it.
                     "image": cover_svg_image(
                         clip.mask.model_copy(
                             update={
                                 "rotation": window["value"][0],
                                 "width": window["value"][1],
                                 "height": window["value"][2],
+                                "feather": window["value"][3],
                                 "center_x": 0.5,
                                 "center_y": 0.5,
                             }
@@ -1063,7 +1069,9 @@ def preview_manifest(
                     )
             elif clip.extra_masks_follow and box_schedule and clip.mask is not None:
                 for window in box_schedule:
-                    angle, width, height = window["value"]
+                    # 按位置读那三个数——这一张窗表的元组里还有软边，而那一格是**这一块自己**的洞
+                    # 的边，不跟着主遮罩的窗走（主遮罩糊多少，是它自己那一张图的事）。
+                    angle, width, height = window["value"][:3]
                     scaled = extra.model_copy(
                         update={
                             "width": extra.width * (width / clip.mask.width),

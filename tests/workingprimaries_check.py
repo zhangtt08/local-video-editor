@@ -127,8 +127,8 @@ def vocabulary_suite() -> None:
         assert all(abs(sum(numbers[row * 3 : row * 3 + 3]) - 1.0) < 1e-5 for row in range(3)), (
             f"{name} 的某一行和不是 1：灰会被推走"
         )
-    assert SCHEMA_VERSION == 29, SCHEMA_VERSION
-    assert capabilities()["project_schema_version"] == 29
+    assert SCHEMA_VERSION == 30, SCHEMA_VERSION
+    assert capabilities()["project_schema_version"] == 30
 
     decode, encode = transfer_tables()
     assert len(decode) == len(encode) == 256, (len(decode), len(encode))

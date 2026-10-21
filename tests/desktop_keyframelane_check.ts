@@ -19,6 +19,7 @@ import { resolve } from "node:path";
 import {
   LANE_CLIP_PAD_PIXELS,
   LANE_PITCH_PIXELS,
+  NEEDLE_AREA_PIXELS,
   NEEDLE_BOTTOM_PIXELS,
   NEEDLE_HIT_PIXELS,
   SEAM_BADGE_BOTTOM_PIXELS,
@@ -142,4 +143,18 @@ assert.ok(badgeRule, "转场牌子的规则存在");
 assert.doesNotMatch(badgeRule[0], /top: /, "牌子不许再写那个照着行高猜的 top——那一行由 keyframeLanes 下发");
 assert.doesNotMatch(badgeRule[0], /height: /, "它的高度同理只许有一份");
 
-console.log("PASS: 同一秒上不同属性的针各走一道、道号按第一次出现排、画不下的（含压在转场牌子底下的）明说是哪几条并给出路、容量按像素算且至少一道、那些像素 CSS 与判定同一份");
+// 1.259：淡角柄也不许盖住针道。扫新那一腿（在画面里点一下「添加向内羽化关键帧」）之后量到的：
+// 最左边那一枚针的盒子正压在 `span.fade-handle in` 底下，`elementFromPoint` 回的是柄——
+// 针看得见却点不到，正是 1.113 那条「宁可少画，也不留一枚点不到的针」不许留下的形状。
+// 让位的是柄（它只服务「拖出一条淡」这一只手），针道那一段高由 `--needle-area` 一处说。
+const needleArea = new RegExp("--needle-area: *(\\d+)px").exec(css);
+assert.ok(needleArea, "留给针道的那一截高没有一处 CSS 来源");
+assert.equal(Number(needleArea[1]), NEEDLE_AREA_PIXELS,
+  "CSS 那一档与界面摆针的那一个数分家了（柄让的那一段就不是针道）");
+const fadeRule = /\.fade-handle\s*\{[^}]*\}/.exec(css);
+assert.ok(fadeRule, "淡角柄那一条规则存在");
+assert.match(fadeRule[0], /bottom: var\(--needle-area\)/,
+  "柄没有让出针道——它会盖住最左边那一枚针，那枚针就点不到了");
+assert.doesNotMatch(fadeRule[0], /bottom: 0/, "同一条规则里不许又写回 bottom: 0");
+
+console.log("PASS: 同一秒上不同属性的针各走一道、道号按第一次出现排、画不下的（含压在转场牌子底下的）明说是哪几条并给出路、容量按像素算且至少一道、淡角柄停在针道之上且那一段高与界面同一个数、那些像素 CSS 与判定同一份");

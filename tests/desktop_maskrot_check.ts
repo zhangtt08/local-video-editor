@@ -120,8 +120,9 @@ assert.ok(picture.includes('rotated ? " rotated-mask" : " animated-mask"'), "旋
 assert.ok(picture.includes("{rotated ? null : CORNERS.map"), "转过的盒子还留着四角把手");
 assert.ok(picture.includes("画面上这框就是转过角度的遮罩盒"), "收掉把手没说为什么");
 assert.ok(picture.includes("这一格的角度是"), "阶梯在画面上没说这一刻吃的是哪一窗");
-assert.ok(picture.includes('type MaskBoxProperty = Exclude<MaskProperty, "mask_rotation">'),
-  "盒子那四个 CSS 变量的名单没把角度排除掉");
+// 1.259：软边与角度同一族——它也不许进那四个 CSS 变量（斜坡烘在引擎那张板里）。
+assert.ok(picture.includes('type MaskBoxProperty = Exclude<MaskProperty, "mask_rotation" | "mask_feather">'),
+  "盒子那四个 CSS 变量的名单没把角度与软边排除掉");
 assert.equal(picture.split('"--mask-w": mask?.width').length - 1, 1, "旋转那一路也该拿盒子的宽去缩放");
 assert.ok(picture.includes('? { maskImage: spun.image,'), "阶梯那一路没换成此刻那一张图");
 assert.ok(picture.includes('? { maskImage: animated.unit, "--mask-x": mask?.center_x ?? .5, "--mask-y": mask?.center_y ?? .5 } as CSSProperties'),
@@ -167,8 +168,9 @@ assert.ok(inspector.includes('removeKeyframe(clip.id, "mask_rotation"'), "再按
 // ④ 角度是关键帧了，但它不走 CSS 变量那一路：`mask-image` 不吃图层 transform（1.164 量的），
 //    界面每窗换的是引擎烘好的那张等比图。把它做成第五个变量就是画一条导出不会走的路。
 const engine = read("desktop/src/engine.ts");
-assert.ok(engine.includes('export type MaskProperty = "mask_x" | "mask_y" | "mask_width" | "mask_height" | "mask_rotation";'),
-  "盒的第五条属性没接进界面类型（导出这一腿 1.165 已经接上了）");
+// 1.259：软边是这一族的第六个属性——界面那条类型必须与契约那条 Literal 同一串，少一格就是少一条路。
+assert.ok(/export type MaskProperty = "mask_x" \| "mask_y" \| "mask_width" \| "mask_height" \| "mask_rotation" \| "mask_feather";/.test(engine),
+  "盒的第五条与第六条属性没一起接进界面类型（导出这一腿 1.165/1.259 都接上了）");
 assert.ok(engine.includes("export type MaskRotationWindow = {"), "预览清单里那扇窗在界面这边没有类型");
 assert.ok(engine.includes("mask_rotation_windows?: MaskRotationWindow[] | null"), "界面没接引擎下发的那份阶梯");
 assert.ok(engine.includes("mask_rotation: number"), "采样值里没有这一格，曲线编辑器就成了瞎子");
@@ -294,8 +296,9 @@ assert.ok(storeSrc.includes("if (!state.project?.clips[clipId]) return false;"),
 assert.ok(/void openProject\(wanted\)\.then\(\(\) => \{/.test(storeSrc)
   && storeSrc.includes("landLinkedTick(linkedTick);"),
   "深链没等工程读进来就下单，选不到那条片段也停不到那一帧");
-assert.ok(contracts.includes('key.property == "mask_rotation" for key in self.keyframes'),
-  "路径遮罩的角度曲线没被拒——摆出来就是一条导出不执行的针");
+// 1.259：软边与角度一起被拒——轮廓的斜坡是跟着板子烘的，那条曲线两头都没处执行。
+assert.ok(contracts.includes('key.property in ("mask_rotation", "mask_feather") for key in self.keyframes'),
+  "路径遮罩的角度与软边曲线没被拒——摆出来就是一条导出不执行的针");
 
 console.log(`PASS: 遮罩角度的参考线在屏幕像素意义上转了（${flat.length} 个角钉住），阶梯按窗落格 ${steps.length} 段两头同一张表，`
   + "界面只平移引擎那张等比图，上下限与能不能打曲线都从 capabilities 读");

@@ -72,7 +72,9 @@ assert.match(row[0], /font-size: var\(--fs-body\)/, "那一行不用刻度里的
 assert.match(css, /\.mask-stack-head\s*\{[^}]*font-size: var\(--fs-label\)/, "标题那一行不用刻度里的字号");
 
 // ⑥ 1.229：每一块的五个数与羽化/反转都在这一格里改——1.221 只给了一个默认矩形，人改不动
-assert.match(inspector, /MASK_ROWS\.map\(\(\[field, label, min, max\]\)/,
+// 1.258 起软边在框点上是可缺省的，所以那一格自己管；这一枚针跟着改到「滤掉软边的那一串」。
+assert.match(inspector,
+  /MASK_ROWS\.filter\(\(row\) => row\[0\] !== "feather"\)\.map\(\(\[field, label, min, max\]\)/,
   "叠加那几块的中心/大小行不是从同一张 MASK_ROWS 折出来的（第二张标签表迟早对不上）");
 assert.match(inspector, /id=\{`stack-\$\{index\}-\$\{field\}`\}/, "每一块的输入框没有按块编号");
 assert.match(inspector, /id=\{`stack-\$\{index\}-rotation`\}/, "叠加的块改不了角度");
@@ -370,8 +372,8 @@ assert.match(contractsSrc, /feather: Annotated\[float \| None, Field\(ge=0, le=1
   "框点没有软边这一格，或它不是「没写就用这一块静止的那个数」那个意思");
 assert.match(contractsSrc, /def box_value\(extra, key, name: str\)/,
   "「没写的那一格归谁」没有一处主人");
-assert.match(contractsSrc, /MASK_BOX_VALUES = \(\*MASK_FIELDS, "mask_feather"\)/,
-  "那一串数的名字不是从主遮罩那五个数折出来的");
+assert.match(contractsSrc, /MASK_BOX_VALUES = tuple\(MASK_FIELDS\)/,
+  "那一串数的名字不是从主遮罩那六个数折出来的（1.259 起它是一个主人）");
 assert.match(contractsSrc, /start = box_value\(self, left, name\)/,
   "越界那一条没问 box_value，自己在判羽化写没写");
 assert.match(engine, /feather\?: number \| null/, "渲染层的框点类型不认识软边这一格");
@@ -407,4 +409,58 @@ assert.match(picture, /feather: box\.feather \?\? row\.feather/,
 assert.equal((inspector.match(/op: "clip\.mask_stack"/g) ?? []).length, 0,
   "检查器不许绕过那一处写入口");
 
-console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的那几个数与反转都在格子里改、每一块可以打自己的框点、跟随时大小按同一比例缩放、框点的时间在条顶上看得见且不接指针、每一块都写明自己怎么动、停在框点上时那几个数改的就是那一枚且软边也在其中、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、选中的那一块拖着中心走、转着的那一块按未转的盒缩放四个角、那颗角度柄与主遮罩共用同一份换算与同一个写入口、Alt 拖出来的是副本、框点那几种缓动与那四格的带只有一处主人、样式仍走刻度");
+// ㉓ 1.259：主遮罩的软边也能打点——那条斜坡烘在引擎那张板里，所以它走的是按窗换图那一路。
+// 这一节钉的是「谁说话」：名单、那条带、开关、第四格的位置，以及界面那一格只在引擎认得时出现。
+assert.match(contractsSrc,
+  /MaskProperty = Literal\[\s*"mask_x", "mask_y", "mask_width", "mask_height", "mask_rotation", "mask_feather"/,
+  "能打点的遮罩属性名单里没有软边，或次序不是那张名字表的次序");
+assert.match(contractsSrc, /"mask_feather": "feather",/, "那条属性没有唯一的字段名映射");
+assert.match(contractsSrc, /"mask_feather": \(0\.0, 1\.0\),/,
+  "软边曲线没有那条带，或它与那一格自己声明的不是同一条");
+assert.match(contractsSrc, /"mask_feather_curves": True,/, "开关没进能力表");
+assert.match(contractsSrc, /key\.property in \("mask_rotation", "mask_feather"\) for key in self\.keyframes/,
+  "路径遮罩只挡角度不挡软边——它会写下一张导出与预览都画不出的窗表");
+assert.match(animationSrc, /BOX_STEPS = \("mask_rotation", "mask_width", "mask_height", "mask_feather"\)/,
+  "那张窗表走的数里没有软边，或次序变了");
+assert.match(animationSrc, /if not rotated_box\(clip\) and not points\(clip, "mask_feather"\):/,
+  "不转的盒带软边曲线时被挡在窗表之外——预览就没有那条斜坡");
+assert.match(animationSrc, /for prop in BOX_STEPS\)/, "采样那一路没有按那张名单走");
+assert.doesNotMatch(animationSrc, /for prop in \("mask_rotation", "mask_width", "mask_height"\)/,
+  "又一处自己列那三个数——加一个数就要改两遍");
+assert.equal((animationSrc.match(/"feather": window\["value"\]\[3\],/g) ?? []).length, 2,
+  "窗那一行与烘图那一步不是同一个数（一处 2 次：行里一次、图里一次）");
+assert.match(animationSrc, /angle, width, height = window\["value"\]\[:3\]/,
+  "跟随那一路按位置读三个数时把软边也算给了这一块——它读的是自己那一个");
+assert.doesNotMatch(animationSrc, /= window\["value"\]\r?\n/,
+  "还有整串解包：窗表多一个数就在这里抛 ValueError，清单 500、监视器整块黑（本轮量到的那一条）");
+assert.match(engine,
+  /export type MaskProperty = "mask_x" \| "mask_y" \| "mask_width" \| "mask_height" \| "mask_rotation" \| "mask_feather";/,
+  "渲染层的属性类型不认识软边这一条曲线");
+assert.match(engine, /mask_feather: number/, "逐帧采样的那一份回执里没有软边这一格");
+assert.match(effects,
+  /property: "mask_feather", label: "遮罩羽化", unit: "%", min: 0, max: 100, step: 1, factor: 100, field: "feather"/,
+  "那张名单里没有软边那一行，或它带的数不是引擎那条带的百分数形式");
+assert.equal((effects.match(/"遮罩羽化"/g) ?? []).length, 1, "软边这个名字有第二处主人");
+assert.match(effects, /const featherCurves = Boolean\(caps\?\.features\.mask_feather_curves\)/,
+  "那一行出现与否不是引擎那一格决定的");
+assert.match(effects, /row\.property === "mask_feather"\s*\r?\n\s*\? featherCurves && mask\.shape !== "path"/,
+  "路径遮罩那一行没被挡掉——摆了就是引擎必拒的一枚 ◇");
+assert.match(inspector, /\['feather', '向内羽化', 0, 100, 'mask_feather'\]\] as const/,
+  "主遮罩那一格的行名单里没有软边");
+assert.match(inspector, /const boxRows = mask && canAnimateMask\(mask\) \? maskRows\(mask, app\.caps\) : \[\];/,
+  "那一串行没有折一次——`maskRows` 少递 caps 正是 1.166 那一族");
+assert.equal((inspector.match(/maskRows\(/g) ?? []).length, 1,
+  "折行那一步有了第二个调用处——1.166 那一族就是「函数对、调用点各算各的」");
+assert.match(inspector, /const staticFeather = Boolean\(mask\) && !boxRows\.some\(\(row\) => row\[0\] === "feather"\);/,
+  "那一格不进曲线时（路径遮罩、老引擎）没有退回「只改静止值」那一种");
+assert.match(inspector, /\{staticFeather && mask \? <div className="effect-row"><label htmlFor="mask-feather">/,
+  "静止那一格的出没跟着上面那条判断走");
+assert.match(inspector, /MASK_ROWS\.filter\(\(row\) => row\[0\] !== "feather"\)/,
+  "再叠那一块的格子又走了一遍通用行——软边在框点上是可缺省的，那一格自己管");
+assert.match(picture, /type MaskBoxProperty = Exclude<MaskProperty, "mask_rotation" \| "mask_feather">;/,
+  "软边被当成一个 CSS 量能表达的量");
+assert.match(picture, /property !== "mask_rotation" && property !== "mask_feather"/,
+  "逐帧那条动画里又给软边写了一个 CSS 变量——画面上会是一条引擎没有的斜坡");
+assert.doesNotMatch(picture, /--mask-feather/, "界面上造了一个第二条斜坡的刻度");
+
+console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的那几个数与反转都在格子里改、每一块可以打自己的框点、跟随时大小按同一比例缩放、框点的时间在条顶上看得见且不接指针、每一块都写明自己怎么动、停在框点上时那几个数改的就是那一枚且软边也在其中、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、选中的那一块拖着中心走、转着的那一块按未转的盒缩放四个角、那颗角度柄与主遮罩共用同一份换算与同一个写入口、Alt 拖出来的是副本、框点那几种缓动与那四格的带只有一处主人、主遮罩的软边是那张窗表的第四个数且界面只在引擎认得时摆出那一格、样式仍走刻度");

@@ -63,6 +63,9 @@
   --edge-hi: inset 0 1px 0 rgba(255, 255, 255, .04);
   --dur: .18s;
   --ease: cubic-bezier(.32, .72, 0, 1);
+  /* 1.259：片段底下留给针道的那一截高。主人是 `keyframeLanes.NEEDLE_AREA_PIXELS`（界面按它摆针），
+     这一档只是把它交给 CSS——淡角柄据此停在针道**之上**，不再盖住最左边那一枚针。 */
+  --needle-area: 37px;
   --tb-h: 44px;
   --sb-h: 30px;
 }
@@ -684,7 +687,7 @@ select { color-scheme: dark; }
 .fade-wedge.gain { bottom: 1px; background: rgba(67, 162, 115, .42); }
 .fade-wedge.in { left: 0; clip-path: polygon(0 0, 0 100%, 100% 100%); }
 .fade-wedge.out { right: 0; clip-path: polygon(100% 0, 100% 100%, 0 100%); }
-.fade-handle { position: absolute; top: 0; bottom: 0; width: 9px; z-index: 5; cursor: ew-resize; border-radius: var(--r-xs); }
+.fade-handle { position: absolute; top: 0; bottom: var(--needle-area); width: 9px; z-index: 5; cursor: ew-resize; border-radius: var(--r-xs); }
 .fade-handle.in { left: 9px; }
 .fade-handle.out { right: 9px; }
 .fade-handle::after { content: ""; position: absolute; top: 22%; bottom: 22%; left: 3px; width: 3px; border-radius: var(--r-xs); background: var(--accent); opacity: .0; }

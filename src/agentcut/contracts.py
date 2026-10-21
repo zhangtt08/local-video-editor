@@ -21,7 +21,9 @@ MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 
 SCHEMA_VERSION = (
 
-    29  # v29 lets one of those box keys carry its own feather: a v28 row's key has no such field
+    30  # v30 lets that soft edge become a curve of its own (`mask_feather`); a v29 row can name
+    #     no such property, so an older engine must fail the keyframe rather than drop the ramp. v29
+    #     lets one of those box keys carry its own feather: a v28 row's key has no such field
 
     #     and `Contract` forbids unknown ones, so an older engine fails the row rather than quietly
 
@@ -53,7 +55,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.258.0"
+APP_VERSION = "1.259.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -413,13 +415,19 @@ EffectField = EffectProperty | SpatialProperty | Literal["denoise"]
 
 # outline per moment (`Clip.mask_shape_keys`), not a scalar curve per vertex. `MaskShapeKeyframe`.
 
-MaskProperty = Literal["mask_x", "mask_y", "mask_width", "mask_height", "mask_rotation"]
+MaskProperty = Literal[
+    "mask_x", "mask_y", "mask_width", "mask_height", "mask_rotation", "mask_feather"
+]
 
 # 1.165: 角度也在这一族里，但它不是斜坡。预览那张图只能按窗换（上一轮量过：`mask-image` 不吃图层
 
 # 的 `transform`），所以 `animation.mask_rotation_schedule` 把曲线采成整帧对齐的常值窗，导出按同一份
 
-# 窗表拼角度的分段式子——阶梯是唯一权威，两端不许各算一条。
+# 窗表拼角度的分段式子——阶梯是唯一权威，两端不许各算一条。1.259：软边同一条理——那条斜坡住在
+
+# 烘出来的那张图里（`masks.svg_image` 的渐变停靠点），CSS 没有能改它的量，所以带软边针的那一块
+
+# 也按窗走（见 `animation.mask_box_schedule` 那一处判断）。
 
 MASK_FIELDS = {
 
@@ -433,13 +441,18 @@ MASK_FIELDS = {
 
     "mask_rotation": "rotation",
 
+    # 1.259：软边也是这一族的一个数（0..1，与那一格自己声明的同一条带）。
+
+    "mask_feather": "feather",
+
 }
 
 MASK_SIZE_FIELDS = {"mask_width", "mask_height"}
-# 1.258：再叠那一块的窗表多带一个数——羽化也跟着换。这张名字表就是「第几列叫什么」唯一的一处：
-# 次序必须与 `animation.MASK_EXTRA_FIELDS` 逐位相同（有门禁按位对），导出那一步靠它取值名。
+# 1.258：那一串框点数的名字表——次序必须与 `animation.MASK_EXTRA_FIELDS` 逐位相同（有门禁按位对），
+# 导出那一步靠它取值名。1.259 起它就是 `MASK_FIELDS` 本身：主遮罩那六个数与再叠那一块的六个数，
+# 名字与次序从此是一个主人。
 
-MASK_BOX_VALUES = (*MASK_FIELDS, "mask_feather")
+MASK_BOX_VALUES = tuple(MASK_FIELDS)
 # 1.221：一条片段可以再叠几块**矩形/椭圆**的遮罩，与主遮罩相乘（交集）。
 # 上限 4 是把「两端的图都要各出一张」这件事收在一个能预算的数上：导出那条 alpha 是
 # `alpha(X,Y)*A*B*C*D`，浏览器那一侧是 `mask-composite: intersect` 叠同样几层。
@@ -468,6 +481,8 @@ PROPERTY_LIMITS = {
     "mask_width": (0.01, 2),
 
     "mask_height": (0.01, 2),
+
+    "mask_feather": (0.0, 1.0),
 
 }
 
@@ -2935,13 +2950,15 @@ class Clip(Contract):
 
         if self.mask.shape == "path" and any(
 
-            key.property == "mask_rotation" for key in self.keyframes
+            key.property in ("mask_rotation", "mask_feather") for key in self.keyframes
 
         ):
 
             return (
 
-                "a free-form outline has no box to turn: 遮罩角度 only exists on a rectangle or "
+                "a free-form outline has no box to turn and its 软边 is baked with the plate: "
+
+                "遮罩角度与遮罩羽化 only exist on a rectangle or "
 
                 "ellipse mask, so keyframe the outline frames instead"
 
@@ -7117,6 +7134,10 @@ def capabilities(
             # without it refuses the curve by name rather than pretending to smooth it.
 
             "mask_rotation_curves": True,
+
+            # 1.259：软边也能打成曲线。它不是 CSS 量能表达的东西（斜坡住在烘出来的那张板里），
+            # 所以带软边针的那一块按窗换图——界面没有这一格就只给中心那两条，不许长出第二份判断。
+            "mask_feather_curves": True,
 
             # 1.166: a turning box also accepts 遮罩宽度/遮罩高度 curves. They are not continuous
 
