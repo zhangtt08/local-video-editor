@@ -139,8 +139,8 @@ assert.ok(inspector.includes("遮罩角度"), "检查器没有角度那一格");
 // 否则转过角度的盒会留下一颗按下去必被引擎拒绝的 ◇。
 assert.ok(inspector.includes("maskAnimFields(mask, caps)"), "检查器自己另判了一份能打的盒属性");
 assert.ok(inspector.includes('if (mask.shape === "path") return [];'), "路径遮罩该整个没有数字盒这一行");
-assert.ok(inspector.includes("import { blurMaxPercent, canAnimateMask") && inspector.includes("maskAnimFields,"),
-  "检查器没从 effects.ts 读那份名单");
+const effectsImport = /import \{[^}]*\} from "\.\.\/effects";/.exec(inspector);
+assert.ok(effectsImport && /\bmaskAnimFields\b/.test(effectsImport[0]), "检查器没从 effects.ts 读那份名单");
 assert.ok(inspector.includes("max={rotationLimit}") && inspector.includes("min={-rotationLimit}"),
   "角度的上下限不是引擎下发的数");
 assert.ok(inspector.includes("features.mask_rotation") && inspector.includes("mask_rotation_limit"),

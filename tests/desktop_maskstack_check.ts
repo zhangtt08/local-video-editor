@@ -7,6 +7,9 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+import { boxKeyAt } from "../desktop/src/effects";
+import type { ShapeMask } from "../desktop/src/engine";
+
 declare const REPO_ROOT: string;
 
 const read = (...parts: string[]) => {
@@ -68,7 +71,7 @@ assert.match(css, /\.mask-stack-head\s*\{[^}]*font-size: var\(--fs-label\)/, "�
 assert.match(inspector, /MASK_ROWS\.map\(\(\[field, label, min, max\]\)/,
   "叠加那几块的中心/大小行不是从同一张 MASK_ROWS 折出来的（第二张标签表迟早对不上）");
 assert.match(inspector, /id=\{`stack-\$\{index\}-\$\{field\}`\}/, "每一块的输入框没有按块编号");
-assert.match(inspector, /value=\{item\.rotation \?\? 0\}/, "叠加的块改不了角度");
+assert.match(inspector, /id=\{`stack-\$\{index\}-rotation`\}/, "叠加的块改不了角度");
 assert.match(inspector, /value=\{item\.feather \* 100\}/, "叠加的块改不了羽化");
 assert.match(inspector, /inverted: event\.target\.checked/, "叠加的块改不了反转");
 assert.match(inspector, /const patch = \(index: number, part: Partial<ShapeMask>\)/,
@@ -141,4 +144,35 @@ assert.match(css, /\.clip-boxkeys\s*\{[^}]*pointer-events: none/, "那一排点�
 assert.match(css, /\.clip-boxkey\s*\{[^}]*background: var\(--accent\)/, "点不用主题色");
 assert.match(css, /\.clip-boxkeys\s*\{[^}]*left: 7px; right: 7px/, "那一排点没有让开两头的修剪柄");
 
-console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的五个数与羽化/反转都在格子里改、每一块可以打自己的框点、跟随时大小按同一比例缩放、框点的时间在条顶上看得见且不接指针、每一块都写明自己怎么动、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、样式仍走刻度");
+// ⑪ 1.243：播放头停在框点那一帧时，卡片上五个数就是**那一枚**——引擎有框点就不读静止值了，
+// 界面再显示静止值就不是「执行的那个数」。选择只在 `boxKeyAt` 一处，这里先把它当行为验。
+const stacked: ShapeMask = {
+  shape: "rectangle", center_x: 0.5, center_y: 0.5, width: 0.3, height: 0.2,
+  rotation: 0, feather: 0, inverted: false,
+  keys: [
+    { at_ticks: 0, center_x: 0.4, center_y: 0.4, width: 0.2, height: 0.2, rotation: 0, interpolation: "linear" },
+    { at_ticks: 70_560_000, center_x: 0.6, center_y: 0.6, width: 0.4, height: 0.4, rotation: 10, interpolation: "ease" },
+  ],
+};
+assert.equal(boxKeyAt(stacked, 0)?.width, 0.2, "停在第一枚框点上，交回的不是那一枚");
+assert.equal(boxKeyAt(stacked, 70_560_000)?.center_x, 0.6, "停在第二枚框点上，交回的不是那一枚");
+assert.equal(boxKeyAt(stacked, 70_560_001), undefined, "两枚之间也交回了一枚——卡片会显示一个并不在这一帧上的数");
+assert.equal(boxKeyAt({ ...stacked, keys: [] }, 0), undefined, "没有框点时交回了一枚不存在的针");
+assert.match(inspector, /const atKey = boxKeyAt\(item, at\);/, "检查器没有用那一处选择（自己又 find 一遍就是第二个主人）");
+assert.match(inspector, /value=\{\(atKey \?\? item\)\[field\] \* 100\}/, "五个数没有按「停在这一枚就用这一枚」显示");
+assert.match(inspector, /value=\{atKey \? atKey\.rotation \?\? 0 : item\.rotation \?\? 0\}/, "角度那一格没有跟着框点走");
+assert.match(inspector, /const commitBox = \(index: number, atKey: MaskBoxKey \| undefined, field: BoxField, value: number\)/,
+  "改那五个数没有一处共同的分岔");
+assert.match(inspector, /if \(atKey\) patchKey\(index, atKey\.at_ticks, next\);/, "停在框点上时改的仍是静止值");
+assert.match(inspector, /const patchKey = \(index: number, atTick: number, part: Partial<MaskBoxKey>\)/, "没有写回框点的那一处");
+assert.match(inspector, /if \(keys\.some\(\(key\) => key\.at_ticks === at\)\) return;/, "这一帧已有框点时，「打点」仍会拿静止值把它盖掉");
+assert.match(inspector, /\|\| Boolean\(atKey\)\}/, "这一帧已有框点时，那颗打点按钮没有灰掉");
+assert.match(inspector, /这一帧已有框点/, "按钮没有把「这一帧已经有了」写在眼前");
+assert.match(inspector, /上面五个数改的是这一枚/, "没有说清上面五个数此刻改的是哪一枚");
+assert.match(inspector, /上面五个数是模板值/, "停在两枚之间时没有说清那五个数此刻只是模板");
+assert.match(inspector, /className=\{key\.at_ticks === at \? "current" : undefined\}/, "当前那一枚框点在表里没有标出来");
+assert.match(inspector, /aria-current=\{key\.at_ticks === at \? "true" : undefined\}/, "当前那一枚对读屏没有交代");
+assert.match(css, /\.mask-stack-at\s*\{[^}]*text-overflow: ellipsis/, "那一句窄了不省略，会把那一行挤成第二行");
+assert.match(css, /\.mask-stack-keylist li\.current \.btn\s*\{[^}]*border-color: var\(--accent\)/, "当前那一枚没有自己在表里亮起来");
+
+console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的五个数与羽化/反转都在格子里改、每一块可以打自己的框点、跟随时大小按同一比例缩放、框点的时间在条顶上看得见且不接指针、每一块都写明自己怎么动、停在框点上时五个数改的就是那一枚、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、样式仍走刻度");

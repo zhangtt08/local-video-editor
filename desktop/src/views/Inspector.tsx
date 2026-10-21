@@ -7,7 +7,7 @@ import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionCh
 import { Icon, Modal } from "../ui";
 import { GradeFields } from "./GradeFields";
 import { SpeedFields } from "./SpeedFields";
-import { blurMaxPercent, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeAdoptHint, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, fitSpeedPercent, INTERPOLATIONS, maskAnimFields, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackGroup, trackingKnobs, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
+import { blurMaxPercent, boxKeyAt, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeAdoptHint, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, fitSpeedPercent, INTERPOLATIONS, maskAnimFields, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackGroup, trackingKnobs, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
 import { frameTicks, TIMEBASE, align, humanDuration, offsetWords, seconds, timecode, ticks } from "../time";
 import {
   DISPLAY_PRIMARIES,
@@ -639,11 +639,14 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
     return Math.max(0, Math.min(clip.duration_ticks, Math.round(raw / frame) * frame));
   };
   // 1.238：一枚框点说的是「这一刻这块盒子的五个数」——打点就是把卡片里现在这五个数记在播放头那一帧上。
+  // 1.243：这一帧**已经有**框点时不打点也不覆盖——卡片上那五个数此刻显示的就是那一枚，
+  // 再拿静止值盖上去不是「打点」，是把它抹掉。界面把按钮灰掉并写明，函数这里也守一道。
   const stampKey = (index: number) => {
     const item = stack[index];
     const at = localTick();
-    const keys = (item.keys ?? []).filter((key) => key.at_ticks !== at);
-    if ((item.keys ?? []).length >= keysLimit && !(item.keys ?? []).some((key) => key.at_ticks === at)) return;
+    const keys = [...(item.keys ?? [])];
+    if (keys.some((key) => key.at_ticks === at)) return;
+    if (keys.length >= keysLimit) return;
     keys.push({
       at_ticks: at,
       center_x: item.center_x,
@@ -658,17 +661,29 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
   };
   const rotationLimit = app.caps?.limits?.mask_rotation_limit;
   const stack = clip.extra_masks ?? [];
+  const at = localTick();
   const full = stack.length >= limit;
   const write = (masks: ShapeMask[]) => setClipMaskStack(clip.id, masks);
   const patch = (index: number, part: Partial<ShapeMask>) =>
     write(stack.map((item, position) => (position === index ? { ...item, ...part } : item)));
+  // 1.243：停在框点那一帧时，五个数写的是这一枚框点本身（与卡片显示的是同一枚）。
+  const patchKey = (index: number, atTick: number, part: Partial<MaskBoxKey>) =>
+    patch(index, { keys: (stack[index].keys ?? []).map((key) => key.at_ticks === atTick ? { ...key, ...part } : key) });
+  type BoxField = "center_x" | "center_y" | "width" | "height";
+  const commitBox = (index: number, atKey: MaskBoxKey | undefined, field: BoxField, value: number) => {
+    const next = { [field]: value } as Pick<ShapeMask, BoxField>;
+    if (atKey) patchKey(index, atKey.at_ticks, next);
+    else patch(index, next);
+  };
   return <div className="mask-stack">
     <div className="mask-stack-head"><span>再叠的遮罩</span><span className="dim">{stack.length} / {limit} 块 · 与主遮罩取交集</span></div>
     <label className="mask-stack-follow" title="勾上之后，没打框点的块跟着主遮罩的中心曲线一起平移；主遮罩与它都没转时，大小也按同一比例缩放；主遮罩转了时，角度跟着它转。打了框点的块走自己的窗，勾这里不会删掉那些框点。羽化仍是自己的。主遮罩没有动画时，跟随的块不动。">
       <input type="checkbox" checked={clip.extra_masks_follow ?? false} disabled={disabled || stack.length === 0}
         onChange={(event) => setClipMaskStack(clip.id, stack, event.target.checked)} />跟着主遮罩平移
     </label>
-    {stack.map((item, index) => <div className="mask-stack-row" key={`stack-${index}`}>
+    {stack.map((item, index) => {
+      const atKey = boxKeyAt(item, at);
+      return <div className="mask-stack-row" key={`stack-${index}`}>
       <div className="mask-stack-title">
         <span className="mask-stack-n">第 {index + 1} 块</span>
         <select className="input tiny" aria-label={`第 ${index + 1} 块叠加遮罩的形状`} value={item.shape} disabled={disabled}
@@ -683,13 +698,13 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
       <div className="mask-stack-grid">
         {MASK_ROWS.map(([field, label, min, max]) => <label className="mask-stack-cell" key={field}>
           <span>{label}</span>
-          <EffectInput id={`stack-${index}-${field}`} value={item[field] * 100} min={min} max={max} step={1}
-            onCommit={(value) => patch(index, { [field]: value / 100 })} />
+          <EffectInput id={`stack-${index}-${field}`} value={(atKey ?? item)[field] * 100} min={min} max={max} step={1}
+            onCommit={(value) => commitBox(index, atKey, field, value / 100)} />
           <span className="dim">%</span>
         </label>)}
         {rotationLimit === undefined ? null : <label className="mask-stack-cell"><span>角度</span>
-          <EffectInput id={`stack-${index}-rotation`} value={item.rotation ?? 0} min={-rotationLimit} max={rotationLimit} step={1}
-            onCommit={(value) => patch(index, { rotation: value })} />
+          <EffectInput id={`stack-${index}-rotation`} value={atKey ? atKey.rotation ?? 0 : item.rotation ?? 0} min={-rotationLimit} max={rotationLimit} step={1}
+            onCommit={(value) => atKey ? patchKey(index, atKey.at_ticks, { rotation: value }) : patch(index, { rotation: value })} />
           <span className="dim">°</span>
         </label>}
         <label className="mask-stack-cell"><span>羽化</span>
@@ -700,17 +715,25 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
         <label className="mask-stack-cell mask-stack-invert"><input type="checkbox" checked={item.inverted} disabled={disabled}
           onChange={(event) => patch(index, { inverted: event.target.checked })} />反转这一块</label>
         <div className="mask-stack-keys">
-          <button type="button" className="btn tiny subtle" disabled={disabled || keysLimit === 0 || (item.keys?.length ?? 0) >= keysLimit}
-            title={`把第 ${index + 1} 块现在的中心、大小与角度记在播放头那一帧上；打了框点的块按整帧窗一格一步地动，预览与导出读同一张表。`}
-            onClick={() => stampKey(index)}>在播放头打框点</button>
-          <span className="dim">{item.keys?.length ?? 0} / {keysLimit} 枚框点</span>
+          <button type="button" className="btn tiny subtle" disabled={disabled || keysLimit === 0 || (item.keys?.length ?? 0) >= keysLimit || Boolean(atKey)}
+            title={atKey
+              ? "这一帧已经有一枚框点——上面五个数改的就是它。要在别的时刻再打一枚，先把播放头挪开。"
+              : `把第 ${index + 1} 块现在的中心、大小与角度记在播放头那一帧上；打了框点的块按整帧窗一格一步地动，预览与导出读同一张表。`}
+            onClick={() => stampKey(index)}>{atKey ? "这一帧已有框点" : "在播放头打框点"}</button>
+          <span className="dim mask-stack-at" title={atKey
+            ? "播放头正停在一枚框点上：上面五个数就是这一枚，改哪一个都写回这一枚。"
+            : item.keys?.length
+              ? "播放头不在这块的任何一枚框点上：上面五个数此刻不参与渲染，它们是下一次「在播放头打框点」会记下的值。"
+              : "这块还没有框点：上面五个数就是它在整段里的静止值。"}>
+            {item.keys?.length ?? 0} / {keysLimit} 枚框点{atKey ? " · 上面五个数改的是这一枚" : item.keys?.length ? " · 上面五个数是模板值" : ""}
+          </span>
           {item.keys?.length ? <button type="button" className="btn tiny subtle" disabled={disabled}
             onClick={() => patch(index, { keys: [] })}>清空框点</button> : null}
         </div>
         {item.keys?.length ? <ul className="mask-stack-keylist">
-          {item.keys.map((key) => <li key={key.at_ticks}>
-            <button type="button" className="btn tiny mono" title="把播放头移到这一帧"
-              onClick={() => { playhead.pause(); playhead.set(clip.position_ticks + key.at_ticks); }}>
+          {item.keys.map((key) => <li key={key.at_ticks} className={key.at_ticks === at ? "current" : undefined}>
+            <button type="button" className="btn tiny mono" aria-current={key.at_ticks === at ? "true" : undefined}
+              title="把播放头移到这一帧" onClick={() => { playhead.pause(); playhead.set(clip.position_ticks + key.at_ticks); }}>
               {timecode(key.at_ticks, app.project?.settings.frame_rate ?? { numerator: 30, denominator: 1 })}
             </button>
             <select className="input tiny" aria-label="这一段框点的插值" value={key.interpolation ?? "linear"}
@@ -725,7 +748,8 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
           </li>)}
         </ul> : null}
       </div>
-    </div>)}
+    </div>;
+    })}
     <div className="insp-actions"><button className="btn tiny" disabled={disabled || full || limit === 0} title={full ? `最多 ${limit} 块；要再加，先删掉一块` : "这一版引擎不认识「再叠的遮罩」这一格，出路是换一台会回的引擎"} onClick={() => write([...stack, { ...DEFAULT_MASK, shape: "rectangle", feather: 0, vertices: null }])}>再抠一块</button></div>
     {stack.length ? <p className="hint" title="框点按整帧窗一格一步地走，导出与预览读同一张表；打点、改插值与删除在每一块自己那一行。条顶上那排小点就是这些框点的时间。">再叠的这几块与主遮罩取交集；打了框点的块按自己的窗走，其余的可以跟着主遮罩。</p> : null}
   </div>;

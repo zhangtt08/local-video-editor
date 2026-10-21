@@ -1,5 +1,5 @@
 import type { GradeCapacity } from "./engine";
-import type { AnimatedEffect, Asset, BlendMode, Capabilities, Clip, Command, Curve, Effects, LayerKeyframe, LayerProperty, LayerWindow, MaskProperty, Project, SharpenSpec, SharpenStatic, SharpenSteps, ShapeMask, SpatialProperty, WipeChannel } from "./engine";
+import type { AnimatedEffect, Asset, BlendMode, Capabilities, Clip, Command, Curve, Effects, LayerKeyframe, LayerProperty, LayerWindow, MaskBoxKey, MaskProperty, Project, SharpenSpec, SharpenStatic, SharpenSteps, ShapeMask, SpatialProperty, WipeChannel } from "./engine";
 import { DEFAULT_EFFECTS } from "./engine";
 import { TIMEBASE } from "./time";
 
@@ -106,6 +106,17 @@ export const maskAnimFields = (mask?: ShapeMask | null, caps?: Capabilities | nu
     ? curves && mask.shape !== "path"
     : !moveOnly || row.property === "mask_x" || row.property === "mask_y");
 };
+
+/**
+ * 1.243：播放头正落在某一枚框点上时，卡片里那五个数说的就是**这一枚**。
+ * 引擎自 1.238 起，这块盒子一旦有框点就不再读静止值（`extra_box_at` 的第一行），
+ * 所以停在一枚框点上却显示静止值，屏幕上的数与执行的那个数不是一回事；
+ * 改它也不会有任何变化。停在任何一枚框点之外时交回 `undefined`，卡片仍显示静止值——
+ * 它此刻的身份是「下一次打点会记下的那五个数」，界面上那句话也得这么说。
+ * 选择只在这一处：检查器不自己 `find`，门禁也照这一句验。
+ */
+export const boxKeyAt = (mask: ShapeMask, at: number): MaskBoxKey | undefined =>
+  (mask.keys ?? []).find((key) => key.at_ticks === at);
 
 /** Label lookup for the keyframe list, which mixes effect and mask properties. */
 /** 插值的名字也只从一张表出去：曲线编辑器的两个下拉、轮廓帧那一行、任何将来要说「这一帧怎么过渡」的地方。 */
