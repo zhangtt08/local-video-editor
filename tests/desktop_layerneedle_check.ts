@@ -58,7 +58,7 @@ assert.equal((effectsCode.match(/`layer\$\{layer\}:\$\{[a-z]+\}`/g) ?? []).lengt
 
 // ⑤ 「+N」数的是**画不下的那些行**：片段自己的与层的在同一张道表里分道，谁画不下谁进牌子。
 assert.match(timeline, /const laned = \[\.\.\.visible, \.\.\.layered\];/, "层的针没有进同一张道表（分开两张就会出现两枚针叠在一起）");
-assert.match(timeline, /needleRows\(laned, laneCapacity\(NEEDLE_AREA_PIXELS\)\)/, "分道问的不是那一处容量算术");
+assert.match(timeline, /needleRows\(laned, laneCapacity\(NEEDLE_AREA_PIXELS\), PROPERTY_RANK\)/, "分道问的不是那一处容量算术（1.260 起还要把那份次序表一起递进去）");
 assert.match(timeline, /const more = starved\.length;/, "+N 还在自己数一遍（1.219 起它数的是没画出来的那几枚针，含被转场牌子压住的）");
 assert.match(timeline, /\+\{more\}<\/button>/, "那枚牌子写的还是旧数目");
 assert.equal((timeline.match(/clip-keyframe-more/g) ?? []).length, 1, "片段条上不许出现两枚 +N");

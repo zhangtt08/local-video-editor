@@ -5,7 +5,8 @@
  说那一枚鼠标点不到——连「点一下跳过去」都做不到。修法是一条属性一道，画不下的属性不画，改成一枚
  「+N」的牌子指回动画曲线：宁可少画，也不留一枚点不到的针。
 
- 这里断的是分道本身：道号由属性第一次出现的顺序定、同一秒的不同属性必得不同道、容量按像素算、
+ 这里断的是分道本身：道号由唯一那张名字表的键序定（1.260——工程里那一串数组每次编辑都会被引擎
+ 重排，「第一次出现」不是一个稳定身份）、同一秒的不同属性必得不同道、容量按像素算、
  超出容量的属性进 hidden（界面据此少画并说明），以及界面真的用上了这两个函数。
  1.115 在这一版里又补了一条只有真点一下才暴露的：那枚牌子把 pointerdown 喂给了片段自己的拖动手势，
  click 因此永远落不到它身上——写在 tooltip 里的那条出路（「点开进动画曲线」）是空的。现在牌子自己收下
@@ -28,6 +29,7 @@ import {
   needleRows,
   underSeamBadge,
 } from "../desktop/src/keyframeLanes";
+import { FIELD_LABEL, PROPERTY_RANK } from "../desktop/src/effects";
 
 const key = (property: string) => ({ property: property as never });
 
@@ -55,6 +57,40 @@ assert.equal(laneCapacity(0), 1, "never zero");
 assert.equal(laneCapacity(37, LANE_PITCH_PIXELS), 3, "the pitch is the caller's knob, not a hidden literal");
 assert.equal(needleRows([], 3).lanes, 0, "no needles, no lanes");
 
+// 1.260：道号不再跟着工程里那一串数组的次序走。`timeline.py` 在每条 `keyframe.set` / `keyframe.remove`
+// 收尾把 `clip.keyframes` 按 (属性, 刻度) 重排，所以「第一次出现」不是一个稳定的身份——Agent 改一条
+// 曲线，人看到的另一条针就换了道，甚至被道数挤出去（1.259 那条扫描腿量到的正是这件事）。
+// 真正的次序只有一处主人：那张名字表 `FIELD_LABEL` 的键序（表由 `effects.ts` 折出来）。
+const rankedKeys = [key("x"), key("rotation"), key("opacity")];
+const forward = needleRows(rankedKeys, 3, PROPERTY_RANK);
+const backward = needleRows([...rankedKeys].reverse(), 3, PROPERTY_RANK);
+assert.deepEqual([...forward.rowOf.keys()], [...backward.rowOf.keys()],
+  "同一批针、两串数组次序，必须给同一张道表——不然编辑一次就换道，那正是这一档修的事");
+// 期望写死成「表里的那个次序」：它既不等于上面那串数组的正序（x, rotation, opacity 恰好是正序，
+// 所以再要一条反序的输入），也不等于引擎排完之后的字母序（opacity, rotation, x）。
+assert.deepEqual([...forward.rowOf.keys()], ["x", "rotation", "opacity"],
+  "道号按名字表的键序排：x 在第一道，不透明度在它之后（引擎重排出来的字母序不是这个）");
+assert.deepEqual([...backward.rowOf.keys()], ["x", "rotation", "opacity"], "换个数组次序还是这一张表");
+
+// 画不下时让位的也是「表里排最后」那一条：第二路画面那种复合键不在这张表里，落在所有有名字的之后。
+const thin = needleRows([key("gain"), key("x"), key("layer0:rotation")], 2, PROPERTY_RANK);
+assert.deepEqual([...thin.rowOf.keys()], ["x", "gain"], "有名字的按表排，占满画得下的那两道");
+assert.deepEqual(thin.hidden, ["layer0:rotation"], "挤出去的是表里没名字那一条，不是数组里最后那一条");
+
+// 表里没有的那些彼此保持第一次出现的相对次序——这一句由稳定排序保证，不是默契。
+const unranked = needleRows([key("layer1:mix"), key("layer0:offset_x")], 3, PROPERTY_RANK);
+assert.deepEqual([...unranked.rowOf.keys()], ["layer1:mix", "layer0:offset_x"],
+  "没进表的键按第一次出现排；Array.prototype.sort 自 ES2019 起保证稳定");
+assert.deepEqual([...needleRows([key("x"), key("opacity")], 3).rowOf.keys()], ["x", "opacity"],
+  "不递表就是老的按第一次出现——留这一格是给上面那一判当对照的");
+// 上面那串写死的期望不是抄来的：它就是那张名字表自己的键序。谁重排了表，这一格先红，
+// 于是「道号变了」这件事有一次读数，而不是等人眼看出来。
+const tableOrder = Object.keys(FIELD_LABEL);
+assert.deepEqual(
+  ["opacity", "rotation", "x"].sort((a, b) => tableOrder.indexOf(a) - tableOrder.indexOf(b)),
+  ["x", "rotation", "opacity"],
+  "写死的那一串与名字表自己的键序分家了——那就重新量一遍再改期望，不要把判据放宽");
+
 // 1.219：转场牌子占住片段底部那一条带（bottom 1、高 18），所以第 0、1 道在它那一横条里，
 // 第 2 道在它之上。横向那一判与纵向分道是同一条规矩：压在底下的那枚不画，交给「+N」说出去。
 assert.equal(underSeamBadge(0, 30, 24), true, "第一道、中心 30、牌子 24 宽：抓取盒 20..40 与牌子 0..24 相交");
@@ -71,6 +107,23 @@ assert.ok(path, "the timeline must be readable from the check's working director
 const source = readFileSync(path!, "utf8");
 assert.match(source, /needleRows\(/, "the timeline asks the shared lane splitter");
 assert.match(source, /laneCapacity\(/, "and derives how many lanes fit from pixels");
+// 1.260：那份次序表只能有一个主人，而且界面必须真的把它递进分道那一步。
+// 少了第三个实参就退回「跟着工程那一串数组的次序排」——Agent 一次编辑，人看见的针就换了道。
+assert.match(source, /needleRows\(laned, laneCapacity\(NEEDLE_AREA_PIXELS\), PROPERTY_RANK\)/,
+  "条上那一排没把次序表递进去：针的道号又会跟着工程数组的次序漂");
+assert.doesNotMatch(source, /PROPERTY_RANK *[:=]/, "时间线不许自己再造一张次序表");
+
+const effectsPath = ["desktop/src/effects.ts", "src/effects.ts"].map((part) => resolve(process.cwd(), part)).find(existsSync);
+assert.ok(effectsPath, "effects.ts 要读得到（那张次序表住在那儿）");
+const effectsSource = readFileSync(effectsPath!, "utf8");
+assert.match(effectsSource, /export const PROPERTY_RANK: Record<string, number> = Object\.fromEntries\(\s*Object\.keys\(FIELD_LABEL\)\.map\(\(property, index\) => \[property, index\]\),\s*\);/,
+  "次序不是从那张名字表的键序折出来的——那就又多了一份「谁先谁后」的算术");
+assert.equal((effectsSource.match(/Object\.keys\(FIELD_LABEL\)/g) ?? []).length, 1, "名字表的键序被数了第二遍");
+const lanesPath = ["desktop/src/keyframeLanes.ts", "src/keyframeLanes.ts"].map((part) => resolve(process.cwd(), part)).find(existsSync);
+assert.ok(lanesPath, "keyframeLanes.ts 要读得到");
+const lanesSource = readFileSync(lanesPath!, "utf8");
+assert.doesNotMatch(lanesSource, /FIELD_LABEL/, "分道那一份模块不许自己认识名字表——次序由调用方递进来");
+assert.doesNotMatch(lanesSource, /order\.sort\(\(a, b\) => a\.localeCompare\(b\)\)/, "道号不许按字母序排（那是引擎存的那一串的次序，不是人看到的次序）");
 assert.match(source, /bottom: NEEDLE_BOTTOM_PIXELS \+ \(rowOf\.get\(k\.property\) \?\? 0\) \* LANE_PITCH_PIXELS/, "each lane sits at its own bottom offset, counted from the shared constant");
 // 只画得了道的针：把 filter 去掉就会又叠回同一堆像素。1.119 起这一份「画出来的那几枚」还要给框选当命中集，
 // 所以它先落成一个名字，界面与框选读的都是它——断到那一行本身，去掉 filter 它就变了。
@@ -157,4 +210,4 @@ assert.match(fadeRule[0], /bottom: var\(--needle-area\)/,
   "柄没有让出针道——它会盖住最左边那一枚针，那枚针就点不到了");
 assert.doesNotMatch(fadeRule[0], /bottom: 0/, "同一条规则里不许又写回 bottom: 0");
 
-console.log("PASS: 同一秒上不同属性的针各走一道、道号按第一次出现排、画不下的（含压在转场牌子底下的）明说是哪几条并给出路、容量按像素算且至少一道、淡角柄停在针道之上且那一段高与界面同一个数、那些像素 CSS 与判定同一份");
+console.log("PASS: 同一秒上不同属性的针各走一道、道号按那张名字表的键序排（两串数组次序给同一张表）、画不下的（含压在转场牌子底下的）明说是哪几条并给出路、容量按像素算且至少一道、淡角柄停在针道之上且那一段高与界面同一个数、那些像素 CSS 与判定同一份");

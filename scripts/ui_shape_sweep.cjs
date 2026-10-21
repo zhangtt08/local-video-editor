@@ -35,6 +35,8 @@ const CLIP = flag("clip", "");
 const TEXTCLIP = flag("text-clip", "");
 // 1.245：框点那一帧（`--boxkey <选择器>`）：滚进视野后读输入框的值、状态那一句与当前那一枚。
 const BOXKEY = flag("boxkey", "");
+// 1.259：主遮罩的软边那一格——◇ 按下去要真写出一条 mask_feather 曲线。
+const FEATHER = flag("feather", "");
 // 1.246：调色节点那一屏（`--gradecard <第几张卡>`）：点第二张卡，量它展开的那一格。
 const GRADECARD = flag("gradecard", "");
 const SIZES = (flag("sizes", "1456x808") || "").split(",");
@@ -263,6 +265,8 @@ async function sweepOne(size, hostPort, probeSource) {
       "#stack-2-width",
       // 1.257：框点选了贝塞尔之后，那一行的四格画出来才算这一屏画了东西。
       "div.mask-stack-bezier",
+      // 1.259：主遮罩软边那一格（◇ 按下去真写一条曲线，由下面那一腿判）。
+      "#mask-feather",
       // 1.252：选中那一块的虚线框。
       ".mask-extra-outline"];
     const run = async (screen) => {
@@ -542,6 +546,60 @@ async function sweepOne(size, hostPort, probeSource) {
         await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: grip.x, y: grip.y - 160, button: "left" });
         await sleep(700);
         await run("拖高时间线");
+      }
+    }
+    // 1.259：主遮罩的软边也能打点。界面那一格 ◇ 按下去，引擎里必须真多出一条 mask_feather，
+    // 而那颗钮的无障碍名要跟着翻成「删除」——「看得见、按下去写了、说得对」三件事一起判。
+    if (FEATHER) {
+      const label = "主遮罩软边打点";
+      const rowOf = (error) => rows.push({ screen: label, panel: flag("panel", ""), size, data: null, error });
+      const trouble = await baseState();
+      if (trouble) rowOf(trouble);
+      else {
+        const before = await engineGet(`/v1/projects/${PROJECT}`);
+        const was = ((before.clips["k2"] || {}).keyframes || [])
+          .filter((k) => k.property === "mask_feather");
+        const scrolled = await evaluate("(function(){var el=document.querySelector('#mask-feather');"
+          + "if(!el)return false;el.scrollIntoView({block:'center'});return true;})()");
+        await sleep(400);
+        const hit = await evaluate("(function(){var btn=Array.from(document.querySelectorAll('button'))"
+          + ".find((n)=>(n.getAttribute('aria-label')||'')==='添加向内羽化关键帧');"
+          + "if(!btn)return null;var r=btn.getBoundingClientRect();"
+          + "var f=document.querySelector('#mask-feather');"
+          + "return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2),"
+          + "value:f?f.value:null,disabled:btn.disabled};})()");
+        if (!scrolled || !hit) rowOf("主遮罩那一格没有「向内羽化」或那颗 ◇：软边那一行没画出来"
+          + "（scrolled=" + scrolled + " hit=" + JSON.stringify(hit) + "）");
+        else if (hit.disabled) rowOf("那颗 ◇ 是灰的，按不下去");
+        else {
+          await click(hit.x, hit.y);
+          await sleep(900);
+          const after = await engineGet(`/v1/projects/${PROJECT}`);
+          const now = ((after.clips["k2"] || {}).keyframes || [])
+            .filter((k) => k.property === "mask_feather");
+          const flipped = await evaluate("(function(){var btn=Array.from(document.querySelectorAll('button'))"
+            + ".find((n)=>(n.getAttribute('aria-label')||'')==='删除向内羽化关键帧');"
+            + "return btn?btn.getAttribute('aria-label'):null;})()");
+          const wrote = now.length === was.length + 1
+            && now.some((k) => Math.abs(k.value - Number(hit.value) / 100) < 1e-9);
+          if (!wrote || flipped !== "删除向内羽化关键帧") {
+            rowOf("按下去之后引擎里不是那一条曲线，或那颗钮没翻成「删除」：before=" + was.length
+              + " after=" + now.length + " 格子里读的是 " + hit.value + "%"
+              + " 键=" + JSON.stringify(now.map((k) => [k.at_ticks, k.value]))
+              + " 无障碍名=" + JSON.stringify(flipped));
+          } else {
+            await run(label);
+            // 这一腿改了共享夹具：按原样放回，再重载一次让页面的 revision 跟上（1.252 那一课）。
+            await enginePost(`/v1/projects/${PROJECT}/edits`, {
+              request_id: `shape-feather-restore-${size}-${Date.now()}`,
+              expected_revision: after.revision,
+              commands: now.slice(was.length).map((k) => ({
+                op: "keyframe.remove", clip_id: "k2", property: "mask_feather",
+                at_ticks: k.at_ticks })) });
+            await cdp.send("Page.reload", {}, 30000);
+            await sleep(2500);
+          }
+        }
       }
     }
     // 1.251：真点一次「复制第 1 块」，再回引擎数块数与框点——这个按钮不该只有源码断言。
@@ -999,6 +1057,23 @@ async function sweepOne(size, hostPort, probeSource) {
       }
     }
 
+    // 1.260：判据自己也要被量一次。「被画遮住」这一支若只会放行、不会拦，就是一把瞎尺
+    // （一个不会动的零与没有这一判同罪）。三种摆位各自的数必须不同：
+    //   同一张卡里两段字叠着 → 撞墨 1、遮住 0；
+    //   两张卡叠着、上面那张画不透明底 → 撞墨 0、遮住 1；
+    //   同样两张卡、上面那张底色透明 → 撞墨 1、遮住 0
+    //   （放行的是**不透明**那一条，不是「不是同一张卡」那一条——少这一档就分不清两条规矩）。
+    if (flag("judge-selftest", "") !== "") {
+      for (const variant of ["same_card", "opaque_cover", "transparent_cover"]) {
+        const data = await evaluate("(function(){ " + probeSource + ";" + judgeFixture(variant) +
+          " return measureAgentCutUi(); })()");
+        rows.push({ screen: "判据自检·" + variant, panel: "judge", size, data, markers: null, state: null });
+      }
+      // 这一段把 `document.body` 换掉了，量完必须把页面恢复回去——留给下一腿一个脏页面，
+      // 下一次红读到的就不是产品（1.252 那条「夹具改完要重载」的同一课）。
+      await cdp.send("Page.reload", {}, 30000);
+      await sleep(1500);
+    }
     cdp.close();
   } finally {
     // Windows 上 SIGTERM 打不穿 msedge 那一棵树：留着它，下一档扫描就会撞上同一个 profile
@@ -1027,6 +1102,36 @@ async function sweepOne(size, hostPort, probeSource) {
   }
   return rows;
 }
+
+/** 1.260：给「字压字」那一条判据造三种摆位。这里只写形状，不写判据——判据住在探针里，
+ *  这三份夹具唯一的用处是问它：同一份几何，把上面那一层的不透明底换一换，数会不会跟着变。
+ *  尺寸按「CJK 一格 = font-size」算：八格 14px = 112px，两段字的重叠那一整片落在 64..136，
+ *  而上面那张卡的盒子 60..280 把它整个盖住。盖不住、算不出绘制次序这些情形都该退回缺陷。
+ *  节点是 createElement/textContent 建出来的，不是拼 HTML 串——量具自己不该在引号上出错。 */
+const judgeFixture = (variant) => {
+  const paint = variant === "transparent_cover" ? "background:rgba(51,51,51,0)" : "background:#333333";
+  const cards = variant === "same_card"
+    ? [["jd-card", "left:20px;top:20px;width:260px;height:40px;background:#222222",
+        [["jd-a", "left:4px;top:6px"], ["jd-b", "left:44px;top:10px"]]]]
+    : [["jd-card", "left:20px;top:20px;width:260px;height:40px;background:#222222",
+        [["jd-a", "left:4px;top:6px"]]],
+       ["jd-top", "left:60px;top:20px;width:220px;height:40px;" + paint,
+        [["jd-b", "left:44px;top:10px"]]]];
+  return "(function(){ var cards = " + JSON.stringify(cards) + ";"
+    + " document.body.textContent = '';"
+    + " var root = document.createElement('div');"
+    + " root.className = 'jd-root'; root.style.cssText = 'position:absolute;inset:0;font-size:14px';"
+    + " cards.forEach(function (card) {"
+    + "   var box = document.createElement('div'); box.className = card[0];"
+    + "   box.style.cssText = 'position:absolute;' + card[1];"
+    + "   card[2].forEach(function (line) {"
+    + "     var span = document.createElement('span'); span.className = line[0];"
+    + "     span.style.cssText = 'position:absolute;' + line[1];"
+    + "     span.textContent = line[0] === 'jd-a' ? '甲在这里写着字甲在这里' : '乙在这里写着字乙在这里';"
+    + "     box.appendChild(span); });"
+    + "   root.appendChild(box); });"
+    + " document.body.appendChild(root); void document.body.offsetHeight; })();";
+};
 
 async function main() {
   const hostPort = await freePort(18899);

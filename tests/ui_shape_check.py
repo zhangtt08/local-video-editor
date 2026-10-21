@@ -85,6 +85,9 @@ PAINTED = {
     "画面Alt拖出副本": "#stack-2-width",
     # 1.257：框点选了贝塞尔之后，那一行四格画出来才算这一屏画了东西。
     "框点带贝塞尔": "div.mask-stack-bezier",
+    # 1.259：主遮罩软边那一格——◇ 真按下去、引擎里真多出一条曲线，由 --feather 那一腿判；
+    # 认的是那一格真的画出来了（老引擎没报开关时它是另一形状，仍要在）。
+    "主遮罩软边打点": "#mask-feather",
 }
 # 反过来：某一屏**不许**出现的那一行。「重置布局」按下去之后还挂着「窗口太矮」，
 # 说的是应用自己要了一个这一屏装不下的数，再回头抱怨用户——那一行在别的屏上是诚实
@@ -293,7 +296,8 @@ def sweep(pid: str, folder: Path, panel: str, extras: tuple[str, ...] = (),
           drag: bool = False, text_clip: str = "", boxkey: str = "",
           gradecard: str = "", dup_extra: bool = False,
           drag_extra: bool = False, insert_extra: bool = False,
-          alt_dup: bool = False, mask_bezier: bool = False) -> list[dict]:
+          alt_dup: bool = False, mask_bezier: bool = False,
+          feather_key: bool = False) -> list[dict]:
     out = folder / f"ui_shape_sweep-{panel}.json"
     shots = os.environ.get("AGENTCUT_SHAPE_SHOTS", "")
     node = subprocess.run(
@@ -318,6 +322,8 @@ def sweep(pid: str, folder: Path, panel: str, extras: tuple[str, ...] = (),
             *(["--insert-extra", "1"] if insert_extra else []),
             *(["--alt-dup", "1"] if alt_dup else []),
             *(["--mask-bezier", "1"] if mask_bezier else []),
+            *(["--judge-selftest", "1"]),
+            *(["--feather", "1"] if feather_key else []),
             *(["--shots", shots] if shots else []),
         ],
         capture_output=True,
@@ -337,6 +343,41 @@ def sweep(pid: str, folder: Path, panel: str, extras: tuple[str, ...] = (),
     return json.loads(out.read_text(encoding="utf-8"))
 
 
+def judge_suite(rows: list[dict]) -> None:
+    """1.260：「字压字」这一判放行了什么，得有人量它——不看的话，那条放行就是 invisible。
+
+    三种摆位各自的数必须不同：
+      same_card        两段字在同一张不透明的卡里叠着 → 撞墨 1、遮住 0
+      opaque_cover     两张卡叠着，上面那张画不透明底，把重叠那一整片盖住 → 撞墨 0、遮住 1
+      transparent_cover 同一份几何，上面那张底色透明 → 撞墨 1、遮住 0
+    最后那一对是关键：它证明放行的是**不透明**那一条，而不是「不是同一张卡」那一条。
+    """
+    want = {
+        "判据自检·same_card": (1, 0),
+        "判据自检·opaque_cover": (0, 1),
+        "判据自检·transparent_cover": (1, 0),
+    }
+    if not rows:
+        fail("判据自检那几行一条都没回来——量具没跑这一腿，「被画遮住」是一个没人验过的数")
+    seen: dict[str, list[str]] = {}
+    for row in rows:
+        screen = str(row["screen"])
+        if screen not in want:
+            fail("判据自检回来了一档不认识的摆位：" + screen)
+        data = row["data"]
+        piles = int(data.get("text_overlap_count", -1))
+        hidden = int(data.get("ink_occluded_count", -1))
+        want_piles, want_hidden = want[screen]
+        detail = json.dumps({"piles": data.get("text_overlaps"),
+                             "occluded": data.get("ink_occluded")}, ensure_ascii=False)[:600]
+        if (piles, hidden) != (want_piles, want_hidden):
+            fail(f"{screen}@{row['size']}: 判据读数不是那三种摆位各自该给的——"
+                 f"撞墨 {piles}（要 {want_piles}）被画遮住 {hidden}（要 {want_hidden}）"
+                 f"；明细 {detail}")
+        seen.setdefault(screen, []).append(str(row["size"]))
+    missing = [name for name in want if name not in seen]
+    if missing:
+        fail("判据自检少了那几档摆位：" + json.dumps(missing, ensure_ascii=False))
 def main() -> None:
     global PORT
     if not (RENDERER / "index.html").is_file():
@@ -369,7 +410,8 @@ def main() -> None:
                                  drag_extra=panel == "inspect",
                                  insert_extra=panel == "inspect",
                                  alt_dup=panel == "inspect",
-                                 mask_bezier=panel == "inspect")
+                                 mask_bezier=panel == "inspect",
+                                 feather_key=panel == "inspect")
             ]
         finally:
             engine.terminate()
@@ -378,6 +420,10 @@ def main() -> None:
             except subprocess.TimeoutExpired:
                 engine.kill()
 
+    # 1.260：判据自检那几行不参与「某一屏」的账——那是量具自己在被量，不是界面的某一屏。
+    judge_rows = [row for row in rows if row.get("panel") == "judge" and row.get("data")]
+    rows = [row for row in rows if row.get("panel") != "judge"]
+    judge_suite(judge_rows)
     screens = [row for row in rows if row.get("data")]
     # 「至少该有 N 屏」那一判数的是**总数**，多出来的余量会把「某一屏根本没量到」吃掉：
     # 1.223 补进「画面中编辑」时，那一屏两档都没量到，总数仍然够，门禁照样绿。
@@ -392,9 +438,11 @@ def main() -> None:
         fail(f"{len(missed)} 行没量到（每一屏都得量到，不许用别的屏抵数）："
              + json.dumps(missed, ensure_ascii=False)[:600])
     # 每一档窗口 26 屏：启动 + 展开 + 其余页签 + 浮层那几颗 + 文字层 + 拖高 + 框点 + 调色节点
-    # + 复制 / 画面拖 / 打新框点 / Alt 拖副本 / 框点带贝塞尔。这个数只是地板——真正的判据是上面那条
-    # 「每一行都必须量到」；加一屏时一起加（按量到的数加，不按猜的加）。
-    needed = 26 * len(SIZES)
+    # + 复制 / 画面拖 / 打新框点 / Alt 拖副本 / 框点带贝塞尔 / 主遮罩软边打点。这个数只是地板——
+    # 真正的判据是上面那条
+    # 「每一行都必须量到」；加一屏时一起加（按量到的数加，不按猜的加）。1.260 那一档是 27：
+    # 从 `SUMMARY green screens=54` 读出来的（两档窗口各 27），判据自检那几行不算屏。
+    needed = 27 * len(SIZES)
     if len(screens) < needed:
         fail(f"只量到 {len(screens)} 屏（至少该有 {needed} 屏）")
 
@@ -423,6 +471,7 @@ def main() -> None:
     named = 0
     cuts = 0
     piles = 0
+    hidden_ink = 0
     print(f"{'那一屏':<26}{'视口':>12}{'字节点':>8}{'最小字':>8}{'圆角档':>18}"
           f"{'尖角':>6}{'被切':>6}{'点不到':>8}{'叠行':>6}{'字压字':>8}")
     for row in screens:
@@ -449,6 +498,9 @@ def main() -> None:
         if data["clipped_count"]:
             problems.append(f"{label}: 有 {data['clipped_count']} 处文字被切 "
                             + json.dumps(data["clipped"][:6], ensure_ascii=False)[:300])
+        # 1.260：被另一张不透明的卡整片盖住的那种不算撞墨，但**必须报数**——一条放行了什么的判据，
+        # 若读数的人看不见它放行了多少，那就是一把瞎尺（一个不会动的零与没有这一判同罪）。
+        hidden_ink += int(data["ink_occluded_count"])
         piles += int(data["text_overlap_count"])
         if data["text_overlaps"]:
             problems.append(f"{label}: 有 {data['text_overlap_count']} 处字压字 "
@@ -491,7 +543,7 @@ def main() -> None:
         f"SUMMARY green screens={len(screens)} 地板={css_floor}px "
         f"叠行合计={sum(row['data']['hint_stack_count'] for row in screens)} "
         f"遮罩后={sum(row['data'].get('behind_scrim_count', 0) for row in screens)} "
-        f"缺口有名={named} 下拉被切={cuts} 字压字合计={piles}"
+        f"缺口有名={named} 下拉被切={cuts} 字压字合计={piles} 被画遮住={hidden_ink}"
     )
 
 

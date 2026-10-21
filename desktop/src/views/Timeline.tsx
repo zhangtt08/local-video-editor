@@ -70,7 +70,7 @@ import {
 import { chordWords } from "../keymap";
 import { copyBlocker, pasteBlocker, pasteTargets } from "../attributePaste";
 import { AttributeDialog } from "./AttributeDialog";
-import { EMPTY_TRACK_HINT, FIELD_LABEL, LAYER_KEY_LABEL, layerNeedles, trackToolBlocker, fadeDragBatch, fadeDragTicks, fadeProperties, fadeWindows, type FadeProperty, type FadeSide, type LayerNeedle } from "../effects";
+import { EMPTY_TRACK_HINT, FIELD_LABEL, LAYER_KEY_LABEL, PROPERTY_RANK, layerNeedles, trackToolBlocker, fadeDragBatch, fadeDragTicks, fadeProperties, fadeWindows, type FadeProperty, type FadeSide, type LayerNeedle } from "../effects";
 import { selectionQuantum, timelineTracks } from "../selection";
 
 const HEAD = 112;
@@ -1218,7 +1218,7 @@ function ClipBlock({
         // 所以不分两套道，也不许有两处「画得下几道」的算术。
         const layered = layerNeedles(clip);
         const laned = [...visible, ...layered];
-        const { rowOf, hidden } = needleRows(laned, laneCapacity(NEEDLE_AREA_PIXELS));
+        const { rowOf, hidden } = needleRows(laned, laneCapacity(NEEDLE_AREA_PIXELS), PROPERTY_RANK);
         // 转场牌子占住片段左下角那一条带（那几个数在 keyframeLanes，界面画与这一判读同一份）：
         // 抓取盒落进那块矩形的那枚针不画——「宁可少画，也不留一枚点不到的针」那条规矩的横向版本。
         // 那块带多宽读上面同一个 `seamWidth`：牌子、针、片段名与时长用的是一个数，

@@ -367,6 +367,50 @@ function measureAgentCutUi() {
     }
   }
   var minSize = null;
+  // 1.260：两块写着字的东西叠在一起，有两种情形，只有一种是缺陷。
+  // ① 同一张卡里两段字互相压住——总有一块读不到，那正是 1.228 立这一判要抓的。
+  // ② 下面那一块的墨被**上面那块自己的不透明底**整个盖住（1.259 那条扫描腿量到的就是它：邻段那张
+  //    片段卡画的是 #294556 这种不透明底，转场重叠时它盖住了前一段卡上「时长」那一截墨）。那不是
+  //    墨撞墨，是绘制次序——压在底下的那一截本来就不在这些像素里；把它记成缺陷就会去改一个本来
+  //    没错的布局（1.228 那条「尺要量墨」的教训的反面：量到了矩形不等于量到了看得见的字）。
+  // 这一判不许静悄悄放过：判不清（拿不到绘制次序、上面那块没有不透明底、盖不住那一整片）照旧记
+  // 缺陷；判清了也要**报数**（`ink_occluded`），让读表的人看见量具放行了多少（一个不会动的零与
+  // 没有这一判同罪）。
+  var opaqueCard = function (el) {
+    var node = el;
+    while (node && node.nodeType === 1) {
+      var bg = /rgba?\(([^)]+)\)/.exec(getComputedStyle(node).backgroundColor);
+      if (bg) {
+        var part = bg[1].split(",").map(function (s) { return parseFloat(s); });
+        var alpha = part.length > 3 ? part[3] : 1;
+        var box = node.getBoundingClientRect();
+        if (alpha > 0.99 && box.width > 0 && box.height > 0) return node;
+      }
+      node = node.parentElement;
+    }
+    return null;
+  };
+  var stackIndex = function (stack, el) {
+    for (var s = 0; s < stack.length; s += 1) {
+      if (stack[s] === el || stack[s].contains(el)) return s;
+    }
+    return -1;
+  };
+  var occludes = function (ea, eb, area) {
+    var stack = document.elementsFromPoint((area.left + area.right) / 2, (area.top + area.bottom) / 2) || [];
+    var ia = stackIndex(stack, ea);
+    var ib = stackIndex(stack, eb);
+    if (ia < 0 || ib < 0 || ia === ib) return null;
+    var top = ia < ib ? ea : eb;
+    var low = ia < ib ? eb : ea;
+    var card = opaqueCard(top);
+    if (!card) return null;
+    if (card.contains(ea) && card.contains(eb)) return null;
+    var box = card.getBoundingClientRect();
+    if (box.left - 1 > area.left || box.right + 1 < area.right) return null;
+    if (box.top - 1 > area.top || box.bottom + 1 < area.bottom) return null;
+    return {by: String(card.className || card.tagName).slice(0, 30), hides: low === ea ? "a" : "b"};
+  };
   // 「字压字」：两块各自写着字、彼此不包含、矩形横竖都叠进去 ≥3px。
   // 1.227 那张文字层截图就是这么看出来的：转场那块牌子（z-index 6、不透明底）压在
   // 右边那一格的片段名与时长的牌子上，`图板` 只剩 `板` 看得见——几何上「两块都在屏上」，
@@ -375,6 +419,8 @@ function measureAgentCutUi() {
   // 明细只留前 6 条（读的人只需要知道压的是谁），总数照实交。
   var overlaps = [];
   var overlapCount = 0;
+  var occluded = [];
+  var occludedCount = 0;
   for (var oa = 0; oa < textRects.length; oa += 1) {
     var ra = textRects[oa].r;
     var ea = textRects[oa].el;
@@ -386,6 +432,17 @@ function measureAgentCutUi() {
       var ow = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
       var oh = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
       if (ow < 3 || oh < 3) continue;
+      // 先问「这两块墨在不在同一层画得出来的像素里」——被另一张不透明的卡整片盖住的那种不是撞墨。
+      var area = {left: Math.max(ra.left, rb.left), top: Math.max(ra.top, rb.top),
+        right: Math.min(ra.right, rb.right), bottom: Math.min(ra.bottom, rb.bottom)};
+      var hid = occludes(ea, eb, area);
+      if (hid) {
+        occludedCount += 1;
+        if (occluded.length < 6) occluded.push({a: textRects[oa].text, a_cls: textRects[oa].cls,
+          b: textRects[ob].text, b_cls: textRects[ob].cls, hides: hid.hides, by: hid.by,
+          over: [Math.round(ow * 10) / 10, Math.round(oh * 10) / 10]});
+        continue;
+      }
       overlapCount += 1;
       if (overlaps.length >= 6) continue;
       overlaps.push({
@@ -438,6 +495,8 @@ function measureAgentCutUi() {
     frame_text_nodes: frameText,
     text_overlaps: overlaps,
     text_overlap_count: overlapCount,
+    ink_occluded: occluded,
+    ink_occluded_count: occludedCount,
     min_font: minSize,
     smallest_sample: smallest,
     radius_steps: Object.keys(radii).sort(function (a, b) { return String(a).localeCompare(String(b), "en", { numeric: true }); }),

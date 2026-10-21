@@ -52,10 +52,21 @@ export type LaneKey = string;
 
 export type NeedleRows = { rowOf: Map<LaneKey, number>; lanes: number; hidden: LaneKey[] };
 
-/** 按属性第一次出现的顺序分道；超过 `capacity` 条的属性进 `hidden`（界面据此画 `+N`，不画点不到的针）。 */
-export function needleRows(keys: { property: LaneKey }[], capacity: number): NeedleRows {
+/** 按属性分道。`rank` 给了就用它排（那份次序表由调用方从唯一那张名字表折出来、递进来），
+ *  没给就按第一次出现；两种排法都是稳定的——`Array.prototype.sort` 自 ES2019 起保证稳定，所以
+ *  「表里没有的名字保持第一次出现的相对次序」这一句不必再自己写一遍。超过 `capacity` 条的属性进
+ *  `hidden`（界面据此画 `+N`，不画点不到的针）。 */
+export function needleRows(
+  keys: { property: LaneKey }[],
+  capacity: number,
+  rank?: Record<string, number>,
+): NeedleRows {
   const order: LaneKey[] = [];
   for (const key of keys) if (!order.includes(key.property)) order.push(key.property);
+  if (rank) {
+    const depth = (property: LaneKey): number => rank[property] ?? Number.MAX_SAFE_INTEGER;
+    order.sort((a, b) => depth(a) - depth(b));
+  }
   const rowOf = new Map<LaneKey, number>();
   order.slice(0, Math.max(0, capacity)).forEach((property, index) => rowOf.set(property, index));
   return { rowOf, lanes: rowOf.size, hidden: order.slice(Math.max(0, capacity)) };

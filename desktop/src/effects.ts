@@ -172,6 +172,16 @@ export const FIELD_LABEL: Record<string, string> = Object.fromEntries([
   ["sharpen_radius", "清晰半径"],
 ] as [string, string][]);
 
+/** 1.260：条上道号按什么次序排，只由这张名字表的键序说。以前 `needleRows` 按工程里那一串数组
+ *  第一次出现的顺序排，而 `timeline.py` 在每条 `keyframe.set` / `keyframe.remove` 收尾都把那一串
+ *  按 (属性, 刻度) 重排——Agent 改一条曲线，人看到的另一条针就换了道（1.259 那条扫描腿量到的正是
+ *  这件事：同一份夹具，编辑前 x 被道数挤掉，编辑后 x 画到片段左缘、墨压在邻段的时长上）。
+ *  表里没有的名字（第二路画面那种复合键）排在有名字的之后，彼此仍按第一次出现——稳定排序把这句
+ *  写成一处算术，而不是两处默契。 */
+export const PROPERTY_RANK: Record<string, number> = Object.fromEntries(
+  Object.keys(FIELD_LABEL).map((property, index) => [property, index]),
+);
+
 /** 1.99：柔焦那条曲线也能在曲线编辑器里看与拖。上限与检查器那一行同源（`blurMaxPercent`：
  *  引擎下发的比例上限与实测过的像素带按当前画幅高折算取小），所以这里不会给出一条
  *  画得出、导出会拒的斜坡；老引擎不回 `blur_keyframes` 就没有这条曲线。
