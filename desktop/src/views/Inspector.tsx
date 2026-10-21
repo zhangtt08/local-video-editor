@@ -749,7 +749,7 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
           <span className="dim mask-stack-at" title={atKey
             ? "播放头正停在一枚框点上：上面五个数就是这一枚，改哪一个都写回这一枚。"
             : item.keys?.length
-              ? "播放头不在这块的任何一枚框点上：上面五个数此刻不参与渲染，它们是下一次「在播放头打框点」会记下的值。"
+              ? "播放头不在这块的任何一枚框点上：上面五个数此刻不参与渲染，它们是下一次「在播放头打框点」会记下的值。在画面里选中这一块时，那一框画的就是这一格真正执行的窗；拖它会在这一帧新打一枚框点。"
               : "这块还没有框点：上面五个数就是它在整段里的静止值。"}>
             {item.keys?.length ?? 0} / {keysLimit} 枚框点{atKey ? " · 上面五个数改的是这一枚" : item.keys?.length ? " · 上面五个数是模板值" : ""}
           </span>

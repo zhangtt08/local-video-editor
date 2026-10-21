@@ -207,7 +207,8 @@ export const DEFAULT_CURVE_POINTS: GradeCurvePoint[] = [
 export type MaskVertex = { x: number; y: number; handle_out: [number, number]; handle_in: [number, number] };
 export type MaskBoxKey = { at_ticks: number; center_x: number; center_y: number; width: number; height: number; rotation?: number; interpolation?: "linear" | "hold" | "ease" };
 export type ShapeMask = { shape: "rectangle" | "ellipse" | "path"; center_x: number; center_y: number; width: number; height: number; rotation?: number; feather: number; inverted: boolean; vertices?: MaskVertex[] | null; keys?: MaskBoxKey[] };
-export type ExtraMaskWindow = { from_ticks: number; to_ticks: number; image: string; follow?: boolean };
+export type ExtraMaskBox = { center_x: number; center_y: number; width: number; height: number; rotation: number };
+export type ExtraMaskWindow = { from_ticks: number; to_ticks: number; image: string; follow?: boolean; box?: ExtraMaskBox | null };
 
 /** The clip's own fade windows, in ticks measured from each edge. 0 means that edge is untouched.
  *  `*_shape` (1.95) is how the property approaches its resting value along that window; the engine

@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from "react";
-import type { Clip, Curve, ExtraMaskWindow, MaskProperty, MaskRotationWindow, MaskShapeWindow, MaskVertex, ShapeMask } from "../engine";
+import type { Clip, Curve, ExtraMaskWindow, MaskBoxKey, MaskProperty, MaskRotationWindow, MaskShapeWindow, MaskVertex, ShapeMask } from "../engine";
 import { TIMEBASE, frameTicks } from "../time";
 import { appInfo, commitMaskEdit, moveMaskCentre, playhead, recordMaskShape, setClipMask, setClipMaskStack, setMaskEditing, useApp, usePlay } from "../store";
 import { asCorner, asSmooth, nearestEdge, withoutVertex, withVertex } from "../maskOutline";
 import { boxVectorFromPointer, rotateAngleFromPointer, rotatedBoxPoints, rotatedCorners, rotatedEdgeMids, rotationWindowAt, stemAngleFromUser } from "../maskGeometry";
 import { morphArmed, outlineAt, shapeVariables, shapeWindowAt, shapeWindowIndex } from "../maskShape";
-import { boxKeyForPlayhead } from "../effects";
+import { boxKeyAt, boxKeyForPlayhead } from "../effects";
 
 const CORNERS = [[-1,-1,"左上"],[1,-1,"右上"],[1,1,"右下"],[-1,1,"左下"]] as const;
 // 只有盒子的四个数靠 CSS 变量动。角度不动变量——它动的是引擎下发的整张图（每段窗一张），
@@ -63,7 +63,8 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
   const [extraDraft, setExtraDraft] = useState<{ index: number; box: ShapeMask } | null>(null);
   // 松手那一刻 React 的状态可能还没追上最后一次 move；落库读的是这个 ref（主遮罩那一手也是同一课）。
   const extraDraftRef = useRef<{ index: number; box: ShapeMask } | null>(null);
-  const extraDrag = useRef<{ index: number; keyTick: number | null; x: number; y: number; box: ShapeMask;
+  const extraDrag = useRef<{ index: number; keyTick: number | null; insertAt: number | null;
+    insertInterp: MaskBoxKey["interpolation"]; x: number; y: number; box: ShapeMask;
     corner: [number, number] | null; angle: number; k: number; rotate: boolean; angle0: number | null;
     pointerId: number; element: SVGElement; captured: boolean; inverse: DOMMatrix;
     projectId: string; revision: number; moved: boolean; detach: () => void } | null>(null);
@@ -282,16 +283,28 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
   const localAt = Math.max(0, Math.min(clip.duration_ticks, play.ticks - clip.position_ticks));
   const selectedIndex = app.maskExtraSel?.clipId === clip.id ? app.maskExtraSel.index : null;
   const selectedExtra = selectedIndex === null ? undefined : clip.extra_masks?.[selectedIndex];
+  const selectedFrameTick = Math.min(clip.duration_ticks, Math.round(localAt / frame) * frame);
   const selectedKey = selectedExtra
-    ? boxKeyForPlayhead(selectedExtra, localAt, Math.round(localAt / frame) * frame) : undefined;
+    ? boxKeyForPlayhead(selectedExtra, localAt, selectedFrameTick) : undefined;
   // 这一张画框按画面比例非均匀拉伸：角度换算的唯一那个 k（与主遮罩那一圈读的是同一个数）。
   const pictureRatio = (app.project?.settings.height ?? 9) / (app.project?.settings.width ?? 16);
+  // 1.255：停在两枚框点之间时，那一框就是**引擎窗表在这一格执行的那五个数**——
+  // 界面不自己插值（那就会画出导出没有的那一格），也不再把框藏起来。
+  const selectedWindow = selectedExtra?.keys?.length && !selectedKey && selectedIndex !== null
+    ? rotationWindowAt(extraWindows?.[selectedIndex] ?? [], localAt) : null;
+  const executedBox = selectedWindow?.box ?? null;
+  const extraKeyLimit = app.caps?.limits?.extra_mask_keys ?? 0;
+  const canInsert = Boolean(executedBox) && (selectedExtra?.keys?.length ?? 0) < extraKeyLimit;
+  // 新那一枚接着这一窗的节奏走：插值抄这一窗起点那一枚，不自己编一个。
+  const windowOwner = selectedExtra && selectedWindow
+    ? boxKeyAt(selectedExtra, selectedWindow.from_ticks) ?? selectedExtra.keys?.[0] : null;
   const extraBox: ShapeMask | null = selectedExtra
     ? (selectedKey ? { ...selectedExtra, center_x: selectedKey.center_x, center_y: selectedKey.center_y,
-        width: selectedKey.width, height: selectedKey.height, rotation: selectedKey.rotation ?? 0 } : selectedExtra)
+        width: selectedKey.width, height: selectedKey.height, rotation: selectedKey.rotation ?? 0 }
+      : executedBox && canInsert ? { ...selectedExtra, ...executedBox } : selectedExtra)
     : null;
   const extraDrawable = Boolean(visible && selectedExtra && extraBox && !follow && !disabled
-    && (!(selectedExtra.keys?.length) || selectedKey));
+    && (!(selectedExtra.keys?.length) || selectedKey || canInsert));
   // 那颗角度柄读的是**画框坐标系里**指针的方向——`rotatedEdgeMids` 那根茎的精确逆。
   // 走按下那一刻那份完整逆矩阵：导引挂在片段自己的旋转/缩放那一摞里，只除 a、d 会把那一摞的转动漏掉。
   const extraPointerAngle = (box: ShapeMask, inverse: DOMMatrix, clientX: number, clientY: number) => {
@@ -309,6 +322,8 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
     let captured = true;
     try { element.setPointerCapture(event.pointerId); } catch { captured = false; }
     const gesture = { index: selectedIndex!, keyTick: selectedKey?.at_ticks ?? null,
+      insertAt: selectedKey || !canInsert ? null : selectedFrameTick,
+      insertInterp: windowOwner?.interpolation ?? "linear",
       x: point.x / 100, y: point.y / 100, box: extraBox, corner, rotate,
       angle0: rotate ? extraPointerAngle(extraBox, inverse, event.clientX, event.clientY) : null,
       angle: extraBox.rotation ?? 0, k: pictureRatio, pointerId: event.pointerId,
@@ -390,20 +405,32 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
     const values = gesture.rotate ? { rotation: box.rotation ?? 0 }
       : { center_x: box.center_x, center_y: box.center_y,
         ...(gesture.corner ? { width: box.width, height: box.height } : {}) };
+    if (gesture.insertAt !== null) {
+      // 停在两枚框点之间：这一拖就是在播放头那一帧**新打一枚**框点，五个数一起带走，
+      // 插值抄这一窗起点那一枚——原来那几枚一字不动。
+      const at = gesture.insertAt;
+      applyExtra(gesture.index, (row) => ({ ...row,
+        keys: [...(row.keys ?? []), { at_ticks: at, center_x: box.center_x, center_y: box.center_y,
+          width: box.width, height: box.height, rotation: box.rotation ?? 0,
+          interpolation: gesture.insertInterp }].sort((a, b) => a.at_ticks - b.at_ticks) }),
+      gesture.projectId, gesture.revision);
+      return;
+    }
     writeExtra(gesture.index, gesture.keyTick, values, gesture.projectId, gesture.revision);
   };
-  // 那一块的写入只有一处主人：拖（松手）与键盘微调交的是同一条 `clip.mask_stack`。
-  const writeExtra = (index: number, keyTick: number | null, values: Partial<ShapeMask>,
+  // 那一块的写入只有一处主人：拖（松手）、停在两枚之间新打一枚、键盘微调，交的都是同一条 `clip.mask_stack`。
+  const applyExtra = (index: number, mutate: (row: ShapeMask) => ShapeMask,
     projectId: string, revision: number) => {
-    const masks = (clip.extra_masks ?? []).map((row, position) => {
-      if (position !== index) return row;
+    setClipMaskStack(clip.id, (clip.extra_masks ?? []).map((row, position) =>
+      position === index ? mutate(row) : row), follow, projectId, revision);
+  };
+  const writeExtra = (index: number, keyTick: number | null, values: Partial<ShapeMask>,
+    projectId: string, revision: number) => applyExtra(index, (row) => {
       if (keyTick !== null) return { ...row,
         keys: (row.keys ?? []).map((key) => key.at_ticks === keyTick
           ? { ...key, ...values } : key) };
       return { ...row, ...values };
-    });
-    setClipMaskStack(clip.id, masks, follow, projectId, revision);
-  };
+    }, projectId, revision);
   const applyVertex = (next: ShapeMask | null) => {
     if (!next || disabled) return;
     write(next);

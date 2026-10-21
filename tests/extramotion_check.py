@@ -301,6 +301,23 @@ def main() -> None:
             assert windows[0]["image"] != windows[-1]["image"], (
                 "两端窗里的图一模一样——框点没被烘进去"
             )
+            # 1.255：每一窗带着它**执行的那五个数**。界面画那一框、拖那一框读的就是这一份，
+            # 不在浏览器里再插一次值。期望由夹具自己那两枚框点按线性算法现算，不从产品 import。
+            assert windows[0]["box"] == {
+                "center_x": EXTRA["center_x"], "center_y": EXTRA["center_y"],
+                "width": EXTRA["width"], "height": EXTRA["height"], "rotation": 0.0,
+            }, ("第一窗交回的盒不是起点那一枚框点", windows[0].get("box"))
+            span = MOVED["center_x"] - EXTRA["center_x"]
+            for window in windows:
+                wanted = EXTRA["center_x"] + span * window["from_ticks"] / (2 * SECOND)
+                assert abs(window["box"]["center_x"] - wanted) < 1e-6, (
+                    "那一窗交回的盒中心不等于这一格该执行的那一个",
+                    window["from_ticks"], window["box"]["center_x"], wanted)
+                for name in ("center_y", "width", "height"):
+                    assert abs(window["box"][name] - EXTRA[name]) < 1e-9, (
+                        "只有中心在动，其余三个数不该跟着变", name, window["box"])
+            assert windows[0]["box"] != windows[-1]["box"], (
+                "两窗交回同一个盒——那一框就不可能跟着动")
             # 亮 = 同时在主遮罩 [0.2,0.8] 与那一块里面；主遮罩不动，动的只有再叠的那一块。
             expected = {
                 ("static", "t0"): (True, True, False, False, False),

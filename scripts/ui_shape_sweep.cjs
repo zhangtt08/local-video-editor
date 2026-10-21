@@ -736,6 +736,87 @@ async function sweepOne(size, hostPort, probeSource) {
         }
       }
     }
+    if (flag("insert-extra", "") !== "") {
+      // 1.255：播放头停在两枚框点**之间**时，画面里那一框就是引擎窗表执行的那一格；
+      // 拖它 = 在这一帧新打一枚框点（原来那几枚一字不动）。判的是回引擎数 keys 的枚数与那一枚的数。
+      const label = "画面打新框点";
+      const rowOf = (error) => rows.push({ screen: label, panel: flag("panel", ""), size, data: null, error });
+      const trouble = await baseState();
+      if (trouble) rowOf(trouble);
+      else {
+        // 把播放头挪到那两枚之间（夹具的键在 0 / 2 / 4 秒，卡片 75% 处就是 3 秒）。
+        const where = await evaluate("(function(){var el=document.querySelector('.clip.selected');"
+          + "var r=document.querySelector('.tl-ruler');"
+          + "if(!el||!r)return null;var b=el.getBoundingClientRect(),s=r.getBoundingClientRect();"
+          + "var x=Math.round(b.left+b.width*0.75);"
+          + "return {x:Math.min(Math.max(x,s.left+2),s.right-2),ry:Math.round(s.top+s.height/2),"
+          + "cy:Math.round(b.top+b.height/2)};})()");
+        if (!where) rowOf("找不到选中的片段卡或标尺，播放头挪不到那两枚之间");
+        else {
+          await click(where.x, where.ry);
+          await sleep(500);
+          await click(where.x, where.cy);
+          await sleep(500);
+          const pick = await evaluate("(function(){var el=document.querySelector("
+            + "\"[aria-label='在画面里选中第 1 块叠加遮罩']\");"
+            + "if(!el)return null;el.scrollIntoView({block:'center'});var r=el.getBoundingClientRect();"
+            + "return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
+          if (!pick) rowOf("找不到「在画面里选中第 1 块叠加遮罩」");
+          else {
+            await click(pick.x, pick.y);
+            await sleep(700);
+            const before = await engineGet(`/v1/projects/${PROJECT}`);
+            const restore = async () => {
+              const latest = await engineGet(`/v1/projects/${PROJECT}`);
+              await enginePost(`/v1/projects/${PROJECT}/edits`, {
+                request_id: `shape-insert-restore-${size}-${Date.now()}`,
+                expected_revision: latest.revision,
+                commands: [{ op: "clip.mask_stack", clip_id: "k2", masks: before.clips["k2"].extra_masks }],
+              });
+              await cdp.send("Page.reload", {}, 30000);
+              await sleep(1200);
+            };
+            const fail = async (message) => { rowOf(message); await restore(); };
+            const wasKeys = before.clips["k2"].extra_masks[0].keys ?? [];
+            const drawn = await evaluate("(function(){var el=document.querySelector('.mask-extra-outline');"
+              + "if(!el)return null;var r=el.getBoundingClientRect();return {w:r.width,h:r.height};})()");
+            const spot = await evaluate("(function(){var el=document.querySelector('.mask-extra-handle');"
+              + "if(!el)return null;var r=el.getBoundingClientRect();"
+              + "return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
+            if (!drawn || !spot) await fail("停在两枚之间时画面里没有那一框或那颗柄");
+            else {
+              await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: spot.x, y: spot.y, button: "left", clickCount: 1 });
+              for (let step = 1; step <= 3; step += 1) {
+                await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: spot.x + step * 10, y: spot.y, button: "left" });
+                await sleep(60);
+              }
+              await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: spot.x + 30, y: spot.y, button: "left" });
+              await sleep(900);
+              const after = await engineGet(`/v1/projects/${PROJECT}`);
+              const nowKeys = after.clips["k2"].extra_masks[0].keys ?? [];
+              const second = wasKeys[1];
+              const added = nowKeys.filter((key) => !wasKeys.some((old) => old.at_ticks === key.at_ticks));
+              const middle = added.filter((key) => key.at_ticks > (wasKeys[0]?.at_ticks ?? 0)
+                && key.at_ticks < (wasKeys[wasKeys.length - 1]?.at_ticks ?? Infinity));
+              const moved = added.length === 1 && Math.abs(added[0].center_x - (second?.center_x ?? 0)) > 0.02;
+              const kept = nowKeys.filter((key) => wasKeys.some((old) => old.at_ticks === key.at_ticks))
+                .every((key) => JSON.stringify(key) === JSON.stringify(wasKeys.find((old) => old.at_ticks === key.at_ticks)));
+              const other = JSON.stringify(after.clips["k2"].extra_masks[1]) === JSON.stringify(before.clips["k2"].extra_masks[1]);
+              if (nowKeys.length !== wasKeys.length + 1 || !middle.length || !moved || !kept || !other) {
+                await fail("拖那一框没有新打一枚框点：枚数 " + JSON.stringify([wasKeys.length, nowKeys.length])
+                  + " 新那枚 " + JSON.stringify(added) + " 原来那几枚没动=" + JSON.stringify(kept));
+              } else {
+                await run(label);
+                await restore();
+              }
+            }
+            await evaluate("(function(){var el=document.querySelector('[aria-label=\"取消选中第 1 块叠加遮罩\"]');"
+              + "if(el)el.click();return !!el;})()");
+            await sleep(300);
+          }
+        }
+      }
+    }
     cdp.close();
   } finally {
     // Windows 上 SIGTERM 打不穿 msedge 那一棵树：留着它，下一档扫描就会撞上同一个 profile

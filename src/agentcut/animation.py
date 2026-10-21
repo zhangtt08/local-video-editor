@@ -1039,27 +1039,24 @@ def preview_manifest(
             own = extra_box_schedule(clip, extra, quantum) if extra.keys else []
             rows = []
             if own:
-                rows = [
-                    {
-                        "from_ticks": window["from_ticks"],
-                        "to_ticks": window["to_ticks"],
-                        "follow": False,
-                        "image": cover_svg_image(
-                            extra.model_copy(
-                                update={
-                                    "center_x": window["value"][0],
-                                    "center_y": window["value"][1],
-                                    "width": window["value"][2],
-                                    "height": window["value"][3],
-                                    "rotation": window["value"][4],
-                                }
+                rows = []
+                for window in own:
+                    # 1.255：这一窗执行的就是这五个数。界面画那一框、拖那一框都读这一份，
+                    # 不在浏览器里再插一次值——两端同一张阶梯，一格一步。
+                    box = dict(zip(MASK_EXTRA_FIELDS, window["value"]))
+                    rows.append(
+                        {
+                            "from_ticks": window["from_ticks"],
+                            "to_ticks": window["to_ticks"],
+                            "follow": False,
+                            "box": box,
+                            "image": cover_svg_image(
+                                extra.model_copy(update=box),
+                                project.settings.width,
+                                project.settings.height,
                             ),
-                            project.settings.width,
-                            project.settings.height,
-                        ),
-                    }
-                    for window in own
-                ]
+                        }
+                    )
             elif clip.extra_masks_follow and box_schedule and clip.mask is not None:
                 for window in box_schedule:
                     angle, width, height = window["value"]

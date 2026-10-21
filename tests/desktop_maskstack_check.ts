@@ -217,12 +217,14 @@ assert.match(store, /export function selectMaskExtra\(clipId: string, index: num
 assert.match(inspector, /selectMaskExtra\(clip\.id, pickedExtra \? null : index\)/, "检查器没有把选中交出去");
 assert.match(inspector, /if \(!pickedExtra\) setMaskEditing\(true\);/, "选中时没有把画面中编辑打开");
 assert.match(picture, /const selectedIndex = app\.maskExtraSel\?\.clipId === clip\.id \? app\.maskExtraSel\.index : null;/, "画面没有认选中的那一块");
-assert.match(picture, /boxKeyForPlayhead\(selectedExtra, localAt, Math\.round\(localAt \/ frame\) \* frame\)/, "画面没有用那一处键的选择");
+assert.match(picture, /const selectedFrameTick = Math\.min\(clip\.duration_ticks, Math\.round\(localAt \/ frame\) \* frame\);/, "画面里那一枚的落点没有折到整帧上");
+assert.match(picture, /boxKeyForPlayhead\(selectedExtra, localAt, selectedFrameTick\)/, "画面没有用那一处键的选择");
 assert.match(picture, /const extraDrawable = Boolean\(visible && selectedExtra && extraBox && !follow && !disabled/, "可拖的条件不对");
 assert.match(picture, /window\.addEventListener\("pointermove", move\);/, "拓取期间没有在 window 上听");
 assert.match(picture, /const box = draft\?\.index === gesture\.index \? draft\.box : null;/, "松手没有读最后一次草稿");
 assert.match(picture, /if \(keyTick !== null\) return \{ \.\.\.row,/, "停在框点上时没有写回那一枚");
-assert.match(picture, /setClipMaskStack\(clip\.id, masks, follow, projectId, revision\)/, "松手没有走那一条写入");
+assert.match(picture, /setClipMaskStack\(clip\.id, \(clip\.extra_masks \?\? \[\]\)\.map\(/, "松手没有走那一条写入");
+assert.match(picture, /follow, projectId, revision\);\s*\};/, "写入没有用按下那一刻记下的那份工程与版本");
 assert.match(picture, /y=\{top\.y \* 100 - hs\.y \/ 2\}/, "柄不在盒子的上边中点");
 assert.match(css, /\.mask-extra-handle\s*\{[^}]*cursor: move/, "柄没有自己的命中与指针");
 // ⑰ 1.253：转过角度的那一块照**画面里**那个角度画，四个角各有一颗缩放柄——拖动按未转的盒算，
@@ -290,4 +292,19 @@ assert.match(picture, /writeExtra\(selectedIndex!, selectedKey\?\.at_ticks \?\? 
 assert.match(picture, /<line className="mask-extra-stem"/, "那颗柄与它那一圈之间没有一根茎（摆在哪看不出来）");
 assert.match(css, /\.mask-extra-handle\.rotate-handle\s*\{[^}]*cursor: grab/, "那颗柄的指针没有跟「可以拖着转」的说法对上");
 assert.match(css, /\.mask-extra-stem\s*\{[^}]*pointer-events: none/, "那根茎接了指针——它会吞掉它底下那一片的抓取");
+// ⑲ 1.255：停在两枚框点**之间**也画那一框——画的是引擎窗表在这一格执行的那五个数，
+// 拖它 = 在这一帧新打一枚框点（原来那几枚一字不动）。旧的那一条「画不出精确盒的帧就不画」撤了。
+assert.match(engine, /box\?: ExtraMaskBox \| null/, "清单里那一窗没带上它执行的盒");
+assert.match(picture, /rotationWindowAt\(extraWindows\?\.\[selectedIndex\] \?\? \[\], localAt\)/, "没有按播放头去引擎那份窗表里取这一格");
+assert.match(picture, /const executedBox = selectedWindow\?\.box \?\? null;/, "那一框没有读窗表给的数（自己插值就是画导出没有的那一格）");
+assert.match(picture, /executedBox && canInsert \? \{ \.\.\.selectedExtra, \.\.\.executedBox \} : selectedExtra/, "停在两枚之间时那一框画的不是执行的那一格");
+assert.match(picture, /const canInsert = Boolean\(executedBox\) && \(selectedExtra\?\.keys\?\.length \?\? 0\) < extraKeyLimit;/, "新打那一枚没有数额度——满了还能插就是自己造一次必被拒的写入");
+assert.match(picture, /app\.caps\?\.limits\?\.extra_mask_keys/, "额度不是引擎下发的那一份");
+assert.match(picture, /insertAt: selectedKey \|\| !canInsert \? null : selectedFrameTick/, "没有定「这一拖是插一枚新的还是改停着的那一枚」");
+assert.match(picture, /insertInterp: windowOwner\?\.interpolation \?\? "linear"/, "新那一枚的插值是自己编的，不是抄这一窗起点那一枚的");
+assert.match(picture, /keys: \[\.\.\.\(row\.keys \?\? \[\]\), \{ at_ticks: at,/, "新那一枚没有并进这一块的框点里");
+assert.match(picture, /\.sort\(\(a, b\) => a\.at_ticks - b\.at_ticks\)/, "插进去的框点没有按时刻排（引擎认的是有序的一串）");
+assert.match(picture, /\) \|\| selectedKey \|\| canInsert\)/, "可拖的条件没给「停在两枚之间」这一格让路");
+assert.match(inspector, /拖它会在这一帧新打一枚框点/, "检查器那一句没说清拖画面里那一框会发生什么");
+assert.equal((picture.match(/setClipMaskStack\(/g) ?? []).length, 1, "插入这一手又长出第二个写入口");
 console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的五个数与羽化/反转都在格子里改、每一块可以打自己的框点、跟随时大小按同一比例缩放、框点的时间在条顶上看得见且不接指针、每一块都写明自己怎么动、停在框点上时五个数改的就是那一枚、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、选中的那一块拖着中心走、转着的那一块按未转的盒缩放四个角、那颗角度柄与主遮罩共用同一份换算与同一个写入口、样式仍走刻度");
