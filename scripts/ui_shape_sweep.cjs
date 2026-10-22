@@ -37,6 +37,10 @@ const TEXTCLIP = flag("text-clip", "");
 const BOXKEY = flag("boxkey", "");
 // 1.259：主遮罩的软边那一格——◇ 按下去要真写出一条 mask_feather 曲线。
 const FEATHER = flag("feather", "");
+// 1.261 第 0 步：`--boxgeo 3,7,11` 把候选的命中盒临时画出来，量它的中心点第一次摸到的是谁。
+// 交回的是数（`panel` 写 "geo"），所以它不占「该有几屏」那一判。
+const BOXGEO = (flag("boxgeo", "") || "").split(",").filter((item) => item !== "").map(Number);
+const GEO = path.resolve(flag("geo", path.join(__dirname, "ui_boxkey_geo.js")));
 // 1.246：调色节点那一屏（`--gradecard <第几张卡>`）：点第二张卡，量它展开的那一格。
 const GRADECARD = flag("gradecard", "");
 const SIZES = (flag("sizes", "1456x808") || "").split(",");
@@ -76,6 +80,18 @@ try {
 } catch (error) {
   console.error("probe does not parse: " + String(error.stdout || "") + String(error.stderr || ""));
   process.exit(2);
+}
+if (BOXGEO.length) {
+  if (!fs.existsSync(GEO)) {
+    console.error("box-key geometry probe missing: " + GEO);
+    process.exit(2);
+  }
+  try {
+    execFileSync(process.execPath, ["--check", GEO], { stdio: "pipe" });
+  } catch (error) {
+    console.error("box-key geometry probe does not parse: " + String(error.stdout || "") + String(error.stderr || ""));
+    process.exit(2);
+  }
 }
 if (!fs.existsSync(path.join(RENDERER, "index.html"))) {
   console.error("renderer missing (build it first: cd desktop && npm run build:renderer): " + RENDERER);
@@ -268,7 +284,9 @@ async function sweepOne(size, hostPort, probeSource) {
       // 1.259：主遮罩软边那一格（◇ 按下去真写一条曲线，由下面那一腿判）。
       "#mask-feather",
       // 1.252：选中那一块的虚线框。
-      ".mask-extra-outline"];
+      ".mask-extra-outline",
+      // 1.261：条上那一枚框点现在是一只手——认 button，span 不算（改了才画得出来）。
+      "button.clip-boxkey"];
     const run = async (screen) => {
       const data = await evaluate("(function(){ " + probeSource + " return measureAgentCutUi(); })()");
       // 「点了才画」那一档必须能证明**真的画了东西**：只数文字节点的话，
@@ -1057,6 +1075,107 @@ async function sweepOne(size, hostPort, probeSource) {
       }
     }
 
+    if (flag("drag-boxkey", "") !== "") {
+      // 1.261：条上那一枚框点真的拖一次。四件事一起判：
+      //   拖的途中那一枚跟着指针走（屏幕跟手）、引擎里恰好一枚的 at_ticks 变了、
+      //   那一枚的另外四个数与别的块一字不动、一次抓取只涨一个版本。
+      const label = "拖框点";
+      const rowOf = (error) => rows.push({ screen: label, panel: flag("panel", ""), size, data: null, error });
+      const trouble = await baseState();
+      if (trouble) rowOf(trouble);
+      else {
+        const before = await engineGet(`/v1/projects/${PROJECT}`);
+        const spot = await evaluate("(function(){var el=document.querySelectorAll('.clip-boxkey')[1];"
+          + "if(!el)return null;el.scrollIntoView({block:'center'});var r=el.getBoundingClientRect();"
+          + "return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2),left:r.left};})()");
+        if (!spot) rowOf("条上没有中间那一枚框点");
+        else {
+          const restore = async () => {
+            const latest = await engineGet(`/v1/projects/${PROJECT}`);
+            await enginePost(`/v1/projects/${PROJECT}/edits`, {
+              request_id: `shape-boxkey-restore-${size}-${Date.now()}`,
+              expected_revision: latest.revision,
+              commands: [{ op: "clip.mask_stack", clip_id: "k2", masks: before.clips["k2"].extra_masks }],
+            });
+            // 放回是裸 HTTP：页面的 revision 不跟着走，下一次真写就会被 409 静默拒（1.252 那一课）。
+            await cdp.send("Page.reload", {}, 30000);
+            await sleep(1200);
+          };
+          const fail = async (message) => { rowOf(message); await restore(); };
+          await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: spot.x, y: spot.y, button: "left", clickCount: 1 });
+          for (let step = 1; step <= 3; step += 1) {
+            await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: spot.x + step * 16, y: spot.y, button: "left" });
+            await sleep(60);
+          }
+          const moved = await evaluate("(function(){var el=document.querySelectorAll('.clip-boxkey')[1];"
+            + "if(!el)return null;return Math.round(el.getBoundingClientRect().left - " + spot.left + ");})()");
+          await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: spot.x + 48, y: spot.y, button: "left" });
+          await sleep(900);
+          const after = await engineGet(`/v1/projects/${PROJECT}`);
+          const was = before.clips["k2"].extra_masks;
+          const now = after.clips["k2"].extra_masks;
+          const changed = [];
+          was.forEach((block, bi) => (block.keys ?? []).forEach((key, ki) => {
+            const item = now[bi] && (now[bi].keys ?? [])[ki];
+            if (JSON.stringify(item) !== JSON.stringify(key)) {
+              changed.push({ bi, ki, from: key.at_ticks, to: item ? item.at_ticks : null,
+                onlyTime: item ? JSON.stringify(item) === JSON.stringify({ ...key, at_ticks: item.at_ticks }) : false });
+            }
+          }));
+          const rate = before.settings.frame_rate;
+          const frame = Math.round(70560000 * rate.denominator / rate.numerator);
+          const one = changed.length === 1;
+          const movedToFrame = one && changed[0].to % frame === 0 && changed[0].to !== changed[0].from;
+          const inRange = one && changed[0].to >= 0 && changed[0].to <= before.clips["k2"].duration_ticks;
+          const others = JSON.stringify(now.filter((_, bi) => bi !== (one ? changed[0].bi : -1)))
+            === JSON.stringify(was.filter((_, bi) => bi !== (one ? changed[0].bi : -1)));
+          const oneVersion = after.revision === before.revision + 1;
+          const follows = typeof moved === "number" && Math.abs(moved - 48) <= 4;
+          if (!one || !movedToFrame || !inRange || !others || !oneVersion || !follows) {
+            await fail("拖那一枚没有按预期落库：" + JSON.stringify({ one, movedToFrame, inRange, others, oneVersion, follows, moved, changed }));
+          } else {
+            await run(label);
+            await restore();
+          }
+        }
+      }
+    }
+    // 1.261 第 0 步：那一枚要能拖，先得有一块摸得到的地方。同屏有三样东西在抢卡片顶上那几像素
+    // （名字那一行、左右 7px 的修剪边、底下 37px 的针道），没量之前不许写那一个高度。
+    if (BOXGEO.length) {
+      const trouble = await baseState();
+      const geoSource = fs.readFileSync(GEO, "utf8");
+      let data = trouble
+        ? { present: false, reason: trouble }
+        : await evaluate("(function(){ " + geoSource
+          + " return measureBoxkeyGeometry(" + JSON.stringify(BOXGEO) + "); })()");
+      if (data && data.present) {
+        // 画得出来不等于说得出：把辅助技术那棵树也数一遍（role=img 会把子树标成 presentational，
+        // 那时这三枚按钮在 AX 树里一个都不出现）。
+        await cdp.send("Accessibility.enable", {}, 30000);
+        const tree = await cdp.send("Accessibility.getFullAXTree", {}, 30000);
+        // 只数**带子上那一排**：它们的无障碍名里都写着「横向拖只改这一枚的时间」。
+        // 检查器里那几颗也带「框点」二字（打点、清空、逐块编辑），混进来就数不出「画了几枚、读屏摸得到几枚」。
+        const named = (tree.nodes || []).filter((node) => node.role && node.role.value === "button"
+          && node.name && String(node.name.value).indexOf("横向拖只改这一枚的时间") !== -1);
+        // getFullAXTree 把**被忽略的**节点也交回来：role=img 那棵子树里按钮的 role 还在，只是
+        // ignored=true。按「有没有这个 role」数是数不出「读屏看不见」的——M6 那一刀就是这么溜过去的。
+        const live = named.filter((node) => !node.ignored);
+        const doc = await engineGet(`/v1/projects/${PROJECT}`);
+        const ticks = [];
+        ((doc.clips["k2"] || {}).extra_masks || []).forEach((block) => {
+          (block.keys || []).forEach((key) => ticks.push(key.at_ticks));
+        });
+        data = {
+          ...data,
+          axButtons: live.length,
+          axIgnored: named.length - live.length,
+          engineKeys: ticks.length,
+          engineDistinct: new Set(ticks).size,
+        };
+      }
+      rows.push({ screen: "框点命中盒", panel: "geo", size, data, markers: null, state: null });
+    }
     // 1.260：判据自己也要被量一次。「被画遮住」这一支若只会放行、不会拦，就是一把瞎尺
     // （一个不会动的零与没有这一判同罪）。三种摆位各自的数必须不同：
     //   同一张卡里两段字叠着 → 撞墨 1、遮住 0；

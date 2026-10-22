@@ -83,6 +83,8 @@ PAINTED = {
     "画面打新框点": ".mask-extra-outline",
     # 1.256：Alt 拖出来的那一副本（检查器里第三块的宽度那一格）。
     "画面Alt拖出副本": "#stack-2-width",
+    # 1.261：条上那一枚框点被真拖之后，那一枚仍是画出来的一只手（button，不是 span）。
+    "拖框点": "button.clip-boxkey",
     # 1.257：框点选了贝塞尔之后，那一行四格画出来才算这一屏画了东西。
     "框点带贝塞尔": "div.mask-stack-bezier",
     # 1.259：主遮罩软边那一格——◇ 真按下去、引擎里真多出一条曲线，由 --feather 那一腿判；
@@ -226,8 +228,13 @@ def seed_project(token: str) -> str:
                      {"at_ticks": 4 * second, "center_x": 0.48, "center_y": 0.5,
                       "width": 0.3, "height": 0.34, "rotation": 0, "interpolation": "hold"},
                  ]},
+                # 1.261 的账：第二块带一枚与上面那块**中间那枚同一格**的框点——
+                # 「同一格只画第一枚」这一判必须有东西可判，否则撤掉守卫没人看得见（M4）。
                 {"shape": "ellipse", "center_x": 0.38, "center_y": 0.5, "width": 0.22,
-                 "height": 0.28, "rotation": 18, "feather": 0.02, "inverted": True},
+                 "height": 0.28, "rotation": 18, "feather": 0.02, "inverted": True,
+                 "keys": [{"at_ticks": 2 * second, "center_x": 0.38, "center_y": 0.5,
+                           "width": 0.22, "height": 0.28, "rotation": 18,
+                           "interpolation": "linear"}]},
             ],
         },
         {
@@ -297,7 +304,8 @@ def sweep(pid: str, folder: Path, panel: str, extras: tuple[str, ...] = (),
           gradecard: str = "", dup_extra: bool = False,
           drag_extra: bool = False, insert_extra: bool = False,
           alt_dup: bool = False, mask_bezier: bool = False,
-          feather_key: bool = False) -> list[dict]:
+          feather_key: bool = False, drag_boxkey: bool = False,
+          boxgeo: str = "") -> list[dict]:
     out = folder / f"ui_shape_sweep-{panel}.json"
     shots = os.environ.get("AGENTCUT_SHAPE_SHOTS", "")
     node = subprocess.run(
@@ -324,6 +332,8 @@ def sweep(pid: str, folder: Path, panel: str, extras: tuple[str, ...] = (),
             *(["--mask-bezier", "1"] if mask_bezier else []),
             *(["--judge-selftest", "1"]),
             *(["--feather", "1"] if feather_key else []),
+            *(["--drag-boxkey", "1"] if drag_boxkey else []),
+            *(["--boxgeo", boxgeo] if boxgeo else []),
             *(["--shots", shots] if shots else []),
         ],
         capture_output=True,
@@ -341,6 +351,71 @@ def sweep(pid: str, folder: Path, panel: str, extras: tuple[str, ...] = (),
         if node.returncode != 0 or not out.is_file():
             fail("扫描没跑完（重试一次还是）：" + (node.stderr or node.stdout)[-400:])
     return json.loads(out.read_text(encoding="utf-8"))
+
+
+def boxkey_geometry_suite(rows: list[dict]) -> None:
+    """1.261 第 0 步量到的那些数不再是「印出来给人看」：这一判把它换成能红的断言。
+
+    卡片顶上那一格只有 5px 高不挡任何人（名字那行的墨从 y 7 起、画出来的针在 y 19），
+    命中盒越界就是把片段的名字压住或把针道抢走。两头的方向都判：
+    盒子必须摸得到自己，而修剪边那一列在盒子底下仍然摸得到。
+    """
+    geo = [row for row in rows if row.get("panel") == "geo"]
+    if not geo:
+        fail("没有框点命中盒那一档的量——量具自己少了一判")
+    for row in geo:
+        data = row.get("data") or {}
+        size = row.get("size")
+        if not data.get("present"):
+            fail(f"{size}：那一枚框点没画出来（{data.get('reason')}）——这一判成了空转")
+        real = data.get("real") or []
+        if len(real) < 2:
+            fail(f"{size}：只量到 {len(real)} 枚命中盒，少于一枚判不出重叠")
+        for index, item in enumerate(real):
+            if not item.get("firstIsSelf"):
+                fail(f"{size}：第 {index + 1} 枚的中心点第一次摸到的是"
+                     f"{item.get('first')}，不是它自己")
+            if item.get("overlapsLabelInk") or item.get("overlapsDurationInk"):
+                fail(f"{size}：第 {index + 1} 枚的盒子压住了名字那一行的墨 {item.get('rect')}")
+            if item.get("overlapsNeedleInk"):
+                fail(f"{size}：第 {index + 1} 枚的盒子抢了针道那一格 {item.get('rect')}")
+            if item.get("height", 99) > 5 or item.get("width", 0) < 11:
+                fail(f"{size}：第 {index + 1} 枚的盒子是 {item.get('width')}×{item.get('height')}"
+                     "——量到的那一格空隙只有 5px 高")
+        # 修剪边那一列在盒子外面还摸得到：少这一判就是把「让位」写成了「抢走」。
+        inside = [item for item in real
+                  if item.get("crossesLeftEdge") or item.get("crossesRightEdge")]
+        for item in inside:
+            if "trim-handle" not in str(item.get("handleBelow")):
+                fail(f"{size}：贴边那一枚把修剪边那一列也占了（盒子底下摸到的是"
+                     f"{item.get('handleBelow')}）")
+        # 同一格上两块只画一枚：画出来的那几枚不许有两只盒子落在同样的像素上。
+        boxes = [tuple(item["rect"].values()) for item in real]
+        if len(set(boxes)) != len(boxes):
+            fail(f"{size}：有两枚命中盒落在完全相同的像素上——低的那一枚点不到 {boxes}")
+        # 「同一格只画一枚」这一判不能空转：夹具里那几枚必须真的撞过一格，
+        # 而画出来的枚数正好等于**去重之后**的时刻数（一条只会放行、不会拦的尺与没有这一判同罪）。
+        engine_keys = int(data.get("engineKeys", -1))
+        distinct = int(data.get("engineDistinct", -1))
+        drawn = int(data.get("domKeys", -1))
+        if engine_keys <= distinct:
+            fail(f"{size}：引擎里 {engine_keys} 枚框点的时刻全不重复——去重那一判没有东西可去，"
+                 "这一格是空转（夹具要说真话：两块要有一枚落在同一格）")
+        if drawn != distinct:
+            fail(f"{size}：条上画了 {drawn} 枚盒子，而引擎里去重后的时刻是 {distinct} 个——"
+                 "要么少画的没少（留一枚点不到的），要么多藏了一枚")
+        if "没有画出来的" not in str(data.get("bandLabel", "")):
+            fail(f"{size}：带子的无障碍名没有说出「哪几枚没画出来」："
+                 f"{str(data.get('bandLabel'))[:140]}")
+        # 这一条**不判 role**：同一轮用 CDP 直接量过（img_ax_probe.cjs），Chromium 对
+        # role=img 里可聚焦的子按钮仍然暴露（5/5 颗、ignored=false），按 AX 数 role 判不出来。
+        # 能判的是「画出来的每一枚在 AX 树里都有名字、都在」——少一颗就是被 aria-hidden
+        # 或 display:none 从读屏那一头拿走了。
+        exposed = int(data.get("axButtons", -1))
+        if exposed != drawn:
+            ignored = int(data.get("axIgnored", 0))
+            fail(f"{size}：AX 树里只有 {exposed} 颗框点按钮（被忽略的 {ignored} 颗），"
+                 f"而条上画了 {drawn} 枚——有一枚读屏的人摸不到")
 
 
 def judge_suite(rows: list[dict]) -> None:
@@ -411,7 +486,9 @@ def main() -> None:
                                  insert_extra=panel == "inspect",
                                  alt_dup=panel == "inspect",
                                  mask_bezier=panel == "inspect",
-                                 feather_key=panel == "inspect")
+                                 feather_key=panel == "inspect",
+                                 drag_boxkey=panel == "inspect",
+                                 boxgeo="3,7,11" if panel == "inspect" else "")
             ]
         finally:
             engine.terminate()
@@ -422,7 +499,10 @@ def main() -> None:
 
     # 1.260：判据自检那几行不参与「某一屏」的账——那是量具自己在被量，不是界面的某一屏。
     judge_rows = [row for row in rows if row.get("panel") == "judge" and row.get("data")]
-    rows = [row for row in rows if row.get("panel") != "judge"]
+    # "geo" 那几行是 1.261 第 0 步的命中盒量具：它是数，不是画出来的一屏。
+    geo_rows = [row for row in rows if row.get("panel") == "geo"]
+    rows = [row for row in rows if row.get("panel") not in ("judge", "geo")]
+    boxkey_geometry_suite(geo_rows)
     judge_suite(judge_rows)
     screens = [row for row in rows if row.get("data")]
     # 「至少该有 N 屏」那一判数的是**总数**，多出来的余量会把「某一屏根本没量到」吃掉：
@@ -437,12 +517,12 @@ def main() -> None:
     if missed:
         fail(f"{len(missed)} 行没量到（每一屏都得量到，不许用别的屏抵数）："
              + json.dumps(missed, ensure_ascii=False)[:600])
-    # 每一档窗口 26 屏：启动 + 展开 + 其余页签 + 浮层那几颗 + 文字层 + 拖高 + 框点 + 调色节点
-    # + 复制 / 画面拖 / 打新框点 / Alt 拖副本 / 框点带贝塞尔 / 主遮罩软边打点。这个数只是地板——
-    # 真正的判据是上面那条
-    # 「每一行都必须量到」；加一屏时一起加（按量到的数加，不按猜的加）。1.260 那一档是 27：
-    # 从 `SUMMARY green screens=54` 读出来的（两档窗口各 27），判据自检那几行不算屏。
-    needed = 27 * len(SIZES)
+    # 每一档窗口 28 屏：启动 + 展开 + 其余页签 + 浮层那几颗 + 文字层 + 拖高 + 框点那一帧 + 调色节点
+    # + 复制 / 画面拖 / 打新框点 / Alt 拖副本 / 框点带贝塞尔 / 主遮罩软边打点 / 条上拖框点。
+    # 这个数只是地板——真正的判据是上面那条「每一行都必须量到」；加一屏时一起加，
+    # 按量到的数加（1.261 这一档是从 `SUMMARY green screens=56` 读出来的两档各 28），
+    # 判据自检与命中盒那几行不算屏。
+    needed = 28 * len(SIZES)
     if len(screens) < needed:
         fail(f"只量到 {len(screens)} 屏（至少该有 {needed} 屏）")
 

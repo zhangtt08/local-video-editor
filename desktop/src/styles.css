@@ -402,8 +402,20 @@ canvas.composite-raw { width: 100%; height: 100%; object-fit: contain; display: 
 /* 1.242：再叠的那几块遮罩自己的框点只**标时间**——卡片顶边一排 3px 的点，左右让开修剪柄。
    这一层不接指针：它没有可拖的东西，而一个 3px 高的命中带只会在片段顶上挖出一块拖不动的死区。
    读屏走 aria-label，鼠标悬停时整段那句 title 会把每一块的时间列出来。 */
-.clip-boxkeys { position: absolute; left: 7px; right: 7px; top: 2px; height: 3px; z-index: 4; pointer-events: none; }
-.clip-boxkey { position: absolute; top: 0; width: 3px; height: 3px; margin-left: -1.5px; border-radius: var(--r-xs); background: var(--accent); box-shadow: 0 0 0 1px rgba(0, 0, 0, .35); }
+/* 1.261：这一排的层号抬到修剪边之上——贴右端那一枚框点画在 x 240，正好落在那一条 7px 的列里，
+   实测它的中心点第一次摸到的是修剪边而不是自己。带子仍不接指针（空处照旧归片段本体），
+   让位的只是「哪一格归谁」：列里除了那一枚 12×5 的盒，其余仍归修剪。 */
+.clip-boxkeys { position: absolute; left: 7px; right: 7px; top: 2px; height: 3px; z-index: 5; pointer-events: none; }
+/* 1.261：那一枚现在是一只手。命中盒的宽高只有一个主人（`boxKeyDrag.BOX_KEY_HIT_PIXELS`），
+   样式表里不许再抄一遍——5px 那一个数是量出来的：框点带画在卡片 y 2..6，名字那一行的**墨**从
+   y 7 起、底下针道画出来的第一枚针在 y 19，往上过 7 就压字、往下过 19 就抢针道。
+   盒子本身透明：看得见的那一颗仍是 3px（`::after`），悬停与拖住时才放大一档，好让人知道这格能抓。
+   带子 `.clip-boxkeys` 仍是 `pointer-events: none`——空处接了指针就是在片段顶上挖一块拖不动的死区。 */
+.clip-boxkey { position: absolute; top: 50%; left: 0; transform: translate(-50%, -50%); padding: 0; border: 0; background: transparent; cursor: ew-resize; z-index: 5; pointer-events: auto; touch-action: none; }
+.clip-boxkey::after { content: ""; position: absolute; top: 50%; left: 50%; width: 3px; height: 3px; transform: translate(-50%, -50%); border-radius: var(--r-xs); background: var(--accent); box-shadow: 0 0 0 1px rgba(0, 0, 0, .35); }
+.clip-boxkey:hover::after, .clip-boxkey:focus-visible::after, .clip-boxkey.held::after { width: 5px; height: 5px; }
+.clip-boxkey.blocked::after { background: var(--danger); }
+.clip-boxkey.static { cursor: default; }
 .clip-marquee { position: absolute; border: 1px dashed var(--accent); background: #50c9c41f; pointer-events: none; z-index: 2; }
 .clip-keyframe-more { position: absolute; right: 8px; bottom: 1px; z-index: 5; font-size: var(--fs-micro); color: #ffe3a3; background: transparent; border: 0; cursor: pointer; padding: 2px 3px; min-width: 24px; text-align: center; }
 .key-readout { position: absolute; top: 1px; left: 50%; transform: translateX(-50%); font-size: var(--fs-micro); padding: 1px 5px; border-radius: var(--r-xs); color: var(--accent-deep); background: var(--accent-soft); white-space: nowrap; z-index: 5; pointer-events: none; }

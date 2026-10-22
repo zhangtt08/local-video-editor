@@ -6,6 +6,7 @@ import { countHidden, firstView, laneTicks, paintClips, rulerSeconds, unionRange
 import { transitionLabel } from "../engine";
 import type { Clip, Keyframe, Marker, Project, Track } from "../engine";
 import { planKeyframeDrag, planLayerNeedleDrag, planLayerNeedleRemoval, planNeedleRemoval } from "../keyframeDrag";
+import { BOX_KEY_HIT_PIXELS, planBoxKeyDrag } from "../boxKeyDrag";
 import {
   CHIP_KEEP_PIXELS,
   LANE_CLIP_PAD_PIXELS,
@@ -63,6 +64,7 @@ import {
   setMarker,
   splitAtMarkers,
   setFadeWindowsForClips,
+  setClipMaskStack,
   keymap,
   ZOOM_MAX,
   ZOOM_MIN,
@@ -895,6 +897,7 @@ function ClipBlock({
   // 移动不到两像素就还是原来的「点一下跳过去」，所以不新增快捷键、也不新增命令；撞针在这里提前认出来
   // （reducer 的 KEYFRAME_COLLISION 是同一条判断的权威说法）。
   const [keyDrag, setKeyDrag] = useState<NeedleHeld | null>(null);
+  const [boxKeyDrag, setBoxKeyDrag] = useState<{ block: number; index: number; at: number; blocked: string | null } | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
   const [band, setBand] = useState<PixelBox | null>(null);
 
@@ -1054,6 +1057,101 @@ function ClipBlock({
     window.addEventListener("pointercancel", stop);
   };
 
+  /** 1.261：条上那一枚框点现在也是一只手。换算、吸附与「必定被拒的那一下先拦在发出去之前」
+   *  都收在 `planBoxKeyDrag` 一处；落库仍走那唯一的一个写入口 `setClipMaskStack`（一次交回整串，
+   *  一个批次一个版本），所以这一手既没有新命令、也没有新错误码。
+   *  抓取期间在 window 上听 move/up/cancel（1.252 那一课：SVG/绝对定位小盒子上 pointer capture
+   *  不可靠，松手收不到就永远不落库）。 */
+  const startBoxKey = (event: React.PointerEvent, block: number, index: number, at: number) => {
+    event.stopPropagation();
+    if (razor || event.button !== 0 || track.locked || !box.current) return;
+    event.preventDefault();
+    const node = box.current;
+    // 抓取期间工程可以被另一边改写：记住按下那一刻的那份工程与版本，松手按它写——
+    // 版本对不上就拒（409），而不是拿旧的那一串把别人的改动顶掉（画面里那一手同一口径）。
+    const projectId = project.id;
+    const revision = project.revision;
+    // 画出来的那一格与它真正的时间不是一回事（贴边那枚会被让位）：按下时记住抓取偏差，
+    // 松手按它落回去，否则「抓最左边那一枚」会把它瞬移到画出来的位置上（1.110 同一课）。
+    const grab = ((event.clientX - node.getBoundingClientRect().left) / px) * TIMEBASE - at;
+    const plan = (clientX: number) => planBoxKeyDrag({
+      id: clip.id,
+      duration_ticks: clip.duration_ticks,
+      position_ticks: clip.position_ticks,
+      stack: clip.extra_masks ?? [],
+      block,
+      index,
+      pointer_ticks: ((clientX - node.getBoundingClientRect().left) / px) * TIMEBASE - grab,
+      px,
+      quantum: q,
+      snap,
+      playhead: playhead.value - clip.position_ticks,
+      attract: true,
+    });
+    const move = (ev: PointerEvent) => {
+      const next = plan(ev.clientX);
+      setBoxKeyDrag({ block, index, at: next.kind === "noop" ? at : next.at, blocked: next.kind === "blocked" ? next.reason : null });
+    };
+    const stop = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      setBoxKeyDrag(null);
+      if (ev.type === "pointercancel") return;
+      // 原地松手就还是「点一下跳过去」：一枚都不写，也不留一条空命令。
+      if (Math.abs(ev.clientX - event.clientX) < 2) {
+        selectClip(clip.id);
+        playhead.pause();
+        playhead.set(clip.position_ticks + at);
+        return;
+      }
+      const next = plan(ev.clientX);
+      if (next.kind === "noop") return;
+      if (next.kind === "blocked") {
+        toast("warn", "那一格已经有另一枚框点", next.reason);
+        return;
+      }
+      setClipMaskStack(clip.id, next.masks, undefined, projectId, revision);
+      selectClip(clip.id);
+      playhead.pause();
+      playhead.set(clip.position_ticks + next.at);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+  };
+
+  /** 那一枚的键盘孪生：方向键 ±1 帧、Shift 方向键 ±10 帧（与旋转手柄那一只手同一档）。
+   *  键盘不去吸播放头与邻居——按的就是那一格，`attract` 关掉。 */
+  const nudgeBoxKey = (event: React.KeyboardEvent, block: number, index: number, at: number) => {
+    if (razor || track.locked) return;
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    event.stopPropagation();
+    const step = (event.shiftKey ? 10 : 1) * q * (event.key === "ArrowRight" ? 1 : -1);
+    const next = planBoxKeyDrag({
+      id: clip.id,
+      duration_ticks: clip.duration_ticks,
+      position_ticks: clip.position_ticks,
+      stack: clip.extra_masks ?? [],
+      block,
+      index,
+      pointer_ticks: at + step,
+      px,
+      quantum: q,
+      snap,
+      playhead: playhead.value - clip.position_ticks,
+      attract: false,
+    });
+    if (next.kind === "noop") return;
+    if (next.kind === "blocked") {
+      toast("warn", "那一格已经有另一枚框点", next.reason);
+      return;
+    }
+    setClipMaskStack(clip.id, next.masks);
+    playhead.pause();
+    playhead.set(clip.position_ticks + next.at);
+  };
   const start = (event: React.PointerEvent, modeIn: DragMode) => {
     if (razor || event.button !== 0) return;
     event.stopPropagation();
@@ -1170,7 +1268,20 @@ function ClipBlock({
   const boxKeyRows = (clip.extra_masks ?? [])
     .map((mask, index) => ({ index, times: (mask.keys ?? []).map((key) => key.at_ticks) }))
     .filter((row) => row.times.length);
-  const boxKeyWords = boxKeyRows.map((row) => `第 ${row.index + 1} 块 ${row.times.map((at) => humanDuration(at)).join("、")}`).join("；");
+  // 1.261：同一格上落了两块（复制那一手就会这样）时只画得下一枚——两枚盒子像素完全相同，
+  // 低的那一枚就成了「看得见、点不到」（1.213 给针立的那条规矩在这里同一件事）。
+  // 少画的那几枚必须有名字：带子的悬停与那一枚自己的悬停都点名它，出路是检查器那一块那一行。
+  const drawn = new Map<number, number>();
+  const shadowed: { index: number; at: number }[] = [];
+  for (const row of boxKeyRows) {
+    for (const at of row.times) {
+      if (drawn.has(at)) shadowed.push({ index: row.index, at });
+      else drawn.set(at, row.index);
+    }
+  }
+  const shadowWords = shadowed.map((item) => `第 ${item.index + 1} 块的 ${humanDuration(item.at)}`).join("、");
+  const boxKeyWords = [...drawn.keys()].map((at) => `第 ${drawn.get(at)!} 块的 ${humanDuration(at)}`).join("、")
+    + (shadowed.length ? `；没有画出来的：${shadowWords}` : "");
 
   return (
     <div
@@ -1249,9 +1360,25 @@ function ClipBlock({
           {painted.length ? <span className="clip-needles" style={{ left: MARQUEE_INSET_PIXELS, right: MARQUEE_INSET_PIXELS, height: NEEDLE_AREA_PIXELS }}
             title="在针道的空处拉一个框，框里的针一起挑中：整组拖就是同时改同一份时间差。按住 Shift 点一枚是加进这一组或从组里摘出去。"
             onPointerDown={startMarquee} /> : null}
-          {boxKeyRows.length ? <span className="clip-boxkeys" role="img" aria-label={`再叠的遮罩框点：${boxKeyWords}`}>
-            {boxKeyRows.flatMap((row) => row.times.map((at) => <span key={`${row.index}-${at}`} className="clip-boxkey"
-              style={{ left: `${(at / clip.duration_ticks) * 100}%` }} />))}
+          {boxKeyRows.length ? <span className="clip-boxkeys" role="group" aria-label={`再叠的遮罩框点：${boxKeyWords}`}>
+            {boxKeyRows.flatMap((row) => row.times.map((at, keyIndex) => {
+              if (drawn.get(at) !== row.index) return [];   // 同一格只画第一枚，其余在悬停里有名字
+              const held = Boolean(boxKeyDrag) && boxKeyDrag?.block === row.index && boxKeyDrag?.index === keyIndex;
+              // 拖的那一枚跟着指针走（屏幕跟手是这一手的判据之一），松手才按落点落库。
+              const live = held && boxKeyDrag ? boxKeyDrag.at : at;
+              const name = `第 ${row.index + 1} 块 · 框点 ${humanDuration(at)}`;
+              // 命中盒那一个数只有一个主人：`BOX_KEY_HIT_PIXELS`——样式表里不许再抄一遍宽高。
+              const style = { left: `${(live / clip.duration_ticks) * 100}%`, width: BOX_KEY_HIT_PIXELS.width, height: BOX_KEY_HIT_PIXELS.height };
+              if (razor || track.locked) return <span key={`${row.index}-${at}`} className="clip-boxkey static" style={style}
+                title={`${name} · 这一轨${track.locked ? "锁住了" : "正等着划刀"}，拖不动；打点、改时刻与删除在检查器「再叠的遮罩」那一格`} />;
+              return <button key={`${row.index}-${at}`} type="button"
+                className={`clip-boxkey${held ? " held" : ""}${held && boxKeyDrag?.blocked ? " blocked" : ""}`}
+                style={style}
+                aria-label={`${name}，横向拖只改这一枚的时间`}
+                title={`${name} · 横向拖只改这一枚的时间；方向键 ±1 帧，Shift 方向键 ±10 帧${held && boxKeyDrag?.blocked ? " · 那一格已经有另一枚，先挪开" : ""}${shadowed.some((item) => item.at === at) ? ` · 还有 ${shadowWords} 停在同一格，条上只画得下一枚，那几块在检查器各自那一行改` : ""}`}
+                onPointerDown={(event) => startBoxKey(event, row.index, keyIndex, at)}
+                onKeyDown={(event) => nudgeBoxKey(event, row.index, keyIndex, at)} />;
+            }))}
           </span> : null}
           {band ? <span className="clip-marquee" style={{ left: band.x0, top: band.y0, width: Math.max(0, band.x1 - band.x0), height: Math.max(0, band.y1 - band.y0) }} aria-hidden="true" /> : null}
           {clipPainted.map((k) => {

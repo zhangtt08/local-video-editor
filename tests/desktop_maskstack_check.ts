@@ -9,6 +9,7 @@ import { resolve } from "node:path";
 
 import { BEZIER_AXES, boxKeyAt, boxKeyForPlayhead, bezierBand, DEFAULT_BEZIER, maskBoxInterpolations } from "../desktop/src/effects";
 import type { Capabilities, ShapeMask } from "../desktop/src/engine";
+import { BOX_KEY_HIT_PIXELS, planBoxKeyDrag } from "../desktop/src/boxKeyDrag";
 import { boxVectorFromPointer, rotateAngleFromPointer, rotatedBoxPoints, stemAngleFromUser } from "../desktop/src/maskGeometry";
 import { offsetWords } from "../desktop/src/time";
 
@@ -145,12 +146,16 @@ assert.match(inspector, /className="mask-stack-state dim"/, "每一块没有写�
 assert.match(inspector, /\? `自己走 · \$\{item\.keys\.length\} 枚框点`/, "带框点的那一块没有写明它自己走");
 assert.match(inspector, /: clip\.extra_masks_follow \? "跟随主遮罩" : "静止"/, "没打框点的那一块没有写它跟不跟");
 assert.match(timeline, /const boxKeyRows = \(clip\.extra_masks \?\? \[\]\)/, "条上没有从再叠的遮罩取框点");
-assert.match(timeline, /className="clip-boxkeys" role="img"/, "条顶上那一排点没有画");
-assert.match(timeline, /\(at \/ clip\.duration_ticks\) \* 100/, "点的位置不是按片段本地刻度折的");
+assert.match(timeline, /className="clip-boxkeys" role="group"/, "条顶上那一排点没有画");
+// 真看得见才算数：那一排的 AX 计数由扫描那一腿量（`axButtons`），判据在 tests/ui_shape_check.py。
+assert.doesNotMatch(timeline, /className="clip-boxkeys" role="img"/,
+  "带子又是 role=img——它的孩子现在是真的按钮，那一代会把整棵子树从辅助技术里藏掉（读屏摸不到那只手）");
+// 1.261 之后那一格折成百分比之前先过一只手：拖的那一枚画在指针的落点上（live），没拖的就是它自己的时刻。
+assert.match(timeline, /\(live \/ clip\.duration_ticks\) \* 100/, "点的位置不是按片段本地刻度折的");
 assert.match(timeline, /再叠的遮罩框点：\$\{boxKeyWords\}/, "整段的悬停里没有列出框点的时间");
 assert.match(timeline, /打点、改插值与删除在检查器「再叠的遮罩」那一格/, "悬停里没有指一条真走得通的编辑路");
 assert.match(css, /\.clip-boxkeys\s*\{[^}]*pointer-events: none/, "那一排点接了指针——片段顶上会多出一块拖不动的死区");
-assert.match(css, /\.clip-boxkey\s*\{[^}]*background: var\(--accent\)/, "点不用主题色");
+assert.match(css, /\.clip-boxkey::after\s*\{[^}]*background: var\(--accent\)/, "点不用主题色（那颗点是 ::after 画的那一颗）");
 assert.match(css, /\.clip-boxkeys\s*\{[^}]*left: 7px; right: 7px/, "那一排点没有让开两头的修剪柄");
 
 // ⑪ 1.243：播放头停在框点那一帧时，卡片上五个数就是**那一枚**——引擎有框点就不读静止值了，
@@ -463,4 +468,100 @@ assert.match(picture, /property !== "mask_rotation" && property !== "mask_feathe
   "逐帧那条动画里又给软边写了一个 CSS 变量——画面上会是一条引擎没有的斜坡");
 assert.doesNotMatch(picture, /--mask-feather/, "界面上造了一个第二条斜坡的刻度");
 
-console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的那几个数与反转都在格子里改、每一块可以打自己的框点、跟随时大小按同一比例缩放、框点的时间在条顶上看得见且不接指针、每一块都写明自己怎么动、停在框点上时那几个数改的就是那一枚且软边也在其中、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、选中的那一块拖着中心走、转着的那一块按未转的盒缩放四个角、那颗角度柄与主遮罩共用同一份换算与同一个写入口、Alt 拖出来的是副本、框点那几种缓动与那四格的带只有一处主人、主遮罩的软边是那张窗表的第四个数且界面只在引擎认得时摆出那一格、样式仍走刻度");
+// ⑰ 1.261：条上那一枚框点现在是一只手——横向拖只改它自己的时刻。
+// 判的是行为（真调用那一个规划函数），不是字面量；接线只钉「落库走那唯一的写入口」与
+// 「命中盒那一个数只有一个主人」。
+const boxKey = read("desktop/src/boxKeyDrag.ts", "../../desktop/src/boxKeyDrag.ts");
+const FRAME = 70_560_000 / 24;          // 24 fps 的一帧（夹具的帧率）
+const SPAN = 4 * 70_560_000;            // 片段长 4 秒
+const at = (seconds: number) => Math.round(seconds * 70_560_000);
+const stack: ShapeMask[] = [
+  {
+    shape: "rectangle", center_x: 0.55, center_y: 0.5, width: 0.3, height: 0.34, feather: 0, inverted: false,
+    keys: [
+      { at_ticks: at(0), center_x: 0.55, center_y: 0.5, width: 0.3, height: 0.34, interpolation: "linear" },
+      { at_ticks: at(2), center_x: 0.55, center_y: 0.5, width: 0.3, height: 0.34, interpolation: "ease" },
+      { at_ticks: at(3.6), center_x: 0.62, center_y: 0.5, width: 0.3, height: 0.34, interpolation: "hold" },
+    ],
+  },
+  {
+    shape: "ellipse", center_x: 0.2, center_y: 0.3, width: 0.1, height: 0.1, feather: 0.1, inverted: true,
+    keys: [{ at_ticks: at(1), center_x: 0.2, center_y: 0.3, width: 0.1, height: 0.1, interpolation: "linear" }],
+  },
+];
+const gesture = (over: Record<string, unknown>) => ({
+  id: "k2", duration_ticks: SPAN, position_ticks: 0, stack,
+  block: 0, index: 1, px: 62, quantum: FRAME, snap: true, playhead: null, attract: true, ...over,
+});
+const middle = (masks: ShapeMask[], index: number) => masks[0].keys![index];
+
+const moved = planBoxKeyDrag(gesture({ pointer_ticks: at(2) + FRAME }));
+assert.equal(moved.kind, "move", "往右一帧没有交出一条移动");
+if (moved.kind === "move") {
+  assert.equal(moved.at, at(2) + FRAME, "落点不是那一帧");
+  assert.equal(moved.masks.length, stack.length, "整串少了块");
+  assert.deepEqual(middle(moved.masks, 0), stack[0].keys![0], "同一块的前一枚被顺手动了");
+  assert.deepEqual(middle(moved.masks, 2), stack[0].keys![2], "同一块的后一枚被顺手动了");
+  assert.deepEqual(moved.masks[1], stack[1], "另一块被顺手动了");
+  assert.deepEqual(middle(moved.masks, 1), { ...stack[0].keys![1], at_ticks: at(2) + FRAME },
+    "那一枚只该换时刻，那四个数得原样带走");
+}
+assert.equal(planBoxKeyDrag(gesture({ pointer_ticks: at(2) })).kind, "noop", "回原格也发了一条命令");
+const clash = planBoxKeyDrag(gesture({ pointer_ticks: at(3.6) }));
+assert.equal(clash.kind, "blocked", "拖到另一枚框点停的那一格，界面还发出去了");
+if (clash.kind === "blocked") {
+  assert.match(clash.reason, /另一枚框点/, "那句拒绝没说清是跟谁撞了");
+  assert.match(clash.reason, /检查器/, "拒绝必须点名一条此刻真走得通的路");
+}
+const tail = planBoxKeyDrag(gesture({ pointer_ticks: SPAN + 40 * FRAME }));
+assert.ok(tail.kind === "move" && tail.at <= SPAN && tail.at % FRAME === 0,
+  "拖出段尾没有夹在引擎收得下的地方：" + JSON.stringify(tail));
+assert.ok(tail.kind === "move" && tail.at !== stack[0].keys![2].at_ticks,
+  "夹到的那一格正好是别人的位置——该先撞针再说");
+const free = planBoxKeyDrag(gesture({ snap: false, pointer_ticks: at(2) + 123 }));
+assert.ok(free.kind === "move" && free.at === at(2) + 123,
+  "关掉吸附之后那条落点被界面自己改了：" + JSON.stringify(free));
+const pull = planBoxKeyDrag(gesture({ pointer_ticks: at(2) + FRAME - 5_000, playhead: at(2) + FRAME - 5_000 + 1 }));
+assert.ok(pull.kind === "move" && pull.at % FRAME !== 0,
+  "播放头就在旁边却没吸过去（吸附的那一路没走）：" + JSON.stringify(pull));
+const noPull = planBoxKeyDrag(gesture({ pointer_ticks: at(2) + FRAME - 5_000, playhead: at(2) + FRAME - 5_000 + 1, attract: false }));
+assert.ok(noPull.kind === "move" && noPull.at % FRAME === 0,
+  "键盘那一手不该被旁边的针与播放头拽走：" + JSON.stringify(noPull));
+
+assert.doesNotMatch(boxKey, /op: "clip\.mask_stack"/,
+  "规划那一手里构造了命令——再叠那一串就有了第二个写主人");
+assert.match(timeline, /setClipMaskStack\(clip\.id, next\.masks, undefined, projectId, revision\)/,
+  "拖那一枚没走那唯一的写入口，或没按按下那一刻记下的工程与版本写（那样会把别人的改动顶掉）");
+assert.equal((timeline.match(/op: "clip\.mask_stack"/g) ?? []).length, 0,
+  "时间线自己拼了一条 mask_stack 命令");
+assert.match(timeline, /const style = \{ left: `\$\{\(live \/ clip\.duration_ticks\) \* 100\}%`, width: BOX_KEY_HIT_PIXELS\.width, height: BOX_KEY_HIT_PIXELS\.height \}/,
+  "命中盒那一个数又有人自己写了一遍");
+assert.match(timeline, /onPointerDown=\{\(event\) => startBoxKey\(event, row\.index, keyIndex, at\)\}/,
+  "那一枚没有把手交出去");
+assert.match(timeline, /event\.stopPropagation\(\);\s*\n\s*if \(razor \|\| event\.button !== 0 \|\| track\.locked \|\| !box\.current\) return;/,
+  "按下没先收下这一次——片段的移动手势会把它吃掉（1.115 那一课）");
+assert.match(timeline, /window\.addEventListener\("pointerup", stop\);\s*\n\s*window\.addEventListener\("pointercancel", stop\);\s*\n\s*\};\s*\n\s*\/\*\* 那一枚的键盘孪生/,
+  "松手不在 window 上听——那一枚就永远不落库（1.252 那一课）");
+assert.match(timeline, /className=\{`clip-boxkey\$\{held \? " held" : ""\}\$\{held && boxKeyDrag\?\.blocked \? " blocked" : ""\}`\}/,
+  "拖的那一枚与撞针的那一枚在画面上没有分别");
+assert.match(timeline, /if \(razor \|\| track\.locked\) return <span key=\{`\$\{row\.index\}-\$\{at\}`\} className="clip-boxkey static"/,
+  "锁着的那一轨还在摆一颗点不动的按钮");
+
+// 命中盒的数只有一个主人：样式表里不许再抄一遍宽高；带子仍不接指针，层号抬到修剪边之上。
+assert.doesNotMatch(css, /\.clip-boxkey \{[^}]*(width|height):/,
+  "样式表又写了一遍命中盒的宽高——那两个数就有两个主人");
+assert.match(css, /\.clip-boxkey \{[^}]*pointer-events: auto[^}]*\}/, "那一枚不接指针，就还是画得见摸不着");
+assert.match(css, /\.clip-boxkeys \{[^}]*pointer-events: none[^}]*\}/, "带子接了指针就是在片段顶上挖一块拖不动的死区");
+assert.match(css, /\.clip-boxkeys \{[^}]*z-index: 5[^}]*\}/, "带子还在修剪边那一条下面——贴边那一枚点不到（实测过）");
+assert.ok(BOX_KEY_HIT_PIXELS.height <= 5,
+  "命中盒高过 5px 就压住名字那一行的墨（1.261 量的是卡片 y 2..7 那一格）");
+assert.ok(css.includes(".clip-boxkey.blocked::after"), "撞针那一枚没有自己的样子");
+assert.match(timeline, /if \(drawn\.get\(at\) !== row\.index\) return \[\];/,
+  "同一格上两块各画一枚——低的那一枚点不到（1.213 给针立的那条规矩在这一格同样成立）");
+assert.match(timeline, /没有画出来的：\$\{shadowWords\}/,
+  "少画的那几枚没有名字——静悄悄少画与点不到同罪");
+assert.match(timeline, /条上只画得下一枚，那几块在检查器各自那一行改/,
+  "那一枚的悬停没有给少画的那几枚一条真走得通的路");
+
+
+console.log("PASS: 叠加遮罩只有一处写入口、额度听引擎的、每一块的那几个数与反转都在格子里改、每一块可以打自己的框点、跟随时大小按同一比例缩放、框点的时间在条顶上看得见、那一枚横着拖就只改它自己的时刻、每一块都写明自己怎么动、停在框点上时那几个数改的就是那一枚且软边也在其中、浏览器叠的是引擎那几张图并取交集、每一层各用各的 mask-size/position、选中的那一块拖着中心走、转着的那一块按未转的盒缩放四个角、那颗角度柄与主遮罩共用同一份换算与同一个写入口、Alt 拖出来的是副本、框点那几种缓动与那四格的带只有一处主人、主遮罩的软边是那张窗表的第四个数且界面只在引擎认得时摆出那一格、样式仍走刻度");
