@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { BEZIER_AXES, boxKeyAt, boxKeyForPlayhead, bezierBand, DEFAULT_BEZIER, maskBoxInterpolations } from "../desktop/src/effects";
+import { BEZIER_AXES, boxKeyAt, boxKeyForPlayhead, bezierBand, DEFAULT_BEZIER, extraMotionWords, maskBoxInterpolations } from "../desktop/src/effects";
 import type { Capabilities, ShapeMask } from "../desktop/src/engine";
 import { BOX_KEY_HIT_PIXELS, planBoxKeyDrag } from "../desktop/src/boxKeyDrag";
 import { boxVectorFromPointer, rotateAngleFromPointer, rotatedBoxPoints, stemAngleFromUser } from "../desktop/src/maskGeometry";
@@ -141,10 +141,17 @@ assert.match(picture, /if \(!row\.unit\) return row\.own && !row\.follow \? "0px
 // ⑩ 1.242：框点的时间要**在条上看得见**，而每一块此刻怎么动也要写在它自己那一行。
 // 这一节同时钉住「只切不动」那句假话的消失——那一条不是加了一句新说明，是删掉一句旧的。
 assert.doesNotMatch(timeline, /只切不动/, "时间线上也在说「只切不动」");
-assert.match(inspector, /打了框点的块走自己的窗，勾这里不会删掉那些框点/, "悬停里没写清框点与跟随谁说了算");
+assert.match(inspector, /extra_mask_follow_motion/, "悬停不看引擎那一格就开始承诺「先跟后动」");
+assert.match(inspector, /打了框点的块也一起被带着走（先跟后动）/, "认得这一格的引擎没说清它会带着走");
 assert.match(inspector, /className="mask-stack-state dim"/, "每一块没有写它此刻怎么动");
-assert.match(inspector, /\? `自己走 · \$\{item\.keys\.length\} 枚框点`/, "带框点的那一块没有写明它自己走");
-assert.match(inspector, /: clip\.extra_masks_follow \? "跟随主遮罩" : "静止"/, "没打框点的那一块没有写它跟不跟");
+assert.match(inspector, /extraMotionWords\(item\.keys\?\.length \?\? 0/, "那一块怎么走又回到界面自己拼了");
+assert.doesNotMatch(inspector, /"跟随主遮罩"/, "界面又把那四种说法各抄了一遍");
+// 行为而不是字面量：四种情形各问一次那一个主人。
+assert.equal(extraMotionWords(3, true, true), "先跟后动 · 3 枚框点", "引擎认得这一格时不说「先跟后动」");
+assert.equal(extraMotionWords(3, true, false), "自己走 · 3 枚框点", "引擎不认那一格时界面不许承诺带着走");
+assert.equal(extraMotionWords(3, false, true), "自己走 · 3 枚框点", "没勾跟随也不许说带着走");
+assert.equal(extraMotionWords(0, true, true), "跟随主遮罩", "没框点时那一句要回原样");
+assert.equal(extraMotionWords(0, false, false), "静止", "两样都没有时得说静止");
 assert.match(timeline, /const boxKeyRows = \(clip\.extra_masks \?\? \[\]\)/, "条上没有从再叠的遮罩取框点");
 assert.match(timeline, /className="clip-boxkeys" role="group"/, "条顶上那一排点没有画");
 // 真看得见才算数：那一排的 AX 计数由扫描那一腿量（`axButtons`），判据在 tests/ui_shape_check.py。

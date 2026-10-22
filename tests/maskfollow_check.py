@@ -242,6 +242,61 @@ WIDE_EXTRA = {"shape": "rectangle", "center_x": 0.7, "center_y": 0.5, "width": 0
               "height": 0.6, "feather": 0.0}
 
 
+# 1.263「先跟后动」：这一块自己带框点（0→2 秒中心 0.35→0.50），同时又勾上跟随。
+# 自己的窗表说它此刻在哪，主遮罩这一帧挪了多少再叠上去——这两件事本来就不互斥。
+KEYED_EXTRA = {
+    "shape": "rectangle", "center_x": 0.35, "center_y": 0.5, "width": 0.3,
+    "height": 0.6, "feather": 0.0,
+    "keys": [
+        {"at_ticks": 0, "center_x": 0.35, "center_y": 0.5, "width": 0.3, "height": 0.6,
+         "interpolation": "linear"},
+        {"at_ticks": 2 * SECOND, "center_x": 0.5, "center_y": 0.5, "width": 0.3, "height": 0.6,
+         "interpolation": "linear"},
+    ],
+}
+
+
+def make_keyed_project(folder: Path, follow: bool) -> str:
+    """主遮罩在平移，那一块自己有框点；`follow` 决定要不要「先跟后动」。
+
+    1.8 秒那一帧的账（量具自己按线性算，不读产品）：自己那枚中心到 0.485，
+    主遮罩挪了 0.135 —— 不跟就是 [0.335, 0.635]，跟了就是 [0.47, 0.77]。
+    两个读数在 x=0.42 这一格上必须翻面，否则「叠上去」这一句是空话。
+    """
+    made = request(
+        "/v1/projects",
+        {"request_id": f"mf-keyed-{follow}",
+         "name": "框点与跟随" + ("（先跟后动）" if follow else "（只走自己的窗）"),
+         "settings": {"width": WIDTH, "height": HEIGHT,
+                      "frame_rate": {"numerator": 30, "denominator": 1}}},
+        "POST",
+    )
+    pid = made["project"]["id"]
+    probe = request("/v1/media/import", {"path": str(folder / "white.png")}, "POST")
+    request(
+        f"/v1/projects/{pid}/edits",
+        {"request_id": f"mf-keyed-seed-{follow}",
+         "expected_revision": made["project"]["revision"],
+         "commands": [
+             {"op": "track.add", "track": {"id": "v", "kind": "video", "name": "画面"}},
+             {"op": "asset.import", "asset_id": "w", "label": "白板",
+              "probe_id": probe["id"], "verified": probe["verified"]},
+             {"op": "clip.add", "clip": {"id": "c", "asset_id": "w", "track_id": "v",
+                                         "position_ticks": 0, "duration_ticks": 2 * SECOND}},
+             {"op": "clip.mask", "clip_id": "c", "mask": PRIMARY},
+             {"op": "clip.mask_stack", "clip_id": "c", "masks": [KEYED_EXTRA], "follow": follow},
+             {"op": "keyframe.set", "clip_id": "c",
+              "keyframe": {"property": "mask_x", "at_ticks": 0, "value": 0.5,
+                           "interpolation": "linear"}},
+             {"op": "keyframe.set", "clip_id": "c",
+              "keyframe": {"property": "mask_x", "at_ticks": 2 * SECOND, "value": 0.65,
+                           "interpolation": "linear"}},
+         ]},
+        "POST",
+    )
+    return pid
+
+
 def make_width_project(folder: Path, follow: bool) -> str:
     """主遮罩只动宽度（0.6→1.2）：跟随时再叠那块按同一比例长，不跟就原地不动。"""
     made = request(
@@ -320,6 +375,46 @@ def make_rotated_project(folder: Path, follow: bool) -> str:
     return pid
 
 
+def decision_suite() -> None:
+    """「先跟后动」那一句的判断只有一处主人——几种情形各问一次 `extra_follow_motion`。
+
+    这一节不问像素：主遮罩的中心**没有曲线**时那一个位移恒为 0，画面上什么都看不出来，
+    而编译串会凭空多出一项——老工程的字节不能拿一句「反正看不见」改口。
+    """
+    from agentcut import animation
+    from agentcut.contracts import Clip, ExtraShapeMask, Keyframe, MaskBoxKey, ShapeMask
+
+    frame = 70_560_000
+    mask = ShapeMask(shape="rectangle", center_x=0.5, center_y=0.5, width=0.6, height=0.6)
+    keyed = ExtraShapeMask(
+        shape="rectangle", center_x=0.35, center_y=0.5, width=0.3, height=0.6,
+        keys=[MaskBoxKey(at_ticks=0, center_x=0.35, center_y=0.5, width=0.3, height=0.6,
+                         interpolation="linear"),
+              MaskBoxKey(at_ticks=2 * frame, center_x=0.5, center_y=0.5, width=0.3,
+                         height=0.6, interpolation="linear")],
+    )
+    plain = keyed.model_copy(update={"keys": []})
+    moving = [Keyframe(property="mask_x", at_ticks=2 * frame, value=0.65,
+                       interpolation="linear")]
+
+    def build(follow: bool, extra, curves: list) -> Clip:
+        return Clip(id="k", asset_id="a", track_id="v", position_ticks=0,
+                    duration_ticks=4 * frame, mask=mask, extra_masks=[extra],
+                    extra_masks_follow=follow, keyframes=list(curves))
+
+    cases = [
+        ("框点 + 跟随 + 主遮罩中心在动", build(True, keyed, moving), False, True),
+        ("框点 + 不跟随", build(False, keyed, moving), False, False),
+        ("框点 + 跟随 + 主遮罩不动", build(True, keyed, []), False, False),
+        ("框点 + 跟随 + 路径主遮罩", build(True, keyed, moving), True, False),
+        ("没框点 + 跟随（那一路走 1.237 的静态跟随）", build(True, plain, moving), False, False),
+    ]
+    for label, clip, path_mask, want in cases:
+        got = animation.extra_follow_motion(clip, clip.extra_masks[0], path_mask=path_mask)
+        assert got == want, f"{label}：要不要先跟后动？期望 {want}，量到 {got}"
+    print("   判断的六种情形各自对：只有『框点 + 跟随 + 主遮罩中心在动』说先跟后动")
+
+
 def readings(pid: str, folder: Path, key: str) -> dict:
     revision = request(f"/v1/projects/{pid}")["revision"]
     early, late = export_frames(pid, revision, key, folder)
@@ -339,6 +434,7 @@ def readings(pid: str, folder: Path, key: str) -> dict:
 
 def main() -> None:
     require_prerequisites()
+    decision_suite()
     global PORT
     PORT = free_port()
     with tempfile.TemporaryDirectory(prefix="agentcut-maskfollow-") as temp:
@@ -351,6 +447,9 @@ def main() -> None:
             static = readings(make_project(folder, False), folder, "static")
             moving = readings(make_project(folder, True), folder, "moving")
             following = readings(make_project(folder, True, True), folder, "following")
+            # 1.263：同一块「自己有框点」的两种勾法——跟着走的那一趟，洞要往右多挪一截。
+            keyed = readings(make_keyed_project(folder, True), folder, "keyed")
+            keyed_only = readings(make_keyed_project(folder, False), folder, "keyedonly")
             growing = readings(make_width_project(folder, True), folder, "growing")
             fixed = readings(make_width_project(folder, False), folder, "fixed")
             turning = readings(make_rotated_project(folder, True), folder, "turning")
@@ -381,11 +480,20 @@ def main() -> None:
                 # 所以 t1.8 的 x=0.55 也落进了它的洞里。
                 ("following", "t0"): (True, True, True, False),
                 ("following", "t18"): (False, False, True, True),
+                # 1.263「先跟后动」：自己有框点的那一块，勾上跟随之后中心是
+                # 0.485 + 0.135 = 0.62（洞 [0.47, 0.77]），x=0.42 在洞外；
+                # 不勾的那一趟洞是 [0.335, 0.635]，同一格 0.42 在洞里——这一格就是分水岭。
+                ("keyed", "t0"): (True, True, True, False),
+                ("keyed", "t18"): (False, False, False, True),
+                ("keyedonly", "t0"): (True, True, True, False),
+                ("keyedonly", "t18"): (False, False, True, True),
             }
             names = {"static": "静止", "moving": "主遮罩在动", "following": "跟着主遮罩平移",
                      "growing": "主遮罩在长大（跟）", "fixed": "主遮罩在长大（不跟）",
-                     "turning": "主遮罩在转（跟）", "still": "主遮罩在转（不跟）"}
+                     "turning": "主遮罩在转（跟）", "still": "主遮罩在转（不跟）",
+                     "keyed": "自己有框点（先跟后动）", "keyedonly": "自己有框点（不跟）"}
             cases = (("static", static), ("moving", moving), ("following", following),
+                     ("keyed", keyed), ("keyedonly", keyed_only),
                      ("growing", growing), ("fixed", fixed),
                      ("turning", turning), ("still", still))
             for name, data in cases:
@@ -411,9 +519,11 @@ def main() -> None:
                             f"{name} {when} x={x}: 成片 {left} 预览 {right}——两端的洞不一样"
                         )
             print(
-                "PASS: 七趟都对——不跟随的再叠块原地不动，跟随的跟着主遮罩平移、长大与转角"
-                "（x=0.55 / 0.80 / 0.72 三处由暗转亮），主遮罩自己在动，静止那一趟两端不动；"
-                "七趟 × 两个时刻逐点一致"
+                f"PASS: {len(cases)} 趟都对——不跟随的再叠块原地不动，跟随的跟着主遮罩平移、"
+                "长大与转角（x=0.55 / 0.80 / 0.72 三处由暗转亮），主遮罩自己在动，"
+                "静止那一趟两端不动；自己有框点的那两块：勾了跟随的洞在 x=0.42 是暗的"
+                "（被主遮罩带跑了），没勾的那一格是亮的（只走自己的窗）；"
+                f"{len(cases)} 趟 × 两个时刻逐点一致"
             )
         finally:
             process.kill()

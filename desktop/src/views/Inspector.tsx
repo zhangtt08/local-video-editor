@@ -7,7 +7,7 @@ import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionCh
 import { Icon, Modal } from "../ui";
 import { GradeFields } from "./GradeFields";
 import { SpeedFields } from "./SpeedFields";
-import { blurMaxPercent, boxKeyForPlayhead, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeAdoptHint, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, fitSpeedPercent, INTERPOLATIONS, maskAnimFields, maskBoxInterpolations, BEZIER_AXES, DEFAULT_BEZIER, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackGroup, trackingKnobs, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
+import { blurMaxPercent, boxKeyForPlayhead, extraMotionWords, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeAdoptHint, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, fitSpeedPercent, INTERPOLATIONS, maskAnimFields, maskBoxInterpolations, BEZIER_AXES, DEFAULT_BEZIER, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackGroup, trackingKnobs, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
 import { frameTicks, TIMEBASE, align, humanDuration, offsetWords, seconds, timecode, ticks } from "../time";
 import {
   DISPLAY_PRIMARIES,
@@ -650,6 +650,8 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
   // 1.243：这一帧**已经有**框点时不打点也不覆盖——卡片上那五个数此刻显示的就是那一枚，
   // 再拿静止值盖上去不是「打点」，是把它抹掉。界面把按钮灰掉并写明，函数这里也守一道。
   const featherOnKey = Boolean(app.caps?.features?.extra_mask_feather);
+  // 1.263：带框点的那一块能不能「先跟后动」由引擎说一次，界面只跟着念。
+  const followMotion = Boolean(app.caps?.features?.extra_mask_follow_motion);
   // 「上面那几个数」到底是几个，由引擎那一格认不认得说了算——界面不许自己数一个数出来。
   const keyCells = featherOnKey ? 6 : 5;
   const stampKey = (index: number) => {
@@ -693,7 +695,7 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
   };
   return <div className="mask-stack">
     <div className="mask-stack-head"><span>再叠的遮罩</span><span className="dim">{stack.length} / {limit} 块 · 与主遮罩取交集</span></div>
-    <label className="mask-stack-follow" title="勾上之后，没打框点的块跟着主遮罩的中心曲线一起平移；主遮罩与它都没转时，大小也按同一比例缩放；主遮罩转了时，角度跟着它转。打了框点的块走自己的窗，勾这里不会删掉那些框点。羽化仍是自己的。主遮罩没有动画时，跟随的块不动。">
+    <label className="mask-stack-follow" title={`勾上之后，没打框点的块跟着主遮罩的中心曲线一起平移；主遮罩与它都没转时，大小也按同一比例缩放；主遮罩转了时，角度跟着它转。${followMotion ? "打了框点的块也一起被带着走（先跟后动），那一串框点一枚不删。" : "打了框点的块走自己的窗，勾这里不会删掉那些框点。"}羽化仍是自己的。主遮罩没有动画时，跟随的块不动。`}>
       <input type="checkbox" checked={clip.extra_masks_follow ?? false} disabled={disabled || stack.length === 0}
         onChange={(event) => setClipMaskStack(clip.id, stack, event.target.checked)} />跟着主遮罩平移
     </label>
@@ -731,7 +733,7 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
         <button type="button" className="btn tiny subtle" disabled={disabled} aria-label={`删掉第 ${index + 1} 块叠加遮罩`} onClick={() => write(stack.filter((_, position) => position !== index))}>删掉</button>
         {/* 1.242：这一块此刻怎么动，写在它自己那一行——勾没勾「跟着主遮罩」与有没有框点，
             是两个各自决定它走哪条路的事实，过去只在地下的合成规则里，界面上谁都没说。 */}
-        <span className="mask-stack-state dim">{item.keys?.length ? `自己走 · ${item.keys.length} 枚框点` : clip.extra_masks_follow ? "跟随主遮罩" : "静止"}</span>
+        <span className="mask-stack-state dim">{extraMotionWords(item.keys?.length ?? 0, Boolean(clip.extra_masks_follow), followMotion)}</span>
       </div>
       <div className="mask-stack-grid">
         {/* 这一格自己管「停在哪一枚就改哪一枚」，所以不走 MASK_ROWS 那条通用行（软边在框点上是可缺省的）。 */}

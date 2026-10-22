@@ -37,6 +37,18 @@ export function fitSpeedPercent(clip: Clip, seconds: number, frame: number): { p
 }
 
 
+/**
+ * 1.263：这一块此刻「怎么走」只有一处说法。
+ *
+ * `composed` 是引擎那一格 `features.extra_mask_follow_motion`：不认识它的引擎仍然把框点与跟随
+ * 当互斥的事来做，那时界面说「先跟后动」就是一句服务端不会兑现的承诺。
+ */
+export function extraMotionWords(keys: number, follow: boolean, composed: boolean): string {
+  if (keys && follow && composed) return `先跟后动 · ${keys} 枚框点`;
+  if (keys) return `自己走 · ${keys} 枚框点`;
+  return follow ? "跟随主遮罩" : "静止";
+}
+
 export function blurMaxPercent(caps: Capabilities | null, frameHeight: number): number {
   if (!caps?.features.clip_blur || frameHeight <= 0) return 0;
   return Math.min(

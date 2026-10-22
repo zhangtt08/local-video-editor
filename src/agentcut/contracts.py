@@ -55,7 +55,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.261.0"
+APP_VERSION = "1.263.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -7126,6 +7126,10 @@ def capabilities(
             # 1.258：那一串框点里也可以带羽化。界面据此决定「停在框点上改羽化」写的是这一枚
             # 还是这一块自己——不认识这一格的引擎会连整条写入一起拒。
             "extra_mask_feather": True,
+            # 1.263「先跟后动」：带框点的那一块也可以同时被主遮罩带着走——窗表是它自己的，
+            # 位移是主遮罩这一帧挪了多少。不认识这一格的引擎仍然把两者当成互斥来做，
+            # 所以界面那句「先跟后动」只能在这一格报得出时说。
+            "extra_mask_follow_motion": True,
 
             # 1.165: that angle accepts keyframes. Both ends execute one frame-aligned staircase
 

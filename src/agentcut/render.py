@@ -20,6 +20,7 @@ from .animation import (
     axis_steps,
     expression,
     extra_box_schedule,
+    extra_follow_motion,
     fade_active,
     layer_schedule,
     mask_box_schedule,
@@ -1701,6 +1702,21 @@ def compile_render_plan(
                             )
                             for index, name in enumerate(MASK_BOX_VALUES)
                         }
+                        # 1.263「先跟后动」：窗表给的是这一块**自己**的中心，主遮罩这一帧挪了
+                        # 多少要加在它上面——与预览那条「--mask-x 减静止中心」是同一个数。
+                        # 判断只在 `extra_follow_motion` 一处：主遮罩中心没有曲线时那里返假，
+                        # 老工程的编译串一个字都不许多出来。
+                        if extra_follow_motion(clip, extra, path_mask=path_mask):
+                            registers = (20 + 2 * slot, 21 + 2 * slot)
+                            for name, field in (
+                                ("mask_x", "center_x"),
+                                ("mask_y", "center_y"),
+                            ):
+                                values[name] = (
+                                    f"({values[name]}"
+                                    f"+({expression(clip, name, 'T', registers)}"
+                                    f"-{getattr(clip.mask, field):.9f}))"
+                                )
                     elif follow:
                         registers = (20 + 2 * slot, 21 + 2 * slot)
                         values = {

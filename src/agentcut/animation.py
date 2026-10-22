@@ -741,6 +741,18 @@ def extra_box_schedule(clip: Clip, extra, quantum: int, limit: int | None = None
     )
 
 
+def extra_follow_motion(clip: Clip, extra, path_mask: bool = False) -> bool:
+    """「先跟后动」这一句只在这里说一次。
+
+    1.238 起那一格只许有一个主人：有框点就不跟随。改口的不是优先级，是这两件事本来
+    就不冲突——框点说的是这一块**自己**怎么动，跟随说的是主遮罩把它**带**到哪里。
+    主遮罩的中心没有曲线时那一个位移恒为 0，那就一个字都不加：老工程的编译串逐字节照旧。
+    """
+    if path_mask or not extra.keys or not clip.extra_masks_follow or clip.mask is None:
+        return False
+    return bool(points(clip, "mask_x") or points(clip, "mask_y"))
+
+
 def axis_steps(schedule: list[dict], index: int) -> list[dict]:
     """One number of the shared table as its own scalar schedule - same windows, one edge each."""
     return [{**window, "value": window["value"][index]} for window in schedule]
@@ -1050,6 +1062,12 @@ def preview_manifest(
             rows = []
             if own:
                 rows = []
+                # 1.263「先跟后动」：这一块自己的窗表与「被主遮罩带着走」是两件事，可以同真。
+                # 图烘的是这一窗自己的盒，位移由浏览器那条 `--mask-x/-中心` 的差补上——
+                # 与导出那一步加在中心表达式上的同一个数（判断只在 `extra_follow_motion`）。
+                move_with_main = extra_follow_motion(
+                    clip, extra, path_mask=clip.mask is not None and clip.mask.shape == "path"
+                )
                 for window in own:
                     # 1.255：这一窗执行的就是这五个数。界面画那一框、拖那一框都读这一份，
                     # 不在浏览器里再插一次值——两端同一张阶梯，一格一步。
@@ -1058,7 +1076,7 @@ def preview_manifest(
                         {
                             "from_ticks": window["from_ticks"],
                             "to_ticks": window["to_ticks"],
-                            "follow": False,
+                            "follow": move_with_main,
                             "box": box,
                             "image": cover_svg_image(
                                 extra.model_copy(update=box),
