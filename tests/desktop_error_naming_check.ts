@@ -88,6 +88,26 @@ assert.equal(english.explain(), "轨道已锁定，请解锁或选择其他目�
 const unknown = new EngineError("SOMETHING_NEW", "the engine said this", {}, 422);
 assert.equal(unknown.explain(), "the engine said this", "an unhinted code shows the engine's words");
 
+// 1.265：`PROJECT_LIMIT` 过去交回的是「project exceeds the supported contract limits」加一份空的
+// details，而界面那句中文给的出路是「把长段落拆成几条片段」——那一下只会让片段更多。两头现在都改：
+// 引擎点名是哪一格与两个数，界面念出那一格、两个数，并且只指真减得下数的出路。
+const crowded = new EngineError(
+  "PROJECT_LIMIT",
+  "clips rejected by the contract: Dictionary should have at most 20000 items after validation, not 20001",
+  { contract_path: "clips", reason: "too_long", max_length: 20000, actual_length: 20001 },
+  422,
+);
+const advice = crowded.explain();
+assert.ok(advice.includes("最多 20000"), `那两个数得让人看得见：${advice}`);
+assert.ok(advice.includes("现在要存 20001"), `这一次要存的数也得带出来：${advice}`);
+assert.ok(advice.includes("这一格片段"), `契约字段名要念成中文那一面：${advice}`);
+assert.ok(!advice.includes("clips"), `不许把契约里的字段名原样印给人：${advice}`);
+assert.ok(!advice.includes("拆成几条片段"), `不许再指那条只会让片段更多的手：${advice}`);
+assert.ok(advice.includes("删掉"), `上限那句得说一条真减得下数的出路：${advice}`);
+// 反向：数字不在 details 里时不许编一个数出来。
+const plain = new EngineError("PROJECT_LIMIT", "no numbers here", {}, 422);
+assert.ok(!plain.explain().includes("最多"), `没有数就不许说一句带数的话：${plain.explain()}`);
+
 console.log(
   "PASS: the shell weaves the named file, clip, track or composition into every Chinese hint, the "
   + "eleven analysis refusals all answer in Chinese with a way out, and nothing is added when the "

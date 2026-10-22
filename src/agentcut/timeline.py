@@ -605,6 +605,36 @@ def _check_layer_clock(clip, grade) -> None:
             )
 
 
+def _contract_limit_refusal(error: ValidationError) -> EditorError:
+    """Say *which* contract field rejected the final state, with the two numbers.
+
+    The tail of `apply_commands` revalidates the whole project, and until now every door behind
+    that call — 20000 clips, 128 tracks, 10000 assets, a nested sequence's own clip table —
+    answered the same English shrug with empty `details`. A refusal that names nothing gives a
+    person no exit and an Agent no number to plan against, so the field path, the reason and the
+    pydantic context (allowed / actual) travel with it. Nothing here re-declares a limit: the
+    numbers come from the contract's own error, so the sentence cannot drift from
+    `capabilities.limits`.
+
+    The context is narrowed to JSON scalars on purpose. A field validator that raises carries the
+    exception *object* in `ctx`, and copying that into the payload made the HTTP layer fail to
+    serialize its own refusal — the answer turned into a crash instead of a named limit.
+    `bezier_check` is what measured that.
+    """
+    first = error.errors()[0]
+    path = ".".join(str(part) for part in first["loc"]) or "project"
+    ctx = {
+        key: value
+        for key, value in (first.get("ctx") or {}).items()
+        if key != "field_type" and isinstance(value, (str, int, float, bool))
+    }
+    details = {"contract_path": path, "reason": first["type"], "contract_message": first["msg"]}
+    details.update(ctx)
+    return EditorError(
+        "PROJECT_LIMIT", f"{path} rejected by the contract: {first['msg']}", status=422, **details
+    )
+
+
 def apply_commands(
     project: Project, commands: list[Command], sequence_id: str | None = None
 ) -> Project:
@@ -1387,9 +1417,7 @@ def apply_commands(
             root.sequences[sequence_ref].clips = candidate.clips
         candidate = Project.model_validate(root.model_dump())
     except ValidationError as error:
-        raise EditorError(
-            "PROJECT_LIMIT", "project exceeds the supported contract limits"
-        ) from error
+        raise _contract_limit_refusal(error) from error
     # One rule for every way a mask can arrive: a free-form outline's box *is* the outline it was
     # drawn in. The exporter places the cut with that box and the browser sizes the same unit image
     # by it, so a clip added whole, a mask edited in place and one inside a nested sequence have to

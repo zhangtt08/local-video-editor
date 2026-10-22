@@ -854,7 +854,7 @@ export function errorHints(): Record<string, string> {
       MASK_TRACK_BUDGET: "这条片段的曲线已经写满了：一个跟踪点要占 4 条曲线（中心 X/Y 加宽高），片段最多 2000 条。把这段切成几条短片段分别跟、删掉不要的关键帧，或者关掉尺寸估计（一个点只占 2 条）；也能把播放头挪到已经跟好的末尾，用「接着跟」续一小段。",
       TRACK_FAILED: "画面里没有跟得住的东西：把遮罩盖到纹理明显的主体上再试，或加大搜索半径、减少帧数。",
       INVALID_SPEED: "这个速度改不了：图片和文字没有播放速度，曲线变速要真正的媒体片段。",
-      PROJECT_LIMIT: "工程到了契约上限（片段、轨道或关键帧的数量）：删掉不用的素材与曲线，或把长段落拆成几条片段。",
+      PROJECT_LIMIT: "这一格超出了契约上限：删掉不用的片段或轨道，或把内容分到几个工程里。",
       TIME_OVERFLOW: "这一步超出了可保存的时间范围：把内容往前挪，或缩短这段。",
       API_ERROR: "接口回了一句引擎没有写明的错误：重新读一次工程再试；一直出现就记下操作顺序，方便排查。",
       MEDIA_FAILED: "媒体引擎这一次没给出画面：确认素材还在原位、桌面端在运行后重试；持续失败就点一下「清理缓存」再试。",
@@ -999,7 +999,20 @@ export class EngineError extends Error {
       const value = details[key];
       if (typeof value === "string" && value && value !== asset) named.push(`${word} ${value}`);
     }
-    return named.length ? `${said}（${named.join("、")}）` : said;
+    // 1.265：契约上限那一类拒绝把「哪一格、最多几个、这一次要存几个」写在 details 里。
+    // 光有那句中文人还是不知道要删什么——「把长段落拆成几条片段」那种出路到了这一格只会让
+    // 片段更多。所以这里念出那一格与那两个数；`clips`/`tracks` 是契约里的字段名，给人看的是
+    // 中文那一面（这一句只有一个主人，别处不许再抄一份）。
+    const words: Record<string, string> = { clips: "片段", tracks: "轨道", assets: "素材" };
+    const path = typeof details.contract_path === "string" ? details.contract_path : "";
+    const leaf = path.split(".").pop() ?? "";
+    const allowed = typeof details.max_length === "number" ? details.max_length : 0;
+    const found = typeof details.actual_length === "number" ? details.actual_length : 0;
+    const limit = path && allowed > 0 && found > 0
+      ? `（这一格${words[leaf] ?? leaf}：最多 ${allowed} 个，现在要存 ${found} 个）`
+      : "";
+    const saidOn = named.length ? `${said}（${named.join("、")}）` : said;
+    return `${saidOn}${limit}`;
   }
 }
 
