@@ -99,13 +99,38 @@ def check(path: Path) -> list[str]:
     return problems
 
 
+def duplicate_bullets(path: Path) -> list[str]:
+    """同一节里出现两遍一模一样的 bullet——那就是重复的账，不是两条事实。"""
+    body = path.read_text(encoding="utf-8").replace("\r\n", "\n")
+    problems: list[str] = []
+    for section in body.split("\n## ")[1:]:
+        title = section.splitlines()[0][:24]
+        seen: set[str] = set()
+        for line in section.splitlines():
+            if not line.startswith("- **"):
+                continue
+            head = line[:40]
+            if head in seen:
+                problems.append(f"{path.name}: 节「{title}」里 bullet 出现了两遍：{head}")
+            seen.add(head)
+    return problems
+
+
 def main() -> None:
     missing = [str(path) for path in DOCS if not path.exists()]
     assert not missing, f"docs the gate reads are gone: {missing}"
-    problems: list[str] = []
+    row_problems: list[str] = []
+    duplicates: list[str] = []
     for path in DOCS:
-        problems += check(path)
-    assert not problems, f"{len(problems)} malformed table rows:\n" + "\n".join(problems[:20])
+        row_problems += check(path)
+        duplicates += duplicate_bullets(path)
+    # 那句红字得说清看见的是哪一件事：一条重复的 bullet 不是「表格行坏了」。
+    assert not row_problems, f"{len(row_problems)} malformed table rows:\n" + "\n".join(
+        row_problems[:20]
+    )
+    assert not duplicates, f"{len(duplicates)} 条 bullet 在同一年里写了两遍:\n" + "\n".join(
+        duplicates[:20]
+    )
     tables = sum(len(table_blocks(path.read_text(encoding="utf-8").splitlines())) for path in DOCS)
     rows = sum(
         len(block)
