@@ -142,6 +142,18 @@
   staged 298.8 MB）；`npm run dist` 后根 `AgentCut.exe` 与便携版逐字节相同（**185,154,100 B**，sha256 前缀
   `daca426b0fe28573`），安装版 185,314,816 B（前缀 `3b8245abb3ec2e70`）；`released_package_check` 绿
   （asar 1.261.0、84 个文件、68 句人话）；`packed_engine_surface_check` 绿；
+  装机那一腿（`native_check_1261.py` + `native_read_1261.cjs`：起 `desktop/release/win-unpacked/AgentCut.exe`，
+  用 CDP 在**真窗口**里读数）绿——页面是 `file:///…app.asar/dist/renderer/index.html`，标题栏那枚读的是
+  **「引擎在线 v1.261.0」**（轮询到第 1 秒出现），`.toast/.layer-error/.error` 一个都没有，
+  关窗后 AgentCut 进程数 **0**。这一腿对「条上那一枚到底是 `button` 还是 `span`」的判词是**没量到**：
+  这个人自己的工程（r15）里没有带框点的再叠遮罩。那条形状由 `ui_shape_check` 在 `desktop/dist/renderer` 上量，
+  而 `asar_identity_1261.py` 证过 asar 里那一份与构建产物逐字节相同（`index-RQJ4nkoN.js`，sha256 前缀
+  `59389033b4e7f1f4`）——从提交后的干净树重建渲染层再比一次仍然相同。演示目录那份引擎副本也对齐了
+  （`AgentCut演示/bin/agentcut/agentcut.exe` 与包内那份 sha256 前缀同为 `097bb3b5d4cec97c`）。
+  **起它之前必须把 `ELECTRON_RUN_AS_NODE` 从环境里摘掉**：本机 User/Machine 两档都没有这个变量，只有 Agent 的
+  shell 里带着；带着它，那支 Electron 就当自己是 node——加任何开关都是 `bad option` + exit 9，不加开关 5 秒
+  exit 0、连 `%APPDATA%\agentcut-desktop` 都不碰，看着完全像「发布包起不来」。第一趟就是这么红的，
+  红的是量具：判法是「userData 一个字节都没写」= 没进应用代码 = 起它的方式错了。
   `ui_shape_check` **screens=56 地板=12.5px 叠行合计=0 遮罩后=533 缺口有名=4 下拉被切=0 字压字合计=0 被画遮住=2**（两档各 28 屏，多出来那一屏就是「拖框点」；地板按量到的数加）；
   空闲机单跑 `tests/suite_check.py` **140/140 checks passed**；突变台（`mutate_1261.py`：不 `stopPropagation`、
   改的是那一个数而不是那一枚的时刻、越界不夹、同格不但让两枚叠在一起、命中盒抬到 12px）逐条红在自家
