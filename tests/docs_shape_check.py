@@ -116,20 +116,43 @@ def duplicate_bullets(path: Path) -> list[str]:
     return problems
 
 
+def duplicate_sections(path: Path) -> list[str]:
+    """同一份文档里 `## ` 那一级的标题出现两遍——那是拼接拼重了，不是两节。
+
+    只判 `## ` 这一级：`docs/optimization.md` 里 `### 实测` 这类小节标题在每一节下各有一份，
+    量过是真的重（所以那一层不判——判了就是把量具自己的猜法当成文档的事实）。
+    """
+    body = path.read_text(encoding="utf-8").replace("\r\n", "\n")
+    seen: set[str] = set()
+    twice: set[str] = set()
+    for line in body.splitlines():
+        if not line.startswith("## "):
+            continue
+        if line in seen:
+            twice.add(line)
+        seen.add(line)
+    return [f"{path.name}: 同一级的标题写了两遍：{head[:44]}" for head in sorted(twice)]
+
+
 def main() -> None:
     missing = [str(path) for path in DOCS if not path.exists()]
     assert not missing, f"docs the gate reads are gone: {missing}"
     row_problems: list[str] = []
     duplicates: list[str] = []
+    sections: list[str] = []
     for path in DOCS:
         row_problems += check(path)
         duplicates += duplicate_bullets(path)
+        sections += duplicate_sections(path)
     # 那句红字得说清看见的是哪一件事：一条重复的 bullet 不是「表格行坏了」。
     assert not row_problems, f"{len(row_problems)} malformed table rows:\n" + "\n".join(
         row_problems[:20]
     )
     assert not duplicates, f"{len(duplicates)} 条 bullet 在同一年里写了两遍:\n" + "\n".join(
         duplicates[:20]
+    )
+    assert not sections, f"{len(sections)} 处 `## ` 标题在同一份文档里写了两遍:\n" + "\n".join(
+        sections[:20]
     )
     tables = sum(len(table_blocks(path.read_text(encoding="utf-8").splitlines())) for path in DOCS)
     rows = sum(
@@ -138,7 +161,8 @@ def main() -> None:
         for block in table_blocks(path.read_text(encoding="utf-8").splitlines())
     )
     assert tables > 10 and rows > 40, (tables, rows)
-    print(f"PASS: {len(DOCS)} documents, {tables} tables, {rows} rows all shaped like rows")
+    print(f"PASS: {len(DOCS)} documents, {tables} tables, {rows} rows all shaped like rows"
+          f"；一节标题与一条 bullet 都只有一份")
 
 
 if __name__ == "__main__":

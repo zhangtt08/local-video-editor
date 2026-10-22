@@ -305,7 +305,7 @@ def sweep(pid: str, folder: Path, panel: str, extras: tuple[str, ...] = (),
           drag_extra: bool = False, insert_extra: bool = False,
           alt_dup: bool = False, mask_bezier: bool = False,
           feather_key: bool = False, drag_boxkey: bool = False,
-          boxgeo: str = "") -> list[dict]:
+          boxgeo: str = "", boxdbl: bool = False) -> list[dict]:
     out = folder / f"ui_shape_sweep-{panel}.json"
     shots = os.environ.get("AGENTCUT_SHAPE_SHOTS", "")
     node = subprocess.run(
@@ -334,6 +334,7 @@ def sweep(pid: str, folder: Path, panel: str, extras: tuple[str, ...] = (),
             *(["--feather", "1"] if feather_key else []),
             *(["--drag-boxkey", "1"] if drag_boxkey else []),
             *(["--boxgeo", boxgeo] if boxgeo else []),
+            *(["--boxdbl", "1"] if boxdbl else []),
             *(["--shots", shots] if shots else []),
         ],
         capture_output=True,
@@ -498,6 +499,47 @@ def judge_suite(rows: list[dict]) -> None:
     missing = [name for name in want if name not in seen]
     if missing:
         fail("判据自检少了那几档摆位：" + json.dumps(missing, ensure_ascii=False))
+
+
+def dbl_suite(rows: list[dict]) -> None:
+    """条上那一次双击落在谁身上：1.264 决定「打点那只手不放上条」，依据的是量到的数。
+
+    带子今天 `pointer-events: none`（1.242 的理由：接了指针就是在片段顶上挖一块拖不动的
+    死区），所以空隙里那一点的按下仍归**卡片本体**——而卡片本体的双击另有主人
+    （`Timeline.tsx:1299`：素材是嵌套合成时 `openSequence`）。两只手共用同一片像素就是
+    两个主人。这一判钉的不是手感，是「没有长成两个主人」：少任何一档窗口、量不到、
+    带子接了指针、带子出现在任何一点的命中最上层，都红。
+    """
+    want = len(SIZES)
+    if len(rows) != want:
+        fail(f"双击落点那一腿应当交回 {want} 条（每档窗口一条），实际 {len(rows)} 条："
+             f"{[row.get('size') for row in rows]}")
+    for row in rows:
+        size = str(row.get("size"))
+        data = row.get("data")
+        if not data:
+            fail(f"双击落点那一腿没有读数：{size} 报的是 {row.get('error')}")
+        if not data.get("present"):
+            fail(f"{size}：那一次双击没量到——{data.get('reason')}"
+                 f"（选中片段与框点带都得在场才量得到）")
+        if data.get("bandPointerEvents") != "none":
+            fail(f"{size}：那条带子接了指针（{data.get('bandPointerEvents')}）——"
+                 f"空隙里的按下就不再归卡片本体，那颗嵌套合成的双击会被它抢走")
+        if int(data.get("dots") or 0) < 2:
+            fail(f"{size}：条上只画了 {data.get('dots')} 枚框点——两枚之间才叫空隙，"
+                 f"这一趟等于没量")
+        eaten = [spot.get("dx") for spot in (data.get("spots") or [])
+                 if "clip-boxkeys" in str((spot.get("stack") or [""])[0])]
+        if eaten:
+            fail(f"{size}：带子在这些点的命中最上层（dx {eaten}）——它接住了按下，"
+                 f"卡片本体收不到，那就是在片段顶上挖了一块拖不动的死区")
+        pairs = ", ".join(f"{spot.get('dx')}→{str((spot.get('stack') or [''])[0]).split('.')[-1]}"
+                          for spot in (data.get("spots") or []))
+        print(f"PROBE {size} 带子画出来的高 {data.get('bandHeight')}、中线在卡片顶下 "
+              f"{data.get('cyFromCardTop')}，点位 {data.get('centres')}；"
+              f"各点第一次摸到的是 {pairs}"
+              f"（这一条是嵌套合成：{data.get('nestedSequence')}）")
+
 def main() -> None:
     global PORT
     if not (RENDERER / "index.html").is_file():
@@ -533,7 +575,8 @@ def main() -> None:
                                  mask_bezier=panel == "inspect",
                                  feather_key=panel == "inspect",
                                  drag_boxkey=panel == "inspect",
-                                 boxgeo="3,7,11" if panel == "inspect" else "")
+                                 boxgeo="3,7,11" if panel == "inspect" else "",
+                                 boxdbl=panel == "inspect")
             ]
         finally:
             engine.terminate()
@@ -550,7 +593,11 @@ def main() -> None:
     undo_rows = [row for row in rows if row.get("panel") == "undo"]
     # "retry" 那一行也是数：页签补了几次点、补的是哪一屏——静悄悄重试与没人重试是两回事。
     retry_rows = [row for row in rows if row.get("panel") == "retry"]
-    rows = [row for row in rows if row.get("panel") not in ("judge", "geo", "undo", "retry")]
+    probe_rows = [row for row in rows if row.get("panel") == "probe"]
+    # 这五族都是「数」，不是画出来的一屏：先摘干净，再按屏数判。
+    data_panels = ("judge", "geo", "undo", "retry", "probe")
+    rows = [row for row in rows if row.get("panel") not in data_panels]
+    dbl_suite(probe_rows)
     boxkey_geometry_suite(geo_rows)
     judge_suite(judge_rows)
     undo_suite(undo_rows)

@@ -41,6 +41,7 @@ const FEATHER = flag("feather", "");
 // 交回的是数（`panel` 写 "geo"），所以它不占「该有几屏」那一判。
 const BOXGEO = (flag("boxgeo", "") || "").split(",").filter((item) => item !== "").map(Number);
 const GEO = path.resolve(flag("geo", path.join(__dirname, "ui_boxkey_geo.js")));
+const DBL = path.resolve(flag("dbl", path.join(__dirname, "ui_boxkey_dbl.js")));
 // 1.246：调色节点那一屏（`--gradecard <第几张卡>`）：点第二张卡，量它展开的那一格。
 const GRADECARD = flag("gradecard", "");
 const SIZES = (flag("sizes", "1456x808") || "").split(",");
@@ -81,6 +82,11 @@ try {
   console.error("probe does not parse: " + String(error.stdout || "") + String(error.stderr || ""));
   process.exit(2);
 }
+if (!fs.existsSync(DBL)) {
+  console.error("box-key double-click probe missing: " + DBL);
+  process.exit(2);
+}
+execFileSync(process.execPath, ["--check", DBL], { stdio: "pipe" });
 if (BOXGEO.length) {
   if (!fs.existsSync(GEO)) {
     console.error("box-key geometry probe missing: " + GEO);
@@ -1221,6 +1227,15 @@ async function sweepOne(size, hostPort, probeSource) {
         };
       }
       rows.push({ screen: "框点命中盒", panel: "geo", size, data, markers: null, state: null });
+    }
+    // 1.262 第 0 步：空隙里那一次双击落在谁身上、带子接了指针之后卡片还收不收得到按下。
+    if (flag("boxdbl", "") !== "") {
+      const troubleForDbl = await baseState();
+      const dblSource = fs.readFileSync(DBL, "utf8");
+      const data = troubleForDbl
+        ? { present: false, reason: troubleForDbl }
+        : await evaluate("(function(){ " + dblSource + " return measureBoxkeyDblclick(); })()");
+      rows.push({ screen: "框点双击落点", panel: "probe", size, data, markers: null, state: null });
     }
     // 1.260：判据自己也要被量一次。「被画遮住」这一支若只会放行、不会拦，就是一把瞎尺
     // （一个不会动的零与没有这一判同罪）。三种摆位各自的数必须不同：
