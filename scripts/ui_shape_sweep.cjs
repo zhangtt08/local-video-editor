@@ -347,18 +347,35 @@ async function sweepOne(size, hostPort, probeSource) {
       await sleep(600);
       await run("展开" + opened + "段");
     }
+    const tabRetry = [];
     for (let t = 0; t < tabs.length; t += 1) {
       if (tabs[t].selected || !tabs[t].x || !tabs[t].y) continue;
       await click(tabs[t].x, tabs[t].y);
       await sleep(700);
       const lit = await evaluate(tabsExpression);
-      const now = (lit || []).find((row) => row.i === t) || {};
+      let now = (lit || []).find((row) => row.i === t) || {};
+      let retried = false;
       if (!now.selected) {
-        rows.push({ screen: String(tabs[t].text || tabs[t].label), panel: flag("panel", ""), size, data: null, error: "clicked but the tab never lit" });
+        // 这一档量的是「点了这一颗，那一屏真换过去」。这台机器上页签落地偶尔比 700 ms 慢一拍
+        // （套件里 1040x660 的「历史」就这么红过一次，同一份构建单跑是绿的）。再点一次、多等一档：
+        // **两次都不亮才算缺陷**，判据一条没放软——「点了没换屏」照样红，只是不再拿一次抖动当结论。
+        retried = true;
+        tabRetry.push(`${size}:${String(tabs[t].text || tabs[t].label)}`);
+        await click(tabs[t].x, tabs[t].y);
+        await sleep(1500);
+        const again = await evaluate(tabsExpression);
+        now = (again || []).find((row) => row.i === t) || {};
+      }
+      if (!now.selected) {
+        rows.push({ screen: String(tabs[t].text || tabs[t].label), panel: flag("panel", ""), size, data: null,
+          error: "clicked but the tab never lit" + (retried ? "（两次都不亮）" : "") });
         continue;
       }
       await run(String(now.text || now.label));
     }
+    // 补点这件事要看得见：静悄悄重试与没人重试是两回事，红字之外也留一份数。
+    rows.push({ screen: "页签补点", panel: "retry", size, data: { count: tabRetry.length, names: tabRetry },
+      markers: null, state: null });
     // 浮层那一档：每一颗都从**同一个可复现的起点**出发——编辑页 + 检查器那一列 +
     // 真选中 `--clip` 那条片段 + 检查器里那几段 `<details>` 真展开。
     // 为什么要每颗之前都回一次：上面那几颗里有的是**换页**（动画曲线换编辑页、示波器换右列），
@@ -1131,11 +1148,40 @@ async function sweepOne(size, hostPort, probeSource) {
             === JSON.stringify(was.filter((_, bi) => bi !== (one ? changed[0].bi : -1)));
           const oneVersion = after.revision === before.revision + 1;
           const follows = typeof moved === "number" && Math.abs(moved - 48) <= 4;
-          if (!one || !movedToFrame || !inRange || !others || !oneVersion || !follows) {
-            await fail("拖那一枚没有按预期落库：" + JSON.stringify({ one, movedToFrame, inRange, others, oneVersion, follows, moved, changed }));
+          const stillFields = ["position_ticks", "track_id", "duration_ticks", "source_in_ticks"];
+          const movedClip = stillFields.filter((key) => before.clips["k2"][key] !== after.clips["k2"][key]);
+          const still = movedClip.length === 0;
+          if (!one || !movedToFrame || !inRange || !others || !oneVersion || !follows || !still) {
+            await fail("拖那一枚没有按预期落库：" + JSON.stringify({
+              one, movedToFrame, inRange, others, oneVersion, follows, movedClip, moved, changed }));
           } else {
             await run(label);
-            await restore();
+            // 1.262：撤销那一手也在真页面上量一次。那颗按钮走的是 `engine.restore`：
+            // 恢复旧内容并生成**新**版本，所以判据不是「版本号退回」，而是
+            // 「那一串块逐字段回到拖动前」+「版本号比撤销前更大」。
+            const undoSpot = await evaluate("(function(){var b=document.querySelector('[aria-label^=\"撤销：\"]');"
+              + "if(!b||b.disabled)return null;b.scrollIntoView({block:'center'});var r=b.getBoundingClientRect();"
+              + "return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
+            if (!undoSpot) {
+              await fail("撤销那颗按钮按不到（不在 DOM，或是灰的）");
+            } else {
+              await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: undoSpot.x, y: undoSpot.y, button: "left", clickCount: 1 });
+              await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: undoSpot.x, y: undoSpot.y, button: "left" });
+              await sleep(1400);
+              const back = await engineGet(`/v1/projects/${PROJECT}`);
+              const same = JSON.stringify(back.clips["k2"].extra_masks) === JSON.stringify(was);
+              const newer = back.revision > after.revision;
+              if (!same || !newer) {
+                await fail("撤销那一下没有把那一枚带回原来的格：" + JSON.stringify({
+                  same, newer, from: before.revision, dragged: after.revision, undone: back.revision,
+                }));
+              } else {
+                rows.push({ screen: label + "·撤销", panel: "undo", size,
+                  data: { same, newer, from: before.revision, dragged: after.revision, undone: back.revision },
+                  markers: null, state: null });
+                await restore();
+              }
+            }
           }
         }
       }

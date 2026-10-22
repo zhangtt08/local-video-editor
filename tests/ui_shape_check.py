@@ -353,6 +353,51 @@ def sweep(pid: str, folder: Path, panel: str, extras: tuple[str, ...] = (),
     return json.loads(out.read_text(encoding="utf-8"))
 
 
+def retry_suite(rows: list[dict]) -> None:
+    """页签补点：每一档窗口都要有读数，补了几次、补的是哪一屏都要看得见。
+
+    判的不是「不许补」——补一次而第二下亮了，量到的是这台机器的落地抖动（套件里 1040x660
+    的「历史」就这么红过一次，同一份构建单跑是绿的，红字里那句「点了但那一颗没亮」说的
+    不是产品的屏没换）；判的是「补过的事不许没人知道」：那一档一个读数都没有就是量具自己少了一判。
+    每档窗口里有几处面板就交回几条，所以按窗口合计，不硬写条数。
+    """
+    by_size: dict[str, int] = {}
+    names: list[str] = []
+    for row in rows:
+        data = row.get("data") or {}
+        size = str(row.get("size"))
+        count = int(data.get("count", -1))
+        if count < 0:
+            fail(f"{size}：补点读数里没有数：{data}")
+        by_size[size] = by_size.get(size, 0) + count
+        names += [str(item) for item in (data.get("names") or [])]
+    missing = [size for size in SIZES if size not in by_size]
+    if missing:
+        fail(f"页签补点那档少了这些窗口的读数：{missing}——量具自己少了一判")
+    if names:
+        print(f"NOTE 页签一共补了 {len(names)} 次点才亮 —— {names}")
+
+
+def undo_suite(rows: list[dict]) -> None:
+    """撤销那一手：两档窗口各一条，两条都要「内容回到原样、版本号往前走」。"""
+    want = len(SIZES)
+    if len(rows) != want:
+        fail(f"撤销那一腿应当交回 {want} 条（每档窗口一条），实际 {len(rows)} 条："
+             f"{[row.get('size') for row in rows]}")
+    for row in rows:
+        data = row.get("data")
+        if not data:
+            fail(f"撤销那一腿没有读数：{row.get('size')} 报的是 {row.get('error')}")
+        if not data.get("same"):
+            fail(f"撤销之后那一串块没有逐字段回到拖动前（{row.get('size')}）：{data}")
+        if not data.get("newer"):
+            fail(f"撤销走的是历史恢复，版本号必须往前走，量到的是 "
+                 f"dragged={data.get('dragged')} undone={data.get('undone')}（{row.get('size')}）")
+        if data.get("dragged") != data.get("from") + 1:
+            fail(f"撤销之前那一抓应当只涨一个版本，量到的是 from={data.get('from')} "
+                 f"dragged={data.get('dragged')}（{row.get('size')}）")
+
+
 def boxkey_geometry_suite(rows: list[dict]) -> None:
     """1.261 第 0 步量到的那些数不再是「印出来给人看」：这一判把它换成能红的断言。
 
@@ -501,9 +546,15 @@ def main() -> None:
     judge_rows = [row for row in rows if row.get("panel") == "judge" and row.get("data")]
     # "geo" 那几行是 1.261 第 0 步的命中盒量具：它是数，不是画出来的一屏。
     geo_rows = [row for row in rows if row.get("panel") == "geo"]
-    rows = [row for row in rows if row.get("panel") not in ("judge", "geo")]
+    # "undo" 那两行同样是数：那一屏没有墨与几何可量，硬塞进屏数就是拿假屏换真判据。
+    undo_rows = [row for row in rows if row.get("panel") == "undo"]
+    # "retry" 那一行也是数：页签补了几次点、补的是哪一屏——静悄悄重试与没人重试是两回事。
+    retry_rows = [row for row in rows if row.get("panel") == "retry"]
+    rows = [row for row in rows if row.get("panel") not in ("judge", "geo", "undo", "retry")]
     boxkey_geometry_suite(geo_rows)
     judge_suite(judge_rows)
+    undo_suite(undo_rows)
+    retry_suite(retry_rows)
     screens = [row for row in rows if row.get("data")]
     # 「至少该有 N 屏」那一判数的是**总数**，多出来的余量会把「某一屏根本没量到」吃掉：
     # 1.223 补进「画面中编辑」时，那一屏两档都没量到，总数仍然够，门禁照样绿。
