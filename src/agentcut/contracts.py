@@ -55,7 +55,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.269.0"
+APP_VERSION = "1.270.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -5624,6 +5624,10 @@ class MarkerSplitRequest(Contract):
     expected_revision: Revision
 
     track_ids: Annotated[list[Identifier] | None, Field(max_length=128)] = None
+
+    # 1.270：也可以直接点名叫切点（节拍那一条一次点击就切好），不必先把它们写成标记。
+    # 上限与一次节拍分析交回的枚数同一个数；标记本身仍由调用方决定要不要一起写。
+    at_ticks: Annotated[list[Ticks], Field(min_length=1, max_length=BEAT_MARK_LIMIT)] | None = None
 
     apply: bool = False
 

@@ -1775,7 +1775,7 @@ def create_app(
         place that decides what a split does to the source clock, keyframes, transitions and links.
         """
         project = projects.get(project_id)
-        plan = marker_plan.split_plan(project, request.track_ids)
+        plan = marker_plan.split_plan(project, request.track_ids, request.at_ticks)
         if request.apply and not plan["commands"]:
             raise EditorError(
                 "INVALID_MARKER_SPLIT",

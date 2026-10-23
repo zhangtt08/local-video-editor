@@ -10,17 +10,24 @@ links. Callers submit the plan as one batch.
 from .contracts import Project, project_content_ticks
 
 
-def split_plan(project: Project, track_ids: list[str] | None = None) -> dict:
-    """Plan a split for every marker that falls strictly inside a clip.
+def split_plan(
+    project: Project, track_ids: list[str] | None = None, at_ticks: list[int] | None = None
+) -> dict:
+    """Plan a split for every mark that falls strictly inside a clip.
 
-    A marker on a clip edge, or over empty ruler, plans nothing rather than producing a zero-length
-    piece; a marker closer than one frame to an edge is dropped for the same reason. Splits for one
-    clip are emitted right to left so each earlier marker still refers to the coordinates the clip
-    actually has at that moment.
+    The marks are the ruler's markers unless `at_ticks` names them directly. That is how a beat
+    analysis becomes cuts in one click: the caller passes the ticks it heard, and the markers it
+    wants to keep are written in the same batch. A mark on a clip edge, or over empty ruler, plans
+    nothing rather than producing a zero-length piece; one closer than a frame to an edge is
+    dropped for the same reason. Splits for one clip are emitted right to left so each earlier
+    mark still refers to the coordinates the clip actually has at that moment.
     """
     frame = project.settings.frame_ticks
     wanted = None if track_ids is None else set(track_ids)
-    ticks = sorted({marker.at_ticks for marker in project.markers})
+    if at_ticks is None:
+        ticks = sorted({marker.at_ticks for marker in project.markers})
+    else:
+        ticks = sorted({int(tick) for tick in at_ticks})
     commands: list[dict] = []
     used: set[int] = set()
     clips = 0

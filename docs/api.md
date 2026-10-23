@@ -21,7 +21,7 @@ HTTP 使用 `Authorization: Bearer <AGENTCUT_TOKEN>`。JSON 请求严格校验�
 | POST /v1/projects/{id}/clips/{c}/color-space | clip_color_space | 只读：这份素材自己说的色调曲线（`space`），或点名为什么认不出（`reason` + 四个原样标记）；1.150 起有工具，读一遍 revision 不动 |
 | POST /v1/projects/{id}/clips/{c}/loudness | clip_loudness | 响度表读数与建议增益；`apply=true` 时引擎一次写入（1.79 起有工具，工具侧固定只读，命令交回 `timeline_edit`） |
 | POST /v1/projects/{id}/tracks/{t}/loudness | track_loudness | 整轨响度对齐：逐片段测量并合并成一次写入（1.79 起有工具；`sequence_id` 让它在合成里量那条同名轨） |
-| POST /v1/projects/{id}/markers/split | marker_split | 按标记分割：只出普通 `clip.split` 计划，`apply` 才写入 |
+| POST /v1/projects/{id}/markers/split | marker_split | 按标记分割：只出普通 `clip.split` 计划，`apply` 才写入（1.270 起也可用 `at_ticks` 直接点名切点，节拍那一趟不必先写标记） |
 | POST /v1/projects/{id}/speech-captions | captions_auto | 本地语音识别成字幕线索并取回 `captions.import` 计划（`apply`/`dry_run` 在该工具里固定为 false） |
 | `clip.slip` / `clip.slide`（`/edits`） | timeline_edit | 划动素材窗口 / 左右滑移，两侧相邻段各自补让 |
 | POST /v1/projects/{id}/mask-track | mask_track | 一组目标一起分析画面，每个遮罩各把自己的路径写成关键帧：读同一段窗口的目标只解码一次，整组落进一个批次（与 `/edits` 同一事务语义） |

@@ -1091,27 +1091,71 @@ export async function splitAtMarkers() {
 
 /** 按节拍打点：引擎听一遍这段声音，把起音落成普通的 marker.set。
  *  一次提交一个版本，撤销一步全部退回；打出来的点仍是标记，「按标记分割」决定要不要切。 */
+async function hearBeats(clipId: string) {
+  const project = state.project;
+  if (!engine || !project) return null;
+  return engine.audioBeats(project.id, { clip_id: clipId, sequence_id: state.sequenceId });
+}
+
+function beatMarkerCommands(beats: number[]): Command[] {
+  return beats.map((at, index) => ({
+    op: "marker.set",
+    marker: { id: newId("beat-"), at_ticks: at, name: `节拍 ${index + 1}`, color: "cyan" },
+  }));
+}
+
 export async function beatMarks(clipId: string) {
   const project = state.project;
   if (!engine || !project) return;
   set({ busy: "听节拍…" });
   try {
-    const found = await engine.audioBeats(project.id, {
-      clip_id: clipId, sequence_id: state.sequenceId,
-    });
+    const found = await hearBeats(clipId);
+    if (!found) return;
     if (!found.beats.length) {
       toast("info", "这段里没有找到节拍", "换一段有鼓点或节奏更明显的声音再试；这一次没有写入任何标记。");
       return;
     }
-    const commands: Command[] = found.beats.map((at, index) => ({
-      op: "marker.set",
-      marker: { id: newId("beat-"), at_ticks: at, name: `节拍 ${index + 1}`, color: "cyan" },
-    }));
-    submit(commands, "按节拍打点");
+    submit(beatMarkerCommands(found.beats), "按节拍打点");
     const tempo = found.bpm ? `约 ${found.bpm} BPM · ` : "";
     const taken = found.truncated ? `只取了前 ${found.beats.length} 枚；` : "";
     toast("info", `打了 ${found.beats.length} 枚节拍标记`,
       `${tempo}${taken}撤销一步全部退回；工具栏的剪刀可按这些标记切分。`);
+  } catch (error) {
+    const { title, detail } = describe(error);
+    toast("error", title, detail);
+  } finally {
+    set({ busy: "" });
+  }
+}
+
+/** 按节拍切分：同一趟分析得到的那两个反应合成一个批次——标记留下，切点就是它们那一帧。
+ *  引擎只规划普通 clip.split；标记与切点一起提交，一次点击一个版本，撤销一步整批退回。 */
+export async function beatCut(clipId: string) {
+  const project = state.project;
+  if (!engine || !project) return;
+  set({ busy: "听节拍并切分…" });
+  try {
+    const found = await hearBeats(clipId);
+    if (!found) return;
+    if (!found.beats.length) {
+      toast("info", "这段里没有找到节拍", "换一段有鼓点或节奏更明显的声音再试；这一次没有写入任何标记或切点。");
+      return;
+    }
+    const plan = await engine.markerSplit(project.id, {
+      request_id: newId("beatcut-"), expected_revision: project.revision, at_ticks: found.beats,
+    });
+    if (!plan.markers.commands.length) {
+      toast("info", "这些节拍都落在片段边缘或空隙上",
+        "没有可切的段；这一次没有写入。把播放头停在这个片段里，或换一段有节奏的声音再试。");
+      return;
+    }
+    submit(
+      [...beatMarkerCommands(found.beats), ...(plan.markers.commands as Command[])],
+      "按节拍切分",
+    );
+    const taken = found.truncated ? "只取了前 " + found.beats.length + " 枚；" : "";
+    toast("info", `打了 ${found.beats.length} 枚节拍标记，在 ${plan.markers.splits} 处切分`,
+      `${taken}切点就是标记那一帧；一次提交一个版本，撤销一步整批退回。`);
   } catch (error) {
     const { title, detail } = describe(error);
     toast("error", title, detail);

@@ -245,7 +245,59 @@ def http_suite(folder: Path) -> None:
             f"带变速曲线的片段必须按名字拒绝：{refused.text}"
         )
         assert client.get(path).json()["revision"] == 2, "refusals must not write"
-        print("   http: asset 11 beats, 200% clip", len(marks), "beats, refusals named, revision 2")
+
+        # 1.270: the beats can be named as cut points directly, then markers and cuts submitted as
+        # one batch. The plan writes nothing; the batch is one revision and both halves land.
+        fast_beats = fast.json()["beats"]
+        planned = client.post(
+            path + "/markers/split",
+            json={"request_id": "beat-plan", "expected_revision": 2, "at_ticks": fast_beats},
+        )
+        assert planned.status_code == 200, planned.text
+        plan = planned.json()
+        assert plan["committed"] is False, plan
+        assert client.get(path).json()["revision"] == 2, "planning beat cuts must not write"
+        cuts = plan["markers"]["commands"]
+        assert cuts and all(cut["op"] == "clip.split" for cut in cuts), (
+            f"at_ticks 没有变成切点：{plan}"
+        )
+        assert plan["markers"]["splits"] == len(cuts), plan["markers"]
+        batch = [
+            {
+                "op": "marker.set",
+                "marker": {
+                    "id": f"beat-{index}",
+                    "at_ticks": at,
+                    "name": f"节拍 {index}",
+                    "color": "cyan",
+                },
+            }
+            for index, at in enumerate(fast_beats, start=1)
+        ] + cuts
+        applied = client.post(
+            path + "/edits",
+            json={"request_id": "beat-cut", "expected_revision": 2, "commands": batch},
+        )
+        assert applied.status_code == 200, applied.text
+        project_after = applied.json()["project"]
+        assert project_after["revision"] == 3, project_after["revision"]
+        assert len(project_after["markers"]) == len(fast_beats), project_after["markers"]
+        starts = {
+            clip["position_ticks"]
+            for clip in project_after["clips"].values()
+            if clip["track_id"] == "a"
+        }
+        assert {cut["at_ticks"] for cut in cuts} <= starts, (starts, cuts)
+        # Every clip a mark falls inside is cut — the audio and the picture track share the beat.
+        assert len(project_after["clips"]) == 3 + len(cuts), sorted(project_after["clips"])
+        print(
+            "   beat cut:",
+            len(cuts),
+            "cuts +",
+            len(fast_beats),
+            "marks in one revision 3",
+        )
+        print("   http: asset 11 beats, 200% clip", len(marks), "beats, refusals named, revision 3")
 
 
 def main() -> int:
