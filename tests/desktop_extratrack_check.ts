@@ -48,7 +48,11 @@ assert.ok(!/simplif|correlat|ncc/i.test(body), "界面里又长出了一份跟�
 assert.match(inspector, /跟踪这一块/, "检查器里没有这颗按钮");
 assert.match(inspector, /features\?\.extra_mask_track/, "按钮没按能力表出现");
 assert.match(inspector, /clip\.speed_curve[\s\S]{0,200}跟踪这一块/, "带变速曲线的片段没有按名字说明");
-assert.match(inspector, /trackExtraMask\(clip\.id, index, at\)/, "按钮没有调用那一处唯一实现");
+assert.match(
+  inspector,
+  /trackExtraMask\(clip\.id, index, at[,)]/,
+  "按钮没有调用那一处唯一实现",
+);
 assert.match(inspector, /const inside = play\.ticks/, "按钮没有判播放头是否真在这段里");
 assert.match(inspector, /!inside/, "播放头不在片段里时按钮没有禁用");
 

@@ -107,6 +107,32 @@ def decode_luma(
     return width, height, frames
 
 
+def _rotate_patch(patch: bytes, side: int, degrees: float) -> bytes:
+    """Rotate a square template about its centre; outside pixels take the patch's own mean.
+
+    Nearest-neighbour is enough here: the template is a small luma patch and the score is what
+    decides, so a smoother interpolation would only cost time without changing the winner.
+    Positive degrees rotate the content clockwise, the same reading as the mask's angle.
+    """
+    if abs(degrees) < 1e-9:
+        return patch
+    mean = sum(patch) // len(patch)
+    radians = math.radians(degrees)
+    cos, sin = math.cos(radians), math.sin(radians)
+    centre = (side - 1) / 2
+    out = bytearray(side * side)
+    for y in range(side):
+        dy = y - centre
+        base = y * side
+        for x in range(side):
+            dx = x - centre
+            source_x = centre + dx * cos + dy * sin
+            source_y = centre - dx * sin + dy * cos
+            sx, sy = int(round(source_x)), int(round(source_y))
+            out[base + x] = patch[sy * side + sx] if 0 <= sx < side and 0 <= sy < side else mean
+    return bytes(out)
+
+
 def _template_side(half: int) -> int:
     side = max(4, 2 * half)
     while side * side > MAX_TEMPLATE and side > 4:
@@ -258,6 +284,9 @@ def track_box(
     max_gap: int = GAP_LIMIT,
     min_score: float = MIN_SCORE,
     reacquire: bool = True,
+    rotate: bool = False,
+    angle_range: int = 6,
+    angle_step: int = 2,
 ) -> dict:
     """Follow one box: translation, optional scale, a constant-velocity glide through occlusion,
     and a whole-picture search that looks for the target again while it is hidden.
@@ -303,11 +332,47 @@ def track_box(
             coarse = (zero, energy)
         return coarse
 
+    angle = 0.0
+    angles: list[float] = [0.0]
+    rotated: dict[tuple[int, int], tuple[list[float], float]] = {}
+
+    def rotated_template(probe: int, degrees: float) -> tuple[list[float], float]:
+        key = (probe, int(round(degrees)))
+        found = rotated.get(key)
+        if found is None:
+            base = _resample(anchor, side0, probe)
+            found = _zeroed(_rotate_patch(base, probe, key[1]))
+            rotated[key] = found
+        return found
+
+    def rotation_at(frame: bytes, x0: int, y0: int, probe: int, current: float) -> float:
+        """Pick the angle whose rotated template matches this window best."""
+        best_angle, best_score = current, -2.0
+        low = int(round(current)) - angle_range
+        high = int(round(current)) + angle_range
+        for degrees in range(low, high + 1, angle_step):
+            zero, tsqrt = rotated_template(probe, degrees)
+            score = _ncc(frame, width, x0, y0, zero, probe, tsqrt)
+            if score > best_score:
+                best_angle, best_score = float(degrees), score
+        return best_angle
+
     def locate(
-        frame: bytes, centre_x: float, centre_y: float, radius: int, sized: bool, side: int
+        frame: bytes,
+        centre_x: float,
+        centre_y: float,
+        radius: int,
+        sized: bool,
+        side: int,
+        angle: float,
     ) -> tuple[float, float, float, int]:
-        """Score the best window near a centre, testing the scale probes around it when allowed."""
-        zero, tsqrt = probe_template(side)
+        """Score the best window near a centre, testing the scale probes around it when allowed.
+
+        With rotation on, the translation pass uses the template turned by the angle the last
+        sighting settled on: a turning subject's unrotated template prefers a window shifted along
+        the turn, and picking an angle there reads low.
+        """
+        zero, tsqrt = rotated_template(side, angle) if rotate else probe_template(side)
         score, x0, y0 = _match(frame, width, height, zero, side, tsqrt, centre_x, centre_y, radius)
         best = (score, x0 + side / 2, y0 + side / 2, side)
         if sized:
@@ -316,7 +381,9 @@ def track_box(
                 probe = max(6, min(width - 2, height - 2, round(side * factor)))
                 if probe == side:
                     continue
-                probe_zero, probe_tsqrt = probe_template(probe)
+                probe_zero, probe_tsqrt = (
+                    rotated_template(probe, angle) if rotate else probe_template(probe)
+                )
                 sized_score, sx, sy = _search(
                     frame,
                     width,
@@ -344,7 +411,6 @@ def track_box(
     gap_start: int | None = None
     lost_at: int | None = None
     closure = 0.0
-
     for index, frame in enumerate(frames[1:], start=1):
         glide_x, glide_y = cx + velocity[0], cy + velocity[1]
         hidden = gap_start is not None
@@ -356,6 +422,7 @@ def track_box(
             search * 2 if hidden else search,
             scale and not hidden,
             side,
+            angle,
         )
         floor = min_score
         if len(scores) >= 8:
@@ -375,6 +442,7 @@ def track_box(
                 max(search, 2 * REAQUIRE_SCALE),
                 scale,
                 side,
+                angle,
             )
             if candidate[0] >= floor:
                 best = candidate
@@ -387,6 +455,7 @@ def track_box(
                 break
             cx, cy = glide_x, glide_y
             predicted.append(index)
+            angles.append(angle if rotate else 0.0)
             boxes.append((cx / width, cy / height, side / side0))
             continue
         if gap_start is not None:
@@ -401,6 +470,11 @@ def track_box(
             reacquired.append(index)
         cx, cy = found_x, found_y
         side = probe
+        if rotate:
+            x0 = max(0, min(width - probe, round(found_x) - probe // 2))
+            y0 = max(0, min(height - probe, round(found_y) - probe // 2))
+            angle = rotation_at(frame, x0, y0, probe, angle)
+        angles.append(angle if rotate else 0.0)
         scores.append(score)
         boxes.append((cx / width, cy / height, side / side0))
         if gap_start is not None:
@@ -423,10 +497,12 @@ def track_box(
     if gap_start is not None:
         # The target never came back: stop at the last confident sighting rather than glide on.
         boxes = boxes[:gap_start]
+        angles = angles[:gap_start]
         predicted = [position for position in predicted if position < gap_start]
         lost_at = gap_start
     return {
         "boxes": boxes,
+        "angles": angles if rotate else None,
         "predicted": predicted,
         "gaps": gaps,
         "reacquired": reacquired,
@@ -529,6 +605,7 @@ def follow_window(
     max_gap: int = GAP_LIMIT,
     reacquire: bool = True,
     speed_percent: int = 100,
+    rotate: bool = False,
 ) -> dict:
     """Follow one box through frames somebody else decoded, in clip-local ticks.
 
@@ -538,7 +615,14 @@ def follow_window(
     height = len(decoded[0]) // width
     sample_num, sample_den = analysis_rate(rate, speed_percent)
     result = track_box(
-        decoded, width, box, search, scale=scale, max_gap=max_gap, reacquire=reacquire
+        decoded,
+        width,
+        box,
+        search,
+        scale=scale,
+        max_gap=max_gap,
+        reacquire=reacquire,
+        rotate=rotate,
     )
     points = [
         {
@@ -547,6 +631,7 @@ def follow_window(
             "mask_y": min(0.999, max(0.001, centre[1])),
             "width": min(2.0, max(0.01, box[2] * centre[2])),
             "height": min(2.0, max(0.01, box[3] * centre[2])),
+            **({"rotation": result["angles"][index]} if rotate else {}),
         }
         for index, centre in enumerate(result["boxes"])
     ]
@@ -565,6 +650,7 @@ def follow_window(
             for start, end in result["gaps"]
         ],
         "scale": scale,
+        "rotation_estimated": bool(rotate),
         "frame_ticks": frame_ticks,
         "speed_percent": speed_percent,
         "sample_rate": f"{sample_num}/{sample_den}",

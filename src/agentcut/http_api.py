@@ -48,6 +48,7 @@ from .contracts import (
     CLIP_SUBSET_LIMIT,
     COLOR_SPACES,
     MASK_EXTRA_KEY_LIMIT,
+    MASK_ROTATION_LIMIT,
     TIMEBASE,
     TRACK_FRAMES_MIN,
     AttributePlanRequest,
@@ -881,8 +882,12 @@ def create_app(
         speed = clip.speed_percent / 100
         start = clip.source_in_ticks + int(target.from_ticks * speed)
         estimate_scale = target.estimate_scale and not follows_shape
-        curves = len(MASK_TRACK_SIZED_CURVES) if estimate_scale else len(MASK_TRACK_CURVES)
-        capacity = mask_track_capacity(clip, curves, target.merge, target.from_ticks, frame_ticks)
+        estimate_rotation = target.estimate_rotation and not follows_shape
+        produced = MASK_TRACK_SIZED_CURVES if estimate_scale else MASK_TRACK_CURVES
+        if estimate_rotation:
+            produced = (*produced, "mask_rotation")
+        curves = len(produced)
+        capacity = mask_track_capacity(clip, produced, target.merge, target.from_ticks, frame_ticks)
         frames = min(target.frames, capacity)
         if frames < TRACK_FRAMES_MIN:
             raise EditorError(
@@ -922,6 +927,7 @@ def create_app(
             "capacity": capacity,
             "curves": curves,
             "estimate_scale": estimate_scale,
+            "rotation": estimate_rotation,
             "box": (clip.mask.center_x, clip.mask.center_y, clip.mask.width, clip.mask.height),
             # Everything the decoder actually sees. Two stacked copies of the same shot, asked for
             # the same window at the same rate, land on one key and so on one decode.
@@ -998,6 +1004,7 @@ def create_app(
                 max_gap=target.max_gap_frames,
                 reacquire=target.reacquire,
                 speed_percent=plan["speed_percent"],
+                rotate=plan["rotation"],
             )
             points = [
                 {
@@ -1009,6 +1016,7 @@ def create_app(
                         if plan["estimate_scale"]
                         else {}
                     ),
+                    **({"rotation": point["rotation"]} if plan["rotation"] else {}),
                 }
                 for point in result["points"]
             ]
@@ -1047,6 +1055,7 @@ def create_app(
                     ],
                     "gap_closure": result["gap_closure"],
                     "scale_estimated": result["scale"],
+                    "rotation_estimated": result["rotation_estimated"],
                     "speed_percent": result["speed_percent"],
                     "sample_rate": result["sample_rate"],
                     "gaps": [
@@ -1160,6 +1169,7 @@ def create_app(
         sampled = extra_box_at(extra, request.from_ticks)
         box = (sampled[0], sampled[1], sampled[2], sampled[3])
         scale = request.estimate_scale and extra.shape != "path"
+        rotation = request.estimate_rotation and extra.shape != "path"
         speed = clip.speed_percent / 100
         frame_ticks = project.settings.frame_ticks
         start = clip.source_in_ticks + int(request.from_ticks * speed)
@@ -1198,6 +1208,7 @@ def create_app(
             max_gap=request.max_gap_frames,
             reacquire=request.reacquire,
             speed_percent=clip.speed_percent,
+            rotate=rotation,
         )
         if len(result["points"]) < 2:
             raise EditorError(
@@ -1220,7 +1231,10 @@ def create_app(
                 "center_y": point["mask_y"],
                 "width": point["width"] if scale else sample[2],
                 "height": point["height"] if scale else sample[3],
-                "rotation": sample[4],
+                "rotation": max(
+                    -MASK_ROTATION_LIMIT,
+                    min(MASK_ROTATION_LIMIT, sample[4] + (point.get("rotation") or 0.0)),
+                ),
                 "interpolation": "linear",
             }
             if feather_animated:
@@ -1244,6 +1258,7 @@ def create_app(
             "analysis_width": result["analysis_width"],
             "analysis_height": result["analysis_height"],
             "scale_estimated": result["scale"],
+            "rotation_estimated": result["rotation_estimated"],
             "speed_percent": result["speed_percent"],
             "sample_rate": result["sample_rate"],
             "lost_at_ticks": (

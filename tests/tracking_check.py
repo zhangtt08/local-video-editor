@@ -35,6 +35,8 @@ from agentcut.media import MediaService
 from agentcut.render import compile_render_plan
 from agentcut.timeline import (
     CLIP_KEYFRAME_LIMIT,
+    MASK_TRACK_CURVES,
+    MASK_TRACK_SIZED_CURVES,
     apply_commands,
     mask_track_capacity,
     validate_timeline,
@@ -415,7 +417,10 @@ def interface_suite() -> None:
     assert (
         inspector.count("reacquire: trackSweep, maxGapFrames: trackGap, scale: trackScale") == 2
     ), "both single-clip tracking buttons must carry all three knobs"
-    assert "reacquire: knobs.sweep, maxGapFrames: knobs.gap, scale: knobs.scale" in inspector, (
+    assert all(
+        needle in inspector
+        for needle in ("reacquire: knobs.sweep", "maxGapFrames: knobs.gap", "scale: knobs.scale")
+    ), (
         "the group entry must carry the same stored knobs, not a fourth default"
     )
     assert inspector.count("maxGapFrames: trackGap") == 2, (
@@ -434,8 +439,8 @@ def interface_suite() -> None:
     assert "app.caps?.limits?.track_max_gap_frames" not in inspector, (
         "两个面板各自兜一次底，「引擎没回这个字段时算几」就有了第二个说法"
     )
-    assert inspector.count("trackingKnobs(app.caps?.limits)") == 2, (
-        "单段面板与多选面板必须共用同一处旋钮读数"
+    assert inspector.count("trackingKnobs(app.caps?.limits)") == 3, (
+        "单段面板、多选面板与再叠块必须共用同一处旋钮读数"
     )
     knob_source = (ROOT / "desktop/src/effects.ts").read_text(encoding="utf-8")
     assert knob_source.count("?? 240") == 1 and knob_source.count("?? 60") == 1, (
@@ -649,9 +654,9 @@ def reducer_suite(folder: Path) -> None:
     assert len(centre_only.keyframes) == 4, centre_only.keyframes
     # ... and the budget reads that promise: with the size curves cleared there is room for twice
     # as many frames, which is why the interface's refusal can honestly name that exit.
-    assert mask_track_capacity(breathe.clips["c"], 2, False, 0, T // FPS) > mask_track_capacity(
-        breathe.clips["c"], 2, True, 0, T // FPS
-    ), "a whole-path rewrite is not credited with the curves it clears"
+    whole = mask_track_capacity(breathe.clips["c"], MASK_TRACK_CURVES, False, 0, T // FPS)
+    part = mask_track_capacity(breathe.clips["c"], MASK_TRACK_CURVES, True, 0, T // FPS)
+    assert whole > part, "a whole-path rewrite is not credited with the curves it clears"
 
     # A run that the budget cut short leaves the clip *full*, so the exit the toast must not promise
     # is the one that looks obvious: continuing at the playhead. Measured here, because the sentence
@@ -675,10 +680,11 @@ def reducer_suite(folder: Path) -> None:
     filled = filled_project.clips["c"]
     assert len(filled.keyframes) == CLIP_KEYFRAME_LIMIT, len(filled.keyframes)
     frame = T // FPS
-    assert mask_track_capacity(filled, 4, True, 500 * frame, frame) == 0, (
+    assert mask_track_capacity(filled, MASK_TRACK_SIZED_CURVES, True, 500 * frame, frame) == 0, (
         "a full clip must be out of room"
     )
-    assert mask_track_capacity(filled, 2, False, 0, frame) == CLIP_KEYFRAME_LIMIT // 2, (
+    rewritten = mask_track_capacity(filled, MASK_TRACK_CURVES, False, 0, frame)
+    assert rewritten == CLIP_KEYFRAME_LIMIT // 2, (
         "a centre-only rewrite must be credited with the whole clip again"
     )
     try:

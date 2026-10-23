@@ -823,6 +823,7 @@ export async function trackMasks(targets: TrackTarget[]) {
         ...(target.reacquire === undefined ? {} : { reacquire: target.reacquire }),
         ...(target.maxGapFrames === undefined ? {} : { max_gap_frames: target.maxGapFrames }),
         ...(target.scale === undefined ? {} : { estimate_scale: target.scale }),
+        ...(target.rotate === undefined ? {} : { estimate_rotation: target.rotate }),
       })),
       dry_run: true,
     });
@@ -1166,7 +1167,9 @@ export async function beatCut(clipId: string) {
 
 /** 跟踪再叠遮罩里的一块：每一块自己一条轨迹，主遮罩与别的块一字不动。
  *  分析用 dry-run，写回的是那一条普通的 clip.mask_stack；一次点击一个版本，撤销一步退回。 */
-export async function trackExtraMask(clipId: string, index: number, fromTicks: number) {
+export async function trackExtraMask(
+  clipId: string, index: number, fromTicks: number, estimateRotation?: boolean,
+) {
   const project = state.project;
   if (!engine || !project) return;
   set({ busy: "跟踪这一块…" });
@@ -1174,7 +1177,9 @@ export async function trackExtraMask(clipId: string, index: number, fromTicks: n
     const found = await engine.extraMaskTrack(project.id, clipId, index, {
       request_id: newId("stack-track-"), expected_revision: project.revision,
       sequence_id: state.sequenceId, from_ticks: Math.max(0, Math.round(fromTicks)),
-      frames: state.caps?.limits?.track_max_frames ?? 120, dry_run: true,
+      frames: state.caps?.limits?.track_max_frames ?? 120,
+      ...(estimateRotation === undefined ? {} : { estimate_rotation: estimateRotation }),
+      dry_run: true,
     });
     submit(found.commands as Command[], "跟踪这一块遮罩");
     const row = found.track;

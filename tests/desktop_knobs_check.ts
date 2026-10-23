@@ -1,4 +1,4 @@
-/** 遮罩跟踪的三个旋钮要活得过「换一个工程」「重开一次窗口」。
+/** 遮罩跟踪的几个旋钮要活得过「换一个工程」「重开一次窗口」。
  *
  * 1.87 给人复现了这三个控件，1.88 量清它们是界面状态：同一次会话里留着，换一个工程或重开窗口
  * 就回默认。这一版把它们记进应用偏好。为什么不记进工程状态：元数据那条路（`updateProjectMeta`）
@@ -7,7 +7,8 @@
  * 门禁钉的是读回来的规矩，不是「有没有调 localStorage」：
  * 上限只由引擎的 `capabilities.limits` 给——存着的数比这台引擎的天花板大，读出来必须夹回去；
  * 存坏了一个数（NaN、负数）要退回引擎给的默认，而不是把 0 帧当成「猜 0 帧」；
- * 两个开关没存过就是开着的，只有明确的 "0" 才算关。
+ * 两个开关没存过就是开着的，只有明确的 "0" 才算关；旋转估计相反——没存过是关的，
+ * 只有明确的 "1" 才算开（它更贵，且只在主体真的转时才有收益）。
  */
 
 import assert from "node:assert/strict";
@@ -25,11 +26,19 @@ const GAP = "agentcut.trackGap";
 const SWEEP = "agentcut.trackSweep";
 
 // 没存过：用引擎给的默认，两个开关都是开的。
-assert.deepEqual(readTrackingDefaults(60, 240), { gap: 60, sweep: true, scale: true }, "空存储回引擎默认");
+assert.deepEqual(
+  readTrackingDefaults(60, 240),
+  { gap: 60, sweep: true, scale: true, rotate: false },
+  "空存储回引擎默认（旋转默认关）",
+);
 
 // 存过就留着——「换一个工程、重开一次窗口」在读回来的就是这一条。
-rememberTrackingDefaults({ gap: 120, sweep: false, scale: false });
-assert.deepEqual(readTrackingDefaults(60, 240), { gap: 120, sweep: false, scale: false }, "三个旋钮都要活过下一次读");
+rememberTrackingDefaults({ gap: 120, sweep: false, scale: false, rotate: true });
+assert.deepEqual(
+  readTrackingDefaults(60, 240),
+  { gap: 120, sweep: false, scale: false, rotate: true },
+  "四个旋钮都要活过下一次读",
+);
 
 // 天花板听引擎的：同一份存储，换一台天花板更低的引擎，读出来被夹回去。
 assert.equal(readTrackingDefaults(60, 90).gap, 90, "上限是引擎的数，不是界面写死的");
@@ -37,7 +46,11 @@ assert.equal(readTrackingDefaults(60, 240).gap, 120);
 
 // 只改一个不许动另外两个。
 rememberTrackingDefaults({ gap: 30 });
-assert.deepEqual(readTrackingDefaults(60, 240), { gap: 30, sweep: false, scale: false }, "部分写入只碰它点名的那个");
+assert.deepEqual(
+  readTrackingDefaults(60, 240),
+  { gap: 30, sweep: false, scale: false, rotate: true },
+  "部分写入只碰它点名的那个",
+);
 
 // 存坏的数退回默认：NaN 与负数都不许变成「猜 0 帧」这种看起来合法的值。
 store.set(GAP, "abc");
@@ -54,10 +67,15 @@ assert.equal(readTrackingDefaults(60, 240).gap, 0, "0 帧是明确的设置，�
 // 这一条要测的是「没存过」，不是「存过 false」。）
 store.delete("agentcut.trackScale");
 store.set(SWEEP, "");
-assert.deepEqual(readTrackingDefaults(60, 240), { gap: 0, sweep: true, scale: true });
+assert.deepEqual(readTrackingDefaults(60, 240), { gap: 0, sweep: true, scale: true, rotate: true });
 // 而存成 "0" 就是关：同一个键，存过与没存过必须读得出差别。
 rememberTrackingDefaults({ scale: false });
 assert.equal(readTrackingDefaults(60, 240).scale, false, "明确的关闭要留着");
+// 旋转的默认是反的：只有明确的 "1" 才开，明确的 "0" 要留成关。
+rememberTrackingDefaults({ rotate: false });
+assert.equal(readTrackingDefaults(60, 240).rotate, false, "明确的关闭要留着（旋转）");
+rememberTrackingDefaults({ rotate: true });
+assert.equal(readTrackingDefaults(60, 240).rotate, true, "明确的开启要留着（旋转）");
 
 // 存储不可用（隐私模式抛错）时界面照常工作，读回默认、写不炸。
 (globalThis as { localStorage?: unknown }).localStorage = {
@@ -68,7 +86,14 @@ assert.equal(readTrackingDefaults(60, 240).scale, false, "明确的关闭要留�
     throw new Error("QuotaExceeded");
   },
 };
-assert.deepEqual(readTrackingDefaults(75, 240), { gap: 75, sweep: true, scale: true }, "存不下也要能读出来");
+assert.deepEqual(
+  readTrackingDefaults(75, 240),
+  { gap: 75, sweep: true, scale: true, rotate: false },
+  "存不下也要能读出来",
+);
 rememberTrackingDefaults({ gap: 1 });
 
-console.log("PASS: 三个跟踪旋钮活过下一次读、天花板听引擎的、存坏的数回默认、0 帧算明确设置、存储抛错也不影响界面");
+console.log(
+  "PASS: 四个跟踪旋钮活过下一次读、旋转默认关、天花板听引擎的、存坏的数回默认、"
+  + "0 帧算明确设置、存储抛错也不影响界面",
+);

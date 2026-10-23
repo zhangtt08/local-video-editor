@@ -551,7 +551,12 @@ function GroupTrackFields() {
   const perFrame = project ? frameTicks(project.settings.frame_rate) : 1;
   const picked = project ? Object.values(project.clips).filter((one) => (app.selectedClips ?? []).includes(one.id) && canAnimateMask(one.mask)) : [];
   const skipped = project ? (app.selectedClips ?? []).length - picked.length : 0;
-  const group = trackGroup(picked, perFrame, app.caps?.limits, { reacquire: knobs.sweep, maxGapFrames: knobs.gap, scale: knobs.scale });
+  const group = trackGroup(picked, perFrame, app.caps?.limits, {
+    reacquire: knobs.sweep,
+    maxGapFrames: knobs.gap,
+    scale: knobs.scale,
+    ...(app.caps?.features?.mask_track_rotation ? { rotate: knobs.rotate } : {}),
+  });
   if (!picked.length) {
     return <section className="insp-section"><span className="panel-label">遮罩跟踪</span>
       <p className="hint">多选里没有任何一段带着可以动的遮罩：先在某一段上画好遮罩，再回来一次跟完整组。</p></section>;
@@ -560,7 +565,7 @@ function GroupTrackFields() {
     <div className="row-title"><span className="panel-label">遮罩跟踪</span><span className="tag accent">{picked.length} 段</span></div>
     <fieldset className="effects-fields" disabled={Boolean(app.busy)}>
       <div className="batch-actions"><button className="btn" disabled={Boolean(app.busy || group.blocked)} title={group.blocked ?? "每段各自从片段开头量到量得完的地方：一次分析、写进同一个版本，撤销一步整批退回；同一段画面叠几层、各盖一个主体时，它们共用同一趟读片"} onClick={() => trackMasks(group.targets)}>跟踪所选 {picked.length} 段</button></div>
-      <p className="hint">三个旋钮沿用应用偏好：挡住最多猜 {knobs.gap} 帧、{knobs.sweep ? "被挡住时整幅重找" : "被挡住时按匀速猜"}、{knobs.scale ? "遮罩随远近缩放" : "遮罩不随远近缩放"}。{skipped ? ` 另有 ${skipped} 段这一批不跟。` : ""}</p>
+      <p className="hint">{app.caps?.features?.mask_track_rotation ? "四个" : "三个"}旋钮沿用应用偏好：挡住最多猜 {knobs.gap} 帧、{knobs.sweep ? "被挡住时整幅重找" : "被挡住时按匀速猜"}、{knobs.scale ? "遮罩随远近缩放" : "遮罩不随远近缩放"}{app.caps?.features?.mask_track_rotation ? `、${knobs.rotate ? "画面里的旋转也跟" : "不估旋转"}` : ""}。{skipped ? ` 另有 ${skipped} 段这一批不跟。` : ""}</p>
     </fieldset>
   </section>;
 }
@@ -587,9 +592,11 @@ function MaskFields({ clip }: { clip: Clip }) {
   const [trackGap, setTrackGapState] = useState(storedKnobs.gap);
   const [trackSweep, setTrackSweepState] = useState(storedKnobs.sweep);
   const [trackScale, setTrackScaleState] = useState(storedKnobs.scale);
+  const [trackRotate, setTrackRotateState] = useState(storedKnobs.rotate);
   const setTrackGap = (value: number) => { setTrackGapState(value); rememberTrackingDefaults({ gap: value }); };
   const setTrackSweep = (value: boolean) => { setTrackSweepState(value); rememberTrackingDefaults({ sweep: value }); };
   const setTrackScale = (value: boolean) => { setTrackScaleState(value); rememberTrackingDefaults({ scale: value }); };
+  const setTrackRotate = (value: boolean) => { setTrackRotateState(value); rememberTrackingDefaults({ rotate: value }); };
   // 一次量几帧、量不完时怎么说：判断在 effects.ts 的 trackWindow 里，上下限是引擎的数。
   const perFrame = project ? frameTicks(project.settings.frame_rate) : 1;
   const runOn = trackWindow(Math.floor((clip.duration_ticks - at) / perFrame), at === 0, app.caps?.limits);
@@ -616,8 +623,8 @@ function MaskFields({ clip }: { clip: Clip }) {
         <MaskStack clip={clip} disabled={disabled} />
         <label><input type="checkbox" checked={mask.inverted} onChange={(e) => setClipMask(clip.id, { ...mask, inverted: e.target.checked })} />反转遮罩</label>
         <div className="insp-actions"><button className={`btn tiny${app.maskEditing ? " active" : ""}`} aria-pressed={app.maskEditing} onClick={() => setMaskEditing(!app.maskEditing)}>画面中编辑</button>
-          {animatable && project ? <button className="btn tiny" disabled={disabled || Boolean(runOn.blocked)} title={runOn.blocked ?? (mask.shape === "path" ? "从播放头开始逐帧分析画面，把轮廓的中心写成关键帧，一直量到片段结尾（单次上限由引擎的 capabilities 下发，量不完会在提示里说清）；路径遮罩只整体搬动，不改形状与大小。主体被挡住时按匀速补一段，同时每一帧都在整幅画面里重新找它，找回后把补的那段按真实位置校正；跟丢时会停下来说明" : "从播放头开始逐帧分析画面，把遮罩中心与大小写成关键帧，一直量到片段结尾（单次上限由引擎的 capabilities 下发，量不完会在提示里说清）；主体被挡住时按匀速补一段，同时每一帧都在整幅画面里重新找它，找回后把补的那段按真实位置校正；跟丢时会停下来说明")} onClick={() => trackMasks([{ clipId: clip.id, fromTicks: at, frames: runOn.frames, merge: true, reacquire: trackSweep, maxGapFrames: trackGap, scale: trackScale }])}>{(clip.keyframes ?? []).some((key) => key.property === "mask_x") ? "接着跟" : "跟踪主体"}</button> : null}
-          {animatable && project && (clip.keyframes ?? []).some((key) => key.property === "mask_x") ? <button className="btn tiny subtle" disabled={disabled || Boolean(runAll.blocked)} title={runAll.blocked ?? "整条重跟：从片段开头重新分析，播放头之前已有的路径会被这一段的结果替换"} onClick={() => trackMasks([{ clipId: clip.id, fromTicks: 0, frames: runAll.frames, merge: false, reacquire: trackSweep, maxGapFrames: trackGap, scale: trackScale }])}>从头重跟</button> : null}
+          {animatable && project ? <button className="btn tiny" disabled={disabled || Boolean(runOn.blocked)} title={runOn.blocked ?? (mask.shape === "path" ? "从播放头开始逐帧分析画面，把轮廓的中心写成关键帧，一直量到片段结尾（单次上限由引擎的 capabilities 下发，量不完会在提示里说清）；路径遮罩只整体搬动，不改形状与大小。主体被挡住时按匀速补一段，同时每一帧都在整幅画面里重新找它，找回后把补的那段按真实位置校正；跟丢时会停下来说明" : "从播放头开始逐帧分析画面，把遮罩中心与大小写成关键帧，一直量到片段结尾（单次上限由引擎的 capabilities 下发，量不完会在提示里说清）；主体被挡住时按匀速补一段，同时每一帧都在整幅画面里重新找它，找回后把补的那段按真实位置校正；跟丢时会停下来说明")} onClick={() => trackMasks([{ clipId: clip.id, fromTicks: at, frames: runOn.frames, merge: true, reacquire: trackSweep, maxGapFrames: trackGap, scale: trackScale, rotate: app.caps?.features?.mask_track_rotation ? trackRotate : undefined }])}>{(clip.keyframes ?? []).some((key) => key.property === "mask_x") ? "接着跟" : "跟踪主体"}</button> : null}
+          {animatable && project && (clip.keyframes ?? []).some((key) => key.property === "mask_x") ? <button className="btn tiny subtle" disabled={disabled || Boolean(runAll.blocked)} title={runAll.blocked ?? "整条重跟：从片段开头重新分析，播放头之前已有的路径会被这一段的结果替换"} onClick={() => trackMasks([{ clipId: clip.id, fromTicks: 0, frames: runAll.frames, merge: false, reacquire: trackSweep, maxGapFrames: trackGap, scale: trackScale, rotate: app.caps?.features?.mask_track_rotation ? trackRotate : undefined }])}>从头重跟</button> : null}
           {animatable && project ? <label className="dim" title="被挡住的那段时间最多猜多少帧；猜窗用完还没找回，路径就停在最后一次看到的地方。上限由引擎的 capabilities.limits 下发">挡住最多猜
             <input className="input tiny" type="number" min={0} max={gapCeiling} step={5} value={trackGap} aria-label="遮挡时最多猜几帧"
               onChange={(e) => setTrackGap(Math.max(0, Math.min(gapCeiling, Math.round(Number(e.target.value) || 0))))} />帧
@@ -626,6 +633,8 @@ function MaskFields({ clip }: { clip: Clip }) {
             <input type="checkbox" checked={trackSweep} aria-label="遮挡时在整幅画面上重新找主体" onChange={(e) => setTrackSweep(e.target.checked)} /></label> : null}
           {animatable && project ? <label className="dim" title="开着时一个跟踪点会写中心 X/Y 加宽高四条曲线，遮罩盒随主体远近变大变小；关掉只写两条中心曲线，同样的曲线预算能多跟一倍长度。路径遮罩的形状与大小按画好的轮廓，引擎对它本来就不估尺寸">遮罩随远近缩放
             <input type="checkbox" checked={trackScale} disabled={mask.shape === "path"} aria-label="跟踪时让遮罩盒随远近缩放" onChange={(e) => setTrackScale(e.target.checked)} /></label> : null}
+          {animatable && project && app.caps?.features?.mask_track_rotation ? <label className="dim" title="开着时每一个跟踪点还会估画面里的平面旋转，并写成遮罩角度曲线（一个点占三条曲线：中心 X/Y + 角度；同时开缩放是五条）。引擎在已找到的窗口上按 ±6°、每 2° 试一次，转得太快（一帧超过约 6°）会跟不上。路径遮罩没有角度这一格，引擎对它本来就不估旋转">旋转也跟
+            <input type="checkbox" checked={trackRotate} disabled={mask.shape === "path"} aria-label="跟踪时估计画面里的旋转" onChange={(e) => setTrackRotate(e.target.checked)} /></label> : null}
           {animatable && project ? <button className="btn tiny" disabled={disabled || Boolean(clip.stabilization)} title={clip.stabilization ? "这段画面带着一次稳定：重构图写的就是稳定占用的位移/缩放三条曲线，跑一遍会把稳定悄悄抹掉。先「取消稳定」，再重构图。" : "读取刚跟踪出来的遮罩路径，写入把主体保持在画面正中的平移与缩放曲线；竖屏裁切出货时主体不会跑出画面。放大上限 4 倍，跟不到时会说明"} onClick={() => void reframeClip(clip.id)}>主体跟随重构图</button> : null}
           <button className="btn tiny" onClick={() => setClipMask(clip.id, { ...DEFAULT_MASK, shape: mask.shape, vertices: mask.shape === "path" ? DEFAULT_PATH.map((vertex) => ({ ...vertex, handle_out: [...vertex.handle_out] as [number, number], handle_in: [...vertex.handle_in] as [number, number] })) : null })}>重置遮罩</button></div>
         <p className="hint">遮罩随片段变换；中心、大小与角度都能按◇打点，两端走同一份阶梯。{app.caps?.features.path_shape_keys ? "反相遮罩不打盒关键帧。" : ""}</p>
@@ -780,7 +789,7 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
               : !inside
                 ? "先把播放头停在这个片段里，再从这一帧开始跟踪这一块"
                 : `从播放头这一帧起听画面，把第 ${index + 1} 块的中心与大小写成它自己的框点（最多 ${keysLimit} 枚，写满就按能贴住路径的少数点抽稀）；只改这一块，主遮罩与别的块一字不动；一次提交一个版本，撤销一步整块退回`}
-            onClick={() => void trackExtraMask(clip.id, index, at)}>跟踪这一块</button> : null}
+            onClick={() => void trackExtraMask(clip.id, index, at, app.caps?.features?.mask_track_rotation ? trackingKnobs(app.caps?.limits).rotate : undefined)}>跟踪这一块</button> : null}
           <button type="button" className="btn tiny subtle" disabled={disabled || keysLimit === 0 || (item.keys?.length ?? 0) >= keysLimit || Boolean(atKey)}
             title={atKey
               ? `这一帧已经有一枚框点——上面 ${keyCells} 个数改的就是它。要在别的时刻再打一枚，先把播放头挪开。`

@@ -55,7 +55,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.270.0"
+APP_VERSION = "1.271.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -4568,6 +4568,12 @@ class MaskTrackPoint(Contract):
 
     height: Annotated[float | None, Field(ge=0.01, le=2)] = None
 
+    # 1.271：跟踪也会读画面里的旋转。与宽高同一个规矩：每一点都带，或者一点都不带。
+
+    rotation: Annotated[float | None, Field(ge=-MASK_ROTATION_LIMIT, le=MASK_ROTATION_LIMIT)] = (
+        None
+    )
+
 
 
 
@@ -4626,6 +4632,12 @@ class ClipMaskTrack(Contract):
         if len(shapes) > 1 or not shapes <= {(True, True), (False, False)}:
 
             raise ValueError("every tracked point must carry both width and height, or neither")
+
+        turns = {point.rotation is not None for point in self.points}
+
+        if len(turns) > 1:
+
+            raise ValueError("every tracked point must carry a rotation, or none of them")
 
         return self
 
@@ -5065,6 +5077,10 @@ class MaskTrackTarget(Contract):
 
     estimate_scale: bool = True
 
+    # 1.271：in-plane rotation, searched around the last angle on every sighting. A free-form path
+    # has no angle to turn, so the plan switches it off there just as it does for scale.
+    estimate_rotation: bool = False
+
     max_gap_frames: Annotated[int, Field(ge=0, le=TRACK_GAP_MAX)] = TRACK_GAP_DEFAULT
 
     reacquire: bool = True
@@ -5100,6 +5116,8 @@ class ExtraMaskTrackRequest(Contract):
     search_radius: Annotated[int, Field(ge=2, le=16)] = 10
 
     estimate_scale: bool = True
+
+    estimate_rotation: bool = False
 
     max_gap_frames: Annotated[int, Field(ge=0, le=TRACK_GAP_MAX)] = TRACK_GAP_DEFAULT
 
@@ -7227,6 +7245,8 @@ def capabilities(
             "extra_mask_follow_motion": True,
 
             "extra_mask_track": media_ready,
+
+            "mask_track_rotation": True,
 
             # 1.165: that angle accepts keyframes. Both ends execute one frame-aligned staircase
 

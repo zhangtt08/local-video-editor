@@ -290,7 +290,7 @@ export function trackWindow(
 /** 一组遮罩跟踪的目标：一条片段一份窗口，三个旋钮整组共用（它们本来就是应用偏好）。 */
 export type TrackTarget = {
   clipId: string; fromTicks: number; frames: number; merge: boolean;
-  reacquire?: boolean; maxGapFrames?: number; scale?: boolean;
+  reacquire?: boolean; maxGapFrames?: number; scale?: boolean; rotate?: boolean;
 };
 
 /** 一次跟踪一组遮罩。每段各按自己的长度决定「量几帧」，判断仍然只在 `trackWindow` 里，这里只是把它
@@ -303,7 +303,7 @@ export function trackGroup(
   clips: { id: string; duration_ticks: number }[],
   perFrame: number,
   limits?: { track_min_frames?: number; track_max_frames?: number; track_max_targets?: number },
-  knobs?: { reacquire: boolean; maxGapFrames: number; scale: boolean }
+  knobs?: { reacquire: boolean; maxGapFrames: number; scale: boolean; rotate?: boolean }
 ): { targets: TrackTarget[]; blocked: string | null } {
   const ceiling = limits?.track_max_targets ?? 8;
   if (clips.length > ceiling) {
@@ -323,7 +323,14 @@ export function trackGroup(
       fromTicks: 0,
       frames: window.frames,
       merge: true,
-      ...(knobs ? { reacquire: knobs.reacquire, maxGapFrames: knobs.maxGapFrames, scale: knobs.scale } : {}),
+      ...(knobs
+        ? {
+            reacquire: knobs.reacquire,
+            maxGapFrames: knobs.maxGapFrames,
+            scale: knobs.scale,
+            ...(knobs.rotate === undefined ? {} : { rotate: knobs.rotate }),
+          }
+        : {}),
     });
   }
   return { targets, blocked: null };
@@ -335,9 +342,9 @@ export function trackGroup(
  *  点一次涨一个 revision 并清空撤销栈，等于拿用户的编辑历史换一个勾选。所以它们跟着应用走
  *  （与代理宽度同一处），换一个工程、重开一次窗口都还在。天花板只由引擎的 `capabilities.limits`
  *  给：存着的数比这台引擎的天花板大，读出来就夹回去。 */
-const KNOB_KEYS = { gap: "agentcut.trackGap", sweep: "agentcut.trackSweep", scale: "agentcut.trackScale" };
+const KNOB_KEYS = { gap: "agentcut.trackGap", sweep: "agentcut.trackSweep", scale: "agentcut.trackScale", rotate: "agentcut.trackRotate" };
 
-export type TrackingKnobs = { gap: number; sweep: boolean; scale: boolean };
+export type TrackingKnobs = { gap: number; sweep: boolean; scale: boolean; rotate: boolean };
 
 export function readTrackingDefaults(fallbackGap: number, gapCeiling: number): TrackingKnobs {
   const clamp = (value: number) => Math.max(0, Math.min(Math.round(value), gapCeiling));
@@ -348,9 +355,15 @@ export function readTrackingDefaults(fallbackGap: number, gapCeiling: number): T
     const stored = raw === null || raw === "" ? Number.NaN : Number(raw);
     const gap = Number.isFinite(stored) && stored >= 0 ? clamp(stored) : clamp(fallbackGap);
     // 没存过就是开着的（引擎的默认就是 true），所以只有明确的 "0" 才算关。
-    return { gap, sweep: localStorage.getItem(KNOB_KEYS.sweep) !== "0", scale: localStorage.getItem(KNOB_KEYS.scale) !== "0" };
+    return {
+      gap,
+      sweep: localStorage.getItem(KNOB_KEYS.sweep) !== "0",
+      scale: localStorage.getItem(KNOB_KEYS.scale) !== "0",
+      // 1.271：旋转估计默认关——它比平移贵，且只在主体真的转时才该开。明确的 "1" 才算开。
+      rotate: localStorage.getItem(KNOB_KEYS.rotate) === "1",
+    };
   } catch {
-    return { gap: clamp(fallbackGap), sweep: true, scale: true };
+    return { gap: clamp(fallbackGap), sweep: true, scale: true, rotate: false };
   }
 }
 
@@ -368,6 +381,7 @@ export function rememberTrackingDefaults(knobs: Partial<TrackingKnobs>): void {
     if (knobs.gap !== undefined) localStorage.setItem(KNOB_KEYS.gap, String(knobs.gap));
     if (knobs.sweep !== undefined) localStorage.setItem(KNOB_KEYS.sweep, knobs.sweep ? "1" : "0");
     if (knobs.scale !== undefined) localStorage.setItem(KNOB_KEYS.scale, knobs.scale ? "1" : "0");
+    if (knobs.rotate !== undefined) localStorage.setItem(KNOB_KEYS.rotate, knobs.rotate ? "1" : "0");
   } catch {
     /* 存不下就这一次生效，下次重开回到引擎给的默认 */
   }

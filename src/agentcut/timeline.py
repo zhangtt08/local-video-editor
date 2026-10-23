@@ -58,10 +58,12 @@ CLIP_MASK_SHAPE_LIMIT = next(
 )
 MASK_TRACK_CURVES = ("mask_x", "mask_y")
 MASK_TRACK_SIZED_CURVES = (*MASK_TRACK_CURVES, "mask_width", "mask_height")
+MASK_TRACK_ROTATION_CURVES = (*MASK_TRACK_CURVES, "mask_rotation")
+MASK_TRACK_ALL_CURVES = (*MASK_TRACK_SIZED_CURVES, "mask_rotation")
 
 
 def mask_track_capacity(
-    clip: Clip, curves_per_point: int, merge: bool, from_ticks: int, frame_ticks: int
+    clip: Clip, produced: tuple[str, ...], merge: bool, from_ticks: int, frame_ticks: int
 ) -> int:
     """How many frames a tracking run starting at `from_ticks` still fits on this clip.
 
@@ -73,16 +75,15 @@ def mask_track_capacity(
     A whole-path rewrite (`merge` off) is credited with clearing every mask-motion curve the clip
     carries, which is exactly what `_apply_mask_track` does with it.
     """
-    produced = set(
-        MASK_TRACK_SIZED_CURVES if curves_per_point > len(MASK_TRACK_CURVES) else MASK_TRACK_CURVES
-    )
-    cleared = set(MASK_TRACK_SIZED_CURVES) if not merge else produced
+    curves_per_point = len(produced)
+    names = set(produced)
+    cleared = set(MASK_TRACK_ALL_CURVES) if not merge else names
     start = clip.animation_offset_ticks + from_ticks
     fixed = sum(1 for key in clip.keyframes if key.property not in cleared)
     before = (
         0
         if not merge
-        else sum(1 for key in clip.keyframes if key.property in produced and key.at_ticks < start)
+        else sum(1 for key in clip.keyframes if key.property in names and key.at_ticks < start)
     )
     frames = max(0, (CLIP_KEYFRAME_LIMIT - fixed - before) // curves_per_point)
     if not merge:
@@ -92,7 +93,7 @@ def mask_track_capacity(
             return frames
         stop = start + (frames - 1) * frame_ticks
         beyond = sum(
-            1 for key in clip.keyframes if key.property in produced and key.at_ticks > stop
+            1 for key in clip.keyframes if key.property in names and key.at_ticks > stop
         )
         room = (CLIP_KEYFRAME_LIMIT - fixed - before - beyond) // curves_per_point
         if room >= frames:
@@ -1572,9 +1573,12 @@ def _apply_mask_track(clip, points, merge: bool = True) -> None:
         raise EditorError("INVALID_KEYFRAME", "tracked points exceed the clip", clip_id=clip.id)
     offset = clip.animation_offset_ticks
     sized = points[0].width is not None
+    rotating = points[0].rotation is not None
     values = {"mask_x": "center_x", "mask_y": "center_y"}
     if sized:
         values |= {"mask_width": "width", "mask_height": "height"}
+    if rotating:
+        values |= {"mask_rotation": "rotation"}
     start = offset + points[0].at_ticks
     stop = offset + points[-1].at_ticks
     # A merge rewrites only the curves this run produced, over the ticks it was given. A sized run
@@ -1595,8 +1599,8 @@ def _apply_mask_track(clip, points, merge: bool = True) -> None:
     def survives(key) -> bool:
         if not merge:
             # 从头重跟 means the mask's animation comes from this run alone: a path that was sized
-            # before and is re-tracked centre-only must not keep the old size curves behind it.
-            return key.property not in MASK_TRACK_SIZED_CURVES
+            # or turned before and is re-tracked without them must not keep the old curves behind.
+            return key.property not in MASK_TRACK_ALL_CURVES
         if key.property not in values:
             return True
         return not start <= key.at_ticks <= stop
@@ -1625,6 +1629,8 @@ def _apply_mask_track(clip, points, merge: bool = True) -> None:
     update: dict[str, float] = {"center_x": first.center_x, "center_y": first.center_y}
     if sized:
         update |= {"width": first.width, "height": first.height}
+    if rotating:
+        update["rotation"] = first.rotation
     if merge:
         heads = sorted(
             {
@@ -1640,6 +1646,8 @@ def _apply_mask_track(clip, points, merge: bool = True) -> None:
             if sized and "mask_width" in drawn:
                 update["width"] = drawn["mask_width"]
                 update["height"] = drawn.get("mask_height", update["height"])
+            if rotating and "mask_rotation" in drawn:
+                update["rotation"] = drawn["mask_rotation"]
     clip.mask = mask.model_copy(update=update)
 
 
