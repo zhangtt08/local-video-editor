@@ -258,6 +258,10 @@ def main():
                         "track_id": "v",
                         "position_ticks": index * T,
                         "duration_ticks": T,
+                        # 1.267：契约里的 `clip.add` 要求变速这一格（100 = 原速）。这一档过去
+                        # 一直跑在**上一版的发布包**上，那一版把它当默认值，于是夹具缺这一格也绿；
+                        # 重新冻结 1.267 引擎之后它当场被 422 拒——夹具跟着契约走，不是契约让路。
+                        "speed_percent": 100,
                     },
                 }
                 for index, name in enumerate(("hd", "bare"))
