@@ -55,7 +55,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.265.0"
+APP_VERSION = "1.266.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -595,6 +595,12 @@ MASK_SHAPE_SCHEDULE_MAX = 12
 MASK_ROTATION_SCHEDULE_MAX = 12
 
 MASK_SHAPE_KEY_LIMIT = 32
+
+# 1.266：一次导入最多几条字幕。这个数过去只写在 `subtitles.parse_srt` 的那一句英文里，
+# 既不在能力表、也不在拒绝的 details 里——人被挡住时看不见上限，Agent 也问不到。
+# 现在它是这唯一的一处，能力表下发它，拒绝带着「第几条撞上上限」一起交回。
+
+SUBTITLE_CUE_LIMIT = 2000
 
 # 1.238: 再叠的那一块自己最多带几枚框点。它们不是 `clip.keyframes` 里那五条曲线——
 # 一套点说的是一整块盒子的五个数（中心两个、宽高、角度），同一次窗切段里一起换。
@@ -7460,6 +7466,8 @@ def capabilities(
             "track_max_targets": TRACK_TARGET_LIMIT,
 
             "attribute_paste_targets": ATTRIBUTE_PASTE_TARGET_LIMIT,
+
+            "subtitle_cues": SUBTITLE_CUE_LIMIT,
 
             "sample_rates": [44_100, 48_000, 96_000],
 

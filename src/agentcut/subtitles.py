@@ -2,7 +2,7 @@
 
 import re
 
-from .contracts import MAX_TICKS, TIMEBASE, EditorError, Project
+from .contracts import MAX_TICKS, SUBTITLE_CUE_LIMIT, TIMEBASE, EditorError, Project
 
 TIMING = re.compile(
     r"^(\d{2,6}):(\d{2}):(\d{2})[,.](\d{3})\s+-->\s+"
@@ -33,8 +33,13 @@ def parse_srt(body: str, frame_ticks: int, offset_ticks: int = 0) -> list[tuple[
         if times[1] <= times[0] or not text.strip() or len(text) > 4000 or "\x00" in text:
             raise EditorError("INVALID_SUBTITLE", "cue must have text and at least one frame")
         cues.append((times[0], times[1], text))
-        if len(cues) > 2000:
-            raise EditorError("SUBTITLE_LIMIT", "at most 2000 cues per import")
+        if len(cues) > SUBTITLE_CUE_LIMIT:
+            raise EditorError(
+                "SUBTITLE_LIMIT",
+                f"at most {SUBTITLE_CUE_LIMIT} cues per import, this file reached {len(cues)}",
+                cues=len(cues),
+                limit=SUBTITLE_CUE_LIMIT,
+            )
     return cues
 
 

@@ -1,6 +1,6 @@
 import type { GamutMatrixPreset, GradeNode } from "./engine";
 
-/** 1.158：把引擎那张基色表接进界面。九个系数只从 `capabilities.gamut_matrices` 来。
+/** 1.158：把引擎那张基色表接进界面。九个系数只从能力表下发的那一张基色矩阵表来。
  *
  * `gamut.primaries_matrix` 是这九个数的唯一所有者，`tests/gamut_check.py` 已经用色度坐标那条独立路
  * 量过它，也量过「线性进—矩阵—线性出」这一对真导出之后的画面。这个文件里既不出现任何一个系数，也
@@ -161,12 +161,12 @@ export function foldWords(row: GamutMatrixPreset | null): string {
 export function foldProvenance(row: GamutMatrixPreset | null): string {
   if (!row) {
     return (
-      "这一格里还没有通道混合。折进来那九个数字由引擎算（基色矩阵，随 capabilities.gamut_matrices 交下来），"
+      "这一格里还没有通道混合。折进来那九个数字由引擎算（那张基色矩阵随能力表交下来），"
       + "界面一份都不抄，也不在这里自己算矩阵。"
     );
   }
   return (
-    `「${row.label}」那九个数字由引擎算（基色矩阵，随 capabilities.gamut_matrices 交下来），界面只搬过来；`
+    `「${row.label}」那九个数字由引擎算（那张基色矩阵随能力表交下来），界面只搬过来；`
     + "预览那张九宫格与导出那条链子读的是同一枚节点，所以「预览一个色、成片另一个色」在这一步上没有发生的余地。"
   );
 }

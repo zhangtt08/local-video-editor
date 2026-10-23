@@ -790,10 +790,10 @@ export function errorHints(): Record<string, string> {
       INVALID_LUT: "这个 .cube 文件引擎读不了：表头、行数或关键字有问题，回复里的行号与网格大小指出是哪一行。",
       LUT3D_NO_PLAN: "3D 查找表要写成一个文件才能交给导出，编译进渲染计划时才有地方放它；这里没有作业目录，所以编不出这一级。",
       GRADE_APPLY_NONE: "这条片段上没有任何调色节点，没有可套到整轨的东西：先给它加曲线、白平衡或一张 .cube 表再说。",
-      ATTRIBUTE_NONE: "「粘贴属性」一个类别都没勾：至少要挑一样要搬过去的东西。对话框里那一排勾就是引擎发下来的名单（capabilities.attribute_categories），来源那一段在那一类里没东西可搬时也是灰的。工程没有被改动。",
+      ATTRIBUTE_NONE: "「粘贴属性」一个类别都没勾：至少要挑一样要搬过去的东西。对话框里那一排勾列的就是引擎认识的类别，来源那一段在那一类里没东西可搬时也是灰的。工程没有被改动。",
       ATTRIBUTE_NO_TARGET: "没有要粘的目标片段：先在时间线上选中一段或多段（Shift 点加选、空白处拉框挑一组），再点「粘贴属性」。来源那一段自己不算目标。工程没有被改动。",
-      ATTRIBUTE_PASTE_LIMIT: "这一批装不下：要粘的段数超过一次的上限（能力表 limits.attribute_paste_targets 就是那个数），或算出来的命令会越过一次编辑的命令上限。把选择缩一缩分两批粘，已经写进去的那几段不受影响。",
-      UNKNOWN_ATTRIBUTE_CATEGORY: "勾的类别不在引擎那张表里：类别的名字由 capabilities.attribute_categories 下发，界面不自己列名单。重选一次即可，工程没有被改动。",
+      ATTRIBUTE_PASTE_LIMIT: "这一批装不下：要粘的段数超过一次的上限，或算出来的命令会越过一次编辑的命令上限（这两个数由引擎下发，界面不抄第二份）。把选择缩一缩分两批粘，已经写进去的那几段不受影响。",
+      UNKNOWN_ATTRIBUTE_CATEGORY: "勾的类别不在引擎那张表里：类别的名单由引擎下发，界面不自己列第二份。重选一次即可，工程没有被改动。",
       GRADE_APPLY_EMPTY_TRACK: "这一轨上没有别的片段接得下这条链：逐条原因就在回复的 skipped 里（每链 8 个节点的上限、音频片段没有画面可调色、或工程的查找表额度已用完）。少的那几段不是失败，是没装下——先腾出额度或删掉别段的表再套。",
       GRADE_INLINE_BUDGET: "这张表要存进工程状态，而每次修改都会整份快照一遍：全工程的查找表加起来已经超过额度，所以这一步被拒。回复里写着现在有多少个采样点、上限是多少，以及哪条片段上的表最占地方——腾地方的办法只有删掉或换小某张表。",
       INVALID_BLEND_MODE: "混合模式只能用于画面轨。整批操作没有被保存。",
@@ -907,7 +907,7 @@ export function errorHints(): Record<string, string> {
       COLOR_MANAGE_LIMIT: "这一对要占调色链额度里的两个节点，取下旧的一对之后这条链还是装不下。先在调色节点里删掉几个不要的节点，或者这一段干脆不套色彩管理，只在输出端手动改一个转换。",
       COLOR_MANAGE_NO_CHANGE: "这一段已经是按你选的来源读入、按你选的输出写出了，再套一次不会改变任何东西，所以引擎没有写入。想换一套色彩空间就改上面两个下拉菜单再按「套上」；想重新来就按「取下」再套。",
       COLOR_SPACE_UNDETECTED: "这份素材自己没有说清它是按哪条曲线写的（引擎读的是文件里的 transfer characteristic，色域与基色那两种标记定不出曲线，所以不算答案）。「按素材自带标记」这一档因此用不了：请在「来源空间」里手工选一条（屏幕录制一般是 sRGB，广播时间线是 Rec.709，SD 带子多是 Gamma 2.4），或者用「+LUT」把厂家给的查找表套上再调。",
-      UNKNOWN_COLOUR_TAG: "这个交付色彩标记不在引擎那张表里（表由 capabilities.output_colour_tags 下发，档数以那张表为准，引擎那句拒绝还会点名它认识的全部档位）。要么从那张表里挑，要么留空——留空就是照今天的老样子，一个标记都不写。",
+      UNKNOWN_COLOUR_TAG: "这个交付色彩标记不在引擎那张表里（有哪几档以引擎下发的表为准，引擎那句拒绝还会点名它认识的全部档位）。要么从那一排里挑，要么留空——留空就是照今天的老样子，一个标记都不写。",
       COLOUR_TAG_NEEDS_CONTAINER: "EXR／DPX 交出的是一串图像文件，没有容器可以写这三样标记（primaries／transfer／matrix 都住在容器的 VUI 里）。要带标记的母版请选 mov／mp4／mxf／webm；序列这边由文件自己的像素格式说话。",
       COLOUR_TAG_NEEDS_PICTURE: "这一条交付只有声音，色彩标记是给画面写的。要带标记的母版请选一条带画面的交付，或者把这一栏留空。",
       MEDIA_CACHE_ENTRY_MISSING: "这份派生数据已经不在了（缓存被清过）。重新打开一次素材就会自动重建。",
@@ -962,6 +962,77 @@ export function errorHint(code: string): string {
   return errorHints()[code] ?? "";
 }
 
+/** 一句拒绝怎么说，全仓只有这一处：`EngineError.explain()` 与「粘贴属性」那几行都问它。
+ *  1.266 之前这两处各判各的——粘贴那行写的是 `errorHint(code) || message`，于是**界面那句通用提示
+ *  赢过引擎自己那句带着两个数的中文**（引擎说「一次最多粘 200 段（现在要点 264 段）」，人看到的是
+ *  一句没有数的话，末尾还念着契约里那条点分路径）。1.137 给 `explain()`
+ *  定过同一条规矩：引擎自己说中文时以它为准。这一次把那条规矩收成一处实现，两个表面共用。 */
+export function saidRefusal(
+  code: string,
+  message: string,
+  details: Record<string, unknown>
+): string {
+  const hints = errorHints();
+  const hint = hints[code];
+  if (!hint) return message;
+  // 引擎自己就已经说中文的那些拒绝（例如时间码点名是哪一段数字不对），比通用提示更具体：
+  // 这时通用那句只当兜底，不能把人要看的那半句盖掉。
+  const specific = /[一-鿿]/.test(message);
+  const said = specific ? message : hint;
+  // The engine names the file, clip, track or composition a refusal is about. A generic sentence
+  // on top of that still leaves a person guessing which of forty assets moved.
+  const named: string[] = [];
+  const file = typeof details.asset_label === "string" ? details.asset_label : "";
+  const asset = typeof details.asset_id === "string" ? details.asset_id : "";
+  if (file) named.push(`素材 ${file}`);
+  else if (asset) named.push(`素材 ${asset}`);
+  for (const [key, word] of [
+    ["clip_id", "片段"],
+    ["track_id", "轨道"],
+    ["sequence_id", "合成"],
+  ] as const) {
+    const value = details[key];
+    if (typeof value === "string" && value && value !== asset) named.push(`${word} ${value}`);
+  }
+  const saidOn = named.length ? `${said}（${named.join("、")}）` : said;
+  // 引擎那句是中文时它已经把数说给自己听了，这里再补一遍就是同一句话讲两次。
+  if (specific) return saidOn;
+  return `${saidOn}${ceilingWords(details)}`;
+}
+
+/** 上限那一对数怎么说，也只在这一处。
+ *  1.265 只认契约那一格（`max_length` / `actual_length`）；这一版把同一件事的另一种写法接进来：
+ *  引擎在 `details` 里给了 `limit` 与「现在有几个」那一个数。判据只有一条——**实际数已经到了或越过
+ *  上限**，因为只有这一格「最多 N，现在 M」不会与这句拒绝互相矛盾。`COLOR_MANAGE_LIMIT` 那种
+ *  「6 个节点却放不下 2 个」故意不织：那一格的真实理由是还剩几个位置，界面替它编一对看不懂的数
+ *  比不说更坏。名单加一条，就是给一个新码起作用的唯一改法。 */
+const CEILING_WORDS: Record<string, string> = {
+  outlines: "轮廓帧",
+  samples: "采样点",
+  cues: "字幕条数",
+};
+
+const CONTRACT_WORDS: Record<string, string> = { clips: "片段", tracks: "轨道", assets: "素材" };
+
+function ceilingWords(details: Record<string, unknown>): string {
+  const contractPath = typeof details.contract_path === "string" ? details.contract_path : "";
+  const leaf = contractPath.split(".").pop() ?? "";
+  const allowed = typeof details.max_length === "number" ? details.max_length : 0;
+  const stored = typeof details.actual_length === "number" ? details.actual_length : 0;
+  if (contractPath && allowed > 0 && stored > 0) {
+    return `（这一格${CONTRACT_WORDS[leaf] ?? leaf}：最多 ${allowed} 个，现在要存 ${stored} 个）`;
+  }
+  const limit = typeof details.limit === "number" ? details.limit : 0;
+  if (limit <= 0) return "";
+  for (const [key, word] of Object.entries(CEILING_WORDS)) {
+    const actual = details[key];
+    if (typeof actual === "number" && actual >= limit) {
+      return `（${word}：最多 ${limit}，现在 ${actual}）`;
+    }
+  }
+  return "";
+}
+
 export class EngineError extends Error {
   code: string;
   details: Record<string, unknown>;
@@ -974,45 +1045,10 @@ export class EngineError extends Error {
     this.status = status;
   }
 
-  /** 每个错误都要给出下一步动作——这是降低上手难度的关键，不是装饰。 */
+  /** 每个错误都要给出下一步动作——这是降低上手难度的关键，不是装饰。
+   *  怎么说那句话不在这里判：见 `saidRefusal`，与「粘贴属性」那几行共用同一处。 */
   explain(): string {
-    const hints = errorHints();
-    const hint = hints[this.code];
-    if (!hint) return this.message;
-    // 引擎自己就已经说中文的那些拒绝（例如时间码点名是哪一段数字不对），比通用提示更具体：
-    // 这时通用那句只当兜底，不能把人要看的那半句盖掉。
-    const specific = /[\u4e00-\u9fff]/.test(this.message);
-    const said = specific ? this.message : hint;
-    // The engine names the file, clip, track or composition a refusal is about. A generic sentence
-    // on top of that still leaves a person guessing which of forty assets moved.
-    const details = this.details ?? {};
-    const named: string[] = [];
-    const file = typeof details.asset_label === "string" ? details.asset_label : "";
-    const asset = typeof details.asset_id === "string" ? details.asset_id : "";
-    if (file) named.push(`素材 ${file}`);
-    else if (asset) named.push(`素材 ${asset}`);
-    for (const [key, word] of [
-      ["clip_id", "片段"],
-      ["track_id", "轨道"],
-      ["sequence_id", "合成"],
-    ] as const) {
-      const value = details[key];
-      if (typeof value === "string" && value && value !== asset) named.push(`${word} ${value}`);
-    }
-    // 1.265：契约上限那一类拒绝把「哪一格、最多几个、这一次要存几个」写在 details 里。
-    // 光有那句中文人还是不知道要删什么——「把长段落拆成几条片段」那种出路到了这一格只会让
-    // 片段更多。所以这里念出那一格与那两个数；`clips`/`tracks` 是契约里的字段名，给人看的是
-    // 中文那一面（这一句只有一个主人，别处不许再抄一份）。
-    const words: Record<string, string> = { clips: "片段", tracks: "轨道", assets: "素材" };
-    const path = typeof details.contract_path === "string" ? details.contract_path : "";
-    const leaf = path.split(".").pop() ?? "";
-    const allowed = typeof details.max_length === "number" ? details.max_length : 0;
-    const found = typeof details.actual_length === "number" ? details.actual_length : 0;
-    const limit = path && allowed > 0 && found > 0
-      ? `（这一格${words[leaf] ?? leaf}：最多 ${allowed} 个，现在要存 ${found} 个）`
-      : "";
-    const saidOn = named.length ? `${said}（${named.join("、")}）` : said;
-    return `${saidOn}${limit}`;
+    return saidRefusal(this.code, this.message, this.details ?? {});
   }
 }
 

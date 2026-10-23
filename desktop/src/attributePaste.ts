@@ -6,7 +6,7 @@
  */
 
 import type { AttributeCategory, AttributeCategoryReport, AttributePlan } from "./engine";
-import { errorHint } from "./engine";
+import { saidRefusal } from "./engine";
 import type { AttributeCopy } from "./clipboardStore";
 import { humanDuration } from "./time";
 
@@ -120,10 +120,14 @@ function labelOf(plan: AttributePlan, id: string | null): string {
   return found ? String(found.label ?? id) : id;
 }
 
-/** 一句拒绝的写法只有一处：对话框里预览的那几行与粘完之后那支提示用的是同一句。 */
+/** 一句拒绝的写法只有一处：这一行与监视器/弹层那句报错走的是同一个 `engine.saidRefusal`。
+ *  1.266 之前它优先用界面那张提示表里的那句，于是引擎自己那句带着
+ *  「一次最多粘 N 段（现在要点 M 段）」的中文被整句顶掉，人看到的是一段没有数的话。 */
 export function refusalLines(plan: AttributePlan): string[] {
   return plan.refusals.map(
-    (row) => `${row.clip_id} 拿不到「${labelOf(plan, row.category)}」：${errorHint(row.code) || row.message}`,
+    (row) =>
+      `${row.clip_id} 拿不到「${labelOf(plan, row.category)}」：` +
+      saidRefusal(row.code, row.message, row.details ?? {}),
   );
 }
 

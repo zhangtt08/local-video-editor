@@ -576,6 +576,9 @@ def http_suite(folder: Path) -> None:
         )
         assert over.json()["error"]["code"] == "MASK_SHAPE_LIMIT", over.text
         assert over.json()["error"]["details"]["limit"] == CLIP_MASK_SHAPE_LIMIT, over.text
+        # 1.266: the second half of the pair the shell weaves into its Chinese sentence. The UI can
+        # only say "at most N, now M" if this refusal really carries M alongside the ceiling.
+        assert over.json()["error"]["details"]["outlines"] >= CLIP_MASK_SHAPE_LIMIT, over.text
         assert "split the clip" in over.json()["error"]["message"], over.text
         assert client.get(path).json()["revision"] == 4, "a full mask must not be half written"
 

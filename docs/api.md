@@ -275,7 +275,7 @@ preview-manifest 的「显式零段」另有说法（1.187）：`?no_clips=1`（
 | clip.color | clip_id, color | exposure(-2..2 EV)、contrast(0..2)、saturation(0..2)，默认 0/1/1 |
 | clip.text | clip_id, text | 替换文字内容/字号/颜色，只能操作文字片段 |
 | clip.fade | clip_id, property, duration_ticks?, mode, shape? | opacity/gain；in/out/both；1.90 起写的是片段两条边上的窗口（不再动关键帧）；两头之和不超过片段长度；1.95 起 `duration_ticks` 可以省略（只改形状），`shape` 取 `linear/ease_in/ease_out/ease_in_out`，两者都不给则 422 |
-| captions.import | track_id, asset_id, srt, offset_ticks? | 原子创建新字幕轨、文字素材与片段；最多 2000 条，重叠拒绝并整体回滚 |
+| captions.import | track_id, asset_id, srt, offset_ticks? | 原子创建新字幕轨、文字素材与片段；最多 `capabilities.limits.subtitle_cues`（契约 `SUBTITLE_CUE_LIMIT`，1.266 起这个数只在那一处），越过按 `SUBTITLE_LIMIT` 拒绝并把 `cues` 与 `limit` 一起交回，重叠拒绝并整体回滚 |
 
 效果 x/y 以画布宽高为单位，正方向右/下；scale 默认 1；rotation 为度；opacity 为 0..1，gain 为 0..4。
 关键帧插值 linear / hold / ease，ease 为平滑三次缓入缓出。第一帧之前/末帧之后保持端点值。分割及左缘修剪通过 animation_offset_ticks 保持原曲线连续；内部存储关键帧时间含此偏移，命令时间仍相对当前片段。

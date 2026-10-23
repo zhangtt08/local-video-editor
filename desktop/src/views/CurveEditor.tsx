@@ -261,7 +261,7 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
       ? `手上是 ${copied.keys.length} 枚${copyName(copied)}针，跟当前这一行不是同一条曲线：上方「曲线属性」换回那一条，或到「动画片段」换一段有这一层的`
       : `把复制的 ${copied.keys.length} 枚${copyName(copied)}针按播放头粘到当前片段；${copied.layer === undefined
         ? "落在片段之外或已有针那一格的会跳过"
-        : `落在片段之外、已有针那一格，或越过那一层 ${layerKeyLimit} 枚额度的逐枚跳过并数给你。那个数照搬、不重折——引擎那张带子只按属性分（grade_limits.layer_key_bands）`}`;
+        : `落在片段之外、已有针那一格，或越过那一层 ${layerKeyLimit} 枚额度的逐枚跳过并数给你。那个数照搬、不重折——引擎那张带子只按属性分（那一张随能力表交下来）`}`;
   // 粘贴只有一处实现：按钮和 Ctrl+V 走同一个函数，落点、跳过与回执都是同一条判断。
   const pasteNow = () => {
     const paste = pasteInto(clip, copied, alignTime(head, false), project.id, layerKeyLimit);
@@ -331,7 +331,7 @@ function ValueGraph({ clip, audio, disabled }: { clip: Clip; audio: boolean; dis
             if (layerField && typeof layerKeyLimit !== "number") {
               // 额度（`LAYER_KEY_LIMIT`）数的是那一层全部的针，缺了这个数就不知道第几枚该跳过——
               // 宁可当场少给一只手，也不猜一个数写进链里（与检查器那几颗 ◇ 同一个判法）。
-              toast("warn", "这一层的针还不能复制", "引擎没报那一层的针数额度（capabilities.limits.layer_key_limit），粘过去就不知道第几枚该跳过：换一份会报这个数的引擎，或先用检查器那一层的「在这里打点」逐枚钉。");
+              toast("warn", "这一层的针还不能复制", "引擎没报那一层的针数额度（那一个数随能力表交下来），粘过去就不知道第几枚该跳过：换一份会报这个数的引擎，或先用检查器那一层的「在这里打点」逐枚钉。");
               return;
             }
             const copy = copyKeys(project.id, selectedKeys, layerField?.layer);

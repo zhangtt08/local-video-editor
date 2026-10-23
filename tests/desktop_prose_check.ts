@@ -132,7 +132,9 @@ for (const [fn, source, name] of cells) {
 for (const [name, text, needles] of [
   ["工程基色的来历", workingProvenance("p3-d65", ["rec709", "p3-d65"]), ["primaries_matrix", "抬进线性光—乘—落回", "立方体", "交付", "每一段自己的色彩管理"]],
   ["折叠曲线的来历", spaceFoldProvenance("bt709", rows), ["纯幂 2.4", "逐字节相同"]],
-  ["基色折叠的来历", gamutFoldProvenance({ label: "灰度 BT.709" } as never), ["gamut_matrices", "同一枚节点", "预览一个色、成片另一个色"]],
+  // 1.266：来历仍要在，但那一句不再把契约键名念给人看——「随能力表交下来的那张基色矩阵」
+  // 说的是同一件事。旧的那一枚钉的是 `gamut_matrices` 这个键名，钉的是旧形状。
+  ["基色折叠的来历", gamutFoldProvenance({ label: "灰度 BT.709" } as never), ["基色矩阵", "随能力表", "同一枚节点", "预览一个色、成片另一个色"]],
 ] as [string, string, string[]][]) {
   for (const needle of needles) {
     assert.ok(text.includes(needle), `${name}里少了「${needle}」——那是搬丢了，不是收短了`);

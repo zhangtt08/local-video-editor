@@ -121,7 +121,21 @@ const line = refusalLines(plan)[0];
 assert.ok(line.includes("遮罩"), `那句拒绝没念中文：${line}`);
 assert.ok(line.includes("丙类"), `那句没念引擎给的中文名，而是念了契约 id：${line}`);
 assert.ok(!line.includes("「fade」"), `契约 id 当用户界面用了：${line}`);
-assert.ok(line.includes(errorHint("INVALID_MASK")), `那句不是提示表里那一条：${line}`);
+assert.ok(line.includes(errorHint("INVALID_MASK")), `引擎只说英文时那句仍是提示表里那一条：${line}`);
+// 1.266：引擎自己说中文（带着那两个数）时，这一行不许再让通用提示顶掉它——
+// 这正是本轮修掉的那一手，判据住在这个表面（粘贴那几行）上。
+const chinese = {
+  ...plan,
+  refusals: [
+    {
+      clip_id: "c", category: "fade", code: "MASK_SHAPE_LIMIT",
+      message: "this mask already carries 32 outlines",
+      details: { clip_id: "c", outlines: 32, limit: 32 },
+    },
+  ],
+};
+const woven = refusalLines(chinese)[0];
+assert.ok(woven.includes("轮廓帧：最多 32，现在 32"), `上限那一对数没到粘贴那几行眼前：${woven}`);
 assert.ok(
   pasteSaid(plan, 3).detail.includes(line),
   "提示里那句与预览里那句不是同一句（一句拒绝有了两个说法）",

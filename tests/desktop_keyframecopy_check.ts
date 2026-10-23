@@ -156,7 +156,10 @@ assert.match(curve, /toast\(paste\.dropped \? "warn" : "info"[\s\S]{0,220}layerP
 assert.equal((curve.match(/粘贴动画关键帧/g) ?? []).length, 1, "the chord and the button share one implementation");
 // 层的额度听引擎的，界面不许自带一个数（`LAYER_KEY_LIMIT` 变了这里就得跟着红）。
 assert.match(curve, /const layerKeyLimit = app\.caps\?\.limits\?\.layer_key_limit;/, "the quota is read from capabilities, not hardcoded");
-assert.equal((curve.match(/layer_key_limit/g) ?? []).length, 2, "and read in exactly one place plus the refusal that names it");
+// 1.266：那一处拒绝不再把契约键名念给人看（`capabilities.limits.layer_key_limit` 换成了
+// 「那一个数随能力表交下来」），所以这个数从 2 收到 1——**读的那一处**仍是唯一的一处。
+// 上一版把 2 钉着，钉的正是「拒绝里再念一遍键名」那个旧形状。
+assert.equal((curve.match(/layer_key_limit/g) ?? []).length, 1, "and read in exactly one place, nowhere named to a person");
 // 复制、粘贴、全选是这一层的三个和弦入口；Ctrl+A 那个守卫的括号必须留着，
 // 否则 `a || b && c` 的结合顺序会变成「按一下 Ctrl 就全选」。
 assert.match(curve, /if \(\(e\.ctrlKey \|\| e\.metaKey\) && e\.key\.toLowerCase\(\) === "a"\)/, "the select-all guard keeps its parentheses");
