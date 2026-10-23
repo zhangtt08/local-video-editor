@@ -125,6 +125,11 @@ const KEYS = [
   { key: "F1 / Esc", body: "打开 / 关闭本帮助" },
 ];
 
+/** KEYS 以前是两件事挤在一张表里：带「·」的是功能百科，不带的是手感键。
+ *  1.275 把两半分开——功能百科进自己的「功能」页签（分组 + 搜索），手感键留在「快捷键」。 */
+const FEATURES = KEYS.filter((item) => item.key.includes("·"));
+const HAND_KEYS = KEYS.filter((item) => !item.key.includes("·"));
+
 const CONCEPTS = [
   { name: "revision（版本）", body: "每写一次 +1，只进不退。撤销不是回退版本号，而是用旧内容生成新版本，所以历史永远完整。" },
   { name: "request_id（幂等回执）", body: "每个写操作都要带它。同一个 id 重试只会返回第一次的结果，不会重复执行——Agent 断线重连也不会剪出双倍。" },
@@ -133,7 +138,19 @@ const CONCEPTS = [
 ];
 
 export function HelpOverlay() {
-  const [tab, setTab] = useState<"start" | "areas" | "keys" | "concepts">("start");
+  const [tab, setTab] = useState<"start" | "areas" | "features" | "keys" | "concepts">("start");
+  const [featureQuery, setFeatureQuery] = useState("");
+  const featureNeedle = featureQuery.trim().toLowerCase();
+  const featureMatches = featureNeedle
+    ? FEATURES.filter((item) => item.key.toLowerCase().includes(featureNeedle) || item.body.toLowerCase().includes(featureNeedle))
+    : FEATURES;
+  const featureGroups: { name: string; rows: typeof FEATURES }[] = [];
+  for (const item of featureMatches) {
+    const name = item.key.split("·")[0];
+    const group = featureGroups.find((entry) => entry.name === name);
+    if (group) group.rows.push(item);
+    else featureGroups.push({ name, rows: [item] });
+  }
   // 等一颗新键：按下去就交给 `store.remap`，冲突由那里点名并拒绝，界面只负责把结果再读一遍。
   const [armed, setArmed] = useState<CommandId | null>(null);
   const [rev, setRev] = useState(0);
@@ -166,6 +183,7 @@ export function HelpOverlay() {
           <div className="seg mini">
             <button type="button" className={tab === "start" ? "active" : ""} onClick={() => setTab("start")}>上手</button>
             <button type="button" className={tab === "areas" ? "active" : ""} onClick={() => setTab("areas")}>界面区域</button>
+            <button type="button" className={tab === "features" ? "active" : ""} onClick={() => setTab("features")}>功能</button>
             <button type="button" className={tab === "keys" ? "active" : ""} onClick={() => setTab("keys")}>快捷键</button>
             <button type="button" className={tab === "concepts" ? "active" : ""} onClick={() => setTab("concepts")}>关键概念</button>
           </div>
@@ -200,6 +218,41 @@ export function HelpOverlay() {
                   <div className="area-body">{item.body}</div>
                 </div>
               ))}
+            </div>
+          ) : null}
+          {tab === "features" ? (
+            <div className="feature-index">
+              <div className="feature-search">
+                <input
+                  className="input"
+                  type="search"
+                  value={featureQuery}
+                  onChange={(event) => setFeatureQuery(event.target.value)}
+                  placeholder="搜功能、动作或关键词（比如：跟踪、LUT、节拍）"
+                  aria-label="搜索功能说明"
+                />
+                <span className="hint">{featureNeedle ? `${featureMatches.length} 条` : `共 ${FEATURES.length} 条`}</span>
+              </div>
+              {featureGroups.length === 0 ? (
+                <p className="hint">没有匹配「{featureQuery.trim()}」的功能说明。换个词试试，或到「上手」「界面区域」看看入口在哪。</p>
+              ) : (
+                <div className="feature-groups">
+                  {featureGroups.map((group) => (
+                    <details className="help-group" key={`${group.name}-${featureNeedle ? "search" : "all"}`} open={featureNeedle ? true : undefined}>
+                      <summary><span>{group.name}</span><span className="help-count">{group.rows.length} 条</span></summary>
+                      <div className="area-list">
+                        {group.rows.map((item) => (
+                          <div className="area-row" key={item.key}>
+                            <div className="area-name">{item.key.split("·").slice(1).join("·") || item.key}</div>
+                            <div className="area-body">{item.body}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  ))}
+                </div>
+              )}
+              <p className="hint">这里是每个入口背后的做法与量过的边界；命令键位在「快捷键」页签，入口在哪一屏在「界面区域」。</p>
             </div>
           ) : null}
           {tab === "keys" ? (
@@ -241,16 +294,16 @@ export function HelpOverlay() {
                 </tbody>
               </table>
               <p className="hint">
-                下面那一节是<b>手感键</b>，不在这张表里：它们跟着焦点与上下文走（方向键微调、I/O 进出点、空格播放、Esc 清场、
+                下面那一节是<b>手感键</b>，不在这张可改的表里：它们跟着焦点与上下文走（方向键微调、I/O 进出点、空格播放、Esc 清场、
                 F1/F9/F10），把它们也做成可配置的，只会让那张表看起来谁都能改、其实改了没用了。滚轮那两条（Ctrl+滚轮缩放、
-                Shift+滚轮横滚）同理。
+                Shift+滚轮横滚）同理。每个功能入口背后的做法与量过的边界在「功能」页签，那里可以按关键词搜。
               </p>
             </>
           ) : null}
           {tab === "keys" ? (
             <table className="table keys">
               <tbody>
-                {KEYS.map((item) => (
+                {HAND_KEYS.map((item) => (
                   <tr key={item.key}>
                     <td className="mono k">{item.key}</td>
                     <td>{item.body}</td>

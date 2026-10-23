@@ -792,6 +792,17 @@ select { color-scheme: dark; }
 .area-row { border-left: 2px solid var(--accent-soft); padding-left: 11px; }
 .area-name { font-size: var(--fs-body); font-weight: 600; }
 .area-body { font-size: var(--fs-body); color: var(--ink-2); margin-top: 2px; }
+/* 1.275：功能百科从「快捷键」里搬出来，按主题折叠、可搜；一屏放一条，不把两万字一次摊开。 */
+.feature-index { display: flex; flex-direction: column; gap: 10px; }
+.feature-search { display: flex; align-items: center; gap: 10px; }
+.feature-search .input { flex: 1 1 auto; min-width: 0; }
+/* `.hint` 默认 flex-basis 100%，在同一行里会把输入框挤成一条 24px 的缝——量到过一次。 */
+.feature-search .hint { flex: 0 0 auto; white-space: nowrap; }
+.feature-groups { display: flex; flex-direction: column; gap: 8px; }
+.help-group { border: 1px solid var(--line); border-radius: var(--r-sm); padding: 0 12px; background: var(--panel); }
+.help-group > summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; cursor: pointer; font-size: var(--fs-body); font-weight: 600; }
+.help-group .area-list { padding: 0 0 12px; }
+.help-count { color: var(--ink-3); font-size: var(--fs-label); font-weight: 400; }
 table.keys { width: 100%; }
 table.keys td.k { width: 110px; color: var(--accent-deep); font-weight: 600; }
 /* 1.134：能改的那张表。键名那一格在等按键时要看得出来，「界面上：那颗按钮」是附注不是正文。 */
