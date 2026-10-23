@@ -80,6 +80,7 @@ import {
   updateSequence,
   reframeClip, stabilizeClip, trackMasks,
   cutSilence,
+  beatMarks,
   autoCaptions,
   adoptTrackFades,
   normaliseLoudness,
@@ -226,6 +227,9 @@ function ClipFields({ clip }: { clip: Clip }) {
           </button>
           {asset?.kind === "video" && asset.verified?.has_audio && clip.embedded_audio !== false ? <button className="btn" title="把本段的声音拆成独立声音轨，方便单独淡入淡出或对齐其他音轨" onClick={() => detachAudio(clip.id)}>
             <Icon name="split" /> 拆分内嵌声音
+          </button> : null}
+          {(asset?.kind === "audio" || (asset?.kind === "video" && asset.verified?.has_audio && clip.embedded_audio !== false)) && app.caps?.features?.beat_detect ? <button className="btn" disabled={Boolean(clip.speed_curve)} title={clip.speed_curve ? "带变速曲线的片段还不能听节拍：一秒源声音不落在固定长度的时间线上，打出来的点会对不上画面；先在曲线编辑器里清掉速度曲线" : "用引擎的节拍检测听这段声音，在每一下起音处打一枚标记（默认最短间隔 0.2 秒）；一次提交一个版本，撤销一步全部退回。工具栏的剪刀可以把这些标记变成切点"} onClick={() => void beatMarks(clip.id)}>
+            <Icon name="flag" /> 按节拍打点
           </button> : null}
           {(asset?.kind === "audio" || (asset?.kind === "video" && asset.verified?.has_audio && clip.embedded_audio !== false)) ? <button className="btn" disabled={Boolean(clip.speed_curve)} title={clip.speed_curve ? "带变速曲线的片段还不能去空白：时间不是线性的，切点会切进字里" : "扫描本段声音，把 0.25 秒以上的停顿剪掉并把后面的内容左移（阈值 -35 dB，切点向内取整帧）"} onClick={() => cutSilence(clip.id)}>
             <Icon name="split" /> 去空白

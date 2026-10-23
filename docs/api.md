@@ -16,6 +16,7 @@ HTTP 使用 `Authorization: Bearer <AGENTCUT_TOKEN>`。JSON 请求严格校验�
 | POST /v1/projects/{id}/edits | timeline_edit | 批量命令 |
 | POST /v1/projects/{id}/restore | project_restore | 历史恢复为新版本 |
 | POST /v1/projects/{id}/clips/{c}/silence | clip_silence | 只读扫描静音并取回剪切命令（`apply`/`dry_run` 在该工具里固定为 false） |
+| POST /v1/projects/{id}/audio/beats | audio_beats | 只读听节拍（1.268）：`asset_id` 按素材 1:1，`clip_id` 按片段的恒定速度映射回时间线；交回 `beats` ticks 与可选的 `bpm`，写入仍走 `marker.set`，切点仍由 `marker_split` 决定 |
 | POST /v1/projects/{id}/tracks/{t}/silence | track_silence | 整轨扫描：逐片段报告跳过原因，合并成一条命令计划（1.79 起有工具；`apply`/`dry_run` 在该工具里固定为 false，命令交回 `timeline_edit` 写入） |
 | POST /v1/projects/{id}/clips/{c}/color-space | clip_color_space | 只读：这份素材自己说的色调曲线（`space`），或点名为什么认不出（`reason` + 四个原样标记）；1.150 起有工具，读一遍 revision 不动 |
 | POST /v1/projects/{id}/clips/{c}/loudness | clip_loudness | 响度表读数与建议增益；`apply=true` 时引擎一次写入（1.79 起有工具，工具侧固定只读，命令交回 `timeline_edit`） |

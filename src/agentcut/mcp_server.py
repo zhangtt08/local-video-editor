@@ -18,6 +18,7 @@ from mcp.types import ToolAnnotations
 from .contracts import (
     AttributePlanRequest,
     AutoGradeRequest,
+    BeatRequest,
     CachePrune,
     Clip,
     ClipColorSpaceRead,
@@ -364,6 +365,23 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
             "POST",
             f"/v1/projects/{project_id}/clips/{clip_id}/silence",
             body,
+            timeout=600,
+        )
+
+    @server.tool(annotations=read)
+    async def audio_beats(project_id: Identifier, request: BeatRequest) -> dict[str, Any]:
+        """Listen to one asset or clip and get the ticks where its beats fall.
+
+        Read-only: the reply is a list of integer ticks plus an optional BPM, and nothing is
+        written. Turn the marks into `marker.set` commands and submit them with `timeline_edit`,
+        then use `marker_split` if the marked beats should become cuts. A clip is analysed in the
+        source window it really plays and mapped through its constant speed; a speed curve is
+        refused because it has no single ratio to map back with.
+        """
+        return await call(
+            "POST",
+            f"/v1/projects/{project_id}/audio/beats",
+            request.model_dump(mode="json"),
             timeout=600,
         )
 

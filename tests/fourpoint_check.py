@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from agentcut.contracts import TIMEBASE as T
-from agentcut.contracts import ClipColor, FourPointRequest, Project
+from agentcut.contracts import Clip, ClipColor, FourPointRequest, Project
 from agentcut.fourpoint import plan
 from agentcut.http_api import create_app
 from agentcut.jobs import JobRuntime
@@ -160,6 +160,10 @@ def plan_suite(folder: Path) -> None:
     clip = commands[0]["clip"]
     assert commands[0]["op"] == "clip.insert" and notes["resolution"] == "exact", notes
     assert (clip["duration_ticks"], clip["source_in_ticks"], clip["speed_percent"]) == (T2, 0, 100)
+    # 1.267 把 25/400 收成两个常量时，把 `Clip.speed_percent` 的默认值一起收掉了——老工程、
+    # 老客户端的 clip.add 都不带这一格，于是随包自检当场 422。默认值是兼容承诺，不是量程的
+    # 重复；这一判让它再被删掉时红在这里（而不是在某一支冻结引擎上）。
+    assert Clip.model_fields["speed_percent"].default == 100, "clip.add 省略变速时不再默认原速"
 
     commands, notes = ask(project, source_out_ticks=T6, dest_out_ticks=T2)
     assert notes["resolution"] == "trimmed" and notes["consumed_source_ticks"] == T2, notes

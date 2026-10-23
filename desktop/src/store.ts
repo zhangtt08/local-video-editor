@@ -1089,6 +1089,37 @@ export async function splitAtMarkers() {
   }
 }
 
+/** 按节拍打点：引擎听一遍这段声音，把起音落成普通的 marker.set。
+ *  一次提交一个版本，撤销一步全部退回；打出来的点仍是标记，「按标记分割」决定要不要切。 */
+export async function beatMarks(clipId: string) {
+  const project = state.project;
+  if (!engine || !project) return;
+  set({ busy: "听节拍…" });
+  try {
+    const found = await engine.audioBeats(project.id, {
+      clip_id: clipId, sequence_id: state.sequenceId,
+    });
+    if (!found.beats.length) {
+      toast("info", "这段里没有找到节拍", "换一段有鼓点或节奏更明显的声音再试；这一次没有写入任何标记。");
+      return;
+    }
+    const commands: Command[] = found.beats.map((at, index) => ({
+      op: "marker.set",
+      marker: { id: newId("beat-"), at_ticks: at, name: `节拍 ${index + 1}`, color: "cyan" },
+    }));
+    submit(commands, "按节拍打点");
+    const tempo = found.bpm ? `约 ${found.bpm} BPM · ` : "";
+    const taken = found.truncated ? `只取了前 ${found.beats.length} 枚；` : "";
+    toast("info", `打了 ${found.beats.length} 枚节拍标记`,
+      `${tempo}${taken}撤销一步全部退回；工具栏的剪刀可按这些标记切分。`);
+  } catch (error) {
+    const { title, detail } = describe(error);
+    toast("error", title, detail);
+  } finally {
+    set({ busy: "" });
+  }
+}
+
 /** 划动源画面：片段留在原地、时长不变，只换它播素材的哪一段。 */
 export function slipClip(clipId: string, frames: number) {
   const project = state.project;

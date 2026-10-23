@@ -55,7 +55,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.267.0"
+APP_VERSION = "1.268.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -601,6 +601,10 @@ MASK_SHAPE_KEY_LIMIT = 32
 # 现在它是这唯一的一处，能力表下发它，拒绝带着「第几条撞上上限」一起交回。
 
 SUBTITLE_CUE_LIMIT = 2000
+
+# 1.268：一次节拍分析最多交回几枚位置。它不是标记的总上限（那个是 2000），而是「一次点下去
+# 界面上不会多到没法读」的那一档：30 秒 120 BPM 是 60 枚，512 足够一整首三分半的曲子。
+BEAT_MARK_LIMIT = 512
 
 # 1.238: 再叠的那一块自己最多带几枚框点。它们不是 `clip.keyframes` 里那五条曲线——
 # 一套点说的是一整块盒子的五个数（中心两个、宽高、角度），同一次窗切段里一起换。
@@ -2789,7 +2793,9 @@ class Clip(Contract):
 
     duration_ticks: Duration
 
-    speed_percent: Annotated[int, Field(ge=SPEED_PERCENT_MIN, le=SPEED_PERCENT_MAX)]
+    # 100 是兼容承诺：老工程、老客户端的 clip.add 都不带这一格，省略就是原速；量程那次去重
+    # 只该收「25/400 抄了几处」这件事，不许把默认值一起收掉（1.267 一度收掉，随包自检当场红）。
+    speed_percent: Annotated[int, Field(ge=SPEED_PERCENT_MIN, le=SPEED_PERCENT_MAX)] = 100
 
     text: TextStyle | None = None
 
@@ -5633,6 +5639,41 @@ class SilenceRequest(Contract):
 
 
 
+class BeatRequest(Contract):
+
+    """Listen to one asset or clip and hand back where its beats fall, in timeline ticks.
+
+    This is a read-only analysis: no request_id, no revision, no writes. The positions it returns
+    are ordinary ticks a person can turn into `marker.set` commands and an Agent can plan against;
+    turning them into cuts stays the existing `marker.split` decision.
+
+    Name exactly one of `asset_id` and `clip_id`. An asset is analysed 1:1; a clip is analysed in
+    the window it actually plays and mapped back through its speed, which is the difference between
+    a mark on the music and a mark on the picture. A speed curve has no single ratio, so it is
+    refused by name rather than guessed at.
+
+    """
+
+    sequence_id: Identifier | None = None
+
+    asset_id: Identifier | None = None
+
+    clip_id: Identifier | None = None
+
+    min_gap_ms: Annotated[int, Field(ge=80, le=2000)] = 200
+
+    sensitivity: Annotated[float, Field(ge=0.5, le=2.0)] = 1.0
+
+    @model_validator(mode="after")
+    def _exactly_one_target(self):
+        if (self.asset_id is None) == (self.clip_id is None):
+            raise ValueError("name exactly one of asset_id or clip_id")
+        return self
+
+
+
+
+
 class SpeechCaptionsRequest(Contract):
 
     """Transcribe speech into subtitle cues and hand back the one command that lands them.
@@ -7207,6 +7248,8 @@ def capabilities(
 
             "timeline_markers": True,
 
+            "beat_detect": media_ready,
+
             "delivery_recipes": media_ready,
 
             "safe_area_guides": True,
@@ -7476,6 +7519,8 @@ def capabilities(
             "attribute_paste_targets": ATTRIBUTE_PASTE_TARGET_LIMIT,
 
             "subtitle_cues": SUBTITLE_CUE_LIMIT,
+
+            "beat_marks": BEAT_MARK_LIMIT,
 
             "sample_rates": [44_100, 48_000, 96_000],
 

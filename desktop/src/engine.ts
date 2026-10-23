@@ -845,6 +845,9 @@ export function errorHints(): Record<string, string> {
       BLUR_OUT_OF_RANGE: "柔焦/清晰的半径超出了导出与预览验证过一致的范围。把数值调小；滑杆的上限就是引擎在当前画幅下允许的最大值。",
       NOT_FOUND: "这条时间线上找不到它——片段或轨道可能在另一个合成里（从时间线上方的面包屑进去再操作），或者已经被删掉。",
       INVALID_SILENCE_TARGET: "这段没有可剪的静音，或它还不能剪：带变速曲线的片段要先去掉速度；也可以把阈值调低（默认 -35 dB）、把最短静音调短（默认 0.25 秒）再扫一次。",
+      INVALID_BEAT_TARGET: "这段里没有可听的节拍：要么它不是声音（纯画面素材没有音轨），要么它带着变速曲线——那种片段的一秒源声音不落在固定长度的时间线上，打出来的点会对不上画面。纯画面请换一条声音素材；变速曲线先去曲线编辑器里清掉，或直接对素材本身打点。",
+      BEAT_QUIET: "这段声音里没有一枚起音越过门槛：可能是一段持续不断的长音或底噪。把灵敏度调高一点（滑杆往右），或换一段有鼓点/节奏的区间再试；这一次没有写入任何标记。",
+      BEAT_FAILED: "节拍分析没跑成：素材可能读不出声音。先在素材库里确认这个文件能正常播放，再试一次；这一次没有写入任何标记。",
       INVALID_LOUDNESS_TARGET: "这段量不了响度：需要真正导入的音频，且音量没有被关键帧占用。先清掉音量曲线，或换一段素材。",
       INVALID_REFRAME: "主体跟随要一条画了遮罩、遮罩中心有动画的片段：先画遮罩再按「跟踪主体」，或自己在位移/缩放上手打关键帧。",
       INVALID_DUCK: "自动闪避要两条不同的声音轨：一条说话、一条被压。目标轨不能给自己闪避。",
@@ -1373,6 +1376,12 @@ export class Engine {
         content_ticks: number; commands: Record<string, unknown>[];
       };
     }>("POST", `/v1/projects/${projectId}/markers/split`, body, 60000);
+  }
+  audioBeats(projectId: string, body: Record<string, unknown>) {
+    return this.request<{
+      asset_id: string; clip_id: string | null; beats: number[]; bpm: number | null;
+      frame_ticks: number; analysed_ticks: number; truncated: boolean; revision: number;
+    }>("POST", `/v1/projects/${projectId}/audio/beats`, body, 600000);
   }
   duckTrack(projectId: string, trackId: string, body: Record<string, unknown>) {
     return this.request<{

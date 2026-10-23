@@ -25,6 +25,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import asr as asr_module
 from . import autograde as autograde_module
+from . import beats as beats_module
 from . import duck, silence
 from . import fourpoint as fourpoint_module
 from . import markers as marker_plan
@@ -36,12 +37,14 @@ from .bundles import MAX_BUNDLE_BYTES, export_bundle, import_bundle
 from .colortags import detect_space
 from .contracts import (
     APP_VERSION,
+    BEAT_MARK_LIMIT,
     CLIP_SUBSET_LIMIT,
     COLOR_SPACES,
     TIMEBASE,
     TRACK_FRAMES_MIN,
     AttributePlanRequest,
     AutoGradeRequest,
+    BeatRequest,
     BundleImport,
     CachePrune,
     Clip,
@@ -1167,6 +1170,100 @@ def create_app(
         )
         mutation = projects.mutate(project_id, batch).model_dump()
         return {**mutation, "silence": {**result, "commands": commands}}
+
+    @app.post("/v1/projects/{project_id}/audio/beats", dependencies=auth)
+    def audio_beats(project_id: Identifier, request: BeatRequest, projects: Store):
+        """Listen to one asset or clip and return where its beats fall, in timeline ticks.
+
+        Read-only by construction: no request_id, no revision check, no write. The positions are
+        ordinary ticks a person or an Agent turns into `marker.set`; making cuts out of them stays
+        the existing `marker.split` plan. A clip is analysed in the source window it really plays
+        and mapped back through its speed, so 200 % audio marks every quarter second of timeline.
+        """
+        engine = require_media()
+        root = projects.get(project_id)
+        project = sequence_view(root, request.sequence_id)
+        frame_ticks = project.settings.frame_ticks
+        if request.asset_id is not None:
+            asset = project.assets.get(request.asset_id)
+            if asset is None:
+                raise EditorError(
+                    "NOT_FOUND", "asset is not in this project", 404, asset_id=request.asset_id
+                )
+            verified = asset.verified
+            if verified is None or asset.kind not in ("audio", "video") or not verified.has_audio:
+                raise EditorError(
+                    "INVALID_BEAT_TARGET",
+                    "this asset carries no audio to listen to: import a video or audio file, or "
+                    "pick a different asset",
+                    422,
+                    asset_id=asset.id,
+                    asset_kind=asset.kind,
+                )
+            source = Path(verified.path)
+            if not source.is_file():
+                raise EditorError(
+                    "MEDIA_MISSING",
+                    "source file is gone",
+                    410,
+                    asset_id=asset.id,
+                    asset_label=source.name,
+                )
+            window_ticks = asset.duration_ticks or verified.duration_ticks
+            start_seconds = 0.0
+            position_ticks, source_in_ticks, speed = 0, 0, 1.0
+            clip_id = None
+        else:
+            clip = project.clips.get(request.clip_id)
+            if clip is None:
+                raise EditorError(
+                    "NOT_FOUND", "clip is not in this project", 404, clip_id=request.clip_id
+                )
+            # One shared answer for silence, loudness and beats: an audio-less clip, a detached
+            # video and a speed curve are refused by name here instead of three times.
+            problem = audio_scan_problem(project, clip)
+            if problem:
+                raise EditorError("INVALID_BEAT_TARGET", problem, 422, clip_id=clip.id)
+            asset = project.assets[clip.asset_id]
+            source = Path(asset.verified.path)
+            if not source.is_file():
+                raise EditorError(
+                    "MEDIA_MISSING",
+                    "source file is gone",
+                    410,
+                    clip_id=clip.id,
+                    asset_id=asset.id,
+                    asset_label=source.name,
+                )
+            speed = clip.speed_percent / 100
+            position_ticks, source_in_ticks = clip.position_ticks, clip.source_in_ticks
+            window_ticks = max(1, int(clip.duration_ticks * speed))
+            start_seconds = source_in_ticks / TIMEBASE
+            clip_id = clip.id
+        result = beats_module.analyse(
+            engine.ffmpeg,
+            source,
+            start_seconds,
+            window_ticks / TIMEBASE,
+            min_gap_ms=request.min_gap_ms,
+            sensitivity=request.sensitivity,
+        )
+        marks: list[int] = []
+        for seconds in result["seconds"][:BEAT_MARK_LIMIT]:
+            local = beats_module.ticks_for(seconds / speed, frame_ticks)
+            marks.append(beats_module.ticks_for((position_ticks + local) / TIMEBASE, frame_ticks))
+        return {
+            "asset_id": asset.id,
+            "clip_id": clip_id,
+            "beats": marks,
+            "bpm": result["bpm"],
+            "frame_ticks": frame_ticks,
+            "analysed_ticks": window_ticks,
+            "truncated": len(result["seconds"]) > BEAT_MARK_LIMIT,
+            "min_gap_ms": request.min_gap_ms,
+            "sensitivity": request.sensitivity,
+            "revision": project.revision,
+        }
 
     @app.post("/v1/projects/{project_id}/clips/{clip_id}/color-space", dependencies=auth)
     def clip_color_space(
