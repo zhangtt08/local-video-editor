@@ -1698,7 +1698,7 @@ export function editSource(mode: "insert" | "overwrite") {
  */
 let editChain: Promise<void> = Promise.resolve();
 
-function submit(commands: Command[], label: string, opts?: { quiet?: boolean; selectAfter?: string[]; revision?: number }) {
+function submit(commands: Command[], label: string, opts?: { quiet?: boolean; selectAfter?: string[]; revision?: number; detail?: string }) {
   if (!engine || !state.project) return;
   if (opts?.revision !== undefined && opts.revision !== state.project.revision) {
     toast("warn", "工程已变化，关键帧未修改", "重新选择关键帧后再编辑。"); return;
@@ -1709,7 +1709,7 @@ function submit(commands: Command[], label: string, opts?: { quiet?: boolean; se
     set({ batch: [...state.batch, ...commands], dryRunError: "" });
     scheduleDryRun();
     if (!opts?.quiet) {
-      toast("info", `已加入待提交批次：${label}`, "点“预演”检查冲突，点“提交”才会写入。");
+      toast("info", `已加入待提交批次：${label}`, `${opts?.detail ?? ""}点“预演”检查冲突，点“提交”才会写入。`);
     }
     return;
   }
@@ -1732,11 +1732,11 @@ function submit(commands: Command[], label: string, opts?: { quiet?: boolean; se
     last.label = label;
     return;
   }
-  pendingEdits.push({ commands, label, quiet: Boolean(opts?.quiet), projectId: state.project.id, sequenceId: state.sequenceId, selectAfter: opts?.selectAfter, revision: opts?.revision });
+  pendingEdits.push({ commands, label, quiet: Boolean(opts?.quiet), projectId: state.project.id, sequenceId: state.sequenceId, selectAfter: opts?.selectAfter, revision: opts?.revision, detail: opts?.detail });
   editChain = editChain.then(runPendingEdits).catch(() => {});
 }
 
-let pendingEdits: { commands: Command[]; label: string; quiet: boolean; projectId: string; sequenceId: string | null; selectAfter?: string[]; revision?: number }[] = [];
+let pendingEdits: { commands: Command[]; label: string; quiet: boolean; projectId: string; sequenceId: string | null; selectAfter?: string[]; revision?: number; detail?: string }[] = [];
 
 async function runPendingEdits() {
   while (pendingEdits.length) {
@@ -1744,11 +1744,11 @@ async function runPendingEdits() {
     if (job.revision !== undefined && state.project?.revision !== job.revision) {
       toast("warn", "工程已变化，关键帧未修改", "重新选择关键帧后再编辑。"); continue;
     }
-    if (state.project?.id === job.projectId && state.sequenceId === job.sequenceId) await doSubmit(job.commands, job.label, job.quiet, job.selectAfter);
+    if (state.project?.id === job.projectId && state.sequenceId === job.sequenceId) await doSubmit(job.commands, job.label, job.quiet, job.selectAfter, job.detail);
   }
 }
 
-async function doSubmit(commands: Command[], label: string, quiet: boolean, selectAfter?: string[]) {
+async function doSubmit(commands: Command[], label: string, quiet: boolean, selectAfter?: string[], detail?: string) {
   if (!engine || !state.project) return;
   const project = state.project;
   const previous = project.revision;
@@ -1757,7 +1757,7 @@ async function doSubmit(commands: Command[], label: string, quiet: boolean, sele
     const result = await engine.edit(project.id, previous, commands, false, state.sequenceId);
     if (state.project?.id !== project.id) return;
     pushUndo(previous, label);
-    applyMutation(result, label, quiet, selectAfter);
+    applyMutation(result, label, quiet, selectAfter, detail);
   } catch (error) {
     if (error instanceof EngineError && error.code === "REVISION_CONFLICT") {
       await recoverConflict(error);
@@ -1770,14 +1770,14 @@ async function doSubmit(commands: Command[], label: string, quiet: boolean, sele
   }
 }
 
-function applyMutation(result: MutationResult, label: string, quiet = false, selectAfter?: string[]) {
+function applyMutation(result: MutationResult, label: string, quiet = false, selectAfter?: string[], detail?: string) {
   set({
     project: result.project,
     selectedClips: selectAfter ?? state.selectedClips,
   });
   void loadStreams(result.project.id);
   void refreshProjects();
-  if (!quiet) toast("ok", `${label} · r${result.project.revision}`, "已原子写入，历史可回滚。");
+  if (!quiet) toast("ok", `${label} · r${result.project.revision}`, `${detail ?? ""}已原子写入，历史可回滚。`);
 }
 
 function pushUndo(revision: number, label: string) {
@@ -2415,11 +2415,12 @@ async function reviveClipboard(
 function placeCopied(copied: ClipClipboard, at: number, direction = 0) {
   const project = state.project; if (!project || !copied.clips.length) return;
   const plan = pasteCommands(project, copied, at, direction, state.sequenceId);
+  if (plan.refusal) { toast("warn", "这一组不能跨帧率粘贴", plan.refusal); return; }
   // 一批能装多少条是引擎说的数（以前这里自己写了个 100，于是界面挡得不一定等于引擎挡的）；
   // 能力表还没回来就不猜，让引擎自己去拒——它那句一定比这句准。
   const cap = state.caps?.max_commands_per_batch;
   if (cap !== undefined && plan.commands.length > cap) { toast("warn", `这一组要 ${plan.commands.length} 条命令，一批装不下（上限 ${cap} 条）`, "先把素材导入目标工程，或分几次贴这一组：每次少选几个片段，粘完再选下一批。"); return; }
-  submit(plan.commands, `粘贴 ${copied.clips.length} 个片段`, { selectAfter: plan.ids });
+  submit(plan.commands, `粘贴 ${copied.clips.length} 个片段`, { selectAfter: plan.ids, ...(plan.note ? { detail: plan.note } : {}) });
 }
 
 export function pasteSelection() {

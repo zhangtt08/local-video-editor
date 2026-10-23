@@ -1,7 +1,18 @@
 import { newId, type Asset, type Clip, type Command, type Project, type Track, type Sequence, type VerifiedMedia } from "./engine";
 import { frameTicks, sampleTicks } from "./time";
+import { conformPasted, type RateSettings } from "./rateConform";
 
-export type ClipClipboard = { projectId: string; sequenceId?: string | null; clips: Clip[]; assets: Asset[]; tracks: Track[]; sequences?: Sequence[] };
+export type ClipClipboard = {
+  projectId: string;
+  sequenceId?: string | null;
+  clips: Clip[];
+  assets: Asset[];
+  tracks: Track[];
+  sequences?: Sequence[];
+  /** 1.273：复制那一刻的工程时钟。粘到另一帧率/采样率的工程时，`rateConform` 按它换算切点；
+   *  上一版留下的剪贴板没有这一格，按「同率」处理，行为与 1.272 一字不差。 */
+  settings?: RateSettings;
+};
 
 /** Selection follows the connected groups/links; edits still submit explicit ids. */
 export function relatedClips(project: Project, ids: string[], linksOnly = false): string[] {
@@ -52,7 +63,13 @@ export function copyClips(project: Project, ids: string[], sequenceId: string | 
   };
   clips.forEach((clip) => visit(clip.asset_id));
   const selected = new Set(ids); const incomplete = new Set(Object.values(project.clips).filter((c) => c.link_id && !selected.has(c.id)).map((c) => c.link_id));
-  return structuredClone({ projectId: project.id, sequenceId, sequences: [...sequences.values()], clips: clips.map((c) => c.link_id && incomplete.has(c.link_id) ? { ...c, link_id: null, link_source_offset_ticks: 0 } : c), assets: Object.values(project.assets).filter((a) => assets.has(a.id)), tracks: project.tracks.filter((t) => tracks.has(t.id)) });
+  return structuredClone({
+    projectId: project.id, sequenceId, sequences: [...sequences.values()],
+    clips: clips.map((c) => c.link_id && incomplete.has(c.link_id) ? { ...c, link_id: null, link_source_offset_ticks: 0 } : c),
+    assets: Object.values(project.assets).filter((a) => assets.has(a.id)),
+    tracks: project.tracks.filter((t) => tracks.has(t.id)),
+    settings: { frame_rate: project.settings.frame_rate, sample_rate: project.settings.sample_rate },
+  });
 }
 
 /** 剪贴板里那份素材在目标工程里的落点：同一份内容（按引擎算出的哈希）算已有；同一个工程里
@@ -90,7 +107,7 @@ export function reviveClipboardAssets(copied: ClipClipboard, fresh: Record<strin
 }
 
 /** Build explicit commands; the engine validates media, clocks, locks and overlaps. */
-export function pasteCommands(project: Project, copied: ClipClipboard, at: number, direction = 0, sequenceId: string | null = null): { commands: Command[]; ids: string[] } {
+export function pasteCommands(project: Project, copied: ClipClipboard, at: number, direction = 0, sequenceId: string | null = null): { commands: Command[]; ids: string[]; note?: string; refusal?: string } {
   const commands: Command[] = []; const assets = new Map<string, string>(); const tracks = new Map<string, string>();
   const matchAsset = clipboardAssetMatcher(project, copied);
   const sequences = new Map((copied.sequences ?? []).map((s) => [s.id, copied.projectId === project.id && project.sequences?.[s.id] ? s.id : newId("seq-")]));
@@ -117,9 +134,13 @@ export function pasteCommands(project: Project, copied: ClipClipboard, at: numbe
   const q = trackQuantum(project, copied.tracks);
   const offset = (at - origin) / q;
   const delta = Math.max(-Math.floor(origin / q), direction > 0 ? Math.ceil(offset) : Math.round(offset)) * q;
-  const clips = copied.clips.map((clip): Clip => ({ ...clip, id: ids.get(clip.id)!, asset_id: assets.get(clip.asset_id)!, track_id: tracks.get(clip.track_id)!, position_ticks: clip.position_ticks + delta,
+  const shifted = copied.clips.map((clip) => ({ ...clip, position_ticks: clip.position_ticks + delta }));
+  // 1.273：切点先落到目标工程的格子上，再算回时长。同一帧率的粘贴原样返回，串一字不改。
+  const conformed = conformPasted(shifted, copied.tracks, project, copied.settings, copied.assets);
+  if (conformed.refusal) return { commands: [], ids: [], refusal: conformed.refusal };
+  const clips = conformed.clips.map((clip): Clip => ({ ...clip, id: ids.get(clip.id)!, asset_id: assets.get(clip.asset_id)!, track_id: tracks.get(clip.track_id)!,
     group_id: clip.group_id ? groups.get(clip.group_id)! : null, link_id: clip.link_id ? links.get(clip.link_id)! : null, link_source_offset_ticks: clip.link_id ? clip.link_source_offset_ticks ?? 0 : 0,
     transition_in: clip.transition_in && ids.has(clip.transition_in.from_clip_id) ? { ...clip.transition_in, from_clip_id: ids.get(clip.transition_in.from_clip_id)! } : null }));
   commands.push({ op: "clips.add", clips });
-  return { commands, ids: [...ids.values()] };
+  return { commands, ids: [...ids.values()], ...(conformed.note ? { note: conformed.note } : {}) };
 }

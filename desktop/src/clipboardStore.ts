@@ -41,6 +41,13 @@ export function isClipClipboard(value: unknown): value is ClipClipboard {
   if (!list(value.clips) || !list(value.assets) || !list(value.tracks)) return false;
   if (value.sequenceId !== undefined && value.sequenceId !== null && !text(value.sequenceId)) return false;
   if (value.sequences !== undefined && !list(value.sequences)) return false;
+  if (value.settings !== undefined) {
+    const settings = value.settings;
+    if (!record(settings) || !record(settings.frame_rate)) return false;
+    const rate = settings.frame_rate;
+    if (!count(rate.numerator) || !count(rate.denominator) || rate.numerator <= 0 || rate.denominator <= 0) return false;
+    if (!count(settings.sample_rate) || settings.sample_rate <= 0) return false;
+  }
   if (!(value.clips as unknown[]).every((clip) => record(clip) && text(clip.id) && text(clip.track_id) && text(clip.asset_id) && count(clip.position_ticks) && count(clip.duration_ticks))) return false;
   return (value.assets as unknown[]).every((asset) => record(asset) && text(asset.id) && text(asset.kind) && text(asset.reference))
     && (value.tracks as unknown[]).every((track) => record(track) && text(track.id) && text(track.kind));
