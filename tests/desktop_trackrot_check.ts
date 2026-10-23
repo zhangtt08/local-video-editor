@@ -13,6 +13,8 @@ const read = (...parts: string[]) => {
 
 const contracts = read("src/agentcut/contracts.py", "../../src/agentcut/contracts.py");
 const timeline = read("src/agentcut/timeline.py", "../../src/agentcut/timeline.py");
+const tracking = read("src/agentcut/tracking.py", "../../src/agentcut/tracking.py");
+const engine = read("desktop/src/engine.ts", "../../desktop/src/engine.ts");
 const effects = read("desktop/src/effects.ts", "../../desktop/src/effects.ts");
 const store = read("desktop/src/store.ts", "../../desktop/src/store.ts");
 const inspector = read("desktop/src/views/Inspector.tsx", "../../desktop/src/views/Inspector.tsx");
@@ -54,7 +56,21 @@ assert.match(inspector, /trackExtraMask\(clip\.id, index, at, app\.caps\?\.featu
 assert.ok(help.includes("旋转也跟"), "帮助里没写这个旋钮");
 assert.ok(!help.includes("旋转不会被估计"), "帮助里还留着旧话");
 
+// 1.272：角度按上一帧的转向预测；预测不靠谱时扫一圈，转满一整圈在 ±360° 停下。
+assert.match(tracking, /ANGLE_LIMIT = 360\.0/, "跟踪器没有遮罩角度的上限");
+assert.match(tracking, /ANGLE_SWEEP = 45/, "没有粗扫的跨度");
+assert.match(tracking, /angle \+ spin/, "没有按上一帧的转向预测下一帧");
+assert.match(tracking, /wide=not scores/, "第一帧没有走宽搜");
+assert.match(tracking, /angle_limit_at/, "回执没有点名转满一圈的那一帧");
+assert.match(engine, /angle_limit_at_ticks: number \| null/, "界面类型没有这个字段");
+assert.match(store, /angle_limit_at_ticks !== null/, "提示没有读这一格");
+assert.ok(store.includes("遮罩角度上限 ±360°"), "转满一圈的说法没有写出来");
+assert.ok(store.includes("把这一圈之后的镜头切开"), "转满一圈的出路没有写出来");
+assert.ok(!help.includes("转得太快会跟不上"), "帮助里还留着旧的转速上限");
+assert.ok(help.includes("预测这一帧"), "帮助没有说角度是预测出来的");
+
 console.log(
   "desktop_trackrot_check: PASS: 能力表、契约、reducer、旋钮、请求与帮助都说到同一件事——"
-  + "旋转默认关，开启后写 mask_rotation，路径遮罩不给这一手",
+  + "旋转默认关，开启后写 mask_rotation，路径遮罩不给这一手；角度按上一帧的转向预测，"
+  + "转满一圈在 ±360° 停下并由回执点名那一帧",
 );

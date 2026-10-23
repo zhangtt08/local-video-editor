@@ -24,8 +24,8 @@ HTTP 使用 `Authorization: Bearer <AGENTCUT_TOKEN>`。JSON 请求严格校验�
 | POST /v1/projects/{id}/markers/split | marker_split | 按标记分割：只出普通 `clip.split` 计划，`apply` 才写入（1.270 起也可用 `at_ticks` 直接点名切点，节拍那一趟不必先写标记） |
 | POST /v1/projects/{id}/speech-captions | captions_auto | 本地语音识别成字幕线索并取回 `captions.import` 计划（`apply`/`dry_run` 在该工具里固定为 false） |
 | `clip.slip` / `clip.slide`（`/edits`） | timeline_edit | 划动素材窗口 / 左右滑移，两侧相邻段各自补让 |
-| POST /v1/projects/{id}/mask-track | mask_track | 一组目标一起分析画面，每个遮罩各把自己的路径写成关键帧：读同一段窗口的目标只解码一次，整组落进一个批次（与 `/edits` 同一事务语义）；1.271 起每个目标可选 `estimate_rotation`，点的 `rotation` 写成 `mask_rotation` 曲线 |
-| POST /v1/projects/{id}/clips/{c}/mask-stack/{i}/track | mask_stack_track | 只跟再叠遮罩里的一块（1.269）：写回一条普通的 `clip.mask_stack`，别的块与主遮罩一字不动；路径按 `extra_mask_keys` 抽稀，`track.coarse` 说明额度先于容差用尽；1.271 起可选 `estimate_rotation`，框点的 `rotation` 也一起估 |
+| POST /v1/projects/{id}/mask-track | mask_track | 一组目标一起分析画面，每个遮罩各把自己的路径写成关键帧：读同一段窗口的目标只解码一次，整组落进一个批次（与 `/edits` 同一事务语义）；1.271 起每个目标可选 `estimate_rotation`，点的 `rotation` 写成 `mask_rotation` 曲线；1.272 起角度按上一帧的转向预测，累计满 ±360° 时 `angle_limit_at_ticks` 与 `lost_at_ticks` 同时点名停下那一帧 |
+| POST /v1/projects/{id}/clips/{c}/mask-stack/{i}/track | mask_stack_track | 只跟再叠遮罩里的一块（1.269）：写回一条普通的 `clip.mask_stack`，别的块与主遮罩一字不动；路径按 `extra_mask_keys` 抽稀，`track.coarse` 说明额度先于容差用尽；1.271 起可选 `estimate_rotation`，框点的 `rotation` 也一起估；1.272 起同样报 `angle_limit_at_ticks`，累计满 ±360° 时停下并点名那一帧 |
 | GET /v1/projects/{id}/frame | preview_frame | 取成片的一帧：导出渲染器算出的 PNG（长边压到 256 便于传输，宽高比不变），附 `sha256` 与真正取样的 tick；`sequence_id` 取合成里的画面 |
 | GET /v1/media/cache | media_cache_read | 派生缓存清单：条目、字节、上限 |
 | POST /v1/media/cache/prune | media_cache_prune | 按预算整项淘汰派生缓存（LRU），`dry_run` 先看会删什么、`keep` 保护正在看的哈希 |
@@ -3269,3 +3269,18 @@ mask_rotation_schedule_segments` 当前是 12），`GET /v1/projects/{id}/previe
 给 Agent 的两条实操口径：想核对端一致性，读清单里的 `steps(1, end)` 点数与 `mask_rotation_windows`
 的 `from_ticks`/`to_ticks`，别看针数；想把窗数推到上限，改针的**时刻分布**（让相邻针的角度与宽都不同、
 并且别落在同一段里），而不是堆针数——多打的针若与邻居同值，会被合并掉，不报错也不占额度。
+
+## 1.272 遮罩跟踪：角度按上一帧的转向预测，一圈是硬边界
+
+`estimate_rotation` 的角度搜索不再只以上一帧的角度为中心：跟踪器记住上一帧量到的角增量 `spin`，
+每帧先按 `angle + spin` 预测，模板按预测角先定位、再在预测附近 ±6°（步长 2°）细找。窄找的
+相关系数低于 0.55、第一帧、以及刚结束遮挡的那一帧，改在预测两侧 ±45° 内按 5° 粗扫、再按 1° 细化。
+两条 mask-track 回执都多一格 `angle_limit_at_ticks`（绝对 tick，和 `lost_at_ticks` 一样按
+`from_ticks` 平移）：它非空表示累计转角撞到 `mask_rotation` 的 ±360° 契约边界，跟踪在那一帧停下；
+它与 `lost_at_ticks` 同时指向那一帧，但说法不同——提示与帮助会把它念成「转满一圈」，并给出
+「把这一圈之后的镜头切开分别跟」这条真出路，而不是「跟丢」。
+
+实测（`tests/trackfast_check.py`，白杆+白点夹具、FFmpeg `rotate` 表达式给定角度）：
+13.7°/帧 20 帧全中、最差 1.10°；15°/帧反向逐帧误差 0.00°；静止全 0；25°/帧写到 350°、
+第 15 帧停下；30°/帧与 40°/帧都能走到 360°。写回的角度都在 ±360° 内，reducer 不拒。
+仍不做：3D/透视旋转、一帧超过 ±45° 的粗扫跨度、一条曲线里的多圈旋转、路径遮罩的角度。

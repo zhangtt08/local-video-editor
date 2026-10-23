@@ -763,6 +763,7 @@ export type MaskTrackReceipt = {
   reacquire: boolean; reacquired_frames: number; reacquired_at_ticks: number[];
   gap_closure: number; speed_percent: number; sample_rate: string;
   gaps: { from_ticks: number; to_ticks: number }[]; lost_at_ticks: number | null;
+  angle_limit_at_ticks: number | null;
   first_at_ticks: number; last_at_ticks: number;
   merged?: boolean; kept_frames?: number; replaced_frames?: number;
   budget_frames?: number; seam_ticks?: number; seam_jump?: number;
@@ -1391,6 +1392,7 @@ export class Engine {
       track: {
         index: number; tracked_frames: number; written_keys: number; coarse: boolean;
         predicted_frames: number; reacquired_frames: number; lost_at_ticks: number | null;
+        angle_limit_at_ticks: number | null;
       };
     }>("POST", `/v1/projects/${projectId}/clips/${clipId}/mask-stack/${index}/track`, body, 900000);
   }

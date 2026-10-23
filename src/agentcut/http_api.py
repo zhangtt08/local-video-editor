@@ -1077,6 +1077,11 @@ def create_app(
                         if result["lost_at_ticks"] is None
                         else target.from_ticks + result["lost_at_ticks"]
                     ),
+                    "angle_limit_at_ticks": (
+                        None
+                        if result["angle_limit_at_ticks"] is None
+                        else target.from_ticks + result["angle_limit_at_ticks"]
+                    ),
                     "points": points,
                 }
             )
@@ -1265,6 +1270,11 @@ def create_app(
                 None
                 if result["lost_at_ticks"] is None
                 else request.from_ticks + result["lost_at_ticks"]
+            ),
+            "angle_limit_at_ticks": (
+                None
+                if result["angle_limit_at_ticks"] is None
+                else request.from_ticks + result["angle_limit_at_ticks"]
             ),
             "commands": [command],
         }

@@ -781,11 +781,16 @@ function clipName(project: Project, clipId: string): string {
 /** 「这一次跑到哪儿为止」那句账：跟丢、被单次上限收短、被这条片段的曲线预算收短、量满了，
  *  四种说法只有这一处来源——单段与一组都念它，出路那句不会在两处各自漂移。 */
 function trackTailNote(
-  stats: { lost_at_ticks: number | null; last_at_ticks: number; budget_frames?: number },
+  stats: {
+    lost_at_ticks: number | null; angle_limit_at_ticks: number | null;
+    last_at_ticks: number; budget_frames?: number;
+  },
   tail: number,
   frames: number,
 ): string {
-  return stats.lost_at_ticks !== null
+  return stats.angle_limit_at_ticks !== null
+    ? `在 ${(stats.angle_limit_at_ticks / TIMEBASE).toFixed(2)} 秒处累计转满一整圈（遮罩角度上限 ±360°），跟踪从这里停下，后面的角度不再变化。要保留更长的旋转，把这一圈之后的镜头切开、各自从头跟一段。`
+    : stats.lost_at_ticks !== null
     ? `在 ${(stats.lost_at_ticks / TIMEBASE).toFixed(2)} 秒处跟丢目标，之后遮罩停在最后找到的位置。`
     : tail > 0
       ? stats.budget_frames
@@ -1185,7 +1190,9 @@ export async function trackExtraMask(
     const row = found.track;
     toast("ok", `跟踪了 ${row.tracked_frames} 帧，写入 ${row.written_keys} 枚框点`,
       `${row.coarse ? "这一块的框点额度用完，路径被压粗；" : ""}`
-      + `${row.lost_at_ticks !== null ? "主体在中途跟丢，后面的段落停在最后看见的位置；" : ""}`
+      + `${row.angle_limit_at_ticks !== null
+        ? `在 ${(row.angle_limit_at_ticks / TIMEBASE).toFixed(2)} 秒处累计转满一整圈（遮罩角度上限 ±360°），跟踪停下；把这一圈之后的镜头切开分别跟；`
+        : row.lost_at_ticks !== null ? "主体在中途跟丢，后面的段落停在最后看见的位置；" : ""}`
       + "撤销一步整块退回；主遮罩与别的块没有改动。");
   } catch (error) {
     const { title, detail } = describe(error);

@@ -34,6 +34,16 @@ MAX_TEMPLATE = 96 * 54
 MAX_FRAMES = 900
 FRAME_BYTES = 1 << 20
 
+# Mask angles live in [-360, 360] (`MASK_ROTATION_LIMIT`). More than one full turn cannot be
+# written into one mask curve, so a run whose next predicted angle would pass that limit stops
+# there and reports it; a target that comes to rest exactly on the limit is still followed.
+ANGLE_LIMIT = 360.0
+# A narrow pass settles an angle whose prediction came from the previous sighting; below this
+# correlation the prediction is not trusted and a whole-turn sweep decides instead.
+ANGLE_CONFIDENT = 0.55
+ANGLE_SWEEP = 45
+ANGLE_SWEEP_STEP = 5
+
 
 def _plan_width(source_width: int) -> int:
     return max(32, min(ANALYSIS_WIDTH, source_width))
@@ -345,17 +355,46 @@ def track_box(
             rotated[key] = found
         return found
 
-    def rotation_at(frame: bytes, x0: int, y0: int, probe: int, current: float) -> float:
-        """Pick the angle whose rotated template matches this window best."""
-        best_angle, best_score = current, -2.0
-        low = int(round(current)) - angle_range
-        high = int(round(current)) + angle_range
-        for degrees in range(low, high + 1, angle_step):
+    def rotation_at(
+        frame: bytes, x0: int, y0: int, probe: int, centre: float, wide: bool
+    ) -> float:
+        """Pick the angle whose rotated template matches this window best.
+
+        `centre` is the prediction: the last sighting plus the turn it made over one frame, so a
+        steady spin only needs the narrow pass. When that winner is weak — the first frame, a
+        re-acquired target, or a turn whose speed changed abruptly — the search sweeps a whole turn
+        in coarse steps and refines the winner at one degree. Both passes stop at the contract's
+        angle limit; a turn past one full circle is not written into a single mask curve.
+        """
+
+        def probe_angle(
+            degrees: float, best_angle: float, best_score: float
+        ) -> tuple[float, float]:
+            degrees = max(-ANGLE_LIMIT, min(ANGLE_LIMIT, float(degrees)))
             zero, tsqrt = rotated_template(probe, degrees)
             score = _ncc(frame, width, x0, y0, zero, probe, tsqrt)
             if score > best_score:
-                best_angle, best_score = float(degrees), score
-        return best_angle
+                return degrees, score
+            return best_angle, best_score
+
+        best_angle, best_score = float(centre), -2.0
+        low = int(round(centre)) - angle_range
+        high = int(round(centre)) + angle_range
+        for degrees in range(low, high + 1, angle_step):
+            best_angle, best_score = probe_angle(degrees, best_angle, best_score)
+        if not wide and best_score >= ANGLE_CONFIDENT:
+            return best_angle
+        coarse = best_angle
+        low = int(max(-ANGLE_LIMIT, round(centre) - ANGLE_SWEEP))
+        high = int(min(ANGLE_LIMIT, round(centre) + ANGLE_SWEEP))
+        for degrees in range(low, high + 1, ANGLE_SWEEP_STEP):
+            coarse, best_score = probe_angle(degrees, coarse, best_score)
+        refine = coarse
+        low = int(max(-ANGLE_LIMIT, coarse - ANGLE_SWEEP_STEP))
+        high = int(min(ANGLE_LIMIT, coarse + ANGLE_SWEEP_STEP))
+        for degrees in range(low, high + 1):
+            refine, best_score = probe_angle(degrees, refine, best_score)
+        return refine
 
     def locate(
         frame: bytes,
@@ -410,11 +449,23 @@ def track_box(
     reacquired: list[int] = []
     gap_start: int | None = None
     lost_at: int | None = None
+    angle_limit_at: int | None = None
     closure = 0.0
+    spin = 0.0
     for index, frame in enumerate(frames[1:], start=1):
         glide_x, glide_y = cx + velocity[0], cy + velocity[1]
         hidden = gap_start is not None
         centre_x, centre_y = (glide_x, glide_y) if hidden else (cx, cy)
+        # A prediction that would pass one full turn is the one case the curve cannot hold; a
+        # prediction that lands exactly on the limit is still legal and is tried normally.
+        limited = abs(angle + spin) > ANGLE_LIMIT + 0.5
+        guess = max(-ANGLE_LIMIT, min(ANGLE_LIMIT, angle + spin))
+        if rotate and not hidden and not limited:
+            # Turn and position are one search: a fast spin makes the previous frame's template a
+            # poor probe, so settle the angle at the predicted window before measuring translation.
+            px = max(0, min(width - side, round(centre_x) - side // 2))
+            py = max(0, min(height - side, round(centre_y) - side // 2))
+            guess = rotation_at(frame, px, py, side, guess, wide=not scores)
         best = locate(
             frame,
             centre_x,
@@ -422,7 +473,7 @@ def track_box(
             search * 2 if hidden else search,
             scale and not hidden,
             side,
-            angle,
+            guess,
         )
         floor = min_score
         if len(scores) >= 8:
@@ -435,14 +486,20 @@ def track_box(
             _, origin_x, origin_y = _sweep(
                 small, sweep_w, sweep_h, probe_zero, coarse_side, probe_tsqrt
             )
+            jump_x = (origin_x + coarse_side / 2) * REAQUIRE_SCALE
+            jump_y = (origin_y + coarse_side / 2) * REAQUIRE_SCALE
+            if rotate and not limited:
+                jx = max(0, min(width - side, round(jump_x) - side // 2))
+                jy = max(0, min(height - side, round(jump_y) - side // 2))
+                guess = rotation_at(frame, jx, jy, side, guess, wide=True)
             candidate = locate(
                 frame,
-                (origin_x + coarse_side / 2) * REAQUIRE_SCALE,
-                (origin_y + coarse_side / 2) * REAQUIRE_SCALE,
+                jump_x,
+                jump_y,
                 max(search, 2 * REAQUIRE_SCALE),
                 scale,
                 side,
-                angle,
+                guess,
             )
             if candidate[0] >= floor:
                 best = candidate
@@ -451,6 +508,8 @@ def track_box(
         if score < floor:
             if gap_start is None:
                 gap_start = index
+                if limited and angle_limit_at is None:
+                    angle_limit_at = index
             if index - gap_start >= max_gap:
                 break
             cx, cy = glide_x, glide_y
@@ -470,12 +529,21 @@ def track_box(
             reacquired.append(index)
         cx, cy = found_x, found_y
         side = probe
-        if rotate:
+        if rotate and not limited:
             x0 = max(0, min(width - probe, round(found_x) - probe // 2))
             y0 = max(0, min(height - probe, round(found_y) - probe // 2))
-            angle = rotation_at(frame, x0, y0, probe, angle)
+            # The window settled above used the predicted angle; re-read the angle on the final
+            # window. A sighting that ended an occlusion may have turned a lot while hidden.
+            found_angle = rotation_at(
+                frame, x0, y0, probe, guess, wide=hidden or jumped or not scores
+            )
+            spin = max(-ANGLE_SWEEP, min(ANGLE_SWEEP, found_angle - angle))
+            angle = found_angle
         angles.append(angle if rotate else 0.0)
         scores.append(score)
+        if angle_limit_at is not None:
+            # A later sighting means the turn did not actually stop the run; the note is dropped.
+            angle_limit_at = None
         boxes.append((cx / width, cy / height, side / side0))
         if gap_start is not None:
             # Land the guessed window on the sighting that ended it, spread evenly across the gap.
@@ -508,6 +576,7 @@ def track_box(
         "reacquired": reacquired,
         "closure": closure,
         "lost_at": lost_at,
+        "angle_limit_at": angle_limit_at,
         "template_side": side0,
         "analysis_height": height,
     }
@@ -655,5 +724,8 @@ def follow_window(
         "speed_percent": speed_percent,
         "sample_rate": f"{sample_num}/{sample_den}",
         "lost_at_ticks": None if result["lost_at"] is None else result["lost_at"] * frame_ticks,
+        "angle_limit_at_ticks": (
+            None if result["angle_limit_at"] is None else result["angle_limit_at"] * frame_ticks
+        ),
         "points": points,
     }
