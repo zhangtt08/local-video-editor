@@ -411,6 +411,7 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
                 "output_roots_read",
                 "clip_silence",
                 "audio_beats",
+                "mask_stack_track",
                 "preview_frame",
                 "media_cache_read",
                 "media_cache_prune",

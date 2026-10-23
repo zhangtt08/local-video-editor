@@ -31,7 +31,14 @@ from . import fourpoint as fourpoint_module
 from . import markers as marker_plan
 from . import reframe as reframe_plan
 from . import stabilize as stabilize_module
-from .animation import graph_curve, layer_graph, layer_nodes, preview_manifest, sample_values
+from .animation import (
+    extra_box_at,
+    graph_curve,
+    layer_graph,
+    layer_nodes,
+    preview_manifest,
+    sample_values,
+)
 from .attributes import attribute_plan
 from .bundles import MAX_BUNDLE_BYTES, export_bundle, import_bundle
 from .colortags import detect_space
@@ -40,6 +47,7 @@ from .contracts import (
     BEAT_MARK_LIMIT,
     CLIP_SUBSET_LIMIT,
     COLOR_SPACES,
+    MASK_EXTRA_KEY_LIMIT,
     TIMEBASE,
     TRACK_FRAMES_MIN,
     AttributePlanRequest,
@@ -54,6 +62,7 @@ from .contracts import (
     DuckRequest,
     EditBatch,
     EditorError,
+    ExtraMaskTrackRequest,
     FadeAdoptTrackRequest,
     FourPointRequest,
     GradeApplyTrackRequest,
@@ -111,7 +120,7 @@ from .timeline import (
     sequence_view,
     validate_timeline,
 )
-from .tracking import analyse_window, follow_window
+from .tracking import analyse_window, follow_window, simplify_path
 
 MEDIA_TYPES = {
     ".jpg": "image/jpeg",
@@ -1079,6 +1088,188 @@ def create_app(
                 "targets": receipts,
             },
         }
+
+    @app.post(
+        "/v1/projects/{project_id}/clips/{clip_id}/mask-stack/{index}/track", dependencies=auth
+    )
+    def extra_mask_track(
+        project_id: Identifier,
+        clip_id: Identifier,
+        index: int,
+        request: ExtraMaskTrackRequest,
+        projects: Store,
+    ):
+        """Follow one extra mask block and write its own box keys.
+
+        This is the per-box half of multi-target tracking: the clip's main mask keeps its own path,
+        each extra block gets one here, and the blocks nobody named stay byte-for-byte as they
+        were. The path is decimated to the block's key ceiling by keeping only the samples a
+        straight line cannot replace; `coarse` says whether the ceiling ran out first.
+        """
+        engine = require_media()
+        root = projects.get(project_id)
+        project = sequence_view(root, request.sequence_id)
+        clip = project.clips.get(clip_id)
+        if clip is None:
+            raise EditorError("NOT_FOUND", "clip is not in this project", 404, clip_id=clip_id)
+        asset = project.assets.get(clip.asset_id)
+        if asset is None or asset.kind != "video" or asset.verified is None:
+            raise EditorError(
+                "INVALID_TRACK_TARGET",
+                "only verified video clips can be tracked",
+                422,
+                clip_id=clip.id,
+            )
+        stack = list(clip.extra_masks)
+        if not 0 <= index < len(stack):
+            raise EditorError(
+                "INVALID_TRACK_TARGET",
+                "this clip has no extra mask at that position",
+                422,
+                clip_id=clip.id,
+                index=index,
+                stack_size=len(stack),
+            )
+        speed_blocked = clip.speed_curve
+        if speed_blocked:
+            raise EditorError(
+                "INVALID_MASK",
+                "a tracked mask path cannot follow a speed curve yet",
+                clip_id=clip.id,
+                index=index,
+            )
+        if request.from_ticks >= clip.duration_ticks:
+            raise EditorError(
+                "INVALID_TRACK_TARGET",
+                "tracking starts outside the clip",
+                422,
+                clip_id=clip.id,
+                index=index,
+            )
+        source = Path(asset.verified.path)
+        if not source.is_file():
+            raise EditorError(
+                "MEDIA_MISSING",
+                "source file is gone",
+                410,
+                clip_id=clip.id,
+                asset_id=clip.asset_id,
+                asset_label=source.name,
+            )
+        extra = stack[index]
+        sampled = extra_box_at(extra, request.from_ticks)
+        box = (sampled[0], sampled[1], sampled[2], sampled[3])
+        scale = request.estimate_scale and extra.shape != "path"
+        speed = clip.speed_percent / 100
+        frame_ticks = project.settings.frame_ticks
+        start = clip.source_in_ticks + int(request.from_ticks * speed)
+        frames = request.frames
+        step = max(1, int(frame_ticks * speed))
+        if start + int(frames * frame_ticks * speed) > asset.verified.duration_ticks:
+            frames = (asset.verified.duration_ticks - start) // step
+        if frames < TRACK_FRAMES_MIN:
+            raise EditorError(
+                "SOURCE_OUT_OF_BOUNDS",
+                "tracking runs past the end of the source media",
+                422,
+                clip_id=clip.id,
+                index=index,
+                frames=frames,
+            )
+        width, decoded = analyse_window(
+            engine.ffmpeg,
+            source,
+            asset.verified.width or project.settings.width,
+            asset.verified.height or project.settings.height,
+            project.settings.frame_rate,
+            start,
+            frame_ticks,
+            frames,
+            clip.speed_percent,
+        )
+        result = follow_window(
+            decoded,
+            width,
+            box,
+            request.search_radius,
+            project.settings.frame_rate,
+            frame_ticks,
+            scale=scale,
+            max_gap=request.max_gap_frames,
+            reacquire=request.reacquire,
+            speed_percent=clip.speed_percent,
+        )
+        if len(result["points"]) < 2:
+            raise EditorError(
+                "TRACK_FAILED",
+                "too few frames matched to track",
+                422,
+                clip_id=clip.id,
+                index=index,
+                matched=len(result["points"]),
+            )
+        kept, coarse = simplify_path(result["points"], MASK_EXTRA_KEY_LIMIT)
+        feather_animated = any(key.feather is not None for key in extra.keys)
+        keys: list[dict] = []
+        for point in kept:
+            at = request.from_ticks + point["at_ticks"]
+            sample = extra_box_at(extra, at)
+            key = {
+                "at_ticks": at,
+                "center_x": point["mask_x"],
+                "center_y": point["mask_y"],
+                "width": point["width"] if scale else sample[2],
+                "height": point["height"] if scale else sample[3],
+                "rotation": sample[4],
+                "interpolation": "linear",
+            }
+            if feather_animated:
+                key["feather"] = sample[5]
+            keys.append(key)
+        masks = [item.model_dump(mode="json") for item in stack]
+        masks[index] = {**masks[index], "keys": keys}
+        command = {"op": "clip.mask_stack", "clip_id": clip.id, "masks": masks}
+        receipt = {
+            "clip_id": clip.id,
+            "index": index,
+            "from_ticks": request.from_ticks,
+            "frame_ticks": frame_ticks,
+            "sampled_frames": result["sampled_frames"],
+            "tracked_frames": len(result["points"]),
+            "written_keys": len(keys),
+            "coarse": coarse,
+            "predicted_frames": result["predicted_frames"],
+            "reacquired_frames": result["reacquired_frames"],
+            "reacquire": result["reacquire"],
+            "analysis_width": result["analysis_width"],
+            "analysis_height": result["analysis_height"],
+            "scale_estimated": result["scale"],
+            "speed_percent": result["speed_percent"],
+            "sample_rate": result["sample_rate"],
+            "lost_at_ticks": (
+                None
+                if result["lost_at_ticks"] is None
+                else request.from_ticks + result["lost_at_ticks"]
+            ),
+            "commands": [command],
+        }
+        plan_only = request.dry_run
+        if plan_only:
+            return {
+                "committed": False,
+                "project": root.model_dump(mode="json"),
+                "commands": [command],
+                "track": receipt,
+            }
+        batch = EditBatch(
+            request_id=request.request_id,
+            expected_revision=request.expected_revision,
+            sequence_id=request.sequence_id,
+            commands=[command],  # type: ignore[list-item]
+            dry_run=False,
+        )
+        mutation = projects.mutate(project_id, batch).model_dump()
+        return {**mutation, "commands": [command], "track": receipt}
 
     def track_seam(clip, points: list[dict]) -> dict:
         """What a continued track joins onto: how much survives, and how far the seam jumps.

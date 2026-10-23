@@ -55,7 +55,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.268.0"
+APP_VERSION = "1.269.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -5075,6 +5075,42 @@ class MaskTrackTarget(Contract):
 
 
 
+class ExtraMaskTrackRequest(Contract):
+
+    """Follow one block of the extra-mask stack and write its own box keys.
+
+    The main mask has `mask_track`; this is the same tracker aimed at one of the boxes above it,
+    so one clip can now follow several subjects: each block gets its own path, and the others stay
+    exactly as they were. The path is decimated to the block's key ceiling (`MASK_EXTRA_KEY_LIMIT`)
+    by keeping the samples a straight line cannot replace. `from_ticks` is clip-local; a constant
+    speed is mapped through, a speed curve is refused because its time is not linear.
+
+    """
+
+    request_id: Identifier
+
+    expected_revision: Revision
+
+    sequence_id: Identifier | None = None
+
+    from_ticks: Ticks = 0
+
+    frames: Annotated[int, Field(ge=TRACK_FRAMES_MIN, le=TRACK_FRAMES_MAX)] = 120
+
+    search_radius: Annotated[int, Field(ge=2, le=16)] = 10
+
+    estimate_scale: bool = True
+
+    max_gap_frames: Annotated[int, Field(ge=0, le=TRACK_GAP_MAX)] = TRACK_GAP_DEFAULT
+
+    reacquire: bool = True
+
+    dry_run: bool = False
+
+
+
+
+
 class MaskTrackRequest(Contract):
 
     """Follow one or more box masks across the picture in a single run.
@@ -7185,6 +7221,8 @@ def capabilities(
             # 位移是主遮罩这一帧挪了多少。不认识这一格的引擎仍然把两者当成互斥来做，
             # 所以界面那句「先跟后动」只能在这一格报得出时说。
             "extra_mask_follow_motion": True,
+
+            "extra_mask_track": media_ready,
 
             # 1.165: that angle accepts keyframes. Both ends execute one frame-aligned staircase
 

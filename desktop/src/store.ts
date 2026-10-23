@@ -1120,6 +1120,32 @@ export async function beatMarks(clipId: string) {
   }
 }
 
+/** 跟踪再叠遮罩里的一块：每一块自己一条轨迹，主遮罩与别的块一字不动。
+ *  分析用 dry-run，写回的是那一条普通的 clip.mask_stack；一次点击一个版本，撤销一步退回。 */
+export async function trackExtraMask(clipId: string, index: number, fromTicks: number) {
+  const project = state.project;
+  if (!engine || !project) return;
+  set({ busy: "跟踪这一块…" });
+  try {
+    const found = await engine.extraMaskTrack(project.id, clipId, index, {
+      request_id: newId("stack-track-"), expected_revision: project.revision,
+      sequence_id: state.sequenceId, from_ticks: Math.max(0, Math.round(fromTicks)),
+      frames: state.caps?.limits?.track_max_frames ?? 120, dry_run: true,
+    });
+    submit(found.commands as Command[], "跟踪这一块遮罩");
+    const row = found.track;
+    toast("ok", `跟踪了 ${row.tracked_frames} 帧，写入 ${row.written_keys} 枚框点`,
+      `${row.coarse ? "这一块的框点额度用完，路径被压粗；" : ""}`
+      + `${row.lost_at_ticks !== null ? "主体在中途跟丢，后面的段落停在最后看见的位置；" : ""}`
+      + "撤销一步整块退回；主遮罩与别的块没有改动。");
+  } catch (error) {
+    const { title, detail } = describe(error);
+    toast("error", title, detail);
+  } finally {
+    set({ busy: "" });
+  }
+}
+
 /** 划动源画面：片段留在原地、时长不变，只换它播素材的哪一段。 */
 export function slipClip(clipId: string, frames: number) {
   const project = state.project;

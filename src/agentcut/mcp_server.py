@@ -26,6 +26,7 @@ from .contracts import (
     CreateProject,
     DuckRequest,
     EditBatch,
+    ExtraMaskTrackRequest,
     FadeAdoptTrackRequest,
     FourPointRequest,
     GradeApplyTrackRequest,
@@ -697,6 +698,26 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         return await call(
             "POST",
             f"/v1/projects/{project_id}/mask-track",
+            request.model_dump(mode="json"),
+            timeout=900,
+        )
+
+    @server.tool(annotations=write)
+    async def mask_stack_track(
+        project_id: Identifier, clip_id: Identifier, index: int, request: ExtraMaskTrackRequest
+    ) -> dict[str, Any]:
+        """Follow one block of a clip's extra-mask stack and write that block's own keys.
+
+        The main mask keeps its path through `mask_track`; this is how a second, third or fourth
+        subject in the same shot gets a path of its own. Every other block and the main mask stay
+        untouched, and the whole rewrite lands as one `clip.mask_stack` at one revision, so one undo
+        takes it back. The path is decimated to the block's key ceiling; `track.coarse` says whether
+        the ceiling, rather than the tolerance, decided the last point. `dry_run` returns the
+        command without writing.
+        """
+        return await call(
+            "POST",
+            f"/v1/projects/{project_id}/clips/{clip_id}/mask-stack/{index}/track",
             request.model_dump(mode="json"),
             timeout=900,
         )

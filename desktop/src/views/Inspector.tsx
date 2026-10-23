@@ -78,7 +78,7 @@ import {
   nestSelection,
   openSequence,
   updateSequence,
-  reframeClip, stabilizeClip, trackMasks,
+  reframeClip, stabilizeClip, trackMasks, trackExtraMask,
   cutSilence,
   beatMarks,
   autoCaptions,
@@ -682,6 +682,9 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
   const rotationLimit = app.caps?.limits?.mask_rotation_limit;
   const stack = clip.extra_masks ?? [];
   const at = localTick();
+  // `at` is clamped to the clip, so it cannot tell whether the playhead is really inside it.
+  const inside = play.ticks >= clip.position_ticks
+    && play.ticks < clip.position_ticks + clip.duration_ticks;
   // 1.247：Agent 写在两帧之间的框点，点开它时播放头精确落在它的 tick 上；按取整后的帧去找会落空。
   const exact = Math.max(0, Math.min(clip.duration_ticks, play.ticks - clip.position_ticks));
   const full = stack.length >= limit;
@@ -766,6 +769,14 @@ function MaskStack({ clip, disabled }: { clip: Clip; disabled: boolean }) {
         <label className="mask-stack-cell mask-stack-invert"><input type="checkbox" checked={item.inverted} disabled={disabled}
           onChange={(event) => patch(index, { inverted: event.target.checked })} />反转这一块</label>
         <div className="mask-stack-keys">
+          {app.caps?.features?.extra_mask_track ? <button type="button" className="btn tiny subtle"
+            disabled={disabled || Boolean(clip.speed_curve) || !inside}
+            title={clip.speed_curve
+              ? "带变速曲线的片段还不能跟踪这一块：时间不是线性的，轨迹映射不回来；先清掉速度曲线"
+              : !inside
+                ? "先把播放头停在这个片段里，再从这一帧开始跟踪这一块"
+                : `从播放头这一帧起听画面，把第 ${index + 1} 块的中心与大小写成它自己的框点（最多 ${keysLimit} 枚，写满就按能贴住路径的少数点抽稀）；只改这一块，主遮罩与别的块一字不动；一次提交一个版本，撤销一步整块退回`}
+            onClick={() => void trackExtraMask(clip.id, index, at)}>跟踪这一块</button> : null}
           <button type="button" className="btn tiny subtle" disabled={disabled || keysLimit === 0 || (item.keys?.length ?? 0) >= keysLimit || Boolean(atKey)}
             title={atKey
               ? `这一帧已经有一枚框点——上面 ${keyCells} 个数改的就是它。要在别的时刻再打一枚，先把播放头挪开。`

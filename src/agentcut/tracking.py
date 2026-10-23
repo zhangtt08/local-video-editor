@@ -437,6 +437,53 @@ def track_box(
     }
 
 
+def simplify_path(
+    points: list[dict], limit: int, tolerance: float = 0.0025
+) -> tuple[list[dict], bool]:
+    """Keep the fewest samples whose straight lines stay within `tolerance` of every sample.
+
+    An extra box stores at most a couple of dozen keys, so a tracked path has to be decimated. The
+    error is measured on the four numbers the box actually renders (centre and size, in picture
+    fractions); the returned flag says whether the limit ran out before the tolerance did, so the
+    caller can tell a faithful short path from a coarse one.
+    """
+    if not points:
+        return [], False
+    if len(points) <= 2 or limit <= 2:
+        return points[: max(1, limit)], len(points) > limit
+    kept = {0, len(points) - 1}
+
+    def error(a: int, b: int, index: int) -> float:
+        span = b - a
+        if span <= 0:
+            return 0.0
+        u = (index - a) / span
+        left, right, middle = points[a], points[b], points[index]
+        return max(
+            abs(middle[name] - (left[name] + (right[name] - left[name]) * u))
+            for name in ("mask_x", "mask_y", "width", "height")
+        )
+
+    while len(kept) < limit:
+        ordered = sorted(kept)
+        worst_index, worst = -1, tolerance
+        for first, second in zip(ordered, ordered[1:]):
+            for index in range(first + 1, second):
+                found = error(first, second, index)
+                if found > worst:
+                    worst_index, worst = index, found
+        if worst_index < 0:
+            break
+        kept.add(worst_index)
+    chosen = [points[index] for index in sorted(kept)]
+    leftover = any(
+        error(first, second, index) > tolerance
+        for first, second in zip(sorted(kept), sorted(kept)[1:])
+        for index in range(first + 1, second)
+    )
+    return chosen, leftover
+
+
 def analyse_window(
     ffmpeg: Path,
     source: Path,

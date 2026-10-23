@@ -25,6 +25,7 @@ HTTP 使用 `Authorization: Bearer <AGENTCUT_TOKEN>`。JSON 请求严格校验�
 | POST /v1/projects/{id}/speech-captions | captions_auto | 本地语音识别成字幕线索并取回 `captions.import` 计划（`apply`/`dry_run` 在该工具里固定为 false） |
 | `clip.slip` / `clip.slide`（`/edits`） | timeline_edit | 划动素材窗口 / 左右滑移，两侧相邻段各自补让 |
 | POST /v1/projects/{id}/mask-track | mask_track | 一组目标一起分析画面，每个遮罩各把自己的路径写成关键帧：读同一段窗口的目标只解码一次，整组落进一个批次（与 `/edits` 同一事务语义） |
+| POST /v1/projects/{id}/clips/{c}/mask-stack/{i}/track | mask_stack_track | 只跟再叠遮罩里的一块（1.269）：写回一条普通的 `clip.mask_stack`，别的块与主遮罩一字不动；路径按 `extra_mask_keys` 抽稀，`track.coarse` 说明额度先于容差用尽 |
 | GET /v1/projects/{id}/frame | preview_frame | 取成片的一帧：导出渲染器算出的 PNG（长边压到 256 便于传输，宽高比不变），附 `sha256` 与真正取样的 tick；`sequence_id` 取合成里的画面 |
 | GET /v1/media/cache | media_cache_read | 派生缓存清单：条目、字节、上限 |
 | POST /v1/media/cache/prune | media_cache_prune | 按预算整项淘汰派生缓存（LRU），`dry_run` 先看会删什么、`keep` 保护正在看的哈希 |

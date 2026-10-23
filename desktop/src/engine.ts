@@ -1383,6 +1383,17 @@ export class Engine {
       frame_ticks: number; analysed_ticks: number; truncated: boolean; revision: number;
     }>("POST", `/v1/projects/${projectId}/audio/beats`, body, 600000);
   }
+  extraMaskTrack(projectId: string, clipId: string, index: number, body: Record<string, unknown>) {
+    return this.request<{
+      committed: boolean;
+      project: Record<string, unknown>;
+      commands: Record<string, unknown>[];
+      track: {
+        index: number; tracked_frames: number; written_keys: number; coarse: boolean;
+        predicted_frames: number; reacquired_frames: number; lost_at_ticks: number | null;
+      };
+    }>("POST", `/v1/projects/${projectId}/clips/${clipId}/mask-stack/${index}/track`, body, 900000);
+  }
   duckTrack(projectId: string, trackId: string, body: Record<string, unknown>) {
     return this.request<{
       committed: boolean;
