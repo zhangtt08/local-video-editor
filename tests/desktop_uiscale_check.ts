@@ -214,6 +214,25 @@ const packedRadius = [
 ];
 assert.deepEqual(packedRadius, [], `打包的 CSS 里还有写死的圆角：${packedRadius.join("、")}px`);
 
+// 8) 1.267：1040×660 那一档真截图里量到的三处——数折成两行、预设标题落单字、配置块横溢。
+//    这几条都不是「好不好看」：第一处让总时长跑到播放键底下，第二处把「（推荐交付）」拆成
+//    「（推荐交」+「付）」，第三处把密钥推到横滚之外。判据只看那几条声明在不在。
+const transportRule = /\.timecode, \.timecode-total, \.seq-info \{[^}]*\}/.exec(css);
+assert.ok(transportRule, "找不到时间码那一排的规则");
+assert.ok(/white-space: nowrap/.test(transportRule![0]), "时间码又会在斜杠后折成两行");
+assert.ok(/flex: none/.test(transportRule![0]), "时间码又会被那一排挤扁");
+assert.ok(/\.preview-col \{[^}]*container-type: inline-size/.test(css),
+  "播放器那一栏没有成为容器——放不下的分辨率那一项没法按栏宽收掉");
+assert.ok(/@container \(max-width: 640px\) \{\s*\.transport \.seq-info \{ display: none; \}/.test(css),
+  "窄栏下没有收掉分辨率与帧率，那一排会把它压成 0 宽");
+assert.ok(/\.pr-main b \{[^}]*text-wrap: balance/.test(css), "导出预设标题又会在括号中间断出孤字");
+assert.ok(/\.pr-main span \{[^}]*text-wrap: pretty/.test(css), "导出预设附注没有按标点断行");
+assert.ok(/\.code-block \{[^}]*white-space: pre-wrap[^}]*overflow-wrap: anywhere/.test(css),
+  "MCP 配置块又把长行推到横滚外面");
+assert.ok(/text-wrap:\s*balance/.test(packed), "打包那份 CSS 里没有预设标题的均衡断行");
+assert.ok(/overflow-wrap:\s*anywhere/.test(packed), "打包那份 CSS 里没有配置块的任意断行");
+assert.ok(/container-type:\s*inline-size/.test(packed), "打包那份 CSS 里没有播放器容器");
+
 console.log(
   `desktop_uiscale_check: 界面只从那套刻度里取字与圆角——7 档字号最小 ${tokenValue("--fs-micro")}px、4 档圆角最大 ${tokenValue("--r-lg")}px，` +
     `全表 ${lines.length} 行里没有一处写死的字号/圆角，按钮 ${css.match(/\.btn\s*\{[^}]*height: *([\d.]+)px/)![1]}px 起，` +

@@ -515,7 +515,7 @@ select { color-scheme: dark; }
 
 /* 预览 */
 .center-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.preview-col { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.preview-col { display: flex; flex-direction: column; flex: 1; min-height: 0; container-type: inline-size; }
 .monitor-wrap { container-type: size; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; background: #121417; padding: 16px; }
 .monitor {
   position: relative; height: auto; max-height: 100%; max-width: 100%; aspect-ratio: 16 / 9;
@@ -540,9 +540,16 @@ select { color-scheme: dark; }
 .source-sync input { accent-color: var(--accent); }
 .play-btn { width: 34px; height: 34px; border-radius: 50%; background: var(--accent); color: #102724; display: inline-flex; align-items: center; justify-content: center; }
 .play-btn:hover { background: var(--accent-deep); }
+/* 1.267：时间码是一个数，不是一句话——1040 那一档量到 `/ 00:00:11:15` 在斜杠后折成两行，
+   总时长掉到播放键底下；同一排最右边的分辨率与帧率被挤成 0 宽、整条看不见。数不许折，
+   让不下的那一项由容器查询按栏宽收掉，而不是压扁。 */
 .timecode { font-size: var(--fs-strong); font-weight: 600; letter-spacing: .4px; }
+.timecode, .timecode-total, .seq-info { white-space: nowrap; flex: none; }
 .timecode-total { font-size: var(--fs-label); color: var(--ink-3); }
 .seq-info { font-size: var(--fs-label); color: var(--ink-2); }
+@container (max-width: 640px) {
+  .transport .seq-info { display: none; }
+}
 .preview-foot { flex: none; display: flex; align-items: center; gap: 10px; padding: 4px 10px; font-size: var(--fs-label); color: var(--ink-3); border-top: 1px solid var(--line); background: var(--sunk); }
 
 /* 检查器 */
@@ -582,7 +589,9 @@ select { color-scheme: dark; }
   padding: 9px 11px; overflow: auto; white-space: pre; margin-bottom: 9px;
   max-height: 260px; user-select: text;
 }
-.code-block { font-size: var(--fs-label); max-height: 300px; }
+/* 1.267：1040 那一档的 MCP 配置块里，env 那一行长到把密钥整段推到横滚外面；配置是拿来抄的，
+   不是拿来看格式的——折行显示整段，再把长 token 按任意字符断开。 */
+.code-block { font-size: var(--fs-label); max-height: 300px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .json-box .k, .code-block .k { color: #8ab4ff; }
 .json-box .s { color: #9fd8a8; }
 .json-box .n { color: #f0c674; }
@@ -814,8 +823,10 @@ table.table tr.current td { background: var(--accent-soft); }
 .pr-dot { width: 12px; height: 12px; flex: none; border-radius: 50%; border: 1.5px solid var(--line-strong); margin-top: 3px; background: var(--sunk); }
 .preset-row.active .pr-dot { border-color: var(--accent); background: radial-gradient(circle at 50% 50%, var(--accent) 0 3.5px, var(--sunk) 4px); }
 .pr-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.pr-main b { font-size: var(--fs-body); }
-.pr-main span { font-size: var(--fs-label); color: var(--ink-3); }
+/* 1.267：285px 那一栏里「原始画质 H.264（推荐交付）」会在括号中间断，第二行只剩「付）」。
+   标题按两行均分，附注按标点断行——不让一个字落单。 */
+.pr-main b { font-size: var(--fs-body); text-wrap: balance; }
+.pr-main span { font-size: var(--fs-label); color: var(--ink-3); text-wrap: pretty; }
 .input-row { display: flex; align-items: center; gap: 6px; }
 .input-row .input { flex: 1; min-width: 0; }
 .suffix { font-size: var(--fs-label); color: var(--ink-3); flex: none; }

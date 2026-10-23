@@ -55,7 +55,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.266.0"
+APP_VERSION = "1.267.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -2189,6 +2189,14 @@ PathVertices = Annotated[list[MaskVertex], Field(min_length=3, max_length=MASK_V
 
 
 
+# 1.267：播放速度的量程只有一个主人。此前 25 与 400 抄在四处（两条命令的字段、曲线点的上限、
+# 四点剪辑那一句判断），渲染层还自己抄了第五处——上限挪一次就有四处谎。
+
+SPEED_PERCENT_MIN = 25
+
+SPEED_PERCENT_MAX = 400
+
+
 class SpeedPoint(Contract):
 
     """One node of a speed profile: timeline offset inside the clip and relative percent."""
@@ -2197,7 +2205,7 @@ class SpeedPoint(Contract):
 
     at_ticks: Ticks
 
-    percent: Annotated[int, Field(ge=0, le=400)]
+    percent: Annotated[int, Field(ge=0, le=SPEED_PERCENT_MAX)]
 
 
 
@@ -2781,7 +2789,7 @@ class Clip(Contract):
 
     duration_ticks: Duration
 
-    speed_percent: Annotated[int, Field(ge=25, le=400)] = 100
+    speed_percent: Annotated[int, Field(ge=SPEED_PERCENT_MIN, le=SPEED_PERCENT_MAX)]
 
     text: TextStyle | None = None
 
@@ -4174,7 +4182,7 @@ class ClipSpeedSet(Contract):
 
     clip_id: Identifier
 
-    speed_percent: Annotated[int, Field(ge=25, le=400)]
+    speed_percent: Annotated[int, Field(ge=SPEED_PERCENT_MIN, le=SPEED_PERCENT_MAX)]
 
     ripple: bool = True
 
