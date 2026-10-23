@@ -255,6 +255,7 @@ def main():
             "mask_shape_keys",  # 1.118: 没提过轮廓帧的载荷就是 1.118 之前写的
             "extra_masks",  # 1.221: 没提过再叠那几块的载荷就是 1.221 之前写的
             "extra_masks_follow",  # 1.237: 没提过「跟着主遮罩平移」的载荷就是 1.237 之前写的
+            "chroma",  # 1.276: 没提过色度键的载荷就是 1.276 之前写的
         ):
             del legacy["commands"][0]["clip"][field]
         old_hash = hashlib.sha256(

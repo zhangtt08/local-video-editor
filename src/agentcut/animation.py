@@ -3,6 +3,7 @@
 import hashlib  # preview filter ids are content-addressed, like the caption text files
 from math import sqrt
 
+from .compositing import chroma_row
 from .contracts import (
     FADE_SHAPE_CURVES,
     LAYER_KEY_LIMITS,
@@ -1176,6 +1177,9 @@ def preview_manifest(
             # One key, two shapes: a clip that does not step gets the single static filter the
             # browser has always drawn, a stepped one gets the window table it animates.
             "sharpen": stepped or sharpen,
+            # 1.276：色度键交出去的就是引擎那一份数（`compositing.chroma_row`）——画布不许拿
+            # similarity 与 blend 自己再减一遍；`soft` 说那一段软边还在不在，两端同判。
+            "chroma": chroma_row(clip.chroma) if clip.chroma else None,
             # 画布这一档自己算基础调色与整条链；CSS 这一串只剩柔焦与清晰（它们按顺序留在外层）。
             "webgl": webgl,
             "color_basics": basics if webgl else None,

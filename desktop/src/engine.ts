@@ -208,6 +208,11 @@ export type MaskVertex = { x: number; y: number; handle_out: [number, number]; h
 /** 1.257：那一枚框点也能带贝塞尔——柄与曲线编辑器那两个下拉读的是同一份 `Bezier` 形状，
  *  而「有哪几种缓动可选」由 `capabilities.mask_box_interpolations` 说，界面不许自己滤掉某一种。 */
 export type MaskBoxKey = { at_ticks: number; center_x: number; center_y: number; width: number; height: number; rotation?: number; feather?: number | null; interpolation?: "linear" | "hold" | "ease" | "bezier"; bezier?: Bezier | null };
+/** 1.276：色度键。写进去的就是这四个数——`low`/`high`/`width` 一律由引擎折（`chroma_row`），
+ *  这里既不算 `similarity - blend`，也不带第二个满量程。 */
+export type ChromaKey = { color: string; similarity: number; blend: number; inverted: boolean };
+export type ChromaRow = { color: number[]; low: number; high: number; width: number; soft: boolean; inverted: boolean };
+
 export type ShapeMask = { shape: "rectangle" | "ellipse" | "path"; center_x: number; center_y: number; width: number; height: number; rotation?: number; feather: number; inverted: boolean; vertices?: MaskVertex[] | null; keys?: MaskBoxKey[] };
 export type ExtraMaskBox = { center_x: number; center_y: number; width: number; height: number; rotation: number; feather?: number };
 export type ExtraMaskWindow = { from_ticks: number; to_ticks: number; image: string; follow?: boolean; box?: ExtraMaskBox | null };
@@ -290,7 +295,7 @@ export type SharpenSteps = {
   curve: { offset: number; id: string | null; easing: string }[];
 };
 export type SharpenSpec = SharpenStatic | SharpenSteps;
-export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; webgl?: boolean; color_basics?: number[] | null; grade?: GradeTables | null; sharpen?: SharpenSpec | null; speed?: RampPiece[] | null; mask_image?: string | null; extra_mask_images?: string[] | null; extra_mask_units?: (string | null)[] | null; extra_mask_windows?: (ExtraMaskWindow[] | null)[] | null; extra_masks_follow?: boolean; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; mask_shape?: MaskShapeWindow[] | null; mask_rotation_windows?: MaskRotationWindow[] | null; spatial?: Partial<Record<SpatialProperty, Curve>> | null; edge_filter?: string | null; curves: Record<AnimatedEffect, Curve>; transition: TransitionEnvelope; fade?: Record<"opacity" | "gain", Curve> | null;
+export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; webgl?: boolean; color_basics?: number[] | null; grade?: GradeTables | null; sharpen?: SharpenSpec | null; chroma?: ChromaRow | null; speed?: RampPiece[] | null; mask_image?: string | null; extra_mask_images?: string[] | null; extra_mask_units?: (string | null)[] | null; extra_mask_windows?: (ExtraMaskWindow[] | null)[] | null; extra_masks_follow?: boolean; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; mask_shape?: MaskShapeWindow[] | null; mask_rotation_windows?: MaskRotationWindow[] | null; spatial?: Partial<Record<SpatialProperty, Curve>> | null; edge_filter?: string | null; curves: Record<AnimatedEffect, Curve>; transition: TransitionEnvelope; fade?: Record<"opacity" | "gain", Curve> | null;
       layer?: { asset_id: string; kind?: "image" | "video" | null; motion?: "always" | "paused" | null; mode: BlendMode; mix: number; offset_x: number; offset_y: number; scale: number; rotation?: number; windows?: LayerWindow[]; paintable: boolean; reason?: string | null }[];
       composite?: CompositeEdge | null }> };
 
@@ -323,6 +328,7 @@ export type Clip = {
   speed_percent?: number;
   speed_curve?: SpeedPoint[] | null;
   stabilization?: Stabilization | null;
+  chroma?: ChromaKey | null;
   keyframes?: Keyframe[];
   mask_shape_keys?: MaskShapeKeyframe[];
   animation_offset_ticks?: number;
@@ -686,7 +692,7 @@ export type Capabilities = {
   max_commands_per_batch: number;
   commands: string[];
   features: Record<string, boolean>;
-  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; denoise_db?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number; track_max_gap_frames?: number; track_gap_default?: number; track_min_frames?: number; track_max_frames?: number; mask_rotation_limit?: number; extra_masks?: number; extra_mask_keys?: number; mask_shape_keys?: number; mask_shape_schedule_segments?: number; blur_schedule_segments?: number; sharpen_schedule_segments?: number; layer_key_limit?: number; layer_schedule_segments?: number; attribute_paste_targets?: number };
+  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; denoise_db?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number; track_max_gap_frames?: number; track_gap_default?: number; track_min_frames?: number; track_max_frames?: number; mask_rotation_limit?: number; extra_masks?: number; extra_mask_keys?: number; mask_shape_keys?: number; mask_shape_schedule_segments?: number; blur_schedule_segments?: number; sharpen_schedule_segments?: number; layer_key_limit?: number; layer_schedule_segments?: number; attribute_paste_targets?: number; chroma_similarity_default?: number; chroma_blend_default?: number; chroma_color_default?: string };
   render_presets: Preset[];
   /** 1.137：时间码的写法与「哪两个率才有丢帧码」由引擎说，界面不许自己写一份正则。 */
   timecode_shape?: string;
@@ -785,6 +791,7 @@ export function errorHints(): Record<string, string> {
       CLIP_OVERLAP: "同轨重叠需要转场。先将镜头首尾衔接，再在后一个镜头的属性面板添加转场。",
       INVALID_TRANSITION: "选择首尾衔接的两个镜头，转场需短于每个镜头。",
       INVALID_MASK: "遮罩只能用于画面轨片段，请检查轨道和遮罩范围。整批操作没有被保存。",
+      INVALID_CHROMA: "色度键只扣得动画面：这一段在声音轨上，或它本来就是一层文字。把键挂到画面轨的那一段上。",
       PLAN_INPUT_UNREFERENCED: "编译出来的画面里有一路素材谁都没读——这是引擎把片段接错了解码器，不是你的工程有问题。换一份交付预设，或把这一段单独导一次；还出现就把片段 id 和这段时间告诉我们。",
       PLAN_INPUT_DOUBLE_READ: "编译出来的画面里有一路素材被两条图层链同时读了——同一个素材应该一段一路，不会共用。多半是引擎把两个片段接到了同一个解码器上；把其中一段换个素材或挪到别的轨再导一次，还出现就把这两段的 id 告诉我们。",
       MASK_SHAPE_LIMIT: "这条遮罩的轮廓帧已经记满了。可以先删掉几帧、把这段切成两个片段分别做形变，或把不需要的帧改成同一形状。",

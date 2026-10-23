@@ -34,7 +34,7 @@ from .animation import (
 from .animation import (
     points as curve_points,
 )
-from .compositing import blend_track
+from .compositing import blend_track, chroma_row
 from .contracts import (
     BLUR_RADIUS_LIMIT_PX,
     DENOISE_FLOOR_DB,
@@ -141,6 +141,33 @@ def text_font_path(face_id: str) -> str:
 def _rgb(color: str) -> tuple[int, int, int]:
     values = tuple(int(color[index : index + 2], 16) for index in (1, 3, 5))
     return values  # type: ignore[return-value]
+
+
+def chroma_stage(clip) -> str:
+    """1.276：色度键那一趟 `geq`——把「离键色多远」写成逐像素的 alpha 因子。
+
+    数只由 `compositing.chroma_row` 折一次，预览画布读的是同一份。这一级挂在**调色之前**：
+    浏览器那头的画布也先键、再由外层的 CSS 调色与柔焦套在后面，两端才是同一条顺序。
+    没挂键的片段交回空串，编译出来的串与 1.275 逐字节相同。
+    """
+    if clip.chroma is None:
+        return ""
+    row = chroma_row(clip.chroma)
+    red, green, blue = row["color"]
+    distance = f"sqrt(pow(r(X,Y)-{red},2)+pow(g(X,Y)-{green},2)+pow(b(X,Y)-{blue},2))"
+    if row["soft"]:
+        factor = f"clip(({distance}-{row['low']:.6g})/{row['width']:.6g},0,1)"
+    else:
+        # `blend` 拧到 0 就是那一刀：`gte` 与画布里的 `step` 在同一格给出同一个 1。
+        factor = f"gte({distance},{row['high']:.6g})"
+    if row["inverted"]:
+        factor = f"(1-({factor}))"
+    return (
+        f"format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+        f"a='alpha(X,Y)*({factor})',"
+    )
+
+
 
 
 # Windows' `CreateProcess` takes a command line of ~32 KB, and a keyframe-dense clip reaches it on
@@ -1125,6 +1152,9 @@ def compile_render_plan(
         or any(
             entry["asset"].kind in {"text", "sequence"}
             or entry["clip"].mask
+            # 1.276：挂了色度键的片段必须走叠层那一条路——`cut` 那条链根本没有 alpha 这一趟，
+            # 让它走进去就是「界面说抠了、成片里那一块还是绿的」。
+            or entry["clip"].chroma
             or entry["clip"].transition_in
             or fade_active(entry["clip"], "opacity")
             or any(k.property != "gain" for k in entry["clip"].keyframes)
@@ -1914,7 +1944,9 @@ def compile_render_plan(
                     mode_out = plan.tag("lcxmode")
                     lerped = plan.tag("lcxlerp")
                     merged = plan.tag("lcxmerged")
-                    plan.filters.append(f"{video_source}{paced}{title}split=2{graded}{raws}")
+                    plan.filters.append(
+                        f"{video_source}{paced}{title}{chroma_stage(clip)}split=2{graded}{raws}"
+                    )
                     plan.filters.append(f"{graded}{color_filter(clip, plan)}{fit}{gfit}")
                     plan.filters.append(f"{raws}{fit}{rfit}")
                     plan.filters.append(f"{gfit}split=2{grgb}{gsplit}")
@@ -1934,7 +1966,10 @@ def compile_render_plan(
                     plan.filters.append(f"{lerped}{galpha}alphamerge{merged}")
                     head = f"{merged}format=rgba"
                 else:
-                    head = f"{video_source}{paced}{title}{color_filter(clip, plan)}{fit}"
+                    head = (
+                        f"{video_source}{paced}{title}{chroma_stage(clip)}"
+                        f"{color_filter(clip, plan)}{fit}"
+                    )
                 head = focus_stages(plan, head, clip, focus_basis, frame_ticks=settings.frame_ticks)
                 body = (
                     f"{transform}"

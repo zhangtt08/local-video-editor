@@ -258,8 +258,8 @@ def with_media(project: Project, path: Path) -> Project:
 
 def contract_suite() -> None:
     caps = capabilities()
-    assert SCHEMA_VERSION == 30, SCHEMA_VERSION
-    assert caps["project_schema_version"] == 30
+    assert SCHEMA_VERSION == 31, SCHEMA_VERSION
+    assert caps["project_schema_version"] == 31
     assert MASK_FIELDS["mask_feather"] == "feather", MASK_FIELDS
     # 再叠那一块的窗表按位置说话：这一列属性名与那一列字段名必须一格对一格。
     assert list(MASK_BOX_VALUES) == list(MASK_FIELDS), (MASK_BOX_VALUES, MASK_FIELDS)

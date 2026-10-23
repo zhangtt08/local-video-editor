@@ -21,7 +21,10 @@ MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 
 SCHEMA_VERSION = (
 
-    30  # v30 lets that soft edge become a curve of its own (`mask_feather`); a v29 row can name
+    31  # v31 lets a clip carry a chroma key (`chroma`); a v30 row has no such field and reads
+    #     as "no key", which is exactly what the missing field meant — an older engine never
+    #     sees the new one, it just cannot write it back. v30 lets that soft edge become a
+    #     curve of its own (`mask_feather`); a v29 row can name
     #     no such property, so an older engine must fail the keyframe rather than drop the ramp. v29
     #     lets one of those box keys carry its own feather: a v28 row's key has no such field
 
@@ -55,7 +58,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.275.0"
+APP_VERSION = "1.276.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -663,6 +666,18 @@ DENOISE_LIMIT = 24.0
 # where one knob position becomes the reduction the label promises.
 
 DENOISE_FLOOR_DB = -30.0
+
+# 1.276：色度键抠像——把这一帧里离键色足够近的那些像素抠成透明。两个旋钮量的都是同一件事：
+# 8 位彩色平面上那一段欧氏距离除以满量程 255，所以 0.12 就是 30.6 级。默认那一对由
+# `tests/chroma_check.py` 在真实绿幕夹具上量出来（见那边的数），界面不许自带另一个数。
+
+CHROMA_SIMILARITY_DEFAULT = 0.12
+
+CHROMA_BLEND_DEFAULT = 0.05
+
+# 键色的默认值是绿幕那一种绿；界面「挂上抠像」时写的就是这一个，不许自带第二个色。
+
+CHROMA_COLOR_DEFAULT = "#00FF00"
 
 # Stabilisation: how much of the frame may be spent hiding the borders the correction exposes, and
 
@@ -2779,6 +2794,26 @@ class Stabilization(Contract):
 
 
 
+class ChromaKey(Contract):
+
+    """1.276：色度键——把这一帧里离 `color` 足够近的那些像素抠成透明。
+
+    判的不是一格阈值而是一段距离：像素与键色在 R/G/B 三条轴上的欧氏距离，落在
+    `low = (similarity - blend) × 255` 与 `high = similarity × 255` 之间是软边，比 `low`
+    近的全透、比 `high` 远的全不透；`blend` 为 0 时那一段塌成一刀。导出与预览读的都是
+    引擎在这一处算出的那两个数（`render.chroma_ramp`），界面不许再换算一遍。
+    """
+
+    color: Annotated[str, Field(pattern=TEXT_COLORS)] = CHROMA_COLOR_DEFAULT
+
+    similarity: Annotated[float, Field(ge=0, le=1)] = CHROMA_SIMILARITY_DEFAULT
+
+    blend: Annotated[float, Field(ge=0, le=1)] = CHROMA_BLEND_DEFAULT
+
+    inverted: bool = False
+
+
+
 class Clip(Contract):
 
     id: Identifier
@@ -2819,6 +2854,10 @@ class Clip(Contract):
     speed_curve: SpeedCurve | None = None
 
     stabilization: Stabilization | None = None
+
+    # 1.276：色度键。与遮罩相乘进同一条 alpha（`render` 那一次 `geq`），不是第二套洞。
+
+    chroma: ChromaKey | None = None
 
     keyframes: Annotated[list[Keyframe], Field(max_length=2000)] = Field(default_factory=list)
 
@@ -4130,6 +4169,20 @@ class ClipEffectsSet(Contract):
 
 
 
+class ClipChromaSet(Contract):
+
+    """挂上或摘掉这一段的色度键；整份替换，不像 `clip.patch` 那样只改几个数。"""
+
+    op: Literal["clip.chroma"]
+
+    clip_id: Identifier
+
+    chroma: ChromaKey | None
+
+
+
+
+
 class ClipMaskSet(Contract):
 
     op: Literal["clip.mask"]
@@ -4800,6 +4853,7 @@ Command = Annotated[
     | ClipEffectsSet
 
     | ClipMaskSet
+    | ClipChromaSet
     | ClipMaskStackSet
 
     | ClipMaskTrack
@@ -7098,6 +7152,7 @@ def capabilities(
 
             "clip.mask",
             "clip.mask_stack",
+            "clip.chroma",
 
             "clip.mask_track",
 
@@ -7219,6 +7274,12 @@ def capabilities(
             "nested_sequences": True,
 
             "shape_masks": True,
+
+            # 1.276：色度键抠像。两端都有这一手才算能力：导出是 `render.chroma_ramp` 折进那一次
+            # `geq` 的逐像素因子，预览是同一对数驱动的 WebGL2 画布；老引擎没有这一格，界面那组
+            # 旋钮就不许长出来。
+
+            "chroma_key": True,
 
             "path_masks": True,
 
@@ -7536,6 +7597,15 @@ def capabilities(
             "sharpen_radius_fraction": BLUR_LIMIT,
 
             "sharpen_radius_default": SHARPEN_RADIUS_DEFAULT,
+
+            # 1.276：色度键那两颗旋钮的默认档位。界面「挂上抠像」时写的就是这两个数——
+            # 它们由 `tests/chroma_check.py` 在真实绿幕夹具上量出来，不是界面自己挑的。
+
+            "chroma_similarity_default": CHROMA_SIMILARITY_DEFAULT,
+
+            "chroma_blend_default": CHROMA_BLEND_DEFAULT,
+
+            "chroma_color_default": CHROMA_COLOR_DEFAULT,
 
             "blur_schedule_segments": SPATIAL_SCHEDULE_MAX,
 

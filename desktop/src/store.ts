@@ -19,6 +19,7 @@ import {
 import type {
   Capabilities,
   Clip,
+  ChromaKey,
   Command,
   MutationResult,
   Probe,
@@ -141,6 +142,8 @@ export type AppState = {
   editorPanel: (typeof EDITOR_PANELS)[number];
   graphOpen: boolean;
   maskEditing: boolean;
+  /** 1.276：「看遮罩」那一档——只改预览画布的输出，不写工程、不改导出。 */
+  chromaMatte: boolean;
   /** 1.252：画面里正在编辑的再叠遮罩块（片段 id + 该块序号）；不在任何一块上就是 null。
    *  只活在这一次界面状态里，不进工程——它是一次选择，不是作品的一部分。 */
   maskExtraSel: { clipId: string; index: number } | null;
@@ -202,6 +205,7 @@ let state: AppState = {
   editorPanel: "inspect",
   graphOpen: false,
   maskEditing: false,
+  chromaMatte: false,
   maskExtraSel: null,
   splitterTouched: false,
   monitorMode: "timeline",
@@ -294,6 +298,9 @@ export function openEditorPanel(editorPanel: AppState["editorPanel"]) {
 
 export function setGraphOpen(graphOpen: boolean) { set({ graphOpen }); }
 export function setMaskEditing(maskEditing: boolean) { playhead.pause(); setMonitorMode("timeline"); set({ maskEditing }); }
+
+/** 1.276：「看遮罩」不碰播放、不碰工程——它只是那一帧画布的另一种输出。 */
+export function setChromaMatte(chromaMatte: boolean) { set({ chromaMatte }); }
 export function selectMaskExtra(clipId: string, index: number | null) {
   set({ maskExtraSel: index === null ? null : { clipId, index } });
 }
@@ -2260,6 +2267,12 @@ export function setClipMaskStack(clipId: string, masks: ShapeMask[], follow?: bo
 export function setClipMask(clipId: string, mask: ShapeMask | null, projectId = state.project?.id, revision = state.project?.revision) {
   if (projectId === undefined || revision === undefined) return;
   editAtRevision([{ op: "clip.mask", clip_id: clipId, mask }], projectId, revision, "调整遮罩");
+}
+
+/** 1.276：色度键整份写入或摘掉——与 `clip.mask` 同一个规矩，不在界面拼半个键。 */
+export function setClipChroma(clipId: string, chroma: ChromaKey | null, projectId = state.project?.id, revision = state.project?.revision) {
+  if (projectId === undefined || revision === undefined) return;
+  editAtRevision([{ op: "clip.chroma", clip_id: clipId, chroma }], projectId, revision, "调整色度键");
 }
 
 /**

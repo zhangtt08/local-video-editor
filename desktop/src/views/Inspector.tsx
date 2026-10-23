@@ -1,5 +1,5 @@
 import { manifestUrl } from "../manifestFetch";
-import type { Keyframe, MaskBoxKey, MaskShapeKeyframe, SpatialProperty } from "../engine";
+import type { ChromaKey, Keyframe, MaskBoxKey, MaskShapeKeyframe, SpatialProperty } from "../engine";
 import { useEffect, useId, useRef, useState } from "react";
 
 import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionChoices, type AnimatedEffect, type Capabilities, type Clip, type LinkStatus, type SampledValues, type ShapeMask, type TransitionKind, BLEND_MODES} from "../engine";
@@ -70,6 +70,8 @@ import {
   prefs,
   setClipMask,
   setClipMaskStack,
+  setClipChroma,
+  setChromaMatte,
   selectMaskExtra,
   editAtRevision,
   setMaskEditing,
@@ -133,6 +135,7 @@ export function Inspector() {
       {clip ? <TransitionFields key={`transition-${clip.id}`} clip={clip} /> : null}
       {clip ? <EffectsFields key={clip.id} clip={clip} /> : null}
       {clip && project?.tracks.find((t) => t.id === clip.track_id)?.kind === "video" ? <MaskFields key={`mask-${clip.id}`} clip={clip} /> : null}
+      {clip && !clip.text && project?.tracks.find((t) => t.id === clip.track_id)?.kind === "video" ? <ChromaFields key={`chroma-${clip.id}`} clip={clip} /> : null}
       {clip && project?.tracks.find((t) => t.id === clip.track_id)?.kind === "video" ? <BlendFields clip={clip} /> : null}
       {clip && project?.assets[clip.asset_id]?.kind !== "audio" ? <ColorFields clip={clip} /> : null}
       {clip && project?.assets[clip.asset_id]?.kind !== "audio" ? <GradeFields clipId={clip.id} /> : null}
@@ -568,6 +571,40 @@ function GroupTrackFields() {
       <p className="hint">{app.caps?.features?.mask_track_rotation ? "四个" : "三个"}旋钮沿用应用偏好：挡住最多猜 {knobs.gap} 帧、{knobs.sweep ? "被挡住时整幅重找" : "被挡住时按匀速猜"}、{knobs.scale ? "遮罩随远近缩放" : "遮罩不随远近缩放"}{app.caps?.features?.mask_track_rotation ? `、${knobs.rotate ? "画面里的旋转也跟" : "不估旋转"}` : ""}。{skipped ? ` 另有 ${skipped} 段这一批不跟。` : ""}</p>
     </fieldset>
   </section>;
+}
+
+/** 1.276：色度键那一组。默认值三个数全部由引擎下发（`limits.chroma_*`），界面不自带第二个色，
+ *  也不代替引擎折那一段软边；「看遮罩」只改预览那一帧，既不写工程也不进导出。 */
+function ChromaFields({ clip }: { clip: Clip }) {
+  const app = useApp();
+  const project = editableProject(app);
+  const chroma = clip.chroma ?? null;
+  const disabled = Boolean(app.busy || !project || project.tracks.find((t) => t.id === clip.track_id)?.locked);
+  const limits = app.caps?.limits;
+  const supported = Boolean(app.caps?.features?.chroma_key);
+  const defaults: ChromaKey = {
+    color: String(limits?.chroma_color_default ?? ""),
+    similarity: Number(limits?.chroma_similarity_default ?? 0),
+    blend: Number(limits?.chroma_blend_default ?? 0),
+    inverted: false,
+  };
+  const shown = chroma ?? defaults;
+  return <details className="insp-section chroma-section"><summary className="panel-label">色度键{chroma ? ` · 相似度 ${Math.round(chroma.similarity * 100)}%` : ""}</summary>
+    <fieldset className="effects-fields" disabled={disabled}>
+      {!supported ? <p className="hint">这一版引擎还没有色度键；升级后这里就能挂。</p> : chroma ? <>
+        <div className="effect-row"><label htmlFor="chroma-color">键色</label>
+          <input id="chroma-color" type="color" value={shown.color} aria-label="色度键的键色" title="点开系统取色器：里面那支吸管可以直接在画面上吸一块颜色当键色" onChange={(e) => setClipChroma(clip.id, { ...shown, color: e.target.value })} /></div>
+        <div className="effect-row"><label htmlFor="chroma-similarity">相似度</label><EffectInput id="chroma-similarity" value={shown.similarity * 100} min={0} max={100} step={1} onCommit={(value) => setClipChroma(clip.id, { ...shown, similarity: value / 100 })} /><span className="dim">%</span></div>
+        <div className="effect-row"><label htmlFor="chroma-blend">边缘柔和</label><EffectInput id="chroma-blend" value={shown.blend * 100} min={0} max={100} step={1} onCommit={(value) => setClipChroma(clip.id, { ...shown, blend: value / 100 })} /><span className="dim">%</span></div>
+        <label className="dim" title="开着时留下的正是那一色附近的那些像素——反过来抠">保留键色<input type="checkbox" checked={shown.inverted} aria-label="保留键色而不是抠掉它" onChange={(e) => setClipChroma(clip.id, { ...shown, inverted: e.target.checked })} /></label>
+        <div className="insp-actions">
+          <button className={`btn tiny${app.chromaMatte ? " active" : ""}`} aria-pressed={app.chromaMatte} title="只看这个键抠出来的黑白遮罩，判边缘用得；它不改工程、也不进导出" onClick={() => setChromaMatte(!app.chromaMatte)}>看遮罩</button>
+          <button className="btn tiny subtle" title="摘掉之后这一段回到原样：整块画面都不透明" onClick={() => setClipChroma(clip.id, null)}>摘掉键</button>
+        </div>
+        <p className="hint">离键色近的那些像素抠成透明，露出下面那一层。抠不干净就加大相似度，边缘发毛就加大柔和。</p>
+      </> : <div className="insp-actions"><button className="btn" disabled={disabled} title={`按引擎下发的绿幕默认值挂上键（相似度 ${Math.round(defaults.similarity * 100)}%、柔和 ${Math.round(defaults.blend * 100)}%）；挂上后用键色那格里的吸管吸真正的键色`} onClick={() => setClipChroma(clip.id, defaults)}>挂上抠像</button></div>}
+    </fieldset>
+  </details>;
 }
 
 function MaskFields({ clip }: { clip: Clip }) {
@@ -1231,6 +1268,7 @@ const OPS: Record<string, string> = {
   "transition.remove": "移除转场",
   "clip.effects": "片段属性",
   "clip.mask": "调整遮罩",
+  "clip.chroma": "调整色度键",
   "clip.mask_track": "跟踪遮罩主体",
   "mask.shape.set": "记录遮罩轮廓",
   "mask.shape.remove": "删除遮罩轮廓",

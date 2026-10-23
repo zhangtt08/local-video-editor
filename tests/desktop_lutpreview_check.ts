@@ -56,14 +56,14 @@ assert.match(source, /preserveDrawingBuffer: true/, "画布不保留这一帧—
 const editor = read("desktop/src/views/Preview.tsx");
 assert.equal(count(editor, /gradeNeedsCanvas\(/g), 1, "判据在视图里不止一处");
 assert.match(editor, /const canvasGrade = plan && gradeNeedsCanvas\(plan\.grade\) \? plan\.grade : null;/, "判据的形状变了");
-assert.match(editor, /const canvasLive = canvasGrade !== null && !canvasFailed;/, "「画布活着」没有和失败那条腿分开");
+assert.match(editor, /const canvasLive = \(canvasGrade !== null \|\| canvasChroma !== null\) && !canvasFailed;/, "「画布活着」没有和失败那条腿分开");
 assert.equal(count(editor, /canvasLive \? "grade-source-hidden" : undefined/g), 2, "图片与视频两条腿没有都藏起来");
 assert.match(
   editor,
   /\{canvasLive \? <canvas ref=\{gradeCanvas\} className="grade-canvas" aria-hidden="true" \/> : null\}/,
   "画布不是由同一个数决定画不画",
 );
-assert.match(editor, /painted = paintGrade\(canvas, source, canvasGrade, plan\?\.color_basics \?\? \[1, 1, 1\]\)/, "画布没拿到引擎那三个基础调色数");
+assert.match(editor, /painted = paintGrade\(canvas, source, canvasGrade, plan\?\.color_basics \?\? \[1, 1, 1\], canvasChroma/, "画布没拿到引擎那三个基础调色数");
 assert.match(editor, /try \{[\s\S]{0,140}painted = paintGrade\([\s\S]{0,140}catch \{[\s\S]{0,60}painted = false;/, "抛出来的上传失败没接住");
 assert.match(editor, /if \(!painted\) setCanvasFailed\(true\);/, "画布画不出来时没人接着说");
 // 1.235：播放时这一支每帧都跑。`canvas.width = …` 每次重新分配并清空整块缓冲，尺寸没变就不该付。
@@ -76,7 +76,7 @@ assert.match(
 // 2026-10-20 量到的真缺陷：图片少了 crossOrigin，texImage2D 抛 SecurityError，整块画布是黑的。
 assert.match(editor, /crossOrigin="anonymous" src=\{url\} alt=\{asset\?\.label\}/, "图片没有按 CORS 取——上传到画布会被判成跨源");
 assert.match(editor, /className="layer-error grade-fallback"/, "失败那一句不在屏幕上");
-assert.match(editor, /useEffect\(\(\) => \{ setCanvasFailed\(false\); \}, \[canvasGrade\?\.id\]\);/, "换了链子仍记着上一次的失败");
+assert.match(editor, /useEffect\(\(\) => \{ setCanvasFailed\(false\); \}, \[canvasGrade\?\.id, canvasChroma\]\);/, "换了链子或换了键仍记着上一次的失败");
 assert.doesNotMatch(editor, /atob\(/, "视图自己解码了格点——解码只许一处");
 
 // ④ 样式：画布与源占同一格；源用 visibility 藏（布局不变，遮罩坐标不随之改）

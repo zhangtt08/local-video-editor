@@ -55,6 +55,12 @@ const block = css.slice(css.indexOf(".feature-index"), css.indexOf(".help-count"
 assert.ok(!/\bfont-size:\s*\d+(\.\d+)?px/.test(block), "功能索引里写了死字号");
 assert.ok(!/\bborder-radius:\s*\d+(\.\d+)?px/.test(block), "功能索引里写了死圆角");
 
+// 1.276：正文里的 `**这一句**` 必须在屏幕上变成粗体，不是留两颗星——四个渲染点共用一处折法。
+const count = (text: string, needle: RegExp) => (text.match(needle) ?? []).length;
+assert.equal(count(help, /\{richBody\(item\.body\)\}/g), 4, "帮助那四处正文没有都走同一把折法");
+assert.doesNotMatch(help, /\{item\.body\}/, "还有一处把正文原样摊在屏幕上（星号会露出来）");
+assert.equal(count(help, /export function richBody\(/g), 1, "折粗体的地方不止一处");
+assert.match(help, /<strong key=\{`b\$\{step\}`\}/, "粗体那一截不是按 ** 成对折出来的");
 console.log(
   "desktop_helpindex_check: PASS: KEYS 按「·」拆成功能百科与手感键，功能页可搜索、按主题折叠、"
   + "快捷键页只留手感键，样式只用共享字号与圆角",

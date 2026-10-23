@@ -44,6 +44,11 @@ SHIPPED_ENGINE = UNPACKED / "resources/bin/agentcut/agentcut.exe"
 RENDERER_SENTENCES = (
     "套上色彩管理",
     "取下色彩管理",
+    # 1.276：色度键在人眼前就是这四句——挂上、看遮罩、摘掉，以及画不出来时那一句实话。
+    "挂上抠像",
+    "看遮罩",
+    "摘掉键",
+    "预览画不出这个色度键",
     "素材从哪里读",
     "交付按什么输出",
     "色彩管理套叠",
@@ -147,6 +152,10 @@ RENDERER_LITERALS = (
     "attribute_categories",
     "ATTRIBUTE_PASTE_LIMIT",
     "mask-stack-bezier",
+    # 1.276：那条命令、那句中文提示与那两个默认值的键名——包里那份必须还认得。
+    "clip.chroma",
+    "INVALID_CHROMA",
+    "chroma_similarity_default",
 )
 
 

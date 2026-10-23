@@ -6,7 +6,7 @@ import { MaskPicture } from "./MaskPicture";
 import { TIMEBASE, frameTicks, humanDuration, pacing, rateLabel, timecode } from "../time";
 import type { AnimatedEffect, BlendMode, Clip, GradeTables, PreviewManifest, Project, Track } from "../engine";
 import { feColorMatrixValues } from "../engine";
-import { gradeNeedsCanvas, paintGrade } from "../gradeCanvas";
+import { chromaNeedsCanvas, gradeNeedsCanvas, paintGrade } from "../gradeCanvas";
 import { blurFrames, compositeLive, compositeSwap, layerFrames, layerStyle, sharpenFilters, sharpenFrames, sharpenSteps, wipeClipPath } from "../effects";
 import { appInfo, clearProxyCache, clearDerivedCache, cycleSafeArea, editSource, fourPoint, jumpEditPoint, markSource, playhead, PROXY_WIDTHS, selectClip, selectedSource, setMonitorMode, setProxyWidth, setSourceCursor, setSourcePlaying, setSourceRipple, setSourceTarget, timelineEnd, useApp, usePlay } from "../store";
 
@@ -235,10 +235,14 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
   const animations = useRef<Animation[]>([]); const [error, setError] = useState("");
   const asset = project.assets[clip.asset_id]; const isAudio = track.kind === "audio"; const isImage = asset?.kind === "image";
   const canvasGrade = plan && gradeNeedsCanvas(plan.grade) ? plan.grade : null;
+  // 1.276：键也走同一块画布。要不要走由 `chromaNeedsCanvas` 一处说，界面不再自己判「这段有没有键」。
+  const canvasChroma = plan && chromaNeedsCanvas(plan.chroma) ? plan.chroma : null;
   // 画布的失败不藏着：拿不到 WebGL2 或着色器编不过时，画面退回未套 LUT 的原件并明说，
   // 而不是留一块黑（黑会被当成「这段就是黑的」）。
   const [canvasFailed, setCanvasFailed] = useState(false);
-  const canvasLive = canvasGrade !== null && !canvasFailed;
+  const canvasLive = (canvasGrade !== null || canvasChroma !== null) && !canvasFailed;
+  // 「看遮罩」由应用状态一处说（检查器那颗勾），这里只负责把它交给画布。
+  const chromaMatte = useApp().chromaMatte;
   const relative = (ticks - clip.position_ticks) / TIMEBASE;
   const pace = pacing(clip.speed_percent ?? 100, plan?.speed, relative);
   const effectiveRate = pace.rate * clockRate;
@@ -359,7 +363,7 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
   // 两层就画得出来——底层原图，上面一个 `opacity=mix` 的隔离容器，容器内「已调色」作底、原图按
   // `mix-blend-mode` 相合。`normal` 那一档要交换容器里那两层的顺序（`compositeSwap` 一处判断）：
   // FFmpeg 的 normal 交回第一个输入、CSS 的交回上面那一层。
-  const graded = <div ref={(node) => { blurs.current.edge = node; }} className="layer-edge" style={{ filter: plan?.edge_filter ?? undefined }}><div ref={(node) => { blurs.current.blur = node; }} className="layer-blur"><div className="layer-transform" style={{ filter: plan?.color_filter }}>{media}{canvasLive ? <canvas ref={gradeCanvas} className="grade-canvas" aria-hidden="true" /> : null}{canvasGrade && canvasFailed ? <div className="layer-error grade-fallback">预览画不出这张立方表（这台浏览器没有可用的 WebGL2），画面按未套 LUT 显示；导出不受影响</div> : null}</div></div></div>;
+  const graded = <div ref={(node) => { blurs.current.edge = node; }} className="layer-edge" style={{ filter: plan?.edge_filter ?? undefined }}><div ref={(node) => { blurs.current.blur = node; }} className="layer-blur"><div className="layer-transform" style={{ filter: plan?.color_filter }}>{media}{canvasLive ? <canvas ref={gradeCanvas} className="grade-canvas" aria-hidden="true" /> : null}{canvasGrade && canvasFailed ? <div className="layer-error grade-fallback">预览画不出这张立方表（这台浏览器没有可用的 WebGL2），画面按未套 LUT 显示；导出不受影响</div> : null}{canvasChroma && !canvasGrade && canvasFailed ? <div className="layer-error grade-fallback">预览画不出这个色度键（这台浏览器没有可用的 WebGL2），画面按未抠显示；导出不受影响</div> : null}</div></div></div>;
   // 1.196：视频那一段的「原图」不是第二路解码，而是把已经解码好的那一帧拓进一张 canvas。
   // 本轮量过（AGENTS 1.195 那一节）：暂停与逐帧时两路逐格 0 差，而播放中再开一路解码会把主线程
   // 的动画帧率打掉一半（rAF 181→94）——所以引擎对视频交回 `motion:"paused"`，播放中这一级不画。
@@ -394,11 +398,11 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
   // 最多两倍），CSS 再按 `object-fit: contain` 装进这一格——所以它和原来的 <video>/<img>
   // 在同一格里占的是同一块画面，补边与遮罩坐标一个字都不用改。
   // 换帧：视频播放时按 rAF、暂停/逐帧时按 seeked 与 loadeddata；图片只画一次（load）。
-  useEffect(() => { setCanvasFailed(false); }, [canvasGrade?.id]);
+  useEffect(() => { setCanvasFailed(false); }, [canvasGrade?.id, canvasChroma]);
   useEffect(() => {
     const canvas = gradeCanvas.current;
     const source = (elementRef.current ?? imageRef.current) as HTMLVideoElement | HTMLImageElement | null;
-    if (!canvas || !canvasGrade || !source) return;
+    if (!canvas || (!canvasGrade && !canvasChroma) || !source) return;
     let frame = 0;
     const draw = () => {
       const box = canvas.parentElement?.getBoundingClientRect();
@@ -419,7 +423,7 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
       // SecurityError，画布留在黑底）；抛出来的失败与返回假的失败走同一条退路。
       let painted = false;
       try {
-        painted = paintGrade(canvas, source, canvasGrade, plan?.color_basics ?? [1, 1, 1]);
+        painted = paintGrade(canvas, source, canvasGrade, plan?.color_basics ?? [1, 1, 1], canvasChroma, chromaMatte);
       } catch {
         painted = false;
       }
@@ -436,7 +440,7 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
       for (const name of events) source.removeEventListener(name, draw);
       if (frame) cancelAnimationFrame(frame);
     };
-  }, [canvasGrade?.id, plan?.color_basics, playing, url]);
+  }, [canvasGrade?.id, plan?.color_basics, canvasChroma, chromaMatte, playing, url]);
 
   const rawAt = (blend?: BlendMode) => <div className="layer-transform">{isImage ? <img className="composite-raw" alt="" aria-hidden="true" src={url} style={blend ? { mixBlendMode: blend } : undefined} /> : <canvas className="composite-raw" aria-hidden="true" style={blend ? { mixBlendMode: blend } : undefined} />}</div>;
   const edge = plan?.composite;

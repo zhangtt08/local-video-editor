@@ -267,6 +267,21 @@ def _validate_scope(project: Project) -> None:
             )
         if (clip.mask or clip.extra_masks) and track.kind != "video":
             raise EditorError("INVALID_MASK", "masks require a picture track", clip_id=clip.id)
+        if clip.chroma and track.kind != "video":
+            raise EditorError(
+                "INVALID_CHROMA",
+                "色度键扣在画面上才有意义：这一段所在的轨是声音轨",
+                clip_id=clip.id,
+                track_id=track.id,
+            )
+        if clip.chroma and asset.kind == "text":
+            raise EditorError(
+                "INVALID_CHROMA",
+                "文字层没有可扣的彩色画面——它本来就是画出来的那一片；"
+                "要抠一段绿幕，把文字压在它下面那一层",
+                clip_id=clip.id,
+                asset_id=clip.asset_id,
+            )
         problem = clip.mask_animation_problem()
         if problem:
             raise EditorError("INVALID_MASK", problem, clip_id=clip.id)
@@ -1005,6 +1020,12 @@ def apply_commands(
                         clip.text = TextStyle.model_validate(clip.text.model_dump() | command.text)
                 elif command.op == "clip.mask":
                     clip.mask = command.mask.model_copy(deep=True) if command.mask else None
+                elif command.op == "clip.chroma":
+                    # 整份替换，不与旧的合并：摘掉键就是 `null`，留一半的数会拧出一个没人要键。
+
+                    clip.chroma = (
+                        command.chroma.model_copy(deep=True) if command.chroma else None
+                    )
                 elif command.op == "clip.mask_stack":
                     # 这一版只收矩形与椭圆：自由形状的 alpha 是一张逐帧的板，两端的图要各出一张，
                     # 叠两层那种「交集」在浏览器里是 mask-composite，在导出里是又一张 PNG——

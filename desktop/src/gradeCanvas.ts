@@ -11,7 +11,7 @@
  * `color_basics`，画布之外一格都不许再乘（CSS 那边已经按 `webgl` 把滤镜串清空）。
  */
 
-import type { GradeTables } from "./engine";
+import type { ChromaRow, GradeTables } from "./engine";
 
 const VERTEX = `#version 300 es
 in vec2 aPos;
@@ -92,11 +92,17 @@ export function gradeNeedsCanvas(grade?: GradeTables | null): boolean {
   return grade.stages.some((stage) => gradeStageCube(stage) !== null);
 }
 
+/** 1.276：挂了色度键的那一段也走画布——CSS 的滤镜串里没有「按离键色多远决定透明度」这一支，
+ *  而画布有。判断只在这一处，界面不许再问一遍「这一段有没有键」。 */
+export function chromaNeedsCanvas(chroma?: ChromaRow | null): boolean {
+  return chroma !== null && chroma !== undefined;
+}
+
 function gradeStageCube(stage: Stage): Uint8Array | null {
   return decodeCube(stage);
 }
 
-function shaderFor(stages: Stage[]): string {
+function shaderFor(stages: Stage[], chroma: boolean): string {
   const calls = stages
     .map((stage, index) => {
       if (stage.type === "lut") return `  c = table${index}(c);`;
@@ -128,6 +134,18 @@ function shaderFor(stages: Stage[]): string {
     })
     .filter(Boolean)
     .join("\n");
+  // 1.276：色度键。判的是**原始那一帧**的颜色（`src.rgb * 255`，与导出那趟 `geq` 挂在调色
+  // 之前同一条顺序），数全部由引擎折好下发（`low`/`high`/`width`），这里不减不乘。
+  const keyUniforms = chroma
+    ? "uniform vec3 uKey;\nuniform float uLow;\nuniform float uHigh;\nuniform float uWidth;\nuniform float uSoft;\nuniform float uInvert;\nuniform float uMatte;"
+    : "";
+  const keyStep = chroma
+    ? `  float d = distance(src.rgb * 255.0, uKey);
+  a = uSoft > 0.5 ? clamp((d - uLow) / uWidth, 0.0, 1.0) : step(uHigh, d);
+  if (uInvert > 0.5) a = 1.0 - a;
+  // 「看遮罩」只是这一档预览：AE 与达芬奇都拿它判断键抠得干不干净，导出里没有这一说。
+  if (uMatte > 0.5) { fragColor = vec4(a, a, a, 1.0); return; }`
+    : "";
   return `#version 300 es
 precision highp float;
 precision highp sampler2D;
@@ -137,13 +155,19 @@ out vec4 fragColor;
 uniform sampler2D uSrc;
 uniform vec3 uBasics;
 ${uniforms}
+${keyUniforms}
 ${COMMON}
 ${TETRA}
 ${helpers}
 void main() {
-  vec3 c = basics(texture(uSrc, vUv).rgb, uBasics);
+  vec4 src = texture(uSrc, vUv);
+  float a = 1.0;
+${keyStep}
+  vec3 c = basics(src.rgb, uBasics);
 ${calls}
-  fragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
+  c = clamp(c, 0.0, 1.0);
+  // 预乘交出去：那一块洞要让下面那一层露出来，浏览器按 c*a 与页面相合。
+  fragColor = vec4(c * a, a);
 }`;
 }
 
@@ -176,10 +200,11 @@ function compile(gl: WebGL2RenderingContext, kind: number, body: string): WebGLS
   return shader;
 }
 
-function build(state: State, grade: GradeTables): Built | null {
+function build(state: State, grade: GradeTables | null | undefined, chroma: ChromaRow | null): Built | null {
   const gl = state.gl;
+  const stages = grade?.stages ?? [];
   const vertex = compile(gl, gl.VERTEX_SHADER, VERTEX);
-  const fragment = compile(gl, gl.FRAGMENT_SHADER, shaderFor(grade.stages));
+  const fragment = compile(gl, gl.FRAGMENT_SHADER, shaderFor(stages, chroma !== null));
   if (!vertex || !fragment) return null;
   const program = gl.createProgram();
   if (!program) return null;
@@ -197,7 +222,7 @@ function build(state: State, grade: GradeTables): Built | null {
   gl.useProgram(program);
   const uniforms = new Map<string, WebGLUniformLocation | null>();
   const textures: WebGLTexture[] = [];
-  grade.stages.forEach((stage, index) => {
+  stages.forEach((stage, index) => {
     if (stage.type === "lut") {
       const table = gl.createTexture();
       if (!table) return;
@@ -251,10 +276,13 @@ function build(state: State, grade: GradeTables): Built | null {
   uniforms.set("uSrc", gl.getUniformLocation(program, "uSrc"));
   uniforms.set("uBasics", gl.getUniformLocation(program, "uBasics"));
   gl.uniform1i(uniforms.get("uSrc") ?? null, 0);
-  grade.stages.forEach((stage, index) => {
+  stages.forEach((stage, index) => {
     if (stage.type === "lut") gl.uniform1i(uniforms.get(`uLut${index}`) ?? null, 1 + index);
     else if (stage.type === "lut3d") gl.uniform1i(uniforms.get(`uCube${index}`) ?? null, 1 + index);
   });
+  for (const name of ["uKey", "uLow", "uHigh", "uWidth", "uSoft", "uInvert", "uMatte"]) {
+    uniforms.set(name, gl.getUniformLocation(program, name));
+  }
   const source = gl.createTexture();
   if (source) {
     gl.activeTexture(gl.TEXTURE0);
@@ -264,7 +292,12 @@ function build(state: State, grade: GradeTables): Built | null {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   }
-  return { id: grade.id, program, uniforms, textures, source };
+  return { id: canvasKey(grade, chroma), program, uniforms, textures, source };
+}
+
+/** 程序缓存的那一把钥匙：同一条链换了键、或同一个键换了链，都得重编一次着色器。 */
+function canvasKey(grade: GradeTables | null | undefined, chroma: ChromaRow | null): string {
+  return `${grade?.id ?? "none"}${chroma ? "|key" : ""}`;
 }
 
 /**
@@ -274,15 +307,19 @@ function build(state: State, grade: GradeTables): Built | null {
 export function paintGrade(
   target: HTMLCanvasElement,
   source: TexImageSource,
-  grade: GradeTables,
+  grade: GradeTables | null | undefined,
   basics: number[],
+  chroma: ChromaRow | null = null,
+  matte = false,
 ): boolean {
   let state = STATES.get(target);
   if (!state) {
     // `preserveDrawingBuffer`：截图与读回（验收要逐点比预览与成片的像素）都发生在画完之后的
     // 另一个任务里，不保留这一帧就只能读到一块黑。预览这一块每秒最多六十次，这点代价买得值。
+    // 1.276：`alpha: true` 不是可选项——色度键抠出来的那一块洞要让**下面那一层**露出来，
+    // 缓冲没有 alpha 通道时画布永远是一块不透明的矩形（量过：洞画在着色器里，屏幕上仍是绿）。
     const gl = target.getContext("webgl2", {
-      alpha: false, premultipliedAlpha: false, antialias: false, preserveDrawingBuffer: true,
+      alpha: true, premultipliedAlpha: true, antialias: false, preserveDrawingBuffer: true,
     });
     if (!gl) return false;
     const buffer = gl.createBuffer();
@@ -295,9 +332,10 @@ export function paintGrade(
     STATES.set(target, state);
   }
   const gl = state.gl;
-  if (!state.built || state.built.id !== grade.id) {
+  const wanted = canvasKey(grade, chroma);
+  if (!state.built || state.built.id !== wanted) {
     if (state.built) gl.deleteProgram(state.built.program);
-    state.built = build(state, grade);
+    state.built = build(state, grade, chroma);
   }
   const built = state.built;
   if (!built || !built.source) return false;
@@ -308,6 +346,17 @@ export function paintGrade(
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, source);
   const [brightness, contrast, saturation] = basics;
   gl.uniform3f(built.uniforms.get("uBasics") ?? null, brightness ?? 1, contrast ?? 1, saturation ?? 1);
+  if (chroma && built.uniforms.get("uKey")) {
+    // 三个整数与那一段距离都是引擎算好的；这里只做一次 `uniform`，不换算、不夹、不四舍五入。
+    const [red, green, blue] = chroma.color;
+    gl.uniform3f(built.uniforms.get("uKey") ?? null, red, green, blue);
+    gl.uniform1f(built.uniforms.get("uLow") ?? null, chroma.low);
+    gl.uniform1f(built.uniforms.get("uHigh") ?? null, chroma.high);
+    gl.uniform1f(built.uniforms.get("uWidth") ?? null, chroma.width);
+    gl.uniform1f(built.uniforms.get("uSoft") ?? null, chroma.soft ? 1 : 0);
+    gl.uniform1f(built.uniforms.get("uInvert") ?? null, chroma.inverted ? 1 : 0);
+    gl.uniform1f(built.uniforms.get("uMatte") ?? null, matte ? 1 : 0);
+  }
   gl.drawArrays(gl.TRIANGLES, 0, 3);
   return true;
 }

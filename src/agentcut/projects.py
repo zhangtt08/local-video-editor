@@ -204,6 +204,12 @@ class ProjectStore:
                 # 1.237: a clip that never asked for following hashes as one that could not.
                 if "asset_id" in node and not node.get("extra_masks_follow"):
                     node.pop("extra_masks_follow", None)
+                # 1.276 gave a clip its chroma key. A payload that never mentions one must hash as
+                # the pre-1.276 clip it was, or every `clip.add` receipt written before this release
+                # splits in two the first time it is retried after the upgrade. `blur_check` is the
+                # gate that catches it: its two digests were captured before `blur` existed.
+                if "asset_id" in node and node.get("chroma") is None:
+                    node.pop("chroma", None)
                 # 1.120 gave a parallel node its branch weights. An absent table and an empty one
                 # are the same thing (every branch counts the same), so a pre-1.120 payload that
                 # never mentions weights keeps hashing as the payload it was.
