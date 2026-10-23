@@ -55,7 +55,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.273.0"
+APP_VERSION = "1.274.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -7458,6 +7458,10 @@ def capabilities(
             # 的 `rotate()`；两边逐档量过（`tests/layerrotate_check.py`）才敢下发这一格。
 
             "layer_rotation": True,
+
+            # 1.274：第二路画面可以是一段视频，不再只收图像。视频层从素材第一帧开始播，
+            # 素材比片段短就点名拒；监视器只在暂停/逐帧时画（播放中多一路解码会掉帧）。
+            "layer_video": True,
 
             "timeline_marks": True,
 

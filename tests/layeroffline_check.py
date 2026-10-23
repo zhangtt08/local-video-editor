@@ -7,7 +7,7 @@
 
 这一档钉四件事：
 1. 那颗动作现在当场拒绝，点名是哪一段、给两条走得通的出路；不牵连的删除照旧成功；
-2. 清单那一行的 `paintable`/`reason` 由 `animation.layer_rows` 一处算出：素材悬空 / 不是图像 /
+2. 清单那一行的 `paintable`/`reason` 由 `animation.layer_rows` 一处算出：素材悬空 / 不是图像或视频 /
    没有验过的媒体记录 → 假，三种各有自己的 reason，好的那条是真；
 3. 这一行**不被整条撤掉**——界面要能说「哪一层画不成」，所以行还在、数还在，只是带着实话；
 4. 导出那一条仍然是同一句话（同一个 code），也就是两端说的确实是同一件事。
@@ -144,13 +144,16 @@ def main() -> None:  # noqa: C901 - 一档门禁按节读，比拆成十个互�
             assert unverified["paintable"] is False, unverified
             assert unverified["reason"] == "unverified", unverified
             wrong_kind = row_for({
-                k: (v.model_copy(update={"kind": "video", "duration_ticks": T}) if k == "ly" else v)
+                k: (v.model_copy(update={"kind": "audio", "duration_ticks": T}) if k == "ly" else v)
                 for k, v in {kk: Asset(**vv) for kk, vv in good["assets"].items()}.items()
             })
             assert wrong_kind["paintable"] is False and wrong_kind["reason"] == "kind", wrong_kind
             # 三种坏状态都不许把那一行整条撤掉：界面要能说出「哪一层」画不成
             assert missing["asset_id"] == unverified["asset_id"] == wrong_kind["asset_id"] == "ly"
-            print("   三种画不成的状态：missing / unverified / kind 各有自己的 reason，行都还在")
+            print(
+                "   三种画不成的状态：missing / unverified / kind（音频不是画面）"
+                "各有自己的 reason，行都还在"
+            )
 
             # 3) 清单确实把这份实话交出去（不是只有函数会算）
             manifest = preview_manifest(Project(**good), None, clip_ids=["c"])

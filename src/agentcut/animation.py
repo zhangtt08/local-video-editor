@@ -576,14 +576,27 @@ def layer_rows(clip: Clip, project: Project, quantum: int) -> list[dict]:
     ]
     for row in rows:
         asset = project.assets.get(row["asset_id"])
+        row["kind"] = asset.kind if asset is not None else None
         if asset is None:
             row["paintable"], row["reason"] = False, "missing"
-        elif asset.kind != "image":
+        elif asset.kind not in ("image", "video"):
             row["paintable"], row["reason"] = False, "kind"
         elif asset.verified is None:
             row["paintable"], row["reason"] = False, "unverified"
+        elif (
+            asset.kind == "video"
+            and asset.duration_ticks is not None
+            and asset.duration_ticks < clip.duration_ticks
+        ):
+            # 与导出那条拒绝同一句话：素材比片段短，视频层不会循环或冻帧。
+            row["paintable"], row["reason"] = False, "too_short"
         else:
             row["paintable"], row["reason"] = True, None
+        # 图像是解码好的位图，随时画；视频要另开一路解码——1.195 量过，播放中再开一路
+        # 会把动画帧率打掉一半，所以只在暂停/逐帧时画。由引擎说一次，界面照着办。
+        row["motion"] = (
+            ("always" if asset.kind == "image" else "paused") if row["paintable"] else None
+        )
     return rows
 
 

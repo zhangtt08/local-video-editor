@@ -536,8 +536,8 @@ def _grade_inline_budget(project, before: int) -> None:
     )
 
 
-def _check_layer_sources(project, grade) -> None:
-    """第二路画面指的是谁，只在写之前问一次：工程里有、是图像、而且引擎验过它。
+def _check_layer_sources(project, grade, clip) -> None:
+    """第二路画面指的是谁，只在写之前问一次：工程里有、是图像或视频、而且引擎验过它。
 
     `render.py` 编译时要拿 `asset.verified.path` 去多开一路输入，所以「名字存在但没验过 media」
     这种半截状态必须在这里就挡下——到了导出才发现，用户看到的是一次失败的任务而不是一句拒绝。
@@ -556,11 +556,11 @@ def _check_layer_sources(project, grade) -> None:
                 asset_id=node.asset_id,
                 reason="missing",
             )
-        if asset.kind != "image":
+        if asset.kind not in ("image", "video"):
             raise EditorError(
                 "LAYER_ASSET_UNAVAILABLE",
-                f"第二路画面现在只收图像素材（「{asset.label}」是 {asset.kind}）："
-                "要叠动的画面就把它先摊平成一张图，或用嵌套合成把那段先渲成一帧",
+                f"第二路画面只收图像或视频素材（「{asset.label}」是 {asset.kind}）："
+                "换一张图或一段视频，别把声音或文字层叠进来",
                 422,
                 asset_id=node.asset_id,
                 reason="kind",
@@ -574,6 +574,25 @@ def _check_layer_sources(project, grade) -> None:
                 422,
                 asset_id=node.asset_id,
                 reason="unverified",
+            )
+        if (
+            asset.kind == "video"
+            and asset.duration_ticks is not None
+            and asset.duration_ticks < clip.duration_ticks
+        ):
+            raise EditorError(
+                "LAYER_ASSET_UNAVAILABLE",
+                f"视频层「{asset.label}」只有 "
+                f"{asset.duration_ticks / project.settings.timebase:.2f} 秒，"
+                "这条片段长 "
+                f"{clip.duration_ticks / project.settings.timebase:.2f} 秒："
+                "视频层从素材第一帧开始播，"
+                "不会为了凑长度去循环或冻帧；选一段更长的素材，或把这条片段修短",
+                422,
+                asset_id=node.asset_id,
+                reason="too_short",
+                asset_ticks=asset.duration_ticks,
+                clip_ticks=clip.duration_ticks,
             )
 
 
@@ -1026,7 +1045,7 @@ def apply_commands(
                         raise EditorError("INVALID_COLOR", "audio has no color properties")
                     # 这一条也写得进整条链（界面上那排节点走的就是它），所以同一句「第二路
                     # 画面指的是谁」与「那几枚针落在哪一格」在这里各问一次——只有一个主人。
-                    _check_layer_sources(candidate, command.color.grade)
+                    _check_layer_sources(candidate, command.color.grade, clip)
                     _check_layer_clock(clip, command.color.grade)
                     clip.color = command.color.model_copy(deep=True)
                 elif command.op == "clip.color_manage":
@@ -1040,7 +1059,7 @@ def apply_commands(
                 elif command.op == "clip.grade":
                     if candidate.assets[clip.asset_id].kind == "audio":
                         raise EditorError("INVALID_COLOR", "audio has no color properties")
-                    _check_layer_sources(candidate, command.grade)
+                    _check_layer_sources(candidate, command.grade, clip)
                     _check_layer_clock(clip, command.grade)
                     clip.color = ClipColor.model_validate(
                         {**clip.color.model_dump(), "grade": command.grade}

@@ -291,7 +291,7 @@ export type SharpenSteps = {
 };
 export type SharpenSpec = SharpenStatic | SharpenSteps;
 export type PreviewManifest = { revision: number; sequence_id?: string | null; sequences?: Record<string, PreviewManifest>; track_blend_modes?: Record<string, NonNullable<Track["blend_mode"]>>; mixed_track_ids: string[]; clips: Record<string, { duration_ms: number; sound_enabled: boolean; color_filter: string; webgl?: boolean; color_basics?: number[] | null; grade?: GradeTables | null; sharpen?: SharpenSpec | null; speed?: RampPiece[] | null; mask_image?: string | null; extra_mask_images?: string[] | null; extra_mask_units?: (string | null)[] | null; extra_mask_windows?: (ExtraMaskWindow[] | null)[] | null; extra_masks_follow?: boolean; mask_curves?: Record<MaskProperty, Curve> | null; mask_unit?: string | null; mask_shape?: MaskShapeWindow[] | null; mask_rotation_windows?: MaskRotationWindow[] | null; spatial?: Partial<Record<SpatialProperty, Curve>> | null; edge_filter?: string | null; curves: Record<AnimatedEffect, Curve>; transition: TransitionEnvelope; fade?: Record<"opacity" | "gain", Curve> | null;
-      layer?: { asset_id: string; mode: BlendMode; mix: number; offset_x: number; offset_y: number; scale: number; rotation?: number; windows?: LayerWindow[]; paintable: boolean; reason?: string | null }[];
+      layer?: { asset_id: string; kind?: "image" | "video" | null; motion?: "always" | "paused" | null; mode: BlendMode; mix: number; offset_x: number; offset_y: number; scale: number; rotation?: number; windows?: LayerWindow[]; paintable: boolean; reason?: string | null }[];
       composite?: CompositeEdge | null }> };
 
 /** 引擎给这条片段记下的那一次稳定：有了它，再按一次是换一档强度而不是叠第二遍。 */

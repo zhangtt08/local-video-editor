@@ -1441,7 +1441,7 @@ def compile_render_plan(
         current = pad
         for index, stage in enumerate(stages):
             asset = project.assets.get(stage["asset_id"])
-            if asset is None or asset.kind != "image" or asset.verified is None:
+            if asset is None or asset.kind not in ("image", "video") or asset.verified is None:
                 # 写的时候 reducer 已经问过一遍；素材后来被删/换掉留下的孤儿由这里兜住：
                 # 同一个 code、同一句出路，编译期不 KeyError，也不悄悄少叠一层。
                 raise EditorError(
@@ -1450,6 +1450,23 @@ def compile_render_plan(
                     "重新导入那个文件，或把这一层从链上摘掉",
                     422,
                     asset_id=stage["asset_id"],
+                )
+            if (
+                asset.kind == "video"
+                and asset.duration_ticks is not None
+                and asset.duration_ticks < clip.duration_ticks
+            ):
+                # 视频层从素材第一帧开始播，不循环也不冻帧。写的时候已经拒过一次；这里兜住
+                # 「片段后来被拉长」或「素材被换短」之后留下的状态，免得导出跑到一半才 EOF。
+                raise EditorError(
+                    "LAYER_ASSET_UNAVAILABLE",
+                    f"视频层「{asset.label}」比这条片段短："
+                    f"{asset.duration_ticks / TIMEBASE:.2f} 秒对 "
+                    f"{clip.duration_ticks / TIMEBASE:.2f} 秒。"
+                    "选一段更长的素材，或把这条片段修短",
+                    422,
+                    asset_id=stage["asset_id"],
+                    reason="too_short",
                 )
             alive: list[tuple[dict | None, tuple]] = []
             for window in tables[index] or [None]:
@@ -1475,16 +1492,21 @@ def compile_render_plan(
                 # 整层都在交付帧外（或每一窗都在外面）：这一层什么都不画，也不许多开一路输入。
                 continue
             layer_index = plan.next_input()
-            plan.input_args += [
-                "-loop",
-                "1",
-                "-framerate",
-                fps,
-                "-t",
-                sec(clip.duration_ticks),
-                "-i",
-                asset.verified.path,
-            ]
+            if asset.kind == "video":
+                # 视频层从素材第一帧开始跟着片段自己的时钟走；`-t` 是输入侧的时长，读完这段
+                # 输入就结束，不循环也不冻帧。时间戳从 0 起，与下面 `between(t,…)` 的窗同一把尺。
+                plan.input_args += ["-t", sec(clip.duration_ticks), "-i", asset.verified.path]
+            else:
+                plan.input_args += [
+                    "-loop",
+                    "1",
+                    "-framerate",
+                    fps,
+                    "-t",
+                    sec(clip.duration_ticks),
+                    "-i",
+                    asset.verified.path,
+                ]
             plan.owners[layer_index], plan.allocations = clip.id, plan.allocations + 1
             if len(alive) == 1:
                 current = size_layer(

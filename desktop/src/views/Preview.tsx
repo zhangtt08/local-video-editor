@@ -316,6 +316,16 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
     return () => { created.forEach((a) => a.cancel()); animations.current = []; };
   }, [plan]);
   useLayoutEffect(() => { for (const animation of animations.current) animation.currentTime = relative * 1000; }, [relative, plan]);
+  // 视频层停在片段本地时间那一格：暂停时换播放头就 seek，播放中这一层根本不挂载。
+  useLayoutEffect(() => {
+    (plan?.layer ?? []).forEach((row, index) => {
+      const node = layers.current[index];
+      if (row.kind !== "video" || !(node instanceof HTMLVideoElement)) return;
+      if (!Number.isFinite(node.duration) || node.duration <= 0) return;
+      const target = Math.min(Math.max(0, relative), Math.max(0, node.duration - 0.001));
+      if (Math.abs(node.currentTime - target) > 0.04) node.currentTime = target;
+    });
+  }, [relative, plan]);
   useEffect(() => {
     const element = elementRef.current; if (!element) return;
     element.playbackRate = Math.min(16, Math.max(.0625, pace.rate * clockRate));
@@ -439,7 +449,17 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
     <div ref={(node) => { fades.current.gain = node; }} className="gain-sample" aria-hidden="true" />
     <div ref={(node) => { blends.current.sound = node; }} className="gain-sample" aria-hidden="true" />
     <div ref={(node) => { blends.current.picture = node; }} className="layer-transform"><div ref={(node) => { moves.current.reveal = node; }} className="layer-transform"><div ref={(node) => { moves.current.motion_x = node; }} className="layer-transform"><div ref={(node) => { moves.current.motion_y = node; }} className="layer-transform"><div ref={(node) => { moves.current.zoom = node; }} className="layer-transform"><div ref={(node) => { fades.current.opacity = node; }} className="layer-transform"><div ref={(node) => { wrappers.current.opacity = node; }} className="layer-transform"><div ref={(node) => { wrappers.current.x = node; }} className="layer-transform"><div ref={(node) => { wrappers.current.y = node; }} className="layer-transform"><div ref={(node) => { wrappers.current.scale = node; }} className="layer-transform"><div ref={(node) => { wrappers.current.rotation = node; }} className="layer-transform"><MaskPicture clip={clip} image={plan?.mask_image} extra={plan?.extra_mask_images} extraWindows={plan?.extra_mask_windows} extraUnits={plan?.extra_mask_units} follow={Boolean(plan?.extra_masks_follow)} editable={interactive} animation={plan?.mask_curves && (plan.mask_unit || plan.mask_shape) ? { unit: plan.mask_unit ?? null, curves: plan.mask_curves } : null} shape={plan?.mask_shape} rotation={plan?.mask_rotation_windows}>{picture}</MaskPicture></div></div></div></div></div></div></div></div></div></div></div>
-    {(plan?.layer ?? []).map((row, index) => row.paintable ? <img key={`${row.asset_id}-${index}`} ref={(node) => { layers.current[index] = node; }} className="layer-grade" alt="" aria-hidden="true" src={streams[row.asset_id]} style={{ mixBlendMode: row.mode, opacity: row.mix, ...layerStyle(row.offset_x, row.offset_y, row.scale, row.rotation ?? 0) }} /> : null)}
+    {(plan?.layer ?? []).map((row, index) => {
+      if (!row.paintable) return null;
+      // 1.274：视频层多开一路解码，播放中不画（1.195 量过：rAF 181 → 94）；暂停与逐帧时
+      // 把那一格 seek 到片段本地时间再画，导出每一帧都画。什么时候画得成只问 `compositeLive`。
+      if (!compositeLive(row.motion, playing)) return null;
+      const style = { mixBlendMode: row.mode, opacity: row.mix, ...layerStyle(row.offset_x, row.offset_y, row.scale, row.rotation ?? 0) };
+      const ref = (node: HTMLElement | null) => { layers.current[index] = node; };
+      return row.kind === "video"
+        ? <video key={`${row.asset_id}-${index}`} ref={ref} className="layer-grade" muted playsInline preload="auto" aria-hidden="true" src={streams[row.asset_id]} style={style} />
+        : <img key={`${row.asset_id}-${index}`} ref={ref} className="layer-grade" alt="" aria-hidden="true" src={streams[row.asset_id]} style={style} />;
+    })}
     {(plan?.layer ?? []).some((row) => !row.paintable) ? <p className="layer-offline" role="status">第二路画面有一层现在画不成（那一层指的素材不在工程里、不是图像，或没有引擎验过的媒体记录）：导出会整条拒绝这一段——在那一层的「叠哪一张画面」里换一张已导入的图，或把那一层从链上摘掉。</p> : null}
     {error || playing && pace.rate > 0 && (effectiveRate < .0625 || effectiveRate > 16) ? <div className="layer-error">{error || "叠加速度超出浏览器连续播放范围，请暂停逐帧预览或导出检查"}</div> : null}
   </div>{!isAudio && plan?.transition.black.some((point) => point.value > 0) ? <div ref={(node) => { blends.current.black = node; }} className="transition-black" style={{ mixBlendMode: "plus-lighter" }} aria-hidden="true" /> : null}{!isAudio && plan?.transition.white?.some((point) => point.value > 0) ? <div ref={(node) => { blends.current.white = node; }} className="transition-white" aria-hidden="true" /> : null}</>;

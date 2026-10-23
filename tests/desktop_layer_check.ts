@@ -33,7 +33,7 @@ assert.ok(
 );
 // 1.200：画不画得成只听清单那一行说的 `paintable`，视图不许自己去翻素材表猜。
 // 那一层画不成时监视器必须说一句（安静地少画一层 = 预览与导出又开始各说各话）。
-assert.ok(preview.includes("map((row, index) => row.paintable ? <img"), "那一层画不成时视图还是照画不误");
+assert.ok(preview.includes("if (!row.paintable) return null;"), "那一层画不成时视图还是照画不误");
 assert.ok(preview.includes("(plan?.layer ?? []).some((row) => !row.paintable)"), "画不成的那一层没在监视器里说一句");
 assert.equal(
   (preview.match(/row\.paintable/g) ?? []).length,

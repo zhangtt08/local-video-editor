@@ -253,7 +253,12 @@ function KeyDot({ property, keys, tick, value, limit, props, onCommit }: {
 function OpFields({ node, idPrefix, limits, layerTick, layerOffset, onReplace, onCommit }: { node: GradeNode; idPrefix: string; limits: GradeLimits; layerTick?: number | null; layerOffset?: number; onReplace?: () => void; onCommit: (next: GradeNode) => void }) {
   // 第二路画面指的是哪一张，只能从工程里那份素材表选：界面不自己列名字，也不自己拼 URL。
   const app = useApp();
-  const images = Object.values(app.project?.assets ?? {}).filter((row) => row.kind === "image" && row.verified);
+  // 1.274：第二路画面可以是一段视频。旧引擎没有 `layer_video` 这一格，就只列图像——
+  // 界面不把一段它画不出来的素材递过去。
+  const videos = app.caps?.features?.layer_video === true;
+  const pictures = Object.values(app.project?.assets ?? {}).filter(
+    (row) => (row.kind === "image" || (videos && row.kind === "video")) && row.verified,
+  );
   if (node.kind === "curve") {
     return <div className="grade-body">
       <label className="mask-shape">通道 <select className="input" aria-label="曲线通道" value={node.channel} onChange={(e) => onCommit({ ...node, channel: e.target.value as GradeChannel })}>{CHANNELS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
@@ -338,10 +343,10 @@ function OpFields({ node, idPrefix, limits, layerTick, layerOffset, onReplace, o
         onCommit={(next) => onCommit({ ...node, keys: next })} />
     );
     return <div className="grade-body">
-      <label className="mask-shape">叠哪一张画面
+      <label className="mask-shape">叠哪一段画面
         <select className="input" aria-label="外部画面层的素材" value={node.asset_id} onChange={(e) => onCommit({ ...node, asset_id: e.target.value })}>
-          <option value="">（选一张已导入的图像）</option>
-          {images.map((row) => <option key={row.id} value={row.id}>{row.label}</option>)}
+          <option value="">（选一段已导入的图像或视频）</option>
+          {pictures.map((row) => <option key={row.id} value={row.id}>{row.label}{row.kind === "video" ? "（视频）" : ""}</option>)}
         </select>
       </label>
       <label className="mask-shape">相合的方式
@@ -368,10 +373,11 @@ function OpFields({ node, idPrefix, limits, layerTick, layerOffset, onReplace, o
       <Num id={`${idPrefix}-layer-mix`} label={LAYER_KEY_LABEL.mix} value={node.mix * 100} min={0} max={100} step={5} unit="%"
         onCommit={(value) => onCommit({ ...node, mix: round(value / 100) })} />
       {dot("mix", node.mix)}
-      <p className="hint">这一层读的是<b>工程里另一张图</b>，叠在这段自己那条链走完之后。0% 就是什么都不做。</p>
+      <p className="hint">这一层读的是<b>工程里另一段画面</b>（图像或视频），叠在这段自己那条链走完之后。0% 就是什么都不做。</p>
+      {pictures.find((row) => row.id === node.asset_id)?.kind === "video" ? <p className="hint">视频层从素材第一帧开始播，素材比这条片段短会按 <b>LAYER_ASSET_UNAVAILABLE</b> 拒；监视器只在<b>暂停/逐帧</b>时画它（播放中多一路解码会把帧率打掉一半），导出每一帧都画。</p> : null}
       <p className="hint">方式与权重两端读<b>同一份</b>。它必须排在链尾，否则引擎按 LAYER_POSITION 拒。</p>
       {rotationMax ? <p className="hint">转角<b>顺时针为正</b>，转出去的四个角是<b>透明</b>的，不是黑的。</p> : null}
-      {node.asset_id && !images.some((row) => row.id === node.asset_id) ? <p className="hint">这一层指的素材现在不在工程里（或没有验过的媒体），导出会按 LAYER_ASSET_UNAVAILABLE 拒：重新选一张。</p> : null}
+      {node.asset_id && !pictures.some((row) => row.id === node.asset_id) ? <p className="hint">这一层指的素材现在不在工程里（或没有验过的媒体），导出会按 LAYER_ASSET_UNAVAILABLE 拒：重新选一段。</p> : null}
       {keys.length ? <div className="keyframe-list">
         {keys.map((item, position) => <div key={`${item.property}-${item.at_ticks}`} className="keyframe-item">
           <span className="keyframe-dot">◇</span>
@@ -626,7 +632,12 @@ export function GradeFields({ clipId }: { clipId: string }) {
       : kind === "composite"
         ? { ...DEFAULT_COMPOSITE }
       : kind === "layer"
-        ? { ...DEFAULT_LAYER, asset_id: (Object.values(project?.assets ?? {}).find((row) => row.kind === "image" && row.verified))?.id ?? "" }
+        ? { ...DEFAULT_LAYER, asset_id: (
+            Object.values(project?.assets ?? {}).find((row) => row.kind === "image" && row.verified)
+            ?? (app.caps?.features?.layer_video === true
+              ? Object.values(project?.assets ?? {}).find((row) => row.kind === "video" && row.verified)
+              : undefined)
+          )?.id ?? "" }
         : newOperation(kind);
     write([...nodes, node]);
     pending.current = nodes.length;

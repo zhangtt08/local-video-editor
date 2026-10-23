@@ -246,10 +246,12 @@ def main() -> None:  # noqa: C901 - 一档门禁按节读，比拆成十个互�
             assert all(row["windows"] == [] for row in entry), entry
             assert [row["mode"] for row in entry] == ["screen", "difference"], entry
             assert all(
-                set(row) == set(LAYER_FIELDS) | {"windows", "paintable", "reason"} for row in entry
+                set(row) == set(LAYER_FIELDS) | {"windows", "paintable", "reason", "kind", "motion"}
+                for row in entry
             ), entry
             # 1.200：这一行还得多说实话——素材在不在、验过没验过，由引擎一处说，界面不许自己猜。
             assert all(row["paintable"] is True and row["reason"] is None for row in entry), entry
+            assert all(row["kind"] == "image" and row["motion"] == "always" for row in entry), entry
             plan = compile_render_plan(Project(**document), PRESET, fit="stretch")
             text = "\n".join(plan.filters)
             assert text.count("blend=all_mode=screen") == 1, text
