@@ -210,6 +210,12 @@
   - `tests/contextmenu_check.py`：菜单 324×426、圆角 16px、10 项；焦点 ↓↑、Escape 交回 k1；
     右下角右缘 1448 ≤ 1448、下缘 804 ≤ 804；**轨道头 3 颗按钮**，「更多」3 项、Escape 关得掉。
   - `desktop_uiscale_check.ts`：全表 1305 行无字面量字号/圆角，打包 CSS 带同一套刻度。
+  - **装机那一腿也常驻了**：`tests/packaged_ui_check.py` 开真 `win-unpacked/AgentCut.exe`（隔一份
+    user-data-dir），从窗口自己那句「引擎在线」的悬停说明里读出引擎基址、用它建一个空工程与一条轨，
+    再按命中点点开——1480×900 里卡片圆角 22px、时间线 22px、走带 999px、呼吸位 8px、
+    五枚工具胶囊（名字逐条对上）、轨道头 3 颗按钮、正文 14px；截图落盘。
+    量具是 `scripts/packaged_ui_probe.cjs`（参数化 `--exe/--profile/--out/--shot/--version`），
+    收尾按 PID 树 `taskkill /T`，不留下占端口的窗口。
 - **下一轮的具体入口**：
   1. 视觉这一版只做到「卡片 + 胶囊 + 大圆角」；参考图里那种更细的层次（例如检查器每一节自己的组头）、
      明暗主题仍未做——真要做得先定「一节一组」的形状，再用 `ui_shape_check` 的同一把尺量。
