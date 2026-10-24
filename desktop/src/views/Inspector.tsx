@@ -219,7 +219,7 @@ function ClipFields({ clip }: { clip: Clip }) {
           {[.25, .5, .75, 1, 1.25, 1.5, 2, 3, 4].map((speed) => <option key={speed} value={speed}>{speed}×</option>)}
           {![25,50,75,100,125,150,200,300,400].includes(clip.speed_percent ?? 100) ? <option value={(clip.speed_percent ?? 100) / 100}>{(clip.speed_percent ?? 100) / 100}×</option> : null}
         </select></div> : null}
-        {asset?.kind !== "image" && asset?.kind !== "text" ? <div className="effect-row"><label htmlFor="clip-fit">适配到</label>
+        {asset?.kind !== "image" && asset?.kind !== "text" ? <div className="effect-row row-action"><label htmlFor="clip-fit">适配到</label>
           <input id="clip-fit" className="input mono" type="number" min={0.1} step={0.1} value={fitSeconds} disabled={track?.locked} onChange={(event) => setFitSeconds(event.target.value)} />
           <span className="dim">秒</span>
           <button type="button" className="btn tiny" disabled={track?.locked} title="按目标时长反算播放速度：这段消耗的源不变，放不进 25%–400% 时会说明它能放成几秒" onClick={() => {
@@ -230,7 +230,7 @@ function ClipFields({ clip }: { clip: Clip }) {
         </div> : null}
         {fitSaid ? <p className="hint" role="status">{fitSaid}</p> : null}
         {asset?.kind !== "image" && asset?.kind !== "text" ? <p className="hint">保留音高，变速后自动移动本轨后续片段；动画仍按时间线时间播放。</p> : null}
-        {app.caps?.features?.rough_cut && asset?.kind === "video" && !asset.sequence_id ? <div className="effect-row">
+        {app.caps?.features?.rough_cut && asset?.kind === "video" && !asset.sequence_id ? <div className="effect-row row-action">
           <label htmlFor="rough-keep">粗剪每镜</label>
           <input id="rough-keep" className="input mono" type="number" min={0.1} max={30} step={0.1} value={roughKeep} placeholder={((app.caps.limits.rough_keep_ms_default ?? 1500) / 1000).toFixed(1)} disabled={track?.locked} onChange={(event) => setRoughKeep(event.target.value)} />
           <span className="dim">秒</span>

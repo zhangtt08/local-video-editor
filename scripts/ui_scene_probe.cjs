@@ -312,6 +312,16 @@ async function main() {
         font: parseFloat(style.fontSize), radius: parseFloat(style.borderRadius) || 0,
         x: x, y: y,
         underTag: under ? (under.tagName + '.' + (under.className || '')) : null,
+        panel: (function () {
+          const scroller = hit.closest('.panel-scroll');
+          if (!scroller) return null;
+          const r = scroller.getBoundingClientRect();
+          const cutButtons = Array.from(scroller.querySelectorAll('.effect-row button'))
+            .filter(function (b) { return b.getBoundingClientRect().right > r.right + 1; }).length;
+          return { client: scroller.clientWidth, scroll: scroller.scrollWidth,
+            right: Math.round(r.right), buttonRight: Math.round(hit.getBoundingClientRect().right),
+            cutButtons: cutButtons };
+        })(),
         stack: document.elementsFromPoint(x, y).slice(0, 6).map(function (n) {
           return n.tagName + '.' + (n.className || '') + ':' + (n.textContent || '').trim().slice(0, 24);
         }),

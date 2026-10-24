@@ -209,6 +209,11 @@ def main() -> None:
             assert button["font"] >= 13, button["font"]
             assert button["radius"] >= 8, button["radius"]
             assert "镜头" in button["title"] or "每镜" in button["title"], button["title"]
+            panel = (facts.get("button") or {}).get("panel")
+            assert panel, ("量不到检查器那一栏的宽度", facts.get("button"))
+            assert panel["scroll"] <= panel["client"] + 1, ("检查器横向溢出", panel)
+            assert panel["buttonRight"] <= panel["right"], ("按钮超出面板右缘", panel)
+            assert panel["cutButtons"] == 0, ("有按钮被面板右缘切掉", panel)
             print(
                 f"   每镜留 {keep['value']} 秒"
                 f"（占位 {keep['placeholder']}、{keep['min']}–{keep['max']}）；"

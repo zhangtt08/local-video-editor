@@ -201,6 +201,7 @@
   `tests/desktop_roughcut_check.ts` 钉「一套检测、一份计划、一组常量、两条路由、MCP 只读」；
   `tests/roughui_check.py` 在真页面把「粗剪每镜」填 1 秒按下去——按钮 28×32px、字号 14px、圆角 10px、
   命中点是自己，r1 → r2、三段 1/1/1 秒。`ui_shape_check` 56 屏仍绿（叠行 0、字压字 0、下拉被切 0）。
+- **目检抓到并修掉的一处**：真窗口里「适配到」与「粗剪每镜」两行第四格是按钮，却沿用 `.effect-row` 的 26px 列宽，右缘把按钮切掉并撑出横向滚动。两行改走 `.effect-row.row-action`（最后一列 `auto`）；`roughui_check` 新增两条判据：检查器 `scrollWidth <= clientWidth`、`.effect-row button` 里没有一个右缘超过面板（`cutButtons == 0`）。补账那一趟按修完的源码重打，根 exe 与便携版 **185,205,894 B**（sha256 前缀 `f2098ef0d20f64ca`，安装版 185,366,607 B）。
 - **边界如实说**：只有「每镜留前 N 秒」这一种节奏，不做留中段、按运动量挑段；也没有「自动配乐/自动转场」。
 
 ## 停放点（1.282：按镜头切分——颜色差找硬切，计划是普通 clip.split）

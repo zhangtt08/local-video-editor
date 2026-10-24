@@ -25,6 +25,7 @@ const engine = read("desktop/src/engine.ts");
 const store = read("desktop/src/store.ts");
 const inspector = read("desktop/src/views/Inspector.tsx");
 const help = read("desktop/src/views/Help.tsx");
+const css = read("desktop/src/styles.css");
 
 // ① 检测还是那一处、那一组数。
 assert.match(scenes, /def rough_cut_plan\(clip, cuts: list\[dict\], frame_ticks: int, keep_ticks: int\)/,
@@ -86,6 +87,11 @@ assert.match(inspector, /rough_keep_ms_default \?\? 1500/, "默认秒数没有�
 assert.match(inspector, /void roughCut\(clip\.id, Math\.round\(wanted \* 1000\)\)/, "按钮没有调 store");
 assert.match(inspector, /id="rough-keep"/, "没有那格秒数");
 assert.ok(help.includes('{ key: "剪辑·按镜头粗剪"'), "帮助页没有这一条");
+// 1.283 真窗口量到过：这一行的第四格是按钮，沿用 26px 那一格会把「粗剪」推出面板。
+assert.match(inspector, /className="effect-row row-action">\s*<label htmlFor="rough-keep"/, "粗剪那一行没按内容给最后一列留宽");
+assert.match(inspector, /className="effect-row row-action"><label htmlFor="clip-fit"/, "适配到那一行也没修");
+assert.match(css, /\.effect-row\.row-action \{ grid-template-columns: 76px minmax\(56px, 1fr\) 18px auto; \}/,
+  "样式表里没有 row-action 的列宽");
 
 console.log(
   "PASS: 按镜头粗剪只有一套检测与一份计划——检测复用颜色差，计划是右到左的普通 split + 带 ripple 的 trim、" +
