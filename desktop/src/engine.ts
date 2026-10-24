@@ -1373,6 +1373,7 @@ export class Engine {
       rough: {
         keep_ms: number;
         keep_ticks: number;
+        place: "head" | "lively";
         clips: {
           clip_id: string;
           skipped?: string;
@@ -1391,8 +1392,15 @@ export class Engine {
       rough: {
         threshold: number;
         cuts: { at_ticks: number; source_seconds: number }[];
+        shots?: {
+          from_ticks: number;
+          to_ticks: number;
+          peak_ticks: number;
+          motion: number;
+        }[];
         keep_ms: number;
         keep_ticks: number;
+        place: "head" | "lively";
         commands: Record<string, unknown>[];
       };
     }>("POST", `/v1/projects/${projectId}/clips/${clipId}/rough-cut`, body, 300000);

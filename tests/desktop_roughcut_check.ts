@@ -29,7 +29,7 @@ const timeline = read("desktop/src/views/Timeline.tsx");
 const css = read("desktop/src/styles.css");
 
 // ① 检测还是那一处、那一组数。
-assert.match(scenes, /def rough_cut_plan\(clip, cuts: list\[dict\], frame_ticks: int, keep_ticks: int\)/,
+assert.match(scenes, /def rough_cut_plan\(\n    clip, shots: list\[dict\], frame_ticks: int, keep_ticks: int, place: str = "head"\n\) -> list\[dict\]:/,
   "粗剪没有自己的计划函数");
 assert.match(scenes, /def keep_ticks_for\(frame_ticks: int, keep_ms: int\) -> int/, "没有把每镜留折到帧上");
 assert.match(scenes, /int\(round\(keep_ms \* TIMEBASE \/ 1000 \/ frame_ticks\)\) \* frame_ticks/,
@@ -37,15 +37,15 @@ assert.match(scenes, /int\(round\(keep_ms \* TIMEBASE \/ 1000 \/ frame_ticks\)\)
 assert.ok(!/def _detect|def analyse/.test(scenes.slice(scenes.indexOf("def rough_cut_plan"))),
   "粗剪又写了一份检测");
 
-// ② 计划是普通命令、从右往左、收尾带 ripple。
+// ② 计划是普通命令、从右往左，丢掉的部分用 ripple 移除（源时钟由 split 保留，不另写 source_in）。
 assert.match(scenes, /"op": "clip\.split",\n\s+"clip_id": clip\.id,/, "计划里没有普通 split");
-assert.match(scenes, /right_clip_id": f"\{clip\.id\}-rough\{number:02d\}"/, "右半段的 id 不稳定");
-assert.match(scenes, /"op": "clip\.trim",/, "计划里没有普通 trim");
-assert.match(scenes, /"ripple": True/, "收尾没有让后段左移");
-assert.match(scenes, /clip\.source_in_ticks \+ start \* clip\.speed_percent \/\/ 100/,
-  "留下的头读的源没有按恒定速度折算");
-assert.match(scenes, /for offset, at in enumerate\(reversed\(points\)\)/, "split 不是从右往左");
-assert.match(scenes, /for number in range\(total, -1, -1\)/, "trim 不是从右往左");
+assert.match(scenes, /right_clip_id": piece_ids\[at\]/, "split 的右半段没有走同一张 id 表");
+assert.match(scenes, /f"\{clip\.id\}-rough\{number:02d\}"/, "右半段的 id 不稳定");
+assert.match(scenes, /"op": "clip\.ripple_remove", "clip_id": piece/, "丢掉的部分没有用 ripple 移除");
+assert.ok(!/"source_in_ticks"/.test(scenes.slice(scenes.indexOf("def rough_cut_plan"))),
+  "计划又自己写了一遍源入点");
+assert.match(scenes, /for at in sorted\(starts, reverse=True\)/, "split 不是从右往左");
+assert.match(scenes, /sorted\(spans, key=lambda span: -span\[0\]\)/, "移除不是从右往左");
 
 // ③ 默认值与上下限只在契约。
 assert.match(contracts, /ROUGH_KEEP_MS_DEFAULT = 1500/, "每镜留的默认值不在契约里");
@@ -75,7 +75,8 @@ assert.match(engine, /\/v1\/projects\/\$\{projectId\}\/clips\/\$\{clipId\}\/roug
 assert.match(engine, /rough_keep_ms_default\?: number/, "能力表的默认值没有进类型");
 assert.match(engine, /INVALID_ROUGH_TARGET: "/, "没有这句中文提示");
 assert.match(engine, /ROUGH_NONE: "/, "没有这句中文提示");
-assert.match(store, /export async function roughCut\(clipId: string, keepMs: number\)/, "store 里没有 roughCut");
+assert.match(store, /export async function roughCut\(clipId: string, keepMs: number, place: "head" \| "lively" = "head"\)/,
+  "store 里没有 roughCut（带取法）");
 assert.match(store, /engine\.roughCutPlan\(project\.id, clipId, \{/, "store 没有走引擎的规划");
 assert.match(store, /keep_ms: keepMs/, "store 没有把每镜留发出去");
 assert.match(store, /threshold: state\.caps\.limits\.scene_threshold_default \?\? 0\.18/, "门槛没有读能力表");
@@ -85,7 +86,8 @@ assert.match(store, /submit\(commands as Command\[\], `粗剪：每镜留 \$\{\(
 assert.match(inspector, /app\.caps\?\.features\?\.rough_cut && asset\?\.kind === "video" && !asset\.sequence_id/,
   "那一格没有受能力位与素材类型管");
 assert.match(inspector, /rough_keep_ms_default \?\? 1500/, "默认秒数没有读能力表");
-assert.match(inspector, /void roughCut\(clip\.id, Math\.round\(wanted \* 1000\)\)/, "按钮没有调 store");
+assert.match(inspector, /void roughCut\(clip\.id, Math\.round\(wanted \* 1000\), roughPlace\)/,
+  "按钮没有调 store（带取法）");
 assert.match(inspector, /id="rough-keep"/, "没有那格秒数");
 assert.ok(help.includes('{ key: "剪辑·按镜头粗剪"'), "帮助页没有这一条");
 // 1.284：整轨入口——同一条路由的整轨版、菜单项、store 函数与能力位。
@@ -97,7 +99,8 @@ assert.match(mcp, /async def track_rough_cut\(/, "MCP 没有 track_rough_cut");
 assert.match(engine, /roughCutTrackPlan\(projectId: string, trackId: string, body: Record<string, unknown>\)/,
   "引擎客户端没有 roughCutTrackPlan");
 assert.match(engine, /\/v1\/projects\/\$\{projectId\}\/tracks\/\$\{trackId\}\/rough-cut/, "整轨路径不对");
-assert.match(store, /export async function roughCutTrack\(trackId: string\)/, "store 里没有 roughCutTrack");
+assert.match(store, /export async function roughCutTrack\(trackId: string, place: "head" \| "lively" = "head"\)/,
+  "store 里没有 roughCutTrack（带取法）");
 assert.match(store, /keepMs = state\.caps\.limits\.rough_keep_ms_default \?\? 1500/, "整轨没有读能力表的默认秒数");
 assert.match(store, /submit\(commands as Command\[\], `粗剪整轨：\$\{done\} 段`\)/, "整轨没有整批提交");
 assert.match(inspector, /row-action/, "检查器那两行没有按内容给按钮留宽");
@@ -105,10 +108,25 @@ assert.match(timeline, /label: "按镜头粗剪这一轨"/, "轨道菜单里没�
 assert.match(timeline, /roughCutTrack\(track\.id\)/, "菜单项没有调 store");
 assert.ok(help.includes('{ key: "剪辑·整轨粗剪"'), "帮助页没有整轨那一条");
 // 1.283 真窗口量到过：这一行的第四格是按钮，沿用 26px 那一格会把「粗剪」推出面板。
-assert.match(inspector, /className="effect-row row-action">\s*<label htmlFor="rough-keep"/, "粗剪那一行没按内容给最后一列留宽");
+assert.match(inspector, /className="effect-row row-action rough-row">\s*<label htmlFor="rough-keep"/, "粗剪那一行没按内容给最后一列留宽");
 assert.match(inspector, /className="effect-row row-action"><label htmlFor="clip-fit"/, "适配到那一行也没修");
 assert.match(css, /\.effect-row\.row-action \{ grid-template-columns: 76px minmax\(56px, 1fr\) 18px auto; \}/,
   "样式表里没有 row-action 的列宽");
+assert.match(css, /\.effect-row\.rough-row \{ grid-template-columns: 76px minmax\(40px, 1fr\) 16px auto auto; \}/,
+  "粗剪那一行没有五格的列宽");
+// 1.286：取法（留头 / 挑动）——同一套检测之上多一个由人拧的选择，老引擎没有这一格。
+assert.match(contracts, /place: Literal\["head", "lively"\] = "head"/, "契约里没有取法那一格");
+assert.match(contracts, /"rough_cut_lively": media_ready/, "取法的能力位没下发");
+assert.match(scenes, /MOTION_WINDOW_FRAMES = 10/, "没有动静窗的长度");
+assert.match(scenes, /def _detect\([\s\S]*?tuple\[list\[float\], list\[dict\]\]/, "检测没有同时交回切点与动静");
+assert.match(scenes, /if profile:/, "分析没有按需交回每一镜的最闹窗");
+assert.match(scenes, /place == "lively"/, "计划没有读取法");
+assert.match(store, /roughCut\(clipId: string, keepMs: number, place: "head" \| "lively" = "head"\)/,
+  "store 的粗剪没有取法参数");
+assert.match(store, /place,[\s\S]*?\}\),/, "store 没有把取法发出去");
+assert.match(inspector, /aria-label="粗剪取法"/, "检查器里没有取法下拉");
+assert.match(inspector, /roughCut\(clip\.id, Math\.round\(wanted \* 1000\), roughPlace\)/, "按钮没有把取法交给 store");
+assert.ok(help.includes("挑动"), "帮助页没有说取法两档");
 
 console.log(
   "PASS: 按镜头粗剪只有一套检测与一份计划——检测复用颜色差，计划是右到左的普通 split + 带 ripple 的 trim、" +

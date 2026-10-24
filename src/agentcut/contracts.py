@@ -71,7 +71,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.285.0"
+APP_VERSION = "1.286.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -5919,6 +5919,12 @@ class RoughCutRequest(Contract):
 
     )
 
+    # "head" keeps the first keep_ms of each shot; "lively" keeps the window the scanner measured
+
+    # as the strongest movement (a static shot still keeps its head).
+
+    place: Literal["head", "lively"] = "head"
+
     apply: bool = False
 
     dry_run: bool = False
@@ -7533,6 +7539,10 @@ def capabilities(
             # 1.283：粗剪是同一套检测之上的一个计划，没有检测就没有它。
 
             "rough_cut": media_ready,
+
+            # 1.286：取法（留头 / 挑最有动静的）是新增的一格；老引擎只认留头。
+
+            "rough_cut_lively": media_ready,
 
             # 1.285：剪辑表是纯文本，不需要媒体引擎；老引擎不认这条读路由，界面就不摆那一项。
 

@@ -42,6 +42,9 @@ THRESHOLD_FLOOR = SCENE_THRESHOLD_MIN
 THRESHOLD_CEILING = SCENE_THRESHOLD_MAX
 SAMPLE_FPS = 30
 SAMPLE_W, SAMPLE_H = 64, 36
+# How many sampled frames one motion window covers: ten at 30 fps is a third of a second —
+# long enough that a camera pan reads as movement, short enough to sit inside a 1.5 s keep.
+MOTION_WINDOW_FRAMES = 10
 _FRAME_BYTES = SAMPLE_W * SAMPLE_H * 3
 
 
@@ -112,15 +115,36 @@ def _detect(
     start_seconds: float,
     duration_seconds: float,
     threshold: float,
-) -> list[float]:
-    """Timestamps (seconds, relative to the window) where the picture changes colour."""
+) -> tuple[list[float], list[dict]]:
+    """Shot changes (seconds) and a coarse motion profile (one score per third of a second).
+
+    Both read the same decode: a cut is one frame's colour change, motion is the change accumulated
+    over a window. Splitting them would decode the file twice and could disagree about the frames.
+    """
     found: list[float] = []
+    windows: list[dict] = []
+    score = 0.0
+    frames = 0
+    first = 0
     for index, previous, frame in _frames(ffmpeg, source, start_seconds, duration_seconds):
         if previous is None:
             continue
-        if _difference(previous, frame) >= threshold:
+        change = _difference(previous, frame)
+        if change >= threshold:
             found.append(index / SAMPLE_FPS)
-    return found
+        score += change
+        frames += 1
+        if frames == MOTION_WINDOW_FRAMES:
+            windows.append({"at_seconds": first / SAMPLE_FPS, "score": score})
+            score = 0.0
+            frames = 0
+            first = index + 1
+    if frames:
+        # The leftover window is scaled to a full one so a short tail cannot win by being short.
+        windows.append(
+            {"at_seconds": first / SAMPLE_FPS, "score": score * MOTION_WINDOW_FRAMES / frames}
+        )
+    return found, windows
 
 
 def analyse(
@@ -133,6 +157,7 @@ def analyse(
     min_scene_ms: int = SCENE_MIN_MS_DEFAULT,
     from_ticks: int = 0,
     to_ticks: int | None = None,
+    profile: bool = False,
 ) -> dict:
     """Find shot changes inside one clip and return them in clip-local ticks.
 
@@ -168,7 +193,7 @@ def analyse(
     min_scene_ticks = max(1, min_scene_ms * TIMEBASE // 1000)
     source_start = int(clip.source_in_ticks + start * speed)
     window_ticks = int((end - start) * speed)
-    seconds = _detect(
+    seconds, windows = _detect(
         ffmpeg,
         source,
         source_start / TIMEBASE,
@@ -190,7 +215,7 @@ def analyse(
         cuts.append({"at_ticks": snapped, "source_seconds": round(value, 6)})
         if len(cuts) >= SCENE_MAX_CUTS:
             break
-    return {
+    body = {
         "threshold": threshold,
         "min_scene_ms": min_scene_ms,
         "speed_percent": clip.speed_percent,
@@ -199,6 +224,30 @@ def analyse(
         "cuts": cuts,
         "truncated": len(cuts) >= SCENE_MAX_CUTS,
     }
+    if profile:
+        # The liveliest window of each shot, in clip-local ticks. A static shot keeps its head
+        # (score 0), so "lively" never picks a random frame out of a still picture.
+        bounds = [0, *(cut["at_ticks"] for cut in cuts), clip.duration_ticks]
+        shots = []
+        for shot_from, shot_to in zip(bounds, bounds[1:]):
+            best = 0.0
+            peak = shot_from
+            for window in windows:
+                local = start + int(round(window["at_seconds"] * TIMEBASE / speed))
+                snapped = int(round(local / frame_ticks)) * frame_ticks
+                if shot_from <= snapped < shot_to and window["score"] > best:
+                    best = window["score"]
+                    peak = snapped
+            shots.append(
+                {
+                    "from_ticks": shot_from,
+                    "to_ticks": shot_to,
+                    "peak_ticks": max(shot_from, min(shot_to - frame_ticks, peak)),
+                    "motion": round(best, 6),
+                }
+            )
+        body["shots"] = shots
+    return body
 
 
 def cut_plan(clip, cuts: list[dict]) -> list[dict]:
@@ -228,47 +277,54 @@ def keep_ticks_for(frame_ticks: int, keep_ms: int) -> int:
     return max(frame_ticks, int(round(keep_ms * TIMEBASE / 1000 / frame_ticks)) * frame_ticks)
 
 
-def rough_cut_plan(clip, cuts: list[dict], frame_ticks: int, keep_ticks: int) -> list[dict]:
-    """Keep the head of every detected shot and pack the kept heads together.
+def rough_cut_plan(
+    clip, shots: list[dict], frame_ticks: int, keep_ticks: int, place: str = "head"
+) -> list[dict]:
+    """Keep one window of every shot and pack the windows together.
 
-    Splits go right to left so every cut lands on the coordinates the scanner reported; then the
-    trims go right to left too, each with `ripple=true`, so the pieces after it slide left by
-    exactly the tail that was dropped. A shot shorter than the keep is kept whole, and a clip with
-    no cut is
-    simply trimmed — one take, keep the head.
+    `place="head"` keeps the first `keep_ticks` of each shot; `place="lively"` keeps the window the
+    scanner measured as the strongest movement. A shot shorter than the keep is kept whole. The
+    plan is ordinary commands only: `clip.split` at every window edge, then one
+    `clip.ripple_remove` for each dropped piece, both right to left — so every coordinate is the
+    one the scanner reported, and the reducer stays the only place that decides what a cut does.
     """
-    points = sorted(
-        {
-            int(item["at_ticks"])
-            for item in cuts
-            if 0 < int(item["at_ticks"]) < clip.duration_ticks
-        }
-    )
+    spans: list[tuple[int, int, bool]] = []
+    for shot in shots:
+        shot_from = int(shot["from_ticks"])
+        shot_to = int(shot["to_ticks"])
+        if shot_to - shot_from <= keep_ticks:
+            spans.append((shot_from, shot_to, True))
+            continue
+        latest = shot_to - keep_ticks
+        candidate = int(shot.get("peak_ticks", shot_from)) if place == "lively" else shot_from
+        start = min(max(candidate // frame_ticks * frame_ticks, shot_from), latest)
+        start = start // frame_ticks * frame_ticks
+        end = start + keep_ticks
+        if start > shot_from:
+            spans.append((shot_from, start, False))
+        spans.append((start, end, True))
+        if end < shot_to:
+            spans.append((end, shot_to, False))
+    boundaries = sorted({edge for span in spans for edge in span[:2]})
+    starts = [edge for edge in boundaries if 0 < edge < clip.duration_ticks]
+    piece_ids = {
+        start: f"{clip.id}-rough{number:02d}"
+        for number, start in enumerate(sorted(starts, reverse=True), 1)
+    }
     commands: list[dict] = []
-    total = len(points)
-    for offset, at in enumerate(reversed(points)):
-        number = total - offset
+    for at in sorted(starts, reverse=True):
         commands.append(
             {
                 "op": "clip.split",
                 "clip_id": clip.id,
                 "at_ticks": clip.position_ticks + at,
-                "right_clip_id": f"{clip.id}-rough{number:02d}",
+                "right_clip_id": piece_ids[at],
             }
         )
-    bounds = [0, *points, clip.duration_ticks]
-    for number in range(total, -1, -1):
-        start, end = bounds[number], bounds[number + 1]
-        if end - start <= keep_ticks:
+    for span_start, _span_end, kept in sorted(spans, key=lambda span: -span[0]):
+        if kept:
             continue
-        piece = clip.id if number == 0 else f"{clip.id}-rough{number:02d}"
-        commands.append(
-            {
-                "op": "clip.trim",
-                "clip_id": piece,
-                "source_in_ticks": clip.source_in_ticks + start * clip.speed_percent // 100,
-                "duration_ticks": keep_ticks,
-                "ripple": True,
-            }
-        )
+        piece = clip.id if span_start == 0 else piece_ids.get(span_start)
+        if piece is not None:
+            commands.append({"op": "clip.ripple_remove", "clip_id": piece})
     return commands

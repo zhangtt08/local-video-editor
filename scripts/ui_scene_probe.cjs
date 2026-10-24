@@ -31,9 +31,9 @@ const SIZE = flag("size", "1456x808");
 const OUT = path.resolve(flag("out", "ui_scene_probe.json"));
 const SHOT = flag("shot", "");
 const ACTION = flag("action", "scene");
-const LABEL = ACTION === "rough" ? "粗剪" : "按镜头切分";
-const BUTTON_SCOPE = ACTION === "rough" ? ".panel-scroll button" : ".insp-actions button";
-const EXACT = ACTION === "rough";
+const LABEL = ACTION === "rough" || ACTION === "roughlively" ? "粗剪" : "按镜头切分";
+const BUTTON_SCOPE = ACTION === "rough" || ACTION === "roughlively" ? ".panel-scroll button" : ".insp-actions button";
+const EXACT = ACTION === "rough" || ACTION === "roughlively";
 const MENU_LABEL = ACTION === "edl" ? "复制这一轨的 EDL（剪辑表）" : "按镜头粗剪这一轨";
 const WANT = JSON.stringify(LABEL);
 const MATCH = EXACT
@@ -273,7 +273,7 @@ async function main() {
         })()`);
         facts.after = await projectState();
         facts.clips = Object.values(facts.after.clips || {}).map(function (clip) {
-          return { id: clip.id, position_ticks: clip.position_ticks, duration_ticks: clip.duration_ticks };
+          return { id: clip.id, position_ticks: clip.position_ticks, duration_ticks: clip.duration_ticks, source_in_ticks: clip.source_in_ticks };
         }).sort(function (a, b) { return a.position_ticks - b.position_ticks; });
         return;
       }
@@ -284,7 +284,7 @@ async function main() {
       }
       if (!facts.after) facts.after = await projectState();
       facts.clips = Object.values(facts.after.clips || {}).map(function (clip) {
-        return { id: clip.id, position_ticks: clip.position_ticks, duration_ticks: clip.duration_ticks };
+        return { id: clip.id, position_ticks: clip.position_ticks, duration_ticks: clip.duration_ticks, source_in_ticks: clip.source_in_ticks };
       }).sort(function (a, b) { return a.position_ticks - b.position_ticks; });
     } else {
 
@@ -304,7 +304,7 @@ async function main() {
     await sleep(600);
 
     // ② 检查器里那颗按钮：滚进视野，量它的盒子、字号、圆角，并用命中点确认点得到自己。
-    if (ACTION === "rough") {
+    if (ACTION === "rough" || ACTION === "roughlively") {
       const wrote = await evaluate(`(function () {
         const field = document.getElementById('rough-keep');
         if (!field) return null;
@@ -315,6 +315,20 @@ async function main() {
       })()`);
       facts.keep = wrote;
       if (!wrote) throw new Error("检查器里没有「粗剪每镜」这一格");
+      if (ACTION === "roughlively") {
+        const pick = await evaluate(`(function () {
+          const node = document.querySelector('select[aria-label="粗剪取法"]');
+          if (!node) return null;
+          const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
+          setter.call(node, 'lively');
+          node.dispatchEvent(new Event('change', { bubbles: true }));
+          return { value: node.value,
+            options: Array.from(node.options).map(function (o) { return o.textContent.trim(); }) };
+        })()`);
+        facts.place = pick;
+        if (!pick) throw new Error("检查器里没有「粗剪取法」");
+        await sleep(250);
+      }
       await sleep(300);
     }
     const scrolled = await evaluate(`(function () {
@@ -410,7 +424,7 @@ async function main() {
     }
     if (!facts.after) facts.after = await projectState();
     facts.clips = Object.values(facts.after.clips || {}).map(function (clip) {
-      return { id: clip.id, position_ticks: clip.position_ticks, duration_ticks: clip.duration_ticks };
+      return { id: clip.id, position_ticks: clip.position_ticks, duration_ticks: clip.duration_ticks, source_in_ticks: clip.source_in_ticks };
     }).sort(function (a, b) { return a.position_ticks - b.position_ticks; });
     }
   } finally {

@@ -6584,6 +6584,8 @@ Agent 用 `clip.mask_stack` 写得进去，人在界面上只能加一块、删�
 假红写进了账（`released_package_check` 红在两份引擎字节对不上，而 PyInstaller 不是逐字节
 可复现的），判法就是那一条：树不静就不建，量到什么写什么。
 
+1.286（2026-10-24）：粗剪取法——`place=head|lively`；检测同一次解码顺带量 0.33 秒窗的动静，每镜挑最闹的一段，静止镜头仍留头；计划改为 split + ripple_remove，源时钟由 split 保留。`roughcut_check.py` 量到同一段先静后动素材：挑动读源 5 s、留头读 0 s；`livelyui_check.py` 真页面选挑动执行，一个 revision 读源 5 s。发布账：1.286.0 / schema 33，根 exe 与便携版 185,214,413 B（sha256 前缀 32070e97ee44734c），安装版 185,375,127 B。
+
 1.285（2026-10-24）：EDL 剪辑表——`interchange.py` 写 CMX3600（整帧不丢帧、8 格卷名、源/记录时码），一条画面轨、直切、100% 速度；转场/变速/非画面/分数帧率各自按名字拒绝并点名。`edl_check.py` 量到两段时码与 `SOLID_MP`、revision 不动；`edlui_check.py` 真页面点菜单复制，revision 仍是 1。发布账：1.285.0 / schema 33，根 exe 与便携版 185,212,553 B（sha256 前缀 d1c1874aea230a94），安装版 185,373,266 B。
 
 1.284（2026-10-24）：整轨粗剪——轨道头菜单一项，逐段右到左取同一份计划（普通 split + 带 ripple 的 trim），只动本轨、一个 revision；不能扫的片段带原因跳过。`roughcut_check.py` 整轨一节量到 a 0..1、b 3..4、图片被 ripple 带到 5..7；`trackui_check.py` 在真页面点开轨菜单执行，a 0..1.5、b 3.5..5、图片 6..8。发布账：1.284.0 / schema 33，根 exe 与便携版 185,207,387 B（sha256 前缀 753bfb20b00bcfd3），安装版 185,368,090 B（补账按修完的源码重打；整轨入口只在画面轨上摆，空轨同样灰掉）。

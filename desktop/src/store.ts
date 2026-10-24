@@ -933,7 +933,7 @@ export async function cutSilence(clipId: string) {
 
 /** 按镜头粗剪：每个镜头只留前 keepMs，计划是普通 clip.split + 带 ripple 的 clip.trim，
  *  一次提交一个版本、撤销一步整批退回。门槛与最短镜头读能力表，界面不写第二份。 */
-export async function roughCut(clipId: string, keepMs: number) {
+export async function roughCut(clipId: string, keepMs: number, place: "head" | "lively" = "head") {
   const project = state.project;
   if (!engine || !project || !state.caps) return;
   set({ busy: "粗剪…" });
@@ -945,6 +945,7 @@ export async function roughCut(clipId: string, keepMs: number) {
       threshold: state.caps.limits.scene_threshold_default ?? 0.18,
       min_scene_ms: state.caps.limits.scene_min_ms_default ?? 400,
       keep_ms: keepMs,
+      place,
     });
     const commands = scanned.rough.commands;
     if (!commands.length) {
@@ -964,7 +965,7 @@ export async function roughCut(clipId: string, keepMs: number) {
 
 /** 整轨粗剪：这条轨上的画面片段从右往左各取一份引擎计划，合成一个批次、一个版本。
  *  不能扫的片段（声音、图片、合成、变速、链接）由引擎逐段报告原因；只动本轨。 */
-export async function roughCutTrack(trackId: string) {
+export async function roughCutTrack(trackId: string, place: "head" | "lively" = "head") {
   const project = state.project;
   if (!engine || !project || !state.caps) return;
   set({ busy: "粗剪整轨…" });
@@ -975,6 +976,7 @@ export async function roughCutTrack(trackId: string) {
       expected_revision: project.revision,
       sequence_id: state.sequenceId,
       keep_ms: keepMs,
+      place,
     });
     const commands = scanned.rough.commands;
     const skipped = scanned.rough.clips.filter((item) => item.skipped).length;

@@ -1483,6 +1483,14 @@ def create_app(
                 422,
                 clip_id=clip_id,
             )
+        if clip.transition_in is not None:
+            raise EditorError(
+                "INVALID_ROUGH_TARGET",
+                "a clip with an incoming transition cannot be rough-cut yet: dropping its head "
+                "would move the seam the transition belongs to. Remove the transition first.",
+                422,
+                clip_id=clip_id,
+            )
         asset = project.assets[clip.asset_id]
         source = Path(asset.verified.path)
         if not source.is_file():
@@ -1501,12 +1509,18 @@ def create_app(
             project.settings.frame_ticks,
             threshold=request.threshold,
             min_scene_ms=request.min_scene_ms,
+            profile=True,
         )
         keep_ticks = scenes.keep_ticks_for(project.settings.frame_ticks, request.keep_ms)
         commands = scenes.rough_cut_plan(
-            clip, result["cuts"], project.settings.frame_ticks, keep_ticks
+            clip, result["shots"], project.settings.frame_ticks, keep_ticks, place=request.place
         )
-        body = {**result, "keep_ms": request.keep_ms, "keep_ticks": keep_ticks}
+        body = {
+            **result,
+            "keep_ms": request.keep_ms,
+            "keep_ticks": keep_ticks,
+            "place": request.place,
+        }
         if request.apply and not commands:
             raise EditorError(
                 "ROUGH_NONE",
@@ -1569,6 +1583,14 @@ def create_app(
                     }
                 )
                 continue
+            if clip.transition_in is not None:
+                scanned.append(
+                    {
+                        "clip_id": clip.id,
+                        "skipped": "an incoming transition would move its seam; remove it first",
+                    }
+                )
+                continue
             source = Path(project.assets[clip.asset_id].verified.path)
             if not source.is_file():
                 raise EditorError(
@@ -1586,8 +1608,11 @@ def create_app(
                 frame_ticks,
                 threshold=request.threshold,
                 min_scene_ms=request.min_scene_ms,
+                profile=True,
             )
-            plan = scenes.rough_cut_plan(clip, result["cuts"], frame_ticks, keep_ticks)
+            plan = scenes.rough_cut_plan(
+                clip, result["shots"], frame_ticks, keep_ticks, place=request.place
+            )
             commands.extend(plan)
             scanned.append(
                 {
@@ -1601,6 +1626,7 @@ def create_app(
             "clips": scanned,
             "keep_ms": request.keep_ms,
             "keep_ticks": keep_ticks,
+            "place": request.place,
             "commands": commands,
         }
         if request.apply and not commands:

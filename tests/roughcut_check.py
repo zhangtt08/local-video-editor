@@ -64,6 +64,18 @@ def solid(folder: Path) -> Path:
     return target
 
 
+def frozen_then_move(folder: Path) -> Path:
+    """Six seconds: the first three frozen, the last three moving. No cut — only motion changes."""
+    target = folder / "frozen_move.mp4"
+    run([
+        str(FFMPEG), "-v", "error", "-y", "-nostdin",
+        "-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=3",
+        "-vf", "tpad=start_duration=3:start_mode=clone", "-t", "6",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", str(target),
+    ])
+    return target
+
+
 def still(folder: Path) -> Path:
     target = folder / "still.png"
     run([
@@ -201,6 +213,7 @@ def main() -> None:
         shots, solid_source, still_source, tone_source = (
             three_shots(folder), solid(folder), still(folder), tone(folder)
         )
+        moving = frozen_then_move(folder)
         app, token = client_for(folder)
         headers = {"Authorization": f"Bearer {token}"}
         with TestClient(app, base_url="http://127.0.0.1", headers=headers) as client:
@@ -333,6 +346,34 @@ def main() -> None:
             assert moved["s"]["duration_ticks"] == 2 * SECOND, moved["s"]
             print(
                 "   整轨：a 0..1、b 3..4、图片跳过并被两次 ripple 带到 5 秒，一个 revision"
+            )
+
+            # ⑨ 取法：同一段「先静后动」的素材，留头读 0 秒，挑动读最后那一秒。
+            move_pid, move_revision = seed(client, moving, duration=6 * SECOND)
+            lively = cut(
+                client, move_pid, move_revision, "rc-lively",
+                keep_ms=1000, place="lively", apply=True,
+            )
+            assert lively.status_code == 200, lively.text
+            lively_body = lively.json()["rough"]
+            assert lively_body["place"] == "lively", lively_body
+            assert lively_body["shots"][0]["peak_ticks"] > 0, lively_body["shots"]
+            lively_clips = clips_of(lively.json()["project"])
+            assert len(lively_clips) == 1, lively_clips
+            assert lively_clips[0]["duration_ticks"] == SECOND, lively_clips
+            assert lively_clips[0]["source_in_ticks"] == 5 * SECOND, lively_clips
+            head_pid, head_revision = seed(client, moving, duration=6 * SECOND)
+            headed = cut(
+                client, head_pid, head_revision, "rc-head",
+                keep_ms=1000, place="head", apply=True,
+            )
+            assert headed.status_code == 200, headed.text
+            head_clips = clips_of(headed.json()["project"])
+            assert head_clips[0]["source_in_ticks"] == 0, head_clips
+            print(
+                "   取法：挑动读源 "
+                f"{lively_clips[0]['source_in_ticks'] // SECOND}s、留头读 0s"
+                "（同一段先静后动的素材）"
             )
 
     print(

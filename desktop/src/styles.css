@@ -372,6 +372,9 @@ canvas.composite-raw { width: 100%; height: 100%; object-fit: contain; display: 
 /* 1.283：第四格是一颗按钮的行（粗剪、适配到）不能沿用 26px 那一格——26px 会把「粗剪」
    「适配」推出面板，撑出一条横向滚动条（真窗口量到过）。按内容给最后一列宽度。 */
 .effect-row.row-action { grid-template-columns: 76px minmax(56px, 1fr) 18px auto; }
+/* 1.286：粗剪那一行多了一格取法（留头 / 挑动），把输入框再让出一点，五格仍留在一行里。 */
+.effect-row.rough-row { grid-template-columns: 76px minmax(40px, 1fr) 16px auto auto; }
+.effect-row.rough-row select { width: auto; padding: 4px 6px; }
 /* 淡入淡出的两行：第四格留给「取消」，没有淡时留空，输入框仍然上下对齐；被拒的话横跨整行。 */
 .fade-rows { margin-bottom: 10px; }
 .fade-rows > .panel-label { margin: 0 0 6px; }
