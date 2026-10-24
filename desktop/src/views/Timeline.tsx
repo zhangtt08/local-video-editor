@@ -707,6 +707,15 @@ function TrackRow({
       },
     ];
     if (track.kind === "audio") {
+      // 独奏只摆在声音轨上：画面轨没有这一颗（它的内嵌声音在别人独奏时一律让路）。
+      entries.unshift(
+        {
+          kind: "item", label: track.solo ? "取消独奏" : "独奏（其它声音让路）", icon: "volume",
+          title: "有任意一条声音轨独奏时，其余声音（含画面轨的内嵌声音）都让路；被静音的轨即使独奏也不出声。整轨音量与 M/S 也在检查器的「混音台」里",
+          run: () => updateTrack(track.id, { solo: !track.solo }, track.solo ? "取消独奏" : "独奏这条轨"),
+        },
+        { kind: "sep", id: "solo" },
+      );
       entries.push({
         kind: "item", label: "自动闪避（给说话让路）", icon: "volume", disabled: !!emptyTrack,
         title: emptyTrack ?? "这条轨按 9 dB 让路，写成音量关键帧（说话结束后 0.6 秒抬回来），只改本轨",

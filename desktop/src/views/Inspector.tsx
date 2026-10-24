@@ -2,7 +2,7 @@ import { manifestUrl } from "../manifestFetch";
 import type { ChromaKey, Keyframe, MaskBoxKey, MaskShapeKeyframe, SpatialProperty } from "../engine";
 import { useEffect, useId, useRef, useState } from "react";
 
-import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionChoices, type AnimatedEffect, type Capabilities, type Clip, type LinkStatus, type SampledValues, type ShapeMask, type TransitionKind, BLEND_MODES} from "../engine";
+import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionChoices, type AnimatedEffect, type Capabilities, type Clip, type LinkStatus, type SampledValues, type ShapeMask, type Track, type TransitionKind, BLEND_MODES} from "../engine";
 
 import { Icon, Modal } from "../ui";
 import { canDetachAudio, canLinkClips } from "../clipRules";
@@ -113,6 +113,7 @@ export function Inspector() {
       {sequence ? <section className="insp-section"><span className="panel-label">当前合成</span><fieldset className="effects-fields" disabled={Boolean(app.busy || !readyProject)}><input className="input" key={sequence.id + sequence.name} aria-label="合成名称" defaultValue={sequence.name} maxLength={256} onBlur={(e) => { const name = e.target.value.trim(); if (name && name !== sequence.name) updateSequence({ name }); }} /><NumberField label="合成时长" hint="缩短时不能截断内部片段或已使用的源区间" value={seconds(sequence.duration_ticks)} quantum={project!.settings.timebase * project!.settings.frame_rate.denominator / project!.settings.frame_rate.numerator} min={project!.settings.frame_rate.denominator / project!.settings.frame_rate.numerator} onCommit={(v) => updateSequence({ duration_ticks: ticks(v) })} /></fieldset></section> : null}
       {app.selectedClips.length ? <section className="insp-section"><button className="btn" disabled={Boolean(app.busy || !readyProject)} onClick={() => setNestName(`合成 ${Object.keys(project?.sequences ?? {}).length + 1}`)}>预合成选中片段</button>{compound ? <button className="btn primary" disabled={Boolean(app.busy || app.batch.length)} onClick={() => openSequence(compound)}>进入合成</button> : null}</section> : null}
       {project ? <details className="insp-section" open={!clip && !multiple}><summary className="panel-label">工程设置</summary><ProjectSettings /></details> : null}
+      {project ? <TrackMixer /> : null}
       {app.selectedClips.length ? <AssociationFields /> : null}
 
       {multiple ? <section className="insp-section"><div className="row-title"><span className="panel-label">成组剪辑</span><span className="tag accent">{app.selectedClips.length} 个片段</span></div>
@@ -1095,6 +1096,55 @@ function NumberField({
 
 /** 界面上写的那个 -7 dBTP 就是真正提交的那个值：标签与请求共用这一个常量。 */
 const MASTER_CEILING_DBTP = -7;
+
+/** 1.280：混音台——整轨音量与独奏。这一节里每一条声音轨一行：名字、M、S、滑杆、百分数。
+ *
+ *  三件事定这一节：
+ *  ① 能不能用只问能力位 `features.track_mixer`（1.279 的引擎不认 `solo`，那一格就整节不摆）；
+ *  ② 滑杆的上下限只读 `limits.track_volume_max`（0…400%），拖的时候只动本地、松手才提交——
+ *     否则一次拖动会写成几十个版本；
+ *  ③ 「独奏时让路」这一句只在真有独奏、而这条轨没被静音时出现；静音优先是引擎
+ *     `track_audible` 那条判断，界面不另算一遍。
+ */
+function TrackMixer() {
+  const app = useApp();
+  const project = app.project;
+  if (!project || !app.caps?.features?.track_mixer) return null;
+  const tracks = project.tracks.filter((track) => track.kind === "audio");
+  const soloed = tracks.some((track) => track.solo);
+  return <details className="insp-section" open={Boolean(soloed)}>
+    <summary className="panel-label">混音台{soloed ? " · 独奏中" : ""}{tracks.length ? ` · ${tracks.length} 条声音轨` : ""}</summary>
+    {tracks.length ? <div className="mixer-list">{tracks.map((track) => <MixerRow key={track.id} track={track} soloed={soloed} />)}</div>
+      : null}
+    {/* 空轨时只说一句：两句灰字叠在一起正是这一版要拒的那种排法。 */}
+    <p className="hint">{tracks.length ? "整轨音量乘在片段音量上，导出与预览同一份；独奏时其余声音让路，静音优先。" : "还没有声音轨：在时间线上点「+ 声音轨」，配乐与旁白就各有一条自己的音量。"}</p>
+  </details>;
+}
+
+function MixerRow({ track, soloed }: { track: Track; soloed: boolean }) {
+  const app = useApp();
+  const ceiling = Math.round((app.caps?.limits?.track_volume_max ?? 4) * 100);
+  const [draft, setDraft] = useState(Math.round((track.volume ?? 1) * 100));
+  useEffect(() => setDraft(Math.round((track.volume ?? 1) * 100)), [track.volume]);
+  const commit = () => {
+    const want = Math.min(ceiling, Math.max(0, draft)) / 100;
+    if (Math.abs(want - (track.volume ?? 1)) > 0.0005) updateTrack(track.id, { volume: want }, "调整轨道音量");
+  };
+  const silenced = soloed && !track.solo && !track.muted;
+  return <div className={`mixer-row${track.muted ? " is-muted" : ""}${track.solo ? " is-solo" : ""}${silenced ? " is-yielding" : ""}`}>
+    <span className="mixer-name" title={track.name}>{track.name}</span>
+    <button type="button" className={`mixer-pill${track.muted ? " on" : ""}`} aria-pressed={Boolean(track.muted)}
+      title="静音：导出与预览都不写这条轨的声音" onClick={() => updateTrack(track.id, { muted: !track.muted }, track.muted ? "取消静音" : "静音轨道")}>M</button>
+    <button type="button" className={`mixer-pill${track.solo ? " on" : ""}`} aria-pressed={Boolean(track.solo)}
+      title="独奏：其余所有声音让路（含画面轨的内嵌声音）；被静音的轨即使独奏也不出声"
+      onClick={() => updateTrack(track.id, { solo: !track.solo }, track.solo ? "取消独奏" : "独奏这条轨")}>S</button>
+    <input className="mixer-fader" type="range" min={0} max={ceiling} step={1} value={draft}
+      aria-label={`${track.name} 的音量`} aria-valuetext={`${draft}%`}
+      onChange={(event) => setDraft(Number(event.target.value))}
+      onPointerUp={commit} onKeyUp={commit} onBlur={commit} />
+    <span className="mixer-value mono">{draft}%</span>
+  </div>;
+}
 
 function ProjectSettings() {
   const app = useApp();

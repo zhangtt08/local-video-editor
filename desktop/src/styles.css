@@ -1021,6 +1021,19 @@ table.table tr.current td { background: var(--accent-soft); }
 .card.advanced[open] summary::before { content: "▾"; }
 .card.advanced > *:not(summary) { margin-top: 10px; }
 
+/* 1.280：混音台。一条声音轨一行：名字、M、S、滑杆、百分数——**一行**，不叠第二行小字；
+   「独奏时让路」只把名字压暗（悬停说明在滑杆与那一节末尾的说明里），不为它再加一行。 */
+.mixer-list { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 2px; }
+.mixer-row { display: grid; grid-template-columns: minmax(0, 1fr) 26px 26px minmax(64px, 1.4fr) 44px; gap: 8px; align-items: center; font-size: var(--fs-body); }
+.mixer-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+.mixer-row.is-yielding .mixer-name { color: var(--ink-3); }
+.mixer-row.is-muted .mixer-name { color: var(--ink-3); text-decoration: line-through; }
+.mixer-pill { height: 26px; padding: 0; border-radius: var(--r-pill); border: 1px solid var(--line-strong); background: var(--sunk); color: var(--ink-2); font-size: var(--fs-label); font-weight: 600; }
+.mixer-pill:hover { background: var(--elev); color: var(--ink); }
+.mixer-pill.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-deep); }
+.mixer-fader { width: 100%; min-width: 0; }
+.mixer-value { text-align: right; color: var(--ink-2); font-size: var(--fs-label); white-space: nowrap; }
+
 /* 检查器：片段头与工程头 */
 .clip-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
 .ch-name { font-size: var(--fs-body); font-weight: 600; flex: 1; min-width: 0; }

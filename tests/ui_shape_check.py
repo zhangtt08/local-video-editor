@@ -663,6 +663,10 @@ def main() -> None:
             f"{data['unreachable_count']:>8}{data['hint_stack_count']:>6}"
             f"{data['text_overlap_count']:>8}"
         )
+        # 叠行不为 0 时把那一格的名字与第一句交出来——只报一个数，下一轮还得重扫才知道它在哪。
+        if data["hint_stack_count"]:
+            for stack in data["hint_stacks"]:
+                print(f"{'':<22}叠行：{stack['cell']}（{stack['lines']} 行）{stack['text']}")
         if not data["painted_tags"] or data["min_font"] is None:
             problems.append(f"{label}: 一个字都没画")
             continue

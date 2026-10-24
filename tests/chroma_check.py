@@ -274,7 +274,7 @@ def contract_suite() -> None:
             except Exception:
                 continue
             raise AssertionError(f"{knob}={bad} 竟然收下了")
-    assert SCHEMA_VERSION == 32, SCHEMA_VERSION
+    assert SCHEMA_VERSION == 33, SCHEMA_VERSION
 
 
 def spill_suite() -> None:

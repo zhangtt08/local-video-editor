@@ -35,6 +35,8 @@ export type Track = {
   name: string;
   muted: boolean;
   hidden: boolean;
+  /** 1.280：独奏只摆在声音轨上；静音优先于独奏。判断在引擎 `animation.track_audible` 一处。 */
+  solo?: boolean;
   volume: number;
   locked?: boolean;
   blend_mode?: BlendMode;
@@ -692,7 +694,7 @@ export type Capabilities = {
   max_commands_per_batch: number;
   commands: string[];
   features: Record<string, boolean>;
-  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; denoise_db?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number; track_max_gap_frames?: number; track_gap_default?: number; track_min_frames?: number; track_max_frames?: number; mask_rotation_limit?: number; extra_masks?: number; extra_mask_keys?: number; mask_shape_keys?: number; mask_shape_schedule_segments?: number; blur_schedule_segments?: number; sharpen_schedule_segments?: number; layer_key_limit?: number; layer_schedule_segments?: number; attribute_paste_targets?: number; chroma_similarity_default?: number; chroma_blend_default?: number; chroma_color_default?: string; chroma_spill_default?: number };
+  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; track_volume_max?: number; track_volume_default?: number; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; denoise_db?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number; track_max_gap_frames?: number; track_gap_default?: number; track_min_frames?: number; track_max_frames?: number; mask_rotation_limit?: number; extra_masks?: number; extra_mask_keys?: number; mask_shape_keys?: number; mask_shape_schedule_segments?: number; blur_schedule_segments?: number; sharpen_schedule_segments?: number; layer_key_limit?: number; layer_schedule_segments?: number; attribute_paste_targets?: number; chroma_similarity_default?: number; chroma_blend_default?: number; chroma_color_default?: string; chroma_spill_default?: number };
   render_presets: Preset[];
   /** 1.137：时间码的写法与「哪两个率才有丢帧码」由引擎说，界面不许自己写一份正则。 */
   timecode_shape?: string;

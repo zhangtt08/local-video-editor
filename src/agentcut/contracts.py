@@ -19,9 +19,18 @@ TIMEBASE = 70_560_000
 
 MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 
+# 1.280：整轨音量的两端只有这一处。`Track.volume` 的带、能力表下发的数与界面上那条滑杆
+# 读的都是这两个常量——界面不许自带 0…200% 的第二个版本。
+TRACK_VOLUME_MAX = 4.0
+
+TRACK_VOLUME_DEFAULT = 1.0
+
 SCHEMA_VERSION = (
 
-    32  # v32 lets a chroma key suppress the colour it just exposed (`spill` inside `chroma`); a
+    33  # v33 adds one boolean to a track: `solo`. A v32 row has no such field and reads as
+    #     "not soloed", which is exactly what the missing field meant; solo only changes the mix
+    #     when at least one track says yes, so an upgraded project sounds the same.
+    #     v32 lets a chroma key suppress the colour it just exposed (`spill` inside `chroma`); a
     #     v31 key carries no such field and reads as "no suppression", which is exactly what the
     #     missing field meant — and that is also the default, so upgrading never moves the picture
     #     of a project keyed in 1.276. v31 lets a clip carry a chroma key (`chroma`); a v30 row
@@ -62,7 +71,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.279.0"
+APP_VERSION = "1.280.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -380,7 +389,11 @@ class Track(Contract):
 
     locked: bool = False
 
-    volume: Annotated[float, Field(ge=0, le=4)] = 1.0
+    # 1.280：独奏。有任意一条**声音轨**独奏时，其余所有声音（包括画面轨的内嵌声音）让路；
+    # 静音优先于独奏——被静音的轨即使独奏了也不出声。见 `animation.track_audible`。
+    solo: bool = False
+
+    volume: Annotated[float, Field(ge=0, le=TRACK_VOLUME_MAX)] = TRACK_VOLUME_DEFAULT
 
     blend_mode: BlendMode = "normal"
 
@@ -3791,7 +3804,9 @@ class TrackUpdate(Contract):
 
     locked: bool | None = None
 
-    volume: Annotated[float | None, Field(ge=0, le=4)] = None
+    solo: bool | None = None
+
+    volume: Annotated[float | None, Field(ge=0, le=TRACK_VOLUME_MAX)] = None
 
     blend_mode: BlendMode | None = None
 
@@ -7410,6 +7425,9 @@ def capabilities(
 
             "track_lock": True,
 
+            # 1.280：轨道混音——独奏与整轨音量（音量字段一直在，这一档把它摆到界面上）。
+            "track_mixer": True,
+
             "ripple_delete": True,
 
             "insert_edit": True,
@@ -7604,6 +7622,11 @@ def capabilities(
         "limits": {
 
             "max_tracks": 128,
+
+            # 1.280：整轨音量那一条滑杆的两端。界面读这两个数，不自己写 0…200%。
+            "track_volume_max": TRACK_VOLUME_MAX,
+
+            "track_volume_default": TRACK_VOLUME_DEFAULT,
 
             "max_assets": 10_000,
 

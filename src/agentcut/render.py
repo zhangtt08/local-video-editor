@@ -30,6 +30,7 @@ from .animation import (
     sharpen_schedule,
     sound_enabled,
     spatial_schedule,
+    track_audible,
 )
 from .animation import (
     points as curve_points,
@@ -1118,7 +1119,11 @@ def compile_render_plan(
     audio_only = preset["codec"] is None
 
     video_tracks = [track for track in project.tracks if track.kind == "video" and not track.hidden]
-    audio_tracks = [track for track in project.tracks if track.kind == "audio" and not track.muted]
+    # 1.280：混音的两条规矩（静音优先、有独奏就只留独奏那条）只在 `animation.track_audible`
+    # 一处判；这里与预览清单读的都是它，导出不会与监视器给出两个答案。
+    audio_tracks = [
+        track for track in project.tracks if track.kind == "audio" and track_audible(track, project)
+    ]
 
     layers: list[list[dict]] = []
     visible: list[tuple[object, list[dict]]] = []
@@ -1142,7 +1147,7 @@ def compile_render_plan(
                 or entry["verified"]
                 and entry["verified"].has_audio
             )
-            and sound_enabled(entry["clip"], track)
+            and sound_enabled(entry["clip"], track, project)
         )
     for track in audio_tracks:
         sounds.extend(
@@ -2333,6 +2338,7 @@ def compile_render_plan(
                     "kind": track.kind,
                     "muted": track.muted,
                     "hidden": track.hidden,
+                    "solo": track.solo,
                     "volume": track.volume,
                     "blend_mode": track.blend_mode,
                     "clips": sum(1 for clip in project.clips.values() if clip.track_id == track.id),

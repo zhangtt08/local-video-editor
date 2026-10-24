@@ -33,8 +33,26 @@ from .timeline import link_status
 from .transitions import envelopes
 
 
-def sound_enabled(clip: Clip, track: Track) -> bool:
-    return not track.muted and (track.kind == "audio" or clip.embedded_audio)
+def solo_track_ids(project: Project) -> set[str]:
+    """1.280：被独奏的声音轨。独奏只摆在声音轨上（画面轨没有这一颗按钮）。"""
+    return {track.id for track in project.tracks if track.kind == "audio" and track.solo}
+
+
+def track_audible(track: Track, project: Project) -> bool:
+    """这一条轨的声音出不出得来——**唯一**一处判断，导出与预览清单都读它。
+
+    规则两句话：静音优先（被静音的轨即使独奏了也不出声）；只要有任意一条声音轨独奏，
+    其余所有声音都让路——包括画面轨的内嵌声音（它没有独奏按钮，所以在这一档里一律让路）。
+    没有人独奏时，这条判断与 1.279 的 `not track.muted` 完全等价，老工程声音一字不差。
+    """
+    if track.muted:
+        return False
+    solos = solo_track_ids(project)
+    return not solos or track.id in solos
+
+
+def sound_enabled(clip: Clip, track: Track, project: Project) -> bool:
+    return track_audible(track, project) and (track.kind == "audio" or clip.embedded_audio)
 
 
 def points(clip: Clip, prop: str):
@@ -1168,7 +1186,7 @@ def preview_manifest(
             # The unit image is the box-only answer; a clip that animates its outline gets one image
             # per window instead, and the two would be the same bytes for the first of them.
             "mask_unit": mask_unit,
-            "sound_enabled": sound_enabled(clip, track),
+            "sound_enabled": sound_enabled(clip, track, project),
             "speed": describe(segments(clip, quantum, project.settings.frame_ticks), TIMEBASE)
             if clip.speed_curve
             else None,

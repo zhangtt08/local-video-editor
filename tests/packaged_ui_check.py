@@ -94,7 +94,8 @@ def main() -> None:
         assert editor["bodyFont"] >= 13.5, editor["bodyFont"]
 
         # ⑥ 证据照片写得出来，且不是一张空白。
-        assert shot.is_file() and shot.stat().st_size > 20_000, shot.stat().st_size if shot.is_file() else 0
+        size = shot.stat().st_size if shot.is_file() else 0
+        assert shot.is_file() and size > 20_000, size
 
     print(
         f"PASS: 发布包真窗口（{APP_VERSION}）里工作台是圆角卡片 + 8px 呼吸位 + 五枚工具胶囊，"
