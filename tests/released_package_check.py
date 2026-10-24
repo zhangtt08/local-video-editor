@@ -49,6 +49,8 @@ RENDERER_SENTENCES = (
     "看遮罩",
     "摘掉键",
     "预览画不出这个色度键",
+    # 1.277：拧溢色抑制的那颗旋钮也得真的在包里（界面上就这一句名字）。
+    "溢色抑制",
     "素材从哪里读",
     "交付按什么输出",
     "色彩管理套叠",
@@ -156,6 +158,11 @@ RENDERER_LITERALS = (
     "clip.chroma",
     "INVALID_CHROMA",
     "chroma_similarity_default",
+    # 1.277：溢色抑制在包里的那四串——能力的名字、通道那个序号、着色器那根掩码、旋钮的 id。
+    "chroma_spill",
+    "spill_at",
+    "uSpillMask",
+    "chroma-spill",
 )
 
 

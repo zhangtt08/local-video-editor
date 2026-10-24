@@ -582,10 +582,13 @@ function ChromaFields({ clip }: { clip: Clip }) {
   const disabled = Boolean(app.busy || !project || project.tracks.find((t) => t.id === clip.track_id)?.locked);
   const limits = app.caps?.limits;
   const supported = Boolean(app.caps?.features?.chroma_key);
+  // 1.277：溢色抑制是键里多出来的一格——老引擎（1.276）认不得载荷里的 `spill`，那一格就不摆。
+  const spillSupported = Boolean(app.caps?.features?.chroma_spill);
   const defaults: ChromaKey = {
     color: String(limits?.chroma_color_default ?? ""),
     similarity: Number(limits?.chroma_similarity_default ?? 0),
     blend: Number(limits?.chroma_blend_default ?? 0),
+    spill: Number(limits?.chroma_spill_default ?? 0),
     inverted: false,
   };
   const shown = chroma ?? defaults;
@@ -596,13 +599,14 @@ function ChromaFields({ clip }: { clip: Clip }) {
           <input id="chroma-color" type="color" value={shown.color} aria-label="色度键的键色" title="点开系统取色器：里面那支吸管可以直接在画面上吸一块颜色当键色" onChange={(e) => setClipChroma(clip.id, { ...shown, color: e.target.value })} /></div>
         <div className="effect-row"><label htmlFor="chroma-similarity">相似度</label><EffectInput id="chroma-similarity" value={shown.similarity * 100} min={0} max={100} step={1} onCommit={(value) => setClipChroma(clip.id, { ...shown, similarity: value / 100 })} /><span className="dim">%</span></div>
         <div className="effect-row"><label htmlFor="chroma-blend">边缘柔和</label><EffectInput id="chroma-blend" value={shown.blend * 100} min={0} max={100} step={1} onCommit={(value) => setClipChroma(clip.id, { ...shown, blend: value / 100 })} /><span className="dim">%</span></div>
+        {spillSupported ? <div className="effect-row"><label htmlFor="chroma-spill" title="压的是键色里最强那一条通道，封顶是另外两条里较宽的那一个；压多少由引擎那一个数决定，导出与预览同一份">溢色抑制</label><EffectInput id="chroma-spill" value={(shown.spill ?? 0) * 100} min={0} max={100} step={1} onCommit={(value) => setClipChroma(clip.id, { ...shown, spill: value / 100 })} /><span className="dim">%</span></div> : null}
         <label className="dim" title="开着时留下的正是那一色附近的那些像素——反过来抠">保留键色<input type="checkbox" checked={shown.inverted} aria-label="保留键色而不是抠掉它" onChange={(e) => setClipChroma(clip.id, { ...shown, inverted: e.target.checked })} /></label>
         <div className="insp-actions">
           <button className={`btn tiny${app.chromaMatte ? " active" : ""}`} aria-pressed={app.chromaMatte} title="只看这个键抠出来的黑白遮罩，判边缘用得；它不改工程、也不进导出" onClick={() => setChromaMatte(!app.chromaMatte)}>看遮罩</button>
           <button className="btn tiny subtle" title="摘掉之后这一段回到原样：整块画面都不透明" onClick={() => setClipChroma(clip.id, null)}>摘掉键</button>
         </div>
-        <p className="hint">离键色近的那些像素抠成透明，露出下面那一层。抠不干净就加大相似度，边缘发毛就加大柔和。</p>
-      </> : <div className="insp-actions"><button className="btn" disabled={disabled} title={`按引擎下发的绿幕默认值挂上键（相似度 ${Math.round(defaults.similarity * 100)}%、柔和 ${Math.round(defaults.blend * 100)}%）；挂上后用键色那格里的吸管吸真正的键色`} onClick={() => setClipChroma(clip.id, defaults)}>挂上抠像</button></div>}
+        <p className="hint">离键色近的那些像素抠成透明，露出下面那一层。抠不干净就加大相似度，边缘发毛就加大柔和，边缘还带一层幕布的颜色就拧溢色抑制。</p>
+      </> : <div className="insp-actions"><button className="btn" disabled={disabled} title={`按引擎下发的绿幕默认值挂上键（相似度 ${Math.round(defaults.similarity * 100)}%、柔和 ${Math.round(defaults.blend * 100)}%、溢色抑制 ${Math.round((defaults.spill ?? 0) * 100)}%）；挂上后用键色那格里的吸管吸真正的键色`} onClick={() => setClipChroma(clip.id, defaults)}>挂上抠像</button></div>}
     </fieldset>
   </details>;
 }

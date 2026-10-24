@@ -9,6 +9,10 @@
 数必须是同一次换算的结果，界面不许自己再算 `similarity - blend`。
 
 第三件事是不许有第二种说法：没挂键的片段，编译出来的串里一个键的字节都不许出现。
+
+1.277 把同一只手管到的第二件事也量在成片上：溢色抑制压的是键色里最亮那一条通道，压完那几
+块板子的读数由这里**手算**给出（`SPILL_EXPECTED`），不从 `chroma_row` 反推自己；同时要求压完
+比没压时更不绿——只比「两端一致」的话，两端一起什么都不做也能过关。
 """
 
 import struct
@@ -24,14 +28,17 @@ from agentcut.contracts import (
     CHROMA_BLEND_DEFAULT,
     CHROMA_COLOR_DEFAULT,
     CHROMA_SIMILARITY_DEFAULT,
+    CHROMA_SPILL_DEFAULT,
     SCHEMA_VERSION,
     ChromaKey,
+    EditBatch,
     Project,
 )
 from agentcut.contracts import TIMEBASE as T
 from agentcut.http_api import create_app
 from agentcut.jobs import JobRuntime
 from agentcut.media import MediaService
+from agentcut.projects import ProjectStore
 from agentcut.render import chroma_stage, compile_render_plan
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -61,6 +68,20 @@ PROBES = {
     "key minus 15": (33, 5, NEAR[0], 0.0),
     "key minus 23": (41, 5, NEAR[1], None),
     "key minus 31": (49, 5, NEAR[2], 1.0),
+}
+
+# 1.277：溢色抑制在成片里的读数。这些数是一路**手算**出来的（不叫 `chroma_row` 反推自己）：
+# 压的是绿那一通道，封顶 min(g, max(r,b))——这三块板子里 r 与 b 都是 0，所以封顶就是 0，
+# 压一半就是把 g 折成一半；权重沿用上面那三档（全透 / 0.40392 / 全不透），底片是纯蓝。
+#   key minus 23：0.40392 × 116 = 46.9，0.59608 × 255 = 152.0
+#   key minus 31：224 × 0.5 = 112
+SPILL = 0.5
+SPILL_EXPECTED = {
+    "green field": (0, 0, 255),
+    "red subject": (255, 0, 0),
+    "key minus 15": (0, 0, 255),
+    "key minus 23": (0, 47, 152),
+    "key minus 31": (0, 112, 0),
 }
 
 
@@ -246,14 +267,42 @@ def contract_suite() -> None:
         except Exception:
             continue
         raise AssertionError(f"键色的形状没守住：{bad}")
-    for knob in ("similarity", "blend"):
+    for knob in ("similarity", "blend", "spill"):
         for bad in (-0.01, 1.01):
             try:
                 ChromaKey(**{knob: bad})
             except Exception:
                 continue
             raise AssertionError(f"{knob}={bad} 竟然收下了")
-    assert SCHEMA_VERSION == 31, SCHEMA_VERSION
+    assert SCHEMA_VERSION == 32, SCHEMA_VERSION
+
+
+def spill_suite() -> None:
+    """1.277：溢色抑制那一步——通道、份数、与「0 就是 1.276 那一格」。"""
+    assert ChromaKey().spill == CHROMA_SPILL_DEFAULT == 0.0, ChromaKey().spill
+    plain = chroma_stage(type("C", (), {"chroma": ChromaKey()})())
+    at_zero = chroma_stage(type("C", (), {"chroma": ChromaKey(spill=0.0)})())
+    assert plain == at_zero, "写了 0 的串与没写这一格的串不一样——升级动了老工程的编译串"
+    assert "min(" not in plain, "没拧抑制的那一格也长了压颜色的式子"
+
+    green = chroma_row(ChromaKey(spill=SPILL))
+    assert green["spill"] == SPILL and green["spill_at"] == 1, green
+    half = chroma_stage(type("C", (), {"chroma": ChromaKey(spill=SPILL)})())
+    assert "g='g(X,Y)+(min(g(X,Y),max(r(X,Y),b(X,Y)))-g(X,Y))*0.5'" in half, half
+    assert "r='r(X,Y)'" in half and "b='b(X,Y)'" in half, "压绿却动了另两条平面"
+    assert half.count("geq=") == 1, "多压一次就多半趟滤镜"
+
+    # 通道由键色里最亮那一条定；并列时按 R→G→B 取靠前那一条。
+    cases = (("#FF0000", 0), ("#00FF00", 1), ("#0000FF", 2), ("#808080", 0), ("#004040", 1))
+    for colour, want in cases:
+        row = chroma_row(ChromaKey(color=colour, spill=0.5))
+        assert row["spill_at"] == want, (colour, row["spill_at"], want)
+        plane = ("r", "g", "b")[want]
+        stage = chroma_stage(type("C", (), {"chroma": ChromaKey(color=colour, spill=0.5)})())
+        assert f"{plane}='{plane}(X,Y)+(" in stage, (colour, stage)
+    # 反选压的仍是同一条通道：那是「留着的那一圈也带着幕布色」的同一件事。
+    flipped = chroma_stage(type("C", (), {"chroma": ChromaKey(spill=SPILL, inverted=True)})())
+    assert "min(g(X,Y),max(r(X,Y),b(X,Y)))" in flipped and "(1-(clip(" in flipped, flipped
 
 
 def graph_and_manifest(folder: Path) -> Project:
@@ -298,9 +347,11 @@ def graph_and_manifest(folder: Path) -> Project:
         caps = client.get("/v1/capabilities").json()
         assert "clip.chroma" in caps["commands"], caps["commands"]
         assert caps["features"]["chroma_key"] is True, caps["features"]
+        assert caps["features"]["chroma_spill"] is True, caps["features"]
         assert caps["limits"]["chroma_similarity_default"] == CHROMA_SIMILARITY_DEFAULT
         assert caps["limits"]["chroma_blend_default"] == CHROMA_BLEND_DEFAULT
         assert caps["limits"]["chroma_color_default"] == CHROMA_COLOR_DEFAULT
+        assert caps["limits"]["chroma_spill_default"] == CHROMA_SPILL_DEFAULT
 
         plan = compile_render_plan(project, PRESET)
         graph = " ".join(plan.filters)
@@ -553,6 +604,7 @@ def receipt_suite(folder: Path) -> None:
 
     `blur_check` 那两个 pre-1.64 摘要钉的是「新加一格不许把老回执劈成两半」；这一档钉的是
     另一半——**真的换了数**时不许还命中同一笔。两条一起才算说清了这一格进了指纹没有。
+    1.277 又加一半：`spill` 在默认值时不许进指纹（老载荷重放命中自己），拧动了必须进。
     """
     app, token = client_for(folder)
     with TestClient(
@@ -602,8 +654,8 @@ def receipt_suite(folder: Path) -> None:
         assert again.json()["replayed"] is True, "同一份载荷没有命中自己那笔回执"
         assert again.json()["project"]["revision"] == landed, "重放还涨了一个版本"
 
-        # 重放先看版本号再看回执，所以这里抈 expected_revision
-        # 成当前的那个，让冲突只可能来自「同一个 request_id、不同的键」。
+        # 重放先看版本号再看回执，所以这里把 expected_revision 换成当前那个，
+        # 让冲突只可能来自「同一个 request_id、不同的键」。
         other = {**payload, "expected_revision": landed}
         other["commands"] = [
             {"op": "clip.chroma", "clip_id": "g", "chroma": {**key, "color": "#FF00FF"}}
@@ -618,7 +670,51 @@ def receipt_suite(folder: Path) -> None:
         ]
         also = client.post(path + "/edits", json=softer)
         assert also.status_code == 409, also.text
-        print("   回执认得这份键：同载荷重放命中自己，换键色或换软边都成另一笔")
+
+        # 1.277：1.276 那一份载荷里根本没有 `spill` 这一格。默认值不进指纹，所以「带着默认抑制」
+        # 与「压根没写抑制」必须是**同一笔**回执——否则升级前写下的每一笔挂键，重发都会劈成两半。
+        # 这里只换 `spill` 在不在，request_id 与 expected_revision 都照原来那份发。
+        legacy = {
+            **payload,
+            "commands": [
+                {
+                    "op": "clip.chroma",
+                    "clip_id": "g",
+                    "chroma": {k: v for k, v in key.items() if k != "spill"},
+                }
+            ],
+        }
+        assert "spill" not in legacy["commands"][0]["chroma"], legacy
+        before_old = client.post(path + "/edits", json=legacy)
+        assert before_old.status_code == 200, before_old.text
+        assert before_old.json()["replayed"] is True, "1.276 那份没写抑制的载荷没有命中自己那笔回执"
+        assert before_old.json()["project"]["revision"] == landed, "重放老载荷还涨了一个版本"
+
+        # 反过来：真的拧了抑制就是另一笔。走 HTTP 时这一笔必然先撞上版本门（上一笔已经把版本
+        # 抬走了），所以这里直接比指纹本身——只换 `spill` 这一个数，别的一概不动。
+        def fingerprint(chroma: dict) -> str:
+            batch = EditBatch.model_validate(
+                {"request_id": "fp", "expected_revision": 1,
+                 "commands": [{"op": "clip.chroma", "clip_id": "g", "chroma": chroma}]}
+            )
+            return ProjectStore._fingerprint("edit", batch)
+
+        base = fingerprint(key)
+        assert base == fingerprint(legacy["commands"][0]["chroma"]), "写没写默认抑制成了两笔指纹"
+        # 这一串是 **1.276 那份载荷**算出来的指纹——那时 `chroma` 里压根没有 `spill` 这一格。
+        # 默认值不进指纹，所以升级后带着默认值重发必须还算出同一串；不然 1.276 每一笔挂键的重发
+        # 都会劈成两半。（与 `blur_check` 那两串 pre-1.64 摘要是同一类账。）
+        assert base == "be77fc2f968f72fc11b2ad748c5ee0ec" "91577463e19f1c9b52bc4960db6c8db4", (
+            "这一格的默认值进指纹了——1.276 写下的每一笔回执都会劈成两半"
+        )
+        pressed = fingerprint({**key, "spill": SPILL})
+        assert base != pressed, "拧动了抑制仍然同一笔（指纹没吃这一格）"
+        assert pressed != fingerprint({**key, "spill": SPILL + 0.1}), "两份抑制强度在指纹里是一个数"
+        assert base != fingerprint({**key, "color": "#FF0000"}), "换键色在指纹里不算另一笔"
+        print(
+            "   回执认得这份键：同载荷重放命中自己，换键色或换软边都成另一笔；"
+            "写没写「默认的那一档抑制」是同一笔，拧动了就是另一笔"
+        )
 
 
 def pixels_suite(folder: Path) -> None:
@@ -702,12 +798,29 @@ def pixels_suite(folder: Path) -> None:
         assert at(flipped, 2, 2) == GREEN, at(flipped, 2, 2)
         hole = at(flipped, 20, 20)
         assert distance(hole, BLUE) < distance(hole, RED), hole
-        revision = edit("key-clear", revision, None)
         print(f"   inverted: 绿幕留下 {at(flipped, 2, 2)}，红块被抠走 {hole}")
+
+        # 1.277：拧上溢色抑制再导一次。读回来的是上面那几张手算的数；同时必须比没拧的那一趟
+        # 更不绿——两端一起变到「都不压」也会满足前者，所以这一条才是这一只手的证据。
+        revision = edit("key-spill", revision, ChromaKey(spill=SPILL).model_dump())
+        pressed = export(client, path, revision, "chroma-spill")
+        for name, (x, y, _, _) in PROBES.items():
+            expected = SPILL_EXPECTED[name]
+            got = at(pressed, x, y)
+            delta = max(abs(a - b) for a, b in zip(got, expected))
+            assert delta <= 3, (name, got, expected)
+            print(f"   spill {name:14s} delivered={got} hand={expected} delta={delta}")
+        for name in ("key minus 23", "key minus 31"):
+            x, y = PROBES[name][0], PROBES[name][1]
+            before = at(keyed, x, y)[1] - at(pressed, x, y)[1]
+            assert before >= 40, (name, at(keyed, x, y), at(pressed, x, y))
+        assert at(pressed, 20, 20) == RED, "压绿把红块也改了（那一条通道不是它）"
+        revision = edit("key-clear", revision, None)
 
 
 def main() -> None:
     contract_suite()
+    spill_suite()
     with tempfile.TemporaryDirectory() as raw:
         folder = Path(raw)
         check_fixture(folder)
@@ -721,9 +834,10 @@ def main() -> None:
         folder = Path(raw)
         pixels_suite(folder)
     print(
-        "PASS: 色度键抠像是同一份数在两端跑的一只手 -- 编译串与预览清单读的都是 "
-        "`chroma_row` 那一对数，交付文件里被抠走的那一块交出的是底片而不是黑，"
-        "没挂键的片段一个键的字节都不许多，三种拒法各有名字且不涨版本"
+        "PASS: 色度键与溢色抑制是同一份数在两端跑的一只手 -- 编译串与预览清单读的都是 "
+        "`chroma_row` 那一份（含压哪一条通道），交付文件里被抠走的那一块交出的是底片而不是黑，"
+        "拧上抑制后绿那一通道落在手算的那几个数上且比没拧时更不绿，"
+        "没挂键与没拧抑制的片段一个键的字节都不许多，三种拒法各有名字且不涨版本"
     )
 
 

@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from .contracts import (
+    CHROMA_SPILL_DEFAULT,
     MAX_TICKS,
     PATH_BOX_SCHEMA_VERSION,
     SCHEMA_VERSION,
@@ -210,6 +211,12 @@ class ProjectStore:
                 # gate that catches it: its two digests were captured before `blur` existed.
                 if "asset_id" in node and node.get("chroma") is None:
                     node.pop("chroma", None)
+                # 1.277 added `spill` inside that key. A 1.276 payload never mentioned it, and the
+                # default (no suppression) is precisely the state such a payload was written in, so
+                # a key sitting at the default must keep hashing as the key that never carried it.
+                chroma_node = node.get("chroma") or {}
+                if chroma_node.get("spill") == CHROMA_SPILL_DEFAULT:
+                    chroma_node.pop("spill", None)
                 # 1.120 gave a parallel node its branch weights. An absent table and an empty one
                 # are the same thing (every branch counts the same), so a pre-1.120 payload that
                 # never mentions weights keeps hashing as the payload it was.

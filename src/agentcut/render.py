@@ -34,7 +34,7 @@ from .animation import (
 from .animation import (
     points as curve_points,
 )
-from .compositing import blend_track, chroma_row
+from .compositing import CHROMA_SPILL_PLANES, blend_track, chroma_row
 from .contracts import (
     BLUR_RADIUS_LIMIT_PX,
     DENOISE_FLOOR_DB,
@@ -143,12 +143,30 @@ def _rgb(color: str) -> tuple[int, int, int]:
     return values  # type: ignore[return-value]
 
 
+def chroma_spill_plane(row: dict) -> tuple[str, str]:
+    """1.277：把「压哪一条通道、压多次」翻成 `geq` 那一条平面的式子。
+
+    封顶是 `min(这一条, max(另两条))`——幕布弹回来的那一层颜色被另两条里较宽的那一个拦住，
+    再按 `spill` 往回拉这么多次。通道与份数都由 `chroma_row` 一次定出，这里不比大小。
+    式子里的 `r/g/b(X,Y)` 读的都是**源帧**（`geq` 每条平面各自从源取值，改一条不动另一条的
+    读法），所以键判的那一帧与画布那一份是同一个数。
+    """
+    planes = list(CHROMA_SPILL_PLANES)
+    name = planes[row["spill_at"]]
+    others = [planes[index] for index in range(3) if index != row["spill_at"]]
+    sample = f"{name}(X,Y)"
+    wide = f"max({others[0]}(X,Y),{others[1]}(X,Y))"
+    cap = f"min({sample},{wide})"
+    return name, f"{sample}+({cap}-{sample})*{row['spill']:.6g}"
+
+
 def chroma_stage(clip) -> str:
     """1.276：色度键那一趟 `geq`——把「离键色多远」写成逐像素的 alpha 因子。
 
     数只由 `compositing.chroma_row` 折一次，预览画布读的是同一份。这一级挂在**调色之前**：
     浏览器那头的画布也先键、再由外层的 CSS 调色与柔焦套在后面，两端才是同一条顺序。
-    没挂键的片段交回空串，编译出来的串与 1.275 逐字节相同。
+    没挂键的片段交回空串，编译出来的串与 1.275 逐字节相同；`spill` 为 0 时那一格不参与，
+    串也与 1.276 逐字节相同。
     """
     if clip.chroma is None:
         return ""
@@ -162,8 +180,13 @@ def chroma_stage(clip) -> str:
         factor = f"gte({distance},{row['high']:.6g})"
     if row["inverted"]:
         factor = f"(1-({factor}))"
+    planes = {name: f"{name}(X,Y)" for name in CHROMA_SPILL_PLANES}
+    if row["spill"] > 0:
+        # 只换那一条平面的式子：另两条与 alpha 都照旧读源帧，所以压颜色不会反过来挪洞。
+        name, expression = chroma_spill_plane(row)
+        planes[name] = expression
     return (
-        f"format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+        f"format=rgba,geq=r='{planes['r']}':g='{planes['g']}':b='{planes['b']}':"
         f"a='alpha(X,Y)*({factor})',"
     )
 

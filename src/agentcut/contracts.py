@@ -21,7 +21,11 @@ MAX_TICKS = 2**53 - 1  # JSON integers remain exact in JavaScript clients.
 
 SCHEMA_VERSION = (
 
-    31  # v31 lets a clip carry a chroma key (`chroma`); a v30 row has no such field and reads
+    32  # v32 lets a chroma key suppress the colour it just exposed (`spill` inside `chroma`); a
+    #     v31 key carries no such field and reads as "no suppression", which is exactly what the
+    #     missing field meant — and that is also the default, so upgrading never moves the picture
+    #     of a project keyed in 1.276. v31 lets a clip carry a chroma key (`chroma`); a v30 row
+    #     has no such field and reads
     #     as "no key", which is exactly what the missing field meant — an older engine never
     #     sees the new one, it just cannot write it back. v30 lets that soft edge become a
     #     curve of its own (`mask_feather`); a v29 row can name
@@ -58,7 +62,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.276.0"
+APP_VERSION = "1.277.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -678,6 +682,13 @@ CHROMA_BLEND_DEFAULT = 0.05
 # 键色的默认值是绿幕那一种绿；界面「挂上抠像」时写的就是这一个，不许自带第二个色。
 
 CHROMA_COLOR_DEFAULT = "#00FF00"
+
+# 1.277：溢色抑制——键把绿幕抠走之后，边缘那一圈仍然留着从绿幕上弹回来的绿。压法是同一通道
+# 的封顶：把这一通道压到「另外两条通道里较宽的那一个」以下，量的是 0..255 的平面，与键色
+# 用哪一条通道无关（压的是键色里最强那一条，由 `chroma_row` 一次定出）。默认 0 是刻意的：
+# 1.276 挂上键的那些工程，升级后画出来的必须还是同一幅画，所以这一格从 0 起拧。
+
+CHROMA_SPILL_DEFAULT = 0.0
 
 # Stabilisation: how much of the frame may be spent hiding the borders the correction exposes, and
 
@@ -2801,7 +2812,12 @@ class ChromaKey(Contract):
     判的不是一格阈值而是一段距离：像素与键色在 R/G/B 三条轴上的欧氏距离，落在
     `low = (similarity - blend) × 255` 与 `high = similarity × 255` 之间是软边，比 `low`
     近的全透、比 `high` 远的全不透；`blend` 为 0 时那一段塌成一刀。导出与预览读的都是
-    引擎在这一处算出的那两个数（`render.chroma_ramp`），界面不许再换算一遍。
+    引擎在这一处折出的那一份数（`compositing.chroma_row`），界面不许再换算一遍。
+
+    1.277 多一格 `spill`：键抠走绿幕之后，边缘那一圈还带着从幕布弹回来的绿。压法只有一条
+    算式——把键色里最强那一条通道压到「另外两条里较宽的那一个」以下，压 `spill` 这么多次，
+    即 `mix(c, min(c, max(另两条)), spill)`。同一个 `spill` 数、同一条通道由 `chroma_row`
+    一次定出，导出与预览画布读的都是那一份。默认 0：0 就是 1.276 的那一格，编译串逐字节相同。
     """
 
     color: Annotated[str, Field(pattern=TEXT_COLORS)] = CHROMA_COLOR_DEFAULT
@@ -2809,6 +2825,8 @@ class ChromaKey(Contract):
     similarity: Annotated[float, Field(ge=0, le=1)] = CHROMA_SIMILARITY_DEFAULT
 
     blend: Annotated[float, Field(ge=0, le=1)] = CHROMA_BLEND_DEFAULT
+
+    spill: Annotated[float, Field(ge=0, le=1)] = CHROMA_SPILL_DEFAULT
 
     inverted: bool = False
 
@@ -7275,11 +7293,16 @@ def capabilities(
 
             "shape_masks": True,
 
-            # 1.276：色度键抠像。两端都有这一手才算能力：导出是 `render.chroma_ramp` 折进那一次
-            # `geq` 的逐像素因子，预览是同一对数驱动的 WebGL2 画布；老引擎没有这一格，界面那组
+            # 1.276：色度键抠像。两端都有这一手才算能力：导出是 `render.chroma_stage` 折进那一次
+            # `geq` 的逐像素因子，预览是同一份数驱动的 WebGL2 画布；老引擎没有这一格，界面那组
             # 旋钮就不许长出来。
 
             "chroma_key": True,
+
+            # 1.277：溢色抑制也要两端都有才算。老引擎（1.276）认不得载荷里的 `spill`，界面把
+            # 那一格摆上去只会写进一份交不出去的状态，所以这一档另报一个名字。
+
+            "chroma_spill": True,
 
             "path_masks": True,
 
@@ -7598,7 +7621,7 @@ def capabilities(
 
             "sharpen_radius_default": SHARPEN_RADIUS_DEFAULT,
 
-            # 1.276：色度键那两颗旋钮的默认档位。界面「挂上抠像」时写的就是这两个数——
+            # 1.276：色度键那几格旋钮的默认档位。界面「挂上抠像」时写的就是这几个数——
             # 它们由 `tests/chroma_check.py` 在真实绿幕夹具上量出来，不是界面自己挑的。
 
             "chroma_similarity_default": CHROMA_SIMILARITY_DEFAULT,
@@ -7606,6 +7629,11 @@ def capabilities(
             "chroma_blend_default": CHROMA_BLEND_DEFAULT,
 
             "chroma_color_default": CHROMA_COLOR_DEFAULT,
+
+            # 1.277：溢色抑制那一格的默认值（0 = 不压，与 1.276 同一幅画）。界面不许自带第二个数，
+            # 老引擎不报这一格时那颗旋钮也就不长出来。
+
+            "chroma_spill_default": CHROMA_SPILL_DEFAULT,
 
             "blur_schedule_segments": SPATIAL_SCHEDULE_MAX,
 

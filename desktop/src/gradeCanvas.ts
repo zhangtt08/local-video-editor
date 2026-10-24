@@ -102,6 +102,10 @@ function gradeStageCube(stage: Stage): Uint8Array | null {
   return decodeCube(stage);
 }
 
+/** 1.277：引擎交回的是「压哪一条通道」那一个序号，着色器要的是一根掩码。这里只换写法，
+ *  不在这儿比哪条颜色大——比大小那一步在 `compositing.chroma_row`，只有那一处。 */
+const SPILL_MASKS = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+
 function shaderFor(stages: Stage[], chroma: boolean): string {
   const calls = stages
     .map((stage, index) => {
@@ -137,14 +141,18 @@ function shaderFor(stages: Stage[], chroma: boolean): string {
   // 1.276：色度键。判的是**原始那一帧**的颜色（`src.rgb * 255`，与导出那趟 `geq` 挂在调色
   // 之前同一条顺序），数全部由引擎折好下发（`low`/`high`/`width`），这里不减不乘。
   const keyUniforms = chroma
-    ? "uniform vec3 uKey;\nuniform float uLow;\nuniform float uHigh;\nuniform float uWidth;\nuniform float uSoft;\nuniform float uInvert;\nuniform float uMatte;"
+    ? "uniform vec3 uKey;\nuniform float uLow;\nuniform float uHigh;\nuniform float uWidth;\nuniform float uSoft;\nuniform float uInvert;\nuniform float uSpill;\nuniform vec3 uSpillMask;\nuniform float uMatte;"
     : "";
   const keyStep = chroma
     ? `  float d = distance(src.rgb * 255.0, uKey);
   a = uSoft > 0.5 ? clamp((d - uLow) / uWidth, 0.0, 1.0) : step(uHigh, d);
   if (uInvert > 0.5) a = 1.0 - a;
   // 「看遮罩」只是这一档预览：AE 与达芬奇都拿它判断键抠得干不干净，导出里没有这一说。
-  if (uMatte > 0.5) { fragColor = vec4(a, a, a, 1.0); return; }`
+  if (uMatte > 0.5) { fragColor = vec4(a, a, a, 1.0); return; }
+  // 1.277：溢色抑制。那一条通道由引擎的序号换成一根掩码（这一处不比颜色大小），封顶是
+  // min(这一条, max(另两条))，再按 uSpill 往回拉——与导出那一条平面的 geq 式子同一步。
+  c = vec3(min(c.r, max(c.g, c.b)), min(c.g, max(c.r, c.b)), min(c.b, max(c.r, c.g)));
+  c = mix(src.rgb, c, uSpill * uSpillMask);`
     : "";
   return `#version 300 es
 precision highp float;
@@ -162,8 +170,9 @@ ${helpers}
 void main() {
   vec4 src = texture(uSrc, vUv);
   float a = 1.0;
+  vec3 c = src.rgb;
 ${keyStep}
-  vec3 c = basics(src.rgb, uBasics);
+  c = basics(c, uBasics);
 ${calls}
   c = clamp(c, 0.0, 1.0);
   // 预乘交出去：那一块洞要让下面那一层露出来，浏览器按 c*a 与页面相合。
@@ -280,7 +289,7 @@ function build(state: State, grade: GradeTables | null | undefined, chroma: Chro
     if (stage.type === "lut") gl.uniform1i(uniforms.get(`uLut${index}`) ?? null, 1 + index);
     else if (stage.type === "lut3d") gl.uniform1i(uniforms.get(`uCube${index}`) ?? null, 1 + index);
   });
-  for (const name of ["uKey", "uLow", "uHigh", "uWidth", "uSoft", "uInvert", "uMatte"]) {
+  for (const name of ["uKey", "uLow", "uHigh", "uWidth", "uSoft", "uInvert", "uSpill", "uSpillMask", "uMatte"]) {
     uniforms.set(name, gl.getUniformLocation(program, name));
   }
   const source = gl.createTexture();
@@ -355,6 +364,11 @@ export function paintGrade(
     gl.uniform1f(built.uniforms.get("uWidth") ?? null, chroma.width);
     gl.uniform1f(built.uniforms.get("uSoft") ?? null, chroma.soft ? 1 : 0);
     gl.uniform1f(built.uniforms.get("uInvert") ?? null, chroma.inverted ? 1 : 0);
+    // 1.277：那一条通道与压多次都来自引擎；认不得这一格的老引擎不报它，掩码落回红那一根，
+    // 而 `uSpill` 是 0——0 就是「这一格没参与」，与 1.276 那一帧同一幅画。
+    const mask = SPILL_MASKS[chroma.spill_at ?? 0] ?? SPILL_MASKS[0];
+    gl.uniform1f(built.uniforms.get("uSpill") ?? null, chroma.spill ?? 0);
+    gl.uniform3f(built.uniforms.get("uSpillMask") ?? null, mask[0], mask[1], mask[2]);
     gl.uniform1f(built.uniforms.get("uMatte") ?? null, matte ? 1 : 0);
   }
   gl.drawArrays(gl.TRIANGLES, 0, 3);

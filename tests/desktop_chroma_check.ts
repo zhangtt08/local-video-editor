@@ -1,4 +1,5 @@
 // 1.276：色度键在浏览器里的那一路——一份数、一处判断、一条顺序。
+// 1.277：溢色抑制走同一路上多出来的一步——通道与份数都由引擎定，画布只换一种写法。
 //
 // 判据只有一处（`chromaNeedsCanvas`）；那两个数（`low`/`width`）只由引擎折一次，
 // 画布不许自己减；键判的是**调色前**的那一帧，与导出那趟 `geq` 挂在 `color_filter`
@@ -18,7 +19,7 @@ const read = (...parts: string[]) => {
 };
 const count = (text: string, needle: RegExp) => (text.match(needle) ?? []).length;
 
-const row = { color: [0, 255, 0], low: 17.85, high: 30.6, width: 12.75, soft: true, inverted: false };
+const row = { color: [0, 255, 0], low: 17.85, high: 30.6, width: 12.75, soft: true, spill: 0.4, spill_at: 1, inverted: false };
 
 // ① 判据：挂了键才开画布，没挂就不许多一块画布
 assert.equal(chromaNeedsCanvas(null), false, "没挂键也开画布");
@@ -29,8 +30,9 @@ assert.equal(chromaNeedsCanvas(row), true, "挂了键却没开画布——预览
 const canvas = read("desktop/src/gradeCanvas.ts");
 assert.equal(count(canvas, /distance\(/g), 1, `距离算了 ${count(canvas, /distance\(/g)} 处，只要一处`);
 const keyAt = canvas.indexOf("distance(src.rgb * 255.0, uKey)");
-const gradeAt = canvas.indexOf("vec3 c = basics(src.rgb, uBasics)");
-assert.ok(keyAt > 0 && gradeAt > keyAt, "键没有走在调色之前——导出那趟 geq 挂在 color_filter 之前，两端就不是同一幅画");
+const spillAt = canvas.indexOf("c = mix(src.rgb, c, uSpill * uSpillMask);");
+const gradeAt = canvas.indexOf("c = basics(c, uBasics)");
+assert.ok(keyAt > 0 && spillAt > keyAt && gradeAt > spillAt, "键与溢色没有都走在调色之前——导出那两趟都挂在 color_filter 之前，两端就不是同一幅画");
 assert.match(canvas, /fragColor = vec4\(c \* a, a\);/, "画布没有预乘交出去：那一块洞不会让下面那一层露出来");
 assert.match(canvas, /if \(uMatte > 0\.5\) \{ fragColor = vec4\(a, a, a, 1\.0\); return; \}/, "「看遮罩」没有画那一张黑白 matte");
 assert.match(canvas, /alpha: true, premultipliedAlpha: true/, "画布缓冲不带 alpha——洞永远是一块不透明的矩形");
@@ -40,7 +42,19 @@ assert.match(canvas, /id: canvasKey\(grade, chroma\)/, "编译出来的程序没
 assert.match(canvas, /state\.built\.id !== wanted/, "画布局部没按那份身份决定重编");
 // 界面不许自带那一段距离的任何一个数：那些数只活在 `compositing.chroma_row` 里。
 assert.doesNotMatch(canvas, /17\.85|30\.6|12\.75|0\.12|0\.05/, "画布里长出了引擎的那几个数");
-assert.match(canvas, /for \(const name of \["uKey", "uLow", "uHigh", "uWidth", "uSoft", "uInvert", "uMatte"\]\)/, "键的 uniform 不是一处取的");
+assert.match(canvas, /for \(const name of \["uKey", "uLow", "uHigh", "uWidth", "uSoft", "uInvert", "uSpill", "uSpillMask", "uMatte"\]\)/, "键的 uniform 不是一处取的");
+// 1.277：溢色抑制那一步。算式两端同一条：封顶 `min(这一条, max(另两条))`，按那一个份数往回拉。
+assert.equal(count(canvas, /vec3\(min\(c\.r, max\(c\.g, c\.b\)\), min\(c\.g, max\(c\.r, c\.b\)\), min\(c\.b, max\(c\.r, c\.g\)\)\)/g), 1, `封顶那一步有 ${count(canvas, /min\(c\.r, max\(c\.g, c\.b\)\)/g)} 处实现`);
+assert.equal(count(canvas, /uSpill \* uSpillMask/g), 1, "掩码与份数只该乘一次");
+// 通道由引擎那一个序号决定；画布不许自己比哪条颜色大（那是 `chroma_row` 的一只手）。
+assert.doesNotMatch(canvas, /c\.r > c\.g|c\.g > c\.b|c\.b > c\.r|Math\.max\((?:red|green|blue)/, "画布自己判断压哪一条通道（那份判断只许在引擎里）");
+assert.match(canvas, /const SPILL_MASKS = \[\[1, 0, 0\], \[0, 1, 0\], \[0, 0, 1\]\];/, "序号换掩码那一张表不在唯一一处");
+assert.equal(count(canvas, /const SPILL_MASKS = /g), 1, "序号换掩码的表不止一份");
+assert.match(canvas, /const mask = SPILL_MASKS\[chroma\.spill_at \?\? 0\] \?\? SPILL_MASKS\[0\];/, "那一条通道不是由引擎的序号定的");
+assert.match(canvas, /gl\.uniform1f\(built\.uniforms\.get\("uSpill"\) \?\? null, chroma\.spill \?\? 0\);/, "份数没从引擎那一份数取（认不得这一格的老引擎交出 0）");
+// 「看遮罩」看的是键本身，压不压颜色与那一张黑白图无关——那一步必须在 matte 那一支之后。
+const matteAt = canvas.indexOf("if (uMatte > 0.5) { fragColor = vec4(a, a, a, 1.0); return; }");
+assert.ok(matteAt > 0 && spillAt > matteAt, "溢色那一步排在「看遮罩」之前——那一张黑白图不该被它动到");
 assert.match(canvas, /chroma: ChromaRow \| null = null,\n  matte = false,/, "画布那两个入参的形状变了");
 
 // ③ 视图：一次判断、一次交数、失败那一句说得出是谁画不出来
@@ -57,9 +71,14 @@ assert.doesNotMatch(editor, /setClipChroma\(/, "视图自己写键——写键�
 // ④ 检查器：三个默认值都从能力表来，一颗勾不改工程
 const inspector = read("desktop/src/views/Inspector.tsx");
 assert.match(inspector, /const defaults: ChromaKey = \{/, "挂上抠像写的那一份不是「由那三个数拼出来的键」");
-for (const knob of ["chroma_color_default", "chroma_similarity_default", "chroma_blend_default"]) {
+for (const knob of ["chroma_color_default", "chroma_similarity_default", "chroma_blend_default", "chroma_spill_default"]) {
   assert.ok(inspector.includes(`limits?.${knob}`), `界面没读引擎下发的 ${knob}`);
 }
+// 1.277：溢色抑制那一格只在引擎报了这一档能力时才长出来；界面无权决定压哪一条通道。
+assert.match(inspector, /const spillSupported = Boolean\(app\.caps\?\.features\?\.chroma_spill\);/, "这一格的开关不在唯一一处");
+assert.match(inspector, /\{spillSupported \? <div className="effect-row"><label htmlFor="chroma-spill"/, "老引擎（没有这一档）也摆了那颗旋钮");
+assert.match(inspector, /value=\{\(shown\.spill \?\? 0\) \* 100\} min=\{0\} max=\{100\} step=\{1\} onCommit=\{\(value\) => setClipChroma\(clip\.id, \{ \.\.\.shown, spill: value \/ 100 \}\)\}/, "那颗旋钮自己算了那一段压制（式子只许在引擎里）");
+assert.doesNotMatch(inspector, /spill_at/, "界面自己决定压哪一条通道（那一个序号只由 `chroma_row` 定）");
 assert.doesNotMatch(inspector, /"#00[fF]00[fF]"/, "界面自带了一个绿——键色的默认值归引擎");
 assert.doesNotMatch(inspector, /similarity\s*-\s*blend/, "界面自己算了那一段软边（那份换算只许在引擎里）");
 assert.match(inspector, /<ChromaFields key=\{`chroma-\$\{clip\.id\}`\} clip=\{clip\}/, "那一组没有按片段重建（两条片段的键会串在一起）");
@@ -80,9 +99,12 @@ assert.equal(count(store, /chromaMatte: false,/g), 1, "初始状态里那一档�
 
 // ⑥ 契约与提示：那份数的六个格、那一句中文
 const engine = read("desktop/src/engine.ts");
-assert.match(engine, /export type ChromaRow = \{ color: number\[\]; low: number; high: number; width: number; soft: boolean; inverted: boolean \};/, "清单里那份键的数换了形状");
-assert.match(engine, /export type ChromaKey = \{ color: string; similarity: number; blend: number; inverted: boolean \};/, "写进去的那一份键换了形状");
+assert.match(engine, /export type ChromaRow = \{ color: number\[\]; low: number; high: number; width: number; soft: boolean; spill\?: number; spill_at\?: number; inverted: boolean \};/, "清单里那份键的数换了形状");
+assert.match(engine, /export type ChromaKey = \{ color: string; similarity: number; blend: number; spill\?: number; inverted: boolean \};/, "写进去的那一份键换了形状");
 assert.match(engine, /chroma\?: ChromaRow \| null;/, "预览清单的类型里没有被抠走的那一行");
+// 那两格都是可选的：老引擎不报 `spill`，界面上那一格也就不出现——写死成必填会让老引擎的清单读不出来。
+assert.match(engine, /chroma_spill_default\?: number/, "溢色抑制那个默认数不是「可由引擎不报」的那一格");
+assert.match(engine, /features: Record<string, boolean>;/, "能力开关的形状变了（那一档能力就没法只靠名字判断）");
 assert.match(engine, /INVALID_CHROMA: "[^"]*色度键[^"]*"/, "引擎那句拒法在界面上念不出中文");
 assert.doesNotMatch(engine, /INVALID_CHROMA: "[^"]{0,11}"/, "中文提示短得过不了词表那一道");
 
@@ -90,4 +112,4 @@ assert.doesNotMatch(engine, /INVALID_CHROMA: "[^"]{0,11}"/, "中文提示短得�
 const css = read("desktop/src/styles.css");
 assert.doesNotMatch(css, /chroma/, "样式里为色度键写了单独一档字号或圆角（刻度之外不该有第二套）");
 
-console.log("PASS: 色度键只由引擎那一份数决定，画布判一次、走在调色之前、预乘交出洞，界面三个默认值都来自能力表");
+console.log("PASS: 色度键与溢色抑制都只由引擎那一份数决定，画布判一次、两步都走在调色之前、预乘交出洞，界面四个默认值都来自能力表");
