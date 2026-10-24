@@ -201,7 +201,16 @@ async function main() {
     facts.trackHeadNames = await evaluate(cdp,
       "Array.from(document.querySelectorAll('.tl-head:not(.corner) [aria-label]')).map(function(n){return n.getAttribute('aria-label');})");
 
-    const shot = await cdp.send("Page.captureScreenshot", { format: "png" }, 30000);
+    // 截图是一次「证据」而不是判据本身：真窗口有时在忙时会晚半拍回，重试三次再认输。
+    let shot = null;
+    for (let attempt = 0; attempt < 3 && !shot; attempt += 1) {
+      try {
+        shot = await cdp.send("Page.captureScreenshot", { format: "png" }, 60000);
+      } catch (error) {
+        if (attempt === 2) throw error;
+        await sleep(1200);
+      }
+    }
     if (shot && shot.data) {
       await fs.promises.writeFile(SHOT, Buffer.from(shot.data, "base64"));
     }

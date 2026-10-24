@@ -119,11 +119,15 @@ export function Preview() {
     if (!end || sourceMode) { playhead.pause(); return; }
     let last = performance.now();
     const id = window.setInterval(() => {
-      const now = performance.now(); const next = playhead.value + (now - last) / 1000 * TIMEBASE; last = now;
-      if (next >= end) { playhead.set(end); playhead.pause(); } else playhead.set(next);
+      const now = performance.now();
+      const next = playhead.value + (now - last) / 1000 * TIMEBASE * play.rate;
+      last = now;
+      if (play.rate > 0 && next >= end) { playhead.set(end); playhead.pause(); }
+      else if (play.rate < 0 && next <= 0) { playhead.set(0); playhead.pause(); }
+      else playhead.set(next);
     }, 20);
     return () => window.clearInterval(id);
-  }, [play.playing, end, sourceMode]);
+  }, [play.playing, play.rate, end, sourceMode]);
   if (!project) return null;
   const visuals: { clip: Clip; track: Track }[] = []; const sounds: { clip: Clip; track: Track }[] = [];
   for (const track of project.tracks) for (const clip of Object.values(project.clips)) {
@@ -160,9 +164,9 @@ export function Preview() {
       <FilterDefs plan={displayPlan} />
       {sourceMode && sourceUrl ? sourceInfo?.kind === "image" ? <img src={sourceUrl} alt={sourceInfo.label} /> : sourceInfo?.kind === "audio" ? <><audio key={sourceUrl} ref={(node) => { sourceRef.current = node; }} src={sourceUrl} preload="metadata" onTimeUpdate={(e) => setSourceCursor(e.currentTarget.currentTime * TIMEBASE)} onEnded={() => setSourcePlaying(false)} /><div className="monitor-empty"><Icon name="volume" size={32} /><div className="monitor-title">{sourceInfo.label}</div><div className="monitor-sub">标记需要的声音区间，插入或覆盖到目标声音轨</div></div></> : <video key={sourceUrl} ref={(node) => { sourceRef.current = node; }} src={sourceUrl} playsInline preload="metadata" onTimeUpdate={(e) => setSourceCursor(e.currentTarget.currentTime * TIMEBASE)} onEnded={() => setSourcePlaying(false)} onError={() => { setSourcePlaying(false); setPreviewError("素材无法解码"); }} /> : <>
         {displayPlan ? project.tracks.filter((track) => track.kind === "video" && !track.hidden).map((track) => <div key={track.id} className="preview-track" style={{ mixBlendMode: displayPlan.track_blend_modes?.[track.id] ?? "normal" }}>
-          {visuals.filter((v) => v.track.id === track.id).map(({ clip }) => <PreviewLayer key={clip.id} clip={clip} track={track} project={project} plan={displayPlan.clips[clip.id]} manifest={displayPlan} streams={app.streams} mixed={displayPlan.mixed_track_ids.includes(track.id)} url={app.streams[clip.asset_id]} ticks={play.ticks} playing={ready && play.playing} monitorMuted={monitorMuted} />)}
+          {visuals.filter((v) => v.track.id === track.id).map(({ clip }) => <PreviewLayer key={clip.id} clip={clip} track={track} project={project} plan={displayPlan.clips[clip.id]} manifest={displayPlan} streams={app.streams} mixed={displayPlan.mixed_track_ids.includes(track.id)} url={app.streams[clip.asset_id]} ticks={play.ticks} playing={ready && play.playing} rate={play.rate} monitorMuted={monitorMuted} />)}
         </div>) : null}
-        {displayPlan ? sounds.map(({ clip, track }) => <PreviewLayer key={clip.id} clip={clip} track={track} project={project} plan={displayPlan.clips[clip.id]} url={app.streams[clip.asset_id]} ticks={play.ticks} playing={ready && play.playing} monitorMuted={monitorMuted} />) : null}
+        {displayPlan ? sounds.map(({ clip, track }) => <PreviewLayer key={clip.id} clip={clip} track={track} project={project} plan={displayPlan.clips[clip.id]} url={app.streams[clip.asset_id]} ticks={play.ticks} playing={ready && play.playing} rate={play.rate} monitorMuted={monitorMuted} />) : null}
         {!visuals.length || !ready ? <div className="monitor-empty"><Icon name={previewError ? "warning" : "film"} size={32} /><div className="monitor-title">{previewError || (!ready ? "读取合成预览…" : end ? "此处没有画面" : "从素材库添加第一个镜头")}</div><div className="monitor-sub">{end ? "点击时间线定位，空格播放" : "导入视频、音频或图片，拖到下方时间线"}</div></div> : null}
         {safe !== "off" && insets ? <div className="safe-frame" aria-hidden="true">
           <span className={`safe-guide action${safe === "action" ? " active" : ""}`} style={{ inset: `${insets.action * 100}%` }} />
@@ -193,14 +197,15 @@ export function Preview() {
       <IconBtn icon="next" label="下一帧（→）" onClick={() => { if (sourceMode) { setSourcePlaying(false); setSourceCursor(app.sourceCursorTicks + frameTicks(project.settings.frame_rate)); } else { playhead.pause(); playhead.set(Math.min(end, play.ticks + frameTicks(project.settings.frame_rate))); } }} />
       <IconBtn icon="end" label={sourceMode ? "素材末帧（End）" : "下一个编辑点（↓）"} onClick={() => { if (sourceMode) { setSourcePlaying(false); setSourceCursor(sourceEdit?.end ?? 0); } else jumpEditPoint(1); }} />
       <span className="timecode mono">{timecode(sourceMode ? app.sourceCursorTicks : play.ticks, project.settings.frame_rate)}</span><span className="timecode-total mono">/ {timecode(sourceMode ? sourceEdit?.end ?? 0 : end, project.settings.frame_rate)}</span>
+      {!sourceMode && play.playing && play.rate !== 1 ? <span className="tag accent mono shuttle-chip" role="status" aria-label={"播放速度 " + play.rate + " 倍"}>{play.rate}x</span> : null}
       <span className="spacer" /><IconBtn icon={monitorMuted ? "mute" : "volume"} label="切换监听静音（不影响导出）" active={monitorMuted} onClick={() => setMonitorMuted(!monitorMuted)} />
       <span className="seq-info mono">{project.settings.width}×{project.settings.height} · {rateLabel(project.settings.frame_rate)}</span>
     </div>
   </section>;
 }
 
-function NestedPreview({ id, project, manifest, streams, ticks, playing, monitorMuted, parentGain, clockRate }: {
-  id: string; project: Project; manifest: PreviewManifest; streams: Record<string, string>; ticks: number; playing: boolean; monitorMuted: boolean; parentGain: () => number; clockRate: number;
+function NestedPreview({ id, project, manifest, streams, ticks, playing, monitorMuted, parentGain, clockRate, rate }: {
+  id: string; project: Project; manifest: PreviewManifest; streams: Record<string, string>; ticks: number; playing: boolean; monitorMuted: boolean; parentGain: () => number; clockRate: number; rate: number;
 }) {
   const sequence = project.sequences?.[id]; const plan = manifest.sequences?.[id];
   const byTrack = useMemo(() => {
@@ -210,12 +215,12 @@ function NestedPreview({ id, project, manifest, streams, ticks, playing, monitor
   }, [sequence]);
   if (!sequence || !plan) return <div className="layer-error">合成不存在或预览计划未就绪</div>;
   return <div className="preview-sequence">{sequence.tracks.filter((t) => t.kind === "video" ? !t.hidden : !t.muted).map((track) => <div key={track.id} className="preview-track" style={{ mixBlendMode: plan.track_blend_modes?.[track.id] ?? "normal" }}>
-    {(byTrack.get(track.id) ?? []).filter((c) => ticks >= c.position_ticks && ticks < c.position_ticks + c.duration_ticks).map((clip) => <PreviewLayer key={clip.id} clip={clip} track={track} project={project} plan={plan.clips[clip.id]} manifest={manifest} streams={streams} url={streams[clip.asset_id]} ticks={ticks} playing={playing} monitorMuted={monitorMuted} parentGain={parentGain} clockRate={clockRate} interactive={false} mixed={plan.mixed_track_ids.includes(track.id)} />)}
+    {(byTrack.get(track.id) ?? []).filter((c) => ticks >= c.position_ticks && ticks < c.position_ticks + c.duration_ticks).map((clip) => <PreviewLayer key={clip.id} clip={clip} track={track} project={project} plan={plan.clips[clip.id]} manifest={manifest} streams={streams} url={streams[clip.asset_id]} ticks={ticks} playing={playing} monitorMuted={monitorMuted} parentGain={parentGain} clockRate={clockRate} rate={rate} interactive={false} mixed={plan.mixed_track_ids.includes(track.id)} />)}
   </div>)}</div>;
 }
 
-function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitorMuted, mixed = false, manifest, streams = {}, interactive = true, parentGain, clockRate = 1 }: {
-  clip: Clip; track: Track; project: Project; plan: PreviewManifest["clips"][string] | undefined; url?: string; ticks: number; playing: boolean; monitorMuted: boolean; mixed?: boolean; manifest?: PreviewManifest; streams?: Record<string, string>; interactive?: boolean; parentGain?: () => number; clockRate?: number;
+function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitorMuted, mixed = false, manifest, streams = {}, interactive = true, parentGain, clockRate = 1, rate = 1 }: {
+  clip: Clip; track: Track; project: Project; plan: PreviewManifest["clips"][string] | undefined; url?: string; ticks: number; playing: boolean; monitorMuted: boolean; mixed?: boolean; manifest?: PreviewManifest; streams?: Record<string, string>; interactive?: boolean; parentGain?: () => number; clockRate?: number; rate?: number;
 }) {
   const elementRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
   // 1.234：链上有立方表时画面改由一块 WebGL2 画布画（同一张表、同一档四面体插值），
@@ -332,25 +337,29 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
   }, [relative, plan]);
   useEffect(() => {
     const element = elementRef.current; if (!element) return;
-    element.playbackRate = Math.min(16, Math.max(.0625, pace.rate * clockRate));
+    // 1.281：走带速度乘进这条元素的播放率（正放 2x/4x/8x）；倒放时元素不往前播，
+    // 每一格由下面那条 synchronize 把它 seek 到播放头那一帧——HTML 视频没有负的播放率。
+    const reverse = rate < 0;
+    element.playbackRate = Math.min(16, Math.max(.0625, pace.rate * clockRate * Math.abs(rate)));
     element.preservesPitch = true;
-    const frozen = pace.rate <= 0;
+    const frozen = pace.rate <= 0 || reverse;
     const target = clip.source_in_ticks / TIMEBASE + pace.source;
     const synchronize = () => { if (!playing || frozen || Math.abs(element.currentTime - target) > 0.15) element.currentTime = target; };
     if (element.readyState) synchronize(); else element.addEventListener("loadedmetadata", synchronize, { once: true });
-    element.muted = monitorMuted || track.muted;
+    // 变速/倒放不出声：2x 的音频与成片不是一条声音（DaVinci 也是静音走带）。
+    element.muted = monitorMuted || track.muted || rate !== 1;
     if (playing) {
       if (asset?.verified?.has_audio) {
         const gain = wrappers.current.gain;
         const sound = blends.current.sound;
-        const value = (gain ? Number(getComputedStyle(gain).opacity) * 4 : 1) * (sound ? Number(getComputedStyle(sound).opacity) : 1) * fadeValue("gain") * track.volume * (project.settings.master_gain ?? 1) * (plan?.sound_enabled ? 1 : 0) * (parentGain?.() ?? 1);
+        const value = (gain ? Number(getComputedStyle(gain).opacity) * 4 : 1) * (sound ? Number(getComputedStyle(sound).opacity) : 1) * fadeValue("gain") * track.volume * (project.settings.master_gain ?? 1) * (plan?.sound_enabled ? 1 : 0) * (rate === 1 ? 1 : 0) * (parentGain?.() ?? 1);
         const node = gainNode(element);
         if (node && audioContext) node.gain.setValueAtTime(value, audioContext.currentTime); else element.volume = Math.min(1, value);
       }
       if (frozen) element.pause(); else if (element.paused) void element.play().catch(() => setError("媒体无法播放，请检查素材格式"));
     } else element.pause();
     return () => element.removeEventListener("loadedmetadata", synchronize);
-  }, [relative, playing, clip.source_in_ticks, clip.speed_percent, clip.embedded_audio, isAudio, track.muted, track.volume, monitorMuted, asset?.verified?.has_audio, plan, parentGain, clockRate]);
+  }, [relative, playing, rate, clip.source_in_ticks, clip.speed_percent, clip.embedded_audio, isAudio, track.muted, track.volume, monitorMuted, asset?.verified?.has_audio, plan, parentGain, clockRate]);
   useEffect(() => { const element = elementRef.current; return () => element?.pause(); }, []);
   // 文字层的 CSS 由 textStyle.ts 从同一份 TextStyle 算出，界面不再自己拼一遍。
   const textFonts = useApp().caps?.text_fonts ?? [];
@@ -358,7 +367,7 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
     const gain = wrappers.current.gain; const sound = blends.current.sound;
     return (gain ? Number(getComputedStyle(gain).opacity) * 4 : 1) * (sound ? Number(getComputedStyle(sound).opacity) : 1) * fadeValue("gain") * track.volume * (plan?.sound_enabled ? 1 : 0) * (parentGain?.() ?? 1);
   };
-  const media = asset?.sequence_id && manifest ? <NestedPreview id={asset.sequence_id} project={project} manifest={manifest} streams={streams} ticks={clip.source_in_ticks + Math.floor((ticks - clip.position_ticks) * (clip.speed_percent ?? 100) / 100)} playing={playing} monitorMuted={monitorMuted || track.muted || !plan?.sound_enabled} parentGain={inheritedGain} clockRate={clockRate * (clip.speed_percent ?? 100) / 100} /> : clip.text ? <div className="caption-layer" style={textLayerStyle(clip.text, textFonts)}><span>{clip.text.body}</span></div> : !url ? <div className="layer-error">「{asset?.label}」素材离线或未导入</div> : isImage ? <img ref={imageRef} className={canvasLive ? "grade-source-hidden" : undefined} crossOrigin="anonymous" src={url} alt={asset?.label} /> : isAudio ? <audio ref={(node) => { elementRef.current = node; }} crossOrigin="anonymous" src={url} preload="auto" onError={() => setError("音频无法解码")} /> : <video ref={(node) => { elementRef.current = node; }} className={canvasLive ? "grade-source-hidden" : undefined} crossOrigin="anonymous" src={url} playsInline preload="auto" onError={() => setError("视频无法解码")} />;
+  const media = asset?.sequence_id && manifest ? <NestedPreview id={asset.sequence_id} project={project} manifest={manifest} streams={streams} ticks={clip.source_in_ticks + Math.floor((ticks - clip.position_ticks) * (clip.speed_percent ?? 100) / 100)} playing={playing} monitorMuted={monitorMuted || track.muted || !plan?.sound_enabled} parentGain={inheritedGain} clockRate={clockRate * (clip.speed_percent ?? 100) / 100} rate={rate} /> : clip.text ? <div className="caption-layer" style={textLayerStyle(clip.text, textFonts)}><span>{clip.text.body}</span></div> : !url ? <div className="layer-error">「{asset?.label}」素材离线或未导入</div> : isImage ? <img ref={imageRef} className={canvasLive ? "grade-source-hidden" : undefined} crossOrigin="anonymous" src={url} alt={asset?.label} /> : isAudio ? <audio ref={(node) => { elementRef.current = node; }} crossOrigin="anonymous" src={url} preload="auto" onError={() => setError("音频无法解码")} /> : <video ref={(node) => { elementRef.current = node; }} className={canvasLive ? "grade-source-hidden" : undefined} crossOrigin="anonymous" src={url} playsInline preload="auto" onError={() => setError("视频无法解码")} />;
   // 「叠一层原图」这条边（1.193）：导出那两步是 `(1-mix)·raw + mix·mode(graded, raw)`，浏览器用
   // 两层就画得出来——底层原图，上面一个 `opacity=mix` 的隔离容器，容器内「已调色」作底、原图按
   // `mix-blend-mode` 相合。`normal` 那一档要交换容器里那两层的顺序（`compositeSwap` 一处判断）：

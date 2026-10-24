@@ -317,9 +317,10 @@ export function useApp(): AppState {
 
 /* ---------------------------------------------------------------- 播放头 */
 
-type PlayState = { ticks: number; playing: boolean };
+/** 1.281：`rate` 是走带速度（J/K/L）。K 停下就回到 1；倒放是负数。 */
+type PlayState = { ticks: number; playing: boolean; rate: number };
 const playListeners = new Set<() => void>();
-let play: PlayState = { ticks: 0, playing: false };
+let play: PlayState = { ticks: 0, playing: false, rate: 1 };
 
 function setPlay(patch: Partial<PlayState>) {
   play = { ...play, ...patch };
@@ -347,11 +348,18 @@ export const playhead = {
   get playing() {
     return play.playing;
   },
-  play() {
-    setPlay({ playing: true });
+  get rate() {
+    return play.rate;
+  },
+  play(rate = 1) {
+    setPlay({ playing: true, rate });
+  },
+  /** 已经在放的时候再按 J/L 就是加速；这一格只改速度，不改播放/暂停。 */
+  setRate(rate: number) {
+    setPlay({ rate });
   },
   pause() {
-    setPlay({ playing: false });
+    setPlay({ playing: false, rate: 1 });
   },
 };
 

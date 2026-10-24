@@ -2,6 +2,7 @@ import { useEffect } from "react";
 
 import { bridge } from "./bridge";
 import { ContextMenuHost } from "./ContextMenu";
+import { shuttleRate } from "./shuttle";
 import { TitleBar } from "./TitleBar";
 import { AgentView } from "./views/AgentView";
 import { Editor } from "./views/Editor";
@@ -130,7 +131,7 @@ function useGlobalKeys() {
           setSourceCursor(key === "home" ? 0 : key === "end" ? source?.end ?? 0 : app.sourceCursorTicks + frame * (event.shiftKey ? 10 : 1) * (key === "arrowleft" ? -1 : 1));
           return;
         }
-        if (key === "k" || key === "l") { event.preventDefault(); setSourcePlaying(key === "l"); return; }
+        if (key === "j" || key === "k" || key === "l") { event.preventDefault(); setSourcePlaying(key === "l"); return; }
       }
       if ((key === "arrowleft" || key === "arrowright") && !event.altKey) {
         event.preventDefault();
@@ -140,8 +141,21 @@ function useGlobalKeys() {
         return;
       }
       if (key === "arrowup" || key === "arrowdown") { event.preventDefault(); playhead.pause(); jumpEditPoint(key === "arrowup" ? -1 : 1); return; }
-      if (key === "k") playhead.pause();
-      else if (key === "l") { if (playhead.value >= timelineEnd(app.project)) playhead.set(0); playhead.play(); }
+      if (key === "k") { event.preventDefault(); playhead.pause(); return; }
+      if (key === "j" || key === "l") {
+        // 1.281：达芬奇那一手——J 倒放、K 停、L 正放；同一个方向再按一次就是 2× / 4× / 8×。
+        // 速度阶梯只在 `shuttle.ts` 一处；这里只管「从停着开始」与「到头/到头反向」两件事。
+        event.preventDefault();
+        const direction = key === "l" ? 1 : -1;
+        if (!playhead.playing) {
+          if (direction > 0 && playhead.value >= timelineEnd(app.project)) playhead.set(0);
+          if (direction < 0 && playhead.value <= 0) return;
+          playhead.play(direction);
+          return;
+        }
+        playhead.setRate(shuttleRate(true, playhead.rate, direction));
+        return;
+      }
       // 1.135：V/C/S/X、Delete/Shift+Delete、+/- 都进了那张表（上面那一次 `matchCommand` 已经把它们
       // 交给 `runKeyCommand`）。这里只剩两个**别名**：Backspace 删与「=」放大是同一件事的第二只手，
       // 它们不单独占一个键位，所以既不出现在那张表里，也不许被改键牵走。

@@ -568,6 +568,8 @@ select { color-scheme: dark; }
 .timecode { font-size: var(--fs-strong); font-weight: 600; letter-spacing: .4px; }
 .timecode, .timecode-total, .seq-info { white-space: nowrap; flex: none; }
 .timecode-total { font-size: var(--fs-label); color: var(--ink-3); }
+/* 1.281：J/K/L 变速时的那枚倍率牌——它是状态，不是说明；跟时间码同一排，不另开字号。 */
+.shuttle-chip { font-weight: 700; }
 .seq-info { font-size: var(--fs-label); color: var(--ink-2); }
 @container (max-width: 640px) {
   .transport .seq-info { display: none; }
