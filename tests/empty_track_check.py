@@ -244,8 +244,10 @@ def main() -> None:
             assert "const emptyTrack = trackToolBlocker(track.id, clips)" in wiring, (
                 "the track header must ask the shared predicate, not guess"
             )
-            assert wiring.count("disabled={!!emptyTrack}") == 3, "three whole-track buttons"
-            assert wiring.count(": EMPTY_TRACK_HINT\n") == 3, "each gated button carries the reason"
+            # 1.279 起那三件事（统一响度 / 剪掉停顿 / 自动闪避）从轨道头收进了「更多」菜单：
+            # 判据跟着形状走——三条菜单项都读同一个 `emptyTrack`，标题都交回它的原话。
+            assert wiring.count("disabled: !!emptyTrack,") == 3, "three whole-track menu entries"
+            assert wiring.count("title: emptyTrack ??") == 3, "each gated entry carries the reason"
             assert "disabled={!clips.length}" not in wiring, "a second, drifting copy of the rule"
             print(
                 f"PASS: {refusals} track refusals name the track, all four routes agree on "

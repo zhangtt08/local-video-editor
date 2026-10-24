@@ -352,6 +352,12 @@ class ProjectStore:
                 command["track"].pop("blend_mode", None)
             if command.get("op") == "track.update" and command.get("blend_mode") is None:
                 command.pop("blend_mode", None)
+            # 1.280：solo 是新加的一格。老回执里没有它，校验时会被补成 None / False——
+            # 归一化要把「补出来的默认」剥回去，否则升级会把同一笔请求的指纹改掉（1.277 那条账）。
+            if command.get("op") == "track.update" and command.get("solo") is None:
+                command.pop("solo", None)
+            if command.get("op") == "track.add" and command["track"].get("solo") is False:
+                command["track"].pop("solo", None)
         canonical = json.dumps([operation, payload], sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).hexdigest()
 
