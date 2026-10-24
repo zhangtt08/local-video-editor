@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 
 import { bridge } from "./bridge";
+import { ContextMenuHost } from "./ContextMenu";
 import { TitleBar } from "./TitleBar";
 import { AgentView } from "./views/AgentView";
 import { Editor } from "./views/Editor";
@@ -62,6 +63,7 @@ export function App() {
       <StatusBar />
       <ResizeHandles />
       <ToastHost />
+      <ContextMenuHost />
       {app.showHelp ? <HelpOverlay /> : null}
       {app.busy ? (
         <div className="busy-pill" role="status">

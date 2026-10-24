@@ -54,6 +54,11 @@ import {
   moveSelection,
   splitSelection,
   selectionFor,
+  duplicateSelection,
+  groupSelection,
+  linkSelection,
+  detachAudio,
+  selectAllClips,
   rollClip,
   openSequence,
   cutTrackSilence,
@@ -69,7 +74,9 @@ import {
   ZOOM_MAX,
   ZOOM_MIN,
 } from "../store";
-import { chordWords } from "../keymap";
+import { chordWords, commandLabel } from "../keymap";
+import { openContextMenu, type MenuEntry } from "../ContextMenu";
+import { canDetachAudio, canLinkClips } from "../clipRules";
 import { copyBlocker, pasteBlocker, pasteTargets } from "../attributePaste";
 import { AttributeDialog } from "./AttributeDialog";
 import { EMPTY_TRACK_HINT, FIELD_LABEL, LAYER_KEY_LABEL, PROPERTY_RANK, layerNeedles, trackToolBlocker, fadeDragBatch, fadeDragTicks, fadeProperties, fadeWindows, type FadeProperty, type FadeSide, type LayerNeedle } from "../effects";
@@ -654,6 +661,27 @@ function TrackRow({
   const q = quantum(project, track.kind);
   const painted = paintClips(clips, paint, selectedIds).shown;
 
+  /** 1.278：空白处右键——粘贴、全选、标记、按标记切开。每一项都调工具条那颗按钮在调的那个函数，
+   *  键位提示读 `keymap()`（改键之后这里跟着改），不另写一份键名。 */
+  const laneMenu = (event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const keys = keymap();
+    openContextMenu({
+      at: { x: event.clientX, y: event.clientY },
+      title: `${track.name} · 空白处`,
+      label: "时间线空白处操作",
+      returnTo: event.currentTarget,
+      entries: [
+        { kind: "item", label: commandLabel("paste"), icon: "copy", hint: chordWords(keys.paste), disabled: !app.clipboardCount, run: pasteSelection },
+        { kind: "item", label: commandLabel("select-all"), hint: chordWords(keys["select-all"]), run: selectAllClips },
+        { kind: "sep", id: "marks" },
+        { kind: "item", label: commandLabel("marker"), icon: "flag", hint: chordWords(keys.marker), title: "在播放头写一个普通标记；人与 Agent 用同一个整数刻度", run: () => addMarker() },
+        { kind: "item", label: "在每个标记处切开", icon: "razor", disabled: !(project.markers ?? []).length, title: "落在片段内部的标记才切；落在边缘或空隙上的不算", run: () => void splitAtMarkers() },
+      ],
+    });
+  };
+
   return (
     <div className={`tl-row${track.kind === "audio" ? " audio-row" : ""}`} style={{ height: ROW }}>
       <div className={`tl-head${track.kind === "audio" ? " audio-track" : ""}`} style={{ top: (index + 1) * ROW }}>
@@ -717,6 +745,7 @@ function TrackRow({
         className={`tl-lane${track.kind === "audio" ? " audio-track" : ""}`}
         data-track-id={track.id}
         style={{ width }}
+        onContextMenu={laneMenu}
         onDragOver={(event) => {
           if (track.locked) return;
           if (!event.dataTransfer.types.includes("application/x-agentcut-asset")) return;
@@ -1257,6 +1286,53 @@ function ClipBlock({
     window.addEventListener("pointercancel", stop);
   };
 
+  /** 1.278：片段右键。右键落在没选中的一段上就先选中它（达芬奇 / 剪映 / AE 都是这一手）；
+   *  落在已选中的一段上则保留整组——菜单读的是**当前选择**，多选之后右键，删除与复制仍按整组走。
+   *  每一项都调工具条 / 检查器已经在调的那个 store 函数，这一处不新造命令、也不自己算能不能用。 */
+  const clipMenu = (event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!selected) selectClip(clip.id);
+    const ids = selected ? selectionFor(app.selectedClips) : selectionFor([clip.id]);
+    const members = ids.map((id) => project.clips[id]).filter(Boolean);
+    const keys = keymap();
+    const inside = playhead.value > clip.position_ticks && playhead.value < clip.position_ticks + clip.duration_ticks;
+    const entries: MenuEntry[] = [
+      {
+        kind: "item", label: commandLabel("split-at-playhead"), icon: "razor", hint: chordWords(keys["split-at-playhead"]),
+        disabled: !inside, title: inside ? "剪开之后两段各自保留自己那一截，撤销一步整批退回" : "先把播放头停在这一段里面",
+        run: () => splitSelection(playhead.value),
+      },
+      { kind: "item", label: commandLabel("copy"), icon: "copy", hint: chordWords(keys.copy), run: copySelection },
+      { kind: "item", label: commandLabel("paste"), hint: chordWords(keys.paste), disabled: !app.clipboardCount, run: pasteSelection },
+      { kind: "item", label: commandLabel("duplicate"), hint: chordWords(keys.duplicate), run: duplicateSelection },
+      { kind: "sep", id: "cut" },
+      { kind: "item", label: commandLabel("delete-selection"), icon: "trash", hint: chordWords(keys["delete-selection"]), run: () => removeSelection() },
+      { kind: "item", label: commandLabel("ripple-delete"), hint: chordWords(keys["ripple-delete"]), danger: true, run: () => removeSelection(true) },
+      { kind: "sep", id: "association" },
+      { kind: "item", label: commandLabel("group"), hint: chordWords(keys.group), disabled: members.length < 2, run: () => groupSelection() },
+      { kind: "item", label: commandLabel("ungroup"), hint: chordWords(keys.ungroup), disabled: !members.some((member) => member.group_id), run: () => groupSelection(true) },
+      { kind: "item", label: commandLabel("link"), icon: "link", hint: chordWords(keys.link), disabled: !canLinkClips(project, members), title: "先对齐画面与声音的开始、时长和速度", run: () => linkSelection() },
+      { kind: "item", label: commandLabel("unlink"), hint: chordWords(keys.unlink), disabled: !members.some((member) => member.link_id), run: () => linkSelection(true) },
+    ];
+    if (canDetachAudio(project, clip)) {
+      entries.push({ kind: "item", label: "拆出音频", icon: "music", title: "把这一段的声音拆成独立声音轨，方便单独淡入淡出或对齐其他音轨", run: () => detachAudio(clip.id) });
+    }
+    if ((clip.keyframes ?? []).length) {
+      entries.push(
+        { kind: "sep", id: "curves" },
+        { kind: "item", label: "打开动画曲线", icon: "spark", title: "这一段上已经有针：进动画曲线改值、改插值或整组复制", run: () => { selectClip(clip.id); setGraphOpen(true); } },
+      );
+    }
+    openContextMenu({
+      at: { x: event.clientX, y: event.clientY },
+      title: clip.text?.body ?? asset?.label ?? clip.id,
+      label: "片段操作",
+      returnTo: event.currentTarget,
+      entries,
+    });
+  };
+
   // 转场那块牌子占住左下角多宽——**唯一的出处**：牌子自己与让位的那枚针都读这一个数。
   // 1.228：名字与时长不再读它——它们搬到了卡片上面那一行，牌子在下、字在上，两条带不重叠。
   const seamWidth = clip.transition_in
@@ -1296,6 +1372,7 @@ function ClipBlock({
       onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); event.stopPropagation(); selectClip(clip.id, event.ctrlKey || event.metaKey || event.shiftKey, event.altKey); } }}
       title={`${asset?.label ?? clip.asset_id}\n时长 ${humanDuration(duration)}\n位置 ${position.toLocaleString("en-US")} tick${boxKeyRows.length ? `\n再叠的遮罩框点：${boxKeyWords}（条顶上那排小点；打点、改插值与删除在检查器「再叠的遮罩」那一格）` : ""}`}
       onPointerDown={(event) => start(event, "move")}
+      onContextMenu={clipMenu}
       onDoubleClick={() => { if (asset?.sequence_id && !razor) openSequence(asset.sequence_id); }}
       onClick={(event) => {
         if (track.locked || event.ctrlKey || event.metaKey || event.shiftKey) return;

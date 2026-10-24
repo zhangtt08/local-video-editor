@@ -5,6 +5,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import {DEFAULT_COLOR, DEFAULT_EFFECTS, DEFAULT_MASK, DEFAULT_PATH, transitionChoices, type AnimatedEffect, type Capabilities, type Clip, type LinkStatus, type SampledValues, type ShapeMask, type TransitionKind, BLEND_MODES} from "../engine";
 
 import { Icon, Modal } from "../ui";
+import { canDetachAudio, canLinkClips } from "../clipRules";
 import { GradeFields } from "./GradeFields";
 import { SpeedFields } from "./SpeedFields";
 import { blurMaxPercent, boxKeyForPlayhead, extraMotionWords, canAnimateMask, EFFECT_FIELDS, FIELD_LABEL, fadeAdoptHint, fadeBlocker, fadeProperties, fadeShape, fadeShapeChoices, fadeWindows, fitSpeedPercent, INTERPOLATIONS, maskAnimFields, maskBoxInterpolations, BEZIER_AXES, DEFAULT_BEZIER, rememberTrackingDefaults, sharpenLimits, stabilizeBlocked, trackGroup, trackingKnobs, trackWindow, type FadeProperty, type FadeShape, type FadeSide } from "../effects";
@@ -229,7 +230,7 @@ function ClipFields({ clip }: { clip: Clip }) {
           <button className="btn" title={`复制一段接到本轨末尾（${chordWords(keymap().duplicate)}）`} onClick={() => duplicateClip(clip.id)}>
             <Icon name="copy" /> 复制
           </button>
-          {asset?.kind === "video" && asset.verified?.has_audio && clip.embedded_audio !== false ? <button className="btn" title="把本段的声音拆成独立声音轨，方便单独淡入淡出或对齐其他音轨" onClick={() => detachAudio(clip.id)}>
+          {canDetachAudio(project, clip) ? <button className="btn" title="把本段的声音拆成独立声音轨，方便单独淡入淡出或对齐其他音轨" onClick={() => detachAudio(clip.id)}>
             <Icon name="split" /> 拆分内嵌声音
           </button> : null}
           {(asset?.kind === "audio" || (asset?.kind === "video" && asset.verified?.has_audio && clip.embedded_audio !== false)) && app.caps?.features?.beat_detect ? <button className="btn" disabled={Boolean(clip.speed_curve)} title={clip.speed_curve ? "带变速曲线的片段还不能听节拍：一秒源声音不落在固定长度的时间线上，打出来的点会对不上画面；先在曲线编辑器里清掉速度曲线" : "用引擎的节拍检测听这段声音，在每一下起音处打一枚标记（默认最短间隔 0.2 秒）；一次提交一个版本，撤销一步全部退回。工具栏的剪刀可以把这些标记变成切点"} onClick={() => void beatMarks(clip.id)}>
@@ -279,8 +280,7 @@ function AssociationFields() {
     return () => controller.abort();
   }, [project.id, project.revision, app.sequenceId, linkIds.join(",")]);
   const current = status?.revision === project.revision && status.project === project.id && status.sequenceId === app.sequenceId ? status.links : null;
-  const kinds = new Set(clips.map((c) => project.assets[c.asset_id]?.kind));
-  const canLink = kinds.size === 2 && kinds.has("video") && kinds.has("audio") && clips.every((c) => c.position_ticks === clips[0].position_ticks && c.duration_ticks === clips[0].duration_ticks && (c.speed_percent ?? 100) === (clips[0].speed_percent ?? 100));
+  const canLink = canLinkClips(project, clips);
   return <section className="insp-section"><div className="row-title"><span className="panel-label">组合与链接</span><button className={`btn tiny subtle${edit.linkedSelection ? " active" : ""}`} aria-pressed={edit.linkedSelection} onClick={() => prefs.toggleLinkedSelection()}>联动{edit.linkedSelection ? "开" : "关"}</button></div>
     <div className="insp-actions"><button className="btn tiny" disabled={clips.length < 2} onClick={() => groupSelection()}>组合</button><button className="btn tiny" disabled={!clips.some((c) => c.group_id)} onClick={() => groupSelection(true)}>取消组合</button></div>
     <div className="insp-actions"><button className="btn tiny" disabled={!canLink} title="先对齐视频与音频的开始、时长和速度；当前源入点差值作为同步基准。" onClick={() => linkSelection()}>链接音画</button><button className="btn tiny" disabled={!linkIds.length} onClick={() => linkSelection(true)}>解除链接</button></div>

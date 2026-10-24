@@ -782,6 +782,25 @@ select { color-scheme: dark; }
 .preset span { font-size: var(--fs-label); color: var(--ink-3); }
 .form-note { font-size: var(--fs-label); color: var(--ink-3); background: var(--bg); border-radius: var(--r-sm); padding: 7px 9px; }
 
+/* 1.278：时间线右键菜单。抬起来的一层（模糊背板 + 14px 圆角），行高 36px，字号只取三档：
+   标题 13、条目 14、键位 12.5——不为它另开一档字号，也不把两行小字叠在一起。 */
+.ctx-menu { position: fixed; z-index: 280; min-width: 236px; max-width: 344px; padding: 6px; border-radius: var(--r-md); background: color-mix(in srgb, var(--float) 94%, transparent); border: 1px solid var(--line-strong); box-shadow: var(--shadow-md), var(--edge-hi); backdrop-filter: blur(18px) saturate(1.12); animation: ctx-in var(--dur) var(--ease); }
+.ctx-title { padding: 6px 10px 7px; font-size: var(--fs-label); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctx-item { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 0 10px; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--ink); font: inherit; font-size: var(--fs-body); text-align: left; cursor: default; }
+.ctx-item:hover:not(:disabled) { background: var(--elev); }
+.ctx-item:focus-visible { outline: none; background: var(--elev); box-shadow: inset 0 0 0 1px var(--accent); }
+.ctx-item:disabled { color: var(--ink-3); opacity: .55; }
+.ctx-item.danger { color: var(--danger); }
+.ctx-icon { flex: none; width: 16px; display: grid; place-items: center; color: var(--ink-2); }
+.ctx-item.danger .ctx-icon { color: var(--danger); }
+.ctx-item:disabled .ctx-icon { color: var(--ink-3); }
+.ctx-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 键位提示叫 ctx-chord 而不是 -hint：那是键帽，不是一行要读的说明——面板说明那把尺
+   （desktop_prose_check）不许有人换个名字把说明压小，这里也不钻那个空子。 */
+.ctx-chord { margin-left: auto; padding-left: 18px; color: var(--ink-3); font-size: var(--fs-micro); white-space: nowrap; }
+.ctx-sep { height: 1px; margin: 5px 8px; background: var(--line); }
+@keyframes ctx-in { from { opacity: 0; transform: scale(.98) translateY(-2px); } to { opacity: 1; transform: none; } }
+
 .help { width: 760px; max-width: calc(100vw - 40px); max-height: calc(100vh - 60px); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-md), var(--edge-hi); display: flex; flex-direction: column; overflow: hidden; }
 .help-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .help-title { font-size: var(--fs-strong); font-weight: 600; display: flex; align-items: center; gap: 7px; }
