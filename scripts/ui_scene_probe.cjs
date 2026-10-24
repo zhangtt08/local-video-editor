@@ -30,6 +30,14 @@ const PROJECT = flag("project", "");
 const SIZE = flag("size", "1456x808");
 const OUT = path.resolve(flag("out", "ui_scene_probe.json"));
 const SHOT = flag("shot", "");
+const ACTION = flag("action", "scene");
+const LABEL = ACTION === "rough" ? "粗剪" : "按镜头切分";
+const BUTTON_SCOPE = ACTION === "rough" ? ".panel-scroll button" : ".insp-actions button";
+const EXACT = ACTION === "rough";
+const WANT = JSON.stringify(LABEL);
+const MATCH = EXACT
+  ? `(n.textContent || '').trim() === ${WANT}`
+  : `(n.textContent || '').indexOf(${WANT}) >= 0`;
 const EDGE = flag("edge", "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe");
 
 if (!ENGINE || !TOKEN || !PROJECT) {
@@ -191,7 +199,7 @@ async function main() {
     "--user-data-dir=" + profile, url,
   ], { stdio: "ignore" });
 
-  const facts = { viewport: { width, height }, url };
+  const facts = { viewport: { width, height }, url, action: ACTION };
   let cdp = null;
   try {
     let target = null;
@@ -234,9 +242,22 @@ async function main() {
     await sleep(600);
 
     // ② 检查器里那颗按钮：滚进视野，量它的盒子、字号、圆角，并用命中点确认点得到自己。
+    if (ACTION === "rough") {
+      const wrote = await evaluate(`(function () {
+        const field = document.getElementById('rough-keep');
+        if (!field) return null;
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        setter.call(field, '1');
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+        return { value: field.value, placeholder: field.placeholder, min: field.min, max: field.max };
+      })()`);
+      facts.keep = wrote;
+      if (!wrote) throw new Error("检查器里没有「粗剪每镜」这一格");
+      await sleep(300);
+    }
     const scrolled = await evaluate(`(function () {
-      const hit = Array.from(document.querySelectorAll('.insp-actions button'))
-        .find(function (n) { return (n.textContent || '').indexOf('按镜头切分') >= 0; });
+      const hit = Array.from(document.querySelectorAll('${BUTTON_SCOPE}'))
+        .find(function (n) { return ${MATCH}; });
       if (!hit) return false;
       // 检查器自己是一个滚动容器；scrollIntoView 在这套 grid 里不一定挪得动它，
       // 所以先找到那个 overflow-y 的祖先，按按钮相对它的位置把 scrollTop 挪到正中。
@@ -256,8 +277,8 @@ async function main() {
     if (!scrolled) throw new Error("检查器里没有「按镜头切分」");
     await sleep(500);
     const button = await evaluate(`(function () {
-      const hit = Array.from(document.querySelectorAll('.insp-actions button'))
-        .find(function (n) { return (n.textContent || '').indexOf('按镜头切分') >= 0; });
+      const hit = Array.from(document.querySelectorAll('${BUTTON_SCOPE}'))
+        .find(function (n) { return ${MATCH}; });
       if (!hit) return null;
       const r = hit.getBoundingClientRect();
       const style = getComputedStyle(hit);
@@ -274,7 +295,7 @@ async function main() {
       }
       return {
         text: hit.textContent.trim(), disabled: hit.disabled === true,
-        matches: Array.from(document.querySelectorAll('.insp-actions button')).filter(function (n) { return n.textContent.indexOf('按镜头切分') >= 0; }).length,
+        matches: Array.from(document.querySelectorAll('${BUTTON_SCOPE}')).filter(function (n) { return n.textContent.indexOf(${WANT}) >= 0; }).length,
         scrolls: scrolls,
         chain: (function () {
           const out = []; let n = hit;
@@ -298,13 +319,13 @@ async function main() {
       };
     })()`);
     facts.button = button;
-    if (!button) throw new Error("检查器里没有「按镜头切分」");
+    if (!button) throw new Error("检查器里没有「" + LABEL + "」");
     if (SHOT) {
       await cdp.send("Page.captureScreenshot", { format: "png" }, 30000).then((shot) => {
         if (shot && shot.data) fs.writeFileSync(SHOT, Buffer.from(shot.data, "base64"));
       }).catch(() => {});
     }
-    if (button.disabled) throw new Error("按镜头切分是灰的：" + button.title);
+    if (button.disabled) throw new Error(LABEL + "是灰的：" + button.title);
     await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: button.x, y: button.y, button: "left", buttons: 1, clickCount: 1 });
     await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: button.x, y: button.y, button: "left", buttons: 0, clickCount: 1 });
 

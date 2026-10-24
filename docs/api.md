@@ -16,6 +16,7 @@ HTTP 使用 `Authorization: Bearer <AGENTCUT_TOKEN>`。JSON 请求严格校验�
 | POST /v1/projects/{id}/edits | timeline_edit | 批量命令 |
 | POST /v1/projects/{id}/restore | project_restore | 历史恢复为新版本 |
 | POST /v1/projects/{id}/clips/{c}/silence | clip_silence | 只读扫描静音并取回剪切命令（`apply`/`dry_run` 在该工具里固定为 false） |
+| POST /v1/projects/{id}/clips/{c}/rough-cut | clip_rough_cut | 按镜头粗剪（1.283）：同一套颜色差找硬切，每个镜头只留前 `keep_ms`（默认 1500，100–30000），计划是从右往左的普通 `clip.split` + 带 `ripple` 的 `clip.trim`；`apply` 才写入，工具侧固定只读 |
 | POST /v1/projects/{id}/clips/{c}/scenes | clip_scenes | 按镜头切分（1.282）：引擎用**颜色差**找硬切（64×36 RGB 相邻帧差；纯红→纯绿 scene 分是 0.0、这里是 0.50），门槛/最短镜头/切点上限只在契约里（`capabilities.limits.scene_*`）；交回普通 `clip.split` 计划，`apply` 才写入，工具侧固定只读 |
 | POST /v1/projects/{id}/audio/beats | audio_beats | 只读听节拍（1.268）：`asset_id` 按素材 1:1，`clip_id` 按片段的恒定速度映射回时间线；交回 `beats` ticks 与可选的 `bpm`，写入仍走 `marker.set`，切点仍由 `marker_split` 决定 |
 | POST /v1/projects/{id}/tracks/{t}/silence | track_silence | 整轨扫描：逐片段报告跳过原因，合并成一条命令计划（1.79 起有工具；`apply`/`dry_run` 在该工具里固定为 false，命令交回 `timeline_edit` 写入） |

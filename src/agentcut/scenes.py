@@ -222,3 +222,53 @@ def cut_plan(clip, cuts: list[dict]) -> list[dict]:
             }
         )
     return commands
+
+def keep_ticks_for(frame_ticks: int, keep_ms: int) -> int:
+    """The keep length rounded onto the clip's frame grid, never shorter than one frame."""
+    return max(frame_ticks, int(round(keep_ms * TIMEBASE / 1000 / frame_ticks)) * frame_ticks)
+
+
+def rough_cut_plan(clip, cuts: list[dict], frame_ticks: int, keep_ticks: int) -> list[dict]:
+    """Keep the head of every detected shot and pack the kept heads together.
+
+    Splits go right to left so every cut lands on the coordinates the scanner reported; then the
+    trims go right to left too, each with `ripple=true`, so the pieces after it slide left by
+    exactly the tail that was dropped. A shot shorter than the keep is kept whole, and a clip with
+    no cut is
+    simply trimmed — one take, keep the head.
+    """
+    points = sorted(
+        {
+            int(item["at_ticks"])
+            for item in cuts
+            if 0 < int(item["at_ticks"]) < clip.duration_ticks
+        }
+    )
+    commands: list[dict] = []
+    total = len(points)
+    for offset, at in enumerate(reversed(points)):
+        number = total - offset
+        commands.append(
+            {
+                "op": "clip.split",
+                "clip_id": clip.id,
+                "at_ticks": clip.position_ticks + at,
+                "right_clip_id": f"{clip.id}-rough{number:02d}",
+            }
+        )
+    bounds = [0, *points, clip.duration_ticks]
+    for number in range(total, -1, -1):
+        start, end = bounds[number], bounds[number + 1]
+        if end - start <= keep_ticks:
+            continue
+        piece = clip.id if number == 0 else f"{clip.id}-rough{number:02d}"
+        commands.append(
+            {
+                "op": "clip.trim",
+                "clip_id": piece,
+                "source_in_ticks": clip.source_in_ticks + start * clip.speed_percent // 100,
+                "duration_ticks": keep_ticks,
+                "ripple": True,
+            }
+        )
+    return commands

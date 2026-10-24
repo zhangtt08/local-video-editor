@@ -6584,4 +6584,6 @@ Agent 用 `clip.mask_stack` 写得进去，人在界面上只能加一块、删�
 假红写进了账（`released_package_check` 红在两份引擎字节对不上，而 PyInstaller 不是逐字节
 可复现的），判法就是那一条：树不静就不建，量到什么写什么。
 
+1.283（2026-10-24）：按镜头粗剪——复用颜色差检测，计划是右到左的 `clip.split` 与带 `ripple` 的 `clip.trim`；默认/上下限只在契约（`ROUGH_KEEP_MS_*`）并经 `capabilities.limits.rough_keep_ms_*` 下发。`roughcut_check.py` 量到三段各留 1 秒总长 3 秒首尾相接、一镜到底只留头、留 2 秒时不动、50% 速度读源 2/4 秒、错类型与 `ROUGH_NONE` 各按名字拒绝；`roughui_check.py` 在真页面填 1 秒按下去，r1→r2、三段 1/1/1 秒。发布账：1.283.0 / schema 33，根 exe 与便携版 185,205,939 B（sha256 前缀 d9dbc7a273e075f0），安装版 185,366,654 B。
+
 1.282（2026-10-24）：按镜头切分——`scenes.py` 用 64×36 RGB 相邻帧的平均通道差找硬切（FFmpeg 的 luma-only `scene` 分对纯红→纯绿量到 0.0，这里 0.50），门槛/最短镜头/上限只在契约（`SCENE_THRESHOLD_*`、`SCENE_MIN_MS_DEFAULT`、`SCENE_MAX_CUTS`，经 `capabilities.limits.scene_*` 下发）；计划是右到左的普通 `clip.split`，HTTP 只读与 `apply` 两条路、MCP `clip_scenes` 强制只读、检查器一颗按钮走同一个 store 函数。`scene_check.py` 用红/绿/蓝三段真视频量到 2.0/4.0 s 两个切点、apply 一个 revision 三段相接、50% 速度折到 4.0 s、无切点与错类型各按名字拒绝；`desktop_scene_check.ts` 钉「谁在判断、哪里只有一份」。真页面 `sceneui_check.py`：按钮 118×32、字号 14、圆角 10、命中点是自己，按下 r1→r2、三段 2/2/2 秒；这一跑抓出「时间与剪辑」默认折叠导致按钮点不到，改成默认展开并加壳检。发布账：1.282.0 / schema 33，根 exe 与便携版 185,202,597 B（sha256 前缀 d6e1db915b9f33f7），安装版 185,363,303 B。

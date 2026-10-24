@@ -931,6 +931,37 @@ export async function cutSilence(clipId: string) {
   }
 }
 
+/** 按镜头粗剪：每个镜头只留前 keepMs，计划是普通 clip.split + 带 ripple 的 clip.trim，
+ *  一次提交一个版本、撤销一步整批退回。门槛与最短镜头读能力表，界面不写第二份。 */
+export async function roughCut(clipId: string, keepMs: number) {
+  const project = state.project;
+  if (!engine || !project || !state.caps) return;
+  set({ busy: "粗剪…" });
+  try {
+    const scanned = await engine.roughCutPlan(project.id, clipId, {
+      request_id: newId("rough-"),
+      expected_revision: project.revision,
+      sequence_id: state.sequenceId,
+      threshold: state.caps.limits.scene_threshold_default ?? 0.18,
+      min_scene_ms: state.caps.limits.scene_min_ms_default ?? 400,
+      keep_ms: keepMs,
+    });
+    const commands = scanned.rough.commands;
+    if (!commands.length) {
+      toast("info", "没有可粗剪的镜头", "每一个镜头都比「每镜留」更短；这一次没有写入任何东西。");
+      return;
+    }
+    const shots = scanned.rough.cuts.length + 1;
+    submit(commands as Command[], `粗剪：每镜留 ${(keepMs / 1000).toFixed(1)} 秒`);
+    toast("info", `粗剪完成：${shots} 个镜头`, `每个镜头只留前 ${(keepMs / 1000).toFixed(1)} 秒，后段已左移收拢；撤销一步整批退回。`);
+  } catch (error) {
+    const { title, detail } = describe(error);
+    toast("error", title, detail);
+  } finally {
+    set({ busy: "" });
+  }
+}
+
 function countCuts(commands: Record<string, unknown>[]) {
   return commands.filter((command) => command.op === "clip.ripple_remove").length;
 }

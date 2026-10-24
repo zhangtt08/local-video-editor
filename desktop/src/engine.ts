@@ -694,7 +694,7 @@ export type Capabilities = {
   max_commands_per_batch: number;
   commands: string[];
   features: Record<string, boolean>;
-  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; track_volume_max?: number; track_volume_default?: number; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; denoise_db?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number; track_max_gap_frames?: number; track_gap_default?: number; track_min_frames?: number; track_max_frames?: number; mask_rotation_limit?: number; extra_masks?: number; extra_mask_keys?: number; mask_shape_keys?: number; mask_shape_schedule_segments?: number; blur_schedule_segments?: number; sharpen_schedule_segments?: number; layer_key_limit?: number; layer_schedule_segments?: number; attribute_paste_targets?: number; chroma_similarity_default?: number; chroma_blend_default?: number; chroma_color_default?: string; chroma_spill_default?: number; scene_threshold_default?: number; scene_min_ms_default?: number; scene_max_cuts?: number };
+  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; track_volume_max?: number; track_volume_default?: number; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; denoise_db?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number; track_max_gap_frames?: number; track_gap_default?: number; track_min_frames?: number; track_max_frames?: number; mask_rotation_limit?: number; extra_masks?: number; extra_mask_keys?: number; mask_shape_keys?: number; mask_shape_schedule_segments?: number; blur_schedule_segments?: number; sharpen_schedule_segments?: number; layer_key_limit?: number; layer_schedule_segments?: number; attribute_paste_targets?: number; chroma_similarity_default?: number; chroma_blend_default?: number; chroma_color_default?: string; chroma_spill_default?: number; scene_threshold_default?: number; scene_min_ms_default?: number; scene_max_cuts?: number; rough_keep_ms_default?: number; rough_keep_ms_min?: number; rough_keep_ms_max?: number };
   render_presets: Preset[];
   /** 1.137：时间码的写法与「哪两个率才有丢帧码」由引擎说，界面不许自己写一份正则。 */
   timecode_shape?: string;
@@ -859,6 +859,8 @@ export function errorHints(): Record<string, string> {
       SCENE_NONE: "这一段是一镜到底：没有哪一处画面变化越过门槛。把门槛调低一点再扫一次；这一次没有改写工程。",
       SCENE_THRESHOLD: "镜头门槛落在可用的范围之外了：允许 0.02 到 0.90，默认 0.18。越小越敏感（轻微的灯光变化也会切断），越大越迟钝。",
       SCENE_FAILED: "镜头检测没跑成：这一段素材可能已经损坏或读不出画面。先在素材库里确认这个文件能正常播放，再试一次。",
+      INVALID_ROUGH_TARGET: "这一段不能粗剪：只有导入的视频素材有镜头可分，图片、文字、声音与合成片段都不行；带变速曲线的片段要先清掉曲线，音画链接的片段要先解除链接。",
+      ROUGH_NONE: "每个镜头都比「每镜留」更短，粗剪没有可切的内容。把每镜留调短一点（默认 1.5 秒）再试；这一次没有改写工程。",
       INVALID_BEAT_TARGET: "这段里没有可听的节拍：要么它不是声音（纯画面素材没有音轨），要么它带着变速曲线——那种片段的一秒源声音不落在固定长度的时间线上，打出来的点会对不上画面。纯画面请换一条声音素材；变速曲线先去曲线编辑器里清掉，或直接对素材本身打点。",
       BEAT_QUIET: "这段声音里没有一枚起音越过门槛：可能是一段持续不断的长音或底噪。把灵敏度调高一点（滑杆往右），或换一段有鼓点/节奏的区间再试；这一次没有写入任何标记。",
       BEAT_FAILED: "节拍分析没跑成：素材可能读不出声音。先在素材库里确认这个文件能正常播放，再试一次；这一次没有写入任何标记。",
@@ -1337,6 +1339,20 @@ export class Engine {
         commands: Record<string, unknown>[];
       };
     }>("POST", `/v1/projects/${projectId}/clips/${clipId}/scenes`, body, 300000);
+  }
+
+  /** 粗剪：每个镜头只留前 keep_ms，计划是普通 clip.split 加带 ripple 的 clip.trim。 */
+  roughCutPlan(projectId: string, clipId: string, body: Record<string, unknown>) {
+    return this.request<{
+      committed: boolean;
+      rough: {
+        threshold: number;
+        cuts: { at_ticks: number; source_seconds: number }[];
+        keep_ms: number;
+        keep_ticks: number;
+        commands: Record<string, unknown>[];
+      };
+    }>("POST", `/v1/projects/${projectId}/clips/${clipId}/rough-cut`, body, 300000);
   }
 
   /** 解析 .cube 文本：查找表只由引擎那一个解析器读，界面与 Agent 拿到的数完全一致。 */

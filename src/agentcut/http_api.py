@@ -90,6 +90,7 @@ from .contracts import (
     RenderRequest,
     RestoreProject,
     Revision,
+    RoughCutRequest,
     SceneRequest,
     SequenceRef,
     ShapeMask,
@@ -1453,6 +1454,82 @@ def create_app(
         )
         mutation = projects.mutate(project_id, batch).model_dump()
         return {**mutation, "scenes": {**result, "commands": commands}}
+
+    @app.post("/v1/projects/{project_id}/clips/{clip_id}/rough-cut", dependencies=auth)
+    def rough_cut(
+        project_id: Identifier, clip_id: Identifier, request: RoughCutRequest, projects: Store
+    ):
+        """Keep the head of every shot in one clip and pack those heads together.
+
+        Same colour-change detector as 按镜头切分 (a luma-only score misses red-to-green), but the
+        plan also trims each long shot down to `keep_ms` and lets the following shots ripple left.
+        Every command is an ordinary `clip.split` / `clip.trim`, so the reducer stays the only
+        place that decides what a cut does; `apply` submits the whole plan as one revision.
+        """
+        engine = require_media()
+        root = projects.get(project_id)
+        project = sequence_view(root, request.sequence_id)
+        clip = project.clips.get(clip_id)
+        if clip is None:
+            raise EditorError("NOT_FOUND", "clip is not in this project", 404, clip_id=clip_id)
+        problem = picture_scan_problem(project, clip)
+        if problem:
+            raise EditorError("INVALID_ROUGH_TARGET", problem, 422, clip_id=clip_id)
+        if clip.link_id is not None:
+            raise EditorError(
+                "INVALID_ROUGH_TARGET",
+                "this clip is linked to another one; rough-cutting one side would desync them. "
+                "Unlink first, or cut each clip separately.",
+                422,
+                clip_id=clip_id,
+            )
+        asset = project.assets[clip.asset_id]
+        source = Path(asset.verified.path)
+        if not source.is_file():
+            raise EditorError(
+                "MEDIA_MISSING",
+                "source file is gone",
+                410,
+                clip_id=clip.id,
+                asset_id=clip.asset_id,
+                asset_label=source.name,
+            )
+        result = scenes.analyse(
+            engine.ffmpeg,
+            source,
+            clip,
+            project.settings.frame_ticks,
+            threshold=request.threshold,
+            min_scene_ms=request.min_scene_ms,
+        )
+        keep_ticks = scenes.keep_ticks_for(project.settings.frame_ticks, request.keep_ms)
+        commands = scenes.rough_cut_plan(
+            clip, result["cuts"], project.settings.frame_ticks, keep_ticks
+        )
+        body = {**result, "keep_ms": request.keep_ms, "keep_ticks": keep_ticks}
+        if request.apply and not commands:
+            raise EditorError(
+                "ROUGH_NONE",
+                "every shot is already shorter than the keep, so there is nothing to cut",
+                422,
+                clip_id=clip_id,
+                keep_ms=request.keep_ms,
+            )
+        if not request.apply:
+            return {
+                "committed": False,
+                "project": root.model_dump(),
+                "rough": {**body, "commands": commands},
+            }
+        batch = EditBatch(
+            request_id=request.request_id,
+            expected_revision=request.expected_revision,
+            sequence_id=request.sequence_id,
+            commands=commands,  # type: ignore[arg-type]
+            dry_run=request.dry_run,
+        )
+        mutation = projects.mutate(project_id, batch).model_dump()
+        return {**mutation, "rough": {**body, "commands": commands}}
 
     @app.post("/v1/projects/{project_id}/audio/beats", dependencies=auth)
     def audio_beats(project_id: Identifier, request: BeatRequest, projects: Store):

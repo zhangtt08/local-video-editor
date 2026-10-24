@@ -71,7 +71,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.282.0"
+APP_VERSION = "1.283.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -588,6 +588,15 @@ SCENE_MIN_MS_DEFAULT = 400
 
 # A long take can flicker; the ceiling is what both the scanner and the button read.
 SCENE_MAX_CUTS = 200
+
+# 1.283：粗剪每个镜头留多长。默认 1.5 秒、允许 0.1–30 秒——这是那句话里唯一一个由人拧的数，
+# 其余门槛仍与按镜头切分同一组。
+
+ROUGH_KEEP_MS_DEFAULT = 1500
+
+ROUGH_KEEP_MS_MIN = 100
+
+ROUGH_KEEP_MS_MAX = 30000
 
 # The unsharp staircase gets its own, smaller ceiling because a step here is a pair of stages, not
 
@@ -5874,6 +5883,49 @@ class SceneRequest(Contract):
 
 
 
+class RoughCutRequest(Contract):
+
+    """Find the shots in one clip and keep only the first `keep_ms` of each, packed together.
+
+    The plan is made of ordinary commands only: `clip.split` at every shot change and, for shots
+
+    longer than the keep, one `clip.trim` with `ripple=true` — so the reducer stays the only place
+
+    that decides what a cut or a trim does to the source clock, keyframes and links. Shots shorter
+
+    than `keep_ms` are kept whole. Without a detected cut the whole clip is trimmed, which is the
+
+    same promise said the other way: one take, keep the head.
+
+    """
+
+    request_id: Identifier
+
+    expected_revision: Revision
+
+    sequence_id: Identifier | None = None
+
+    threshold: Annotated[
+
+        float, Field(ge=SCENE_THRESHOLD_MIN, le=SCENE_THRESHOLD_MAX)
+
+    ] = SCENE_THRESHOLD_DEFAULT
+
+    min_scene_ms: Annotated[int, Field(ge=100, le=5000)] = SCENE_MIN_MS_DEFAULT
+
+    keep_ms: Annotated[int, Field(ge=ROUGH_KEEP_MS_MIN, le=ROUGH_KEEP_MS_MAX)] = (
+
+        ROUGH_KEEP_MS_DEFAULT
+
+    )
+
+    apply: bool = False
+
+    dry_run: bool = False
+
+
+
+
 class BeatRequest(Contract):
 
     """Listen to one asset or clip and hand back where its beats fall, in timeline ticks.
@@ -7478,6 +7530,10 @@ def capabilities(
 
             "scene_split": media_ready,
 
+            # 1.283：粗剪是同一套检测之上的一个计划，没有检测就没有它。
+
+            "rough_cut": media_ready,
+
             "loudness_metering": media_ready,
 
             # A local speech model turns one clip's own audio into an SRT the importer lands.
@@ -7729,6 +7785,12 @@ def capabilities(
             "scene_min_ms_default": SCENE_MIN_MS_DEFAULT,
 
             "scene_max_cuts": SCENE_MAX_CUTS,
+
+            "rough_keep_ms_default": ROUGH_KEEP_MS_DEFAULT,
+
+            "rough_keep_ms_min": ROUGH_KEEP_MS_MIN,
+
+            "rough_keep_ms_max": ROUGH_KEEP_MS_MAX,
 
             "track_volume_default": TRACK_VOLUME_DEFAULT,
 

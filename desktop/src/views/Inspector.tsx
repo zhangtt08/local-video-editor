@@ -84,6 +84,7 @@ import {
   reframeClip, stabilizeClip, trackMasks, trackExtraMask,
   cutSilence,
   splitScenes,
+  roughCut,
   beatMarks,
   beatCut,
   autoCaptions,
@@ -160,6 +161,8 @@ function ClipFields({ clip }: { clip: Clip }) {
     // 1.233：适配时长的目标秒数是这一格自己的草稿（与工程状态无关），说完那句回执就留着给人看。
     const [fitSeconds, setFitSeconds] = useState("5");
     const [fitSaid, setFitSaid] = useState("");
+    // 1.283：每镜留几秒是这一格自己的草稿；空着就走能力表下发的默认值。
+    const [roughKeep, setRoughKeep] = useState("");
     const project = editableProject(app, true) ?? app.project;
     if (!project) return null;
     const asset = project.assets[clip.asset_id];
@@ -227,6 +230,15 @@ function ClipFields({ clip }: { clip: Clip }) {
         </div> : null}
         {fitSaid ? <p className="hint" role="status">{fitSaid}</p> : null}
         {asset?.kind !== "image" && asset?.kind !== "text" ? <p className="hint">保留音高，变速后自动移动本轨后续片段；动画仍按时间线时间播放。</p> : null}
+        {app.caps?.features?.rough_cut && asset?.kind === "video" && !asset.sequence_id ? <div className="effect-row">
+          <label htmlFor="rough-keep">粗剪每镜</label>
+          <input id="rough-keep" className="input mono" type="number" min={0.1} max={30} step={0.1} value={roughKeep} placeholder={((app.caps.limits.rough_keep_ms_default ?? 1500) / 1000).toFixed(1)} disabled={track?.locked} onChange={(event) => setRoughKeep(event.target.value)} />
+          <span className="dim">秒</span>
+          <button type="button" className="btn" disabled={track?.locked} title="用同一套颜色差检测找镜头，每个镜头只留前这么多秒，并把留下的头接在一起——一次提交一个版本，撤销一步整批退回" onClick={() => {
+            const wanted = Number(roughKeep) || (app.caps!.limits.rough_keep_ms_default ?? 1500) / 1000;
+            void roughCut(clip.id, Math.round(wanted * 1000));
+          }}>粗剪</button>
+        </div> : null}
         <div className="insp-actions">
           <SplitButton clip={clip} />
           <button className="btn" title={`复制一段接到本轨末尾（${chordWords(keymap().duplicate)}）`} onClick={() => duplicateClip(clip.id)}>

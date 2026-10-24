@@ -50,6 +50,7 @@ from .contracts import (
     RenderRequest,
     RestoreProject,
     Revision,
+    RoughCutRequest,
     SceneRequest,
     SequenceRef,
     SilenceRequest,
@@ -387,6 +388,26 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         return await call(
             "POST",
             f"/v1/projects/{project_id}/clips/{clip_id}/scenes",
+            body,
+            timeout=600,
+        )
+
+    @server.tool(annotations=read)
+    async def clip_rough_cut(
+        project_id: Identifier, clip_id: Identifier, request: RoughCutRequest
+    ) -> dict[str, Any]:
+        """Keep the head of every shot in one clip and get the ordinary cut/trim commands.
+
+        Read-only here: `apply` and `dry_run` are forced off, so nothing is written. The shots come
+        from the same colour-change detector as 按镜头切分 (a luma-only score misses red-to-green),
+        then each shot longer than `keep_ms` is trimmed with `ripple=true` so the kept heads sit
+        together. Review or edit the returned `commands`, then submit them with `timeline_edit` to
+        keep one atomic revision.
+        """
+        body = request.model_dump(mode="json") | {"apply": False, "dry_run": False}
+        return await call(
+            "POST",
+            f"/v1/projects/{project_id}/clips/{clip_id}/rough-cut",
             body,
             timeout=600,
         )
