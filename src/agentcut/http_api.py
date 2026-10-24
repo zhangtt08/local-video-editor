@@ -1628,7 +1628,7 @@ def create_app(
         project_id: Identifier,
         track_id: Identifier,
         projects: Store,
-        sequence_id: Identifier | None = None,
+        sequence_id: SequenceRef | None = None,
     ):
         """One picture track as a CMX3600 edit list: straight cuts, 100 % speed, whole frame rates.
 

@@ -416,7 +416,7 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
     async def project_edl(
         project_id: Identifier,
         track_id: Identifier,
-        sequence_id: Identifier | None = None,
+        sequence_id: SequenceRef | None = None,
     ) -> dict[str, Any]:
         """One picture track as a CMX3600 edit list for another editor.
 
