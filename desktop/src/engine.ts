@@ -860,6 +860,9 @@ export function errorHints(): Record<string, string> {
       SCENE_THRESHOLD: "镜头门槛落在可用的范围之外了：允许 0.02 到 0.90，默认 0.18。越小越敏感（轻微的灯光变化也会切断），越大越迟钝。",
       SCENE_FAILED: "镜头检测没跑成：这一段素材可能已经损坏或读不出画面。先在素材库里确认这个文件能正常播放，再试一次。",
       INVALID_ROUGH_TARGET: "这一段不能粗剪：只有导入的视频素材有镜头可分，图片、文字、声音与合成片段都不行；带变速曲线的片段要先清掉曲线，音画链接的片段要先解除链接。",
+      EDL_RATE: "剪辑表的时码按整帧写：这条时间线是分数帧率，CMX3600 要先定丢帧/不丢帧那一套算法，这一版不猜。把工程换成 24/25/30/50/60，或者直接交付成片。",
+      EDL_UNSUPPORTED: "这条轨上有剪辑表说不出的东西（转场、变速或不是画面的片段）。先去掉或合并它们，或者直接交付成片；这一趟没有写任何文件。",
+      EDL_EMPTY: "这条轨上还没有片段，剪辑表是空的。先放几段画面进来。",
       ROUGH_NONE: "每个镜头都比「每镜留」更短，粗剪没有可切的内容。把每镜留调短一点（默认 1.5 秒）再试；这一次没有改写工程。",
       INVALID_BEAT_TARGET: "这段里没有可听的节拍：要么它不是声音（纯画面素材没有音轨），要么它带着变速曲线——那种片段的一秒源声音不落在固定长度的时间线上，打出来的点会对不上画面。纯画面请换一条声音素材；变速曲线先去曲线编辑器里清掉，或直接对素材本身打点。",
       BEAT_QUIET: "这段声音里没有一枚起音越过门槛：可能是一段持续不断的长音或底噪。把灵敏度调高一点（滑杆往右），或换一段有鼓点/节奏的区间再试；这一次没有写入任何标记。",
@@ -1339,6 +1342,28 @@ export class Engine {
         commands: Record<string, unknown>[];
       };
     }>("POST", `/v1/projects/${projectId}/clips/${clipId}/scenes`, body, 300000);
+  }
+
+  /** 剪辑表：一条画面轨的 CMX3600 文本（只读）；直切、100% 速度、整帧率。 */
+  trackEdl(projectId: string, trackId: string, sequenceId?: string | null) {
+    const query =
+      `?track_id=${encodeURIComponent(trackId)}` +
+      (sequenceId ? `&sequence_id=${encodeURIComponent(sequenceId)}` : "");
+    return this.request<{
+      track_id: string;
+      track_name: string;
+      frame_rate: number;
+      duration_ticks: number;
+      events: {
+        number: number;
+        reel: string;
+        record_in: string;
+        record_out: string;
+        label: string;
+      }[];
+      text: string;
+      revision: number;
+    }>("GET", `/v1/projects/${projectId}/edl${query}`);
   }
 
   /** 整轨粗剪：逐片段右到左各取一份计划，合成一个批次；不能扫的片段带原因跳过。 */

@@ -63,6 +63,7 @@ import {
   openSequence,
   cutTrackSilence,
   roughCutTrack,
+  copyTrackEdl,
   duckTrack,
   alignTrackLoudness,
   addMarker,
@@ -707,6 +708,14 @@ function TrackRow({
         run: () => cutTrackSilence(track.id),
       },
     ];
+    if (track.kind === "video" && app.caps?.features?.edl_export) {
+      // 剪辑表与粗剪一样只摆在画面轨：声音轨没有可交给另一套剪辑器的直切列表。
+      entries.unshift({
+        kind: "item", label: "复制这一轨的 EDL（剪辑表）", icon: "copy", disabled: !!emptyTrack,
+        title: emptyTrack ?? "把这条画面轨的直切列表复制成 CMX3600（整帧、不丢帧），粘进达芬奇 / Premiere 的 EDL 导入即可；转场、变速与非画面片段会被点名拒绝而不是漏掉",
+        run: () => void copyTrackEdl(track.id),
+      });
+    }
     if (track.kind === "video" && app.caps?.features?.rough_cut) {
       // 粗剪是画面上的事：声音轨不摆这一项，空轨时与另外三项一样灰掉并交回同一句原因。
       entries.unshift({

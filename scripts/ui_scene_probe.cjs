@@ -34,6 +34,7 @@ const ACTION = flag("action", "scene");
 const LABEL = ACTION === "rough" ? "粗剪" : "按镜头切分";
 const BUTTON_SCOPE = ACTION === "rough" ? ".panel-scroll button" : ".insp-actions button";
 const EXACT = ACTION === "rough";
+const MENU_LABEL = ACTION === "edl" ? "复制这一轨的 EDL（剪辑表）" : "按镜头粗剪这一轨";
 const WANT = JSON.stringify(LABEL);
 const MATCH = EXACT
   ? `(n.textContent || '').trim() === ${WANT}`
@@ -226,7 +227,7 @@ async function main() {
     }
     facts.before = await projectState();
 
-    if (ACTION === "track") {
+    if (ACTION === "track" || ACTION === "edl") {
       // 轨道头「其它操作」→ 菜单里的「按镜头粗剪这一轨」：两下真鼠标，再回引擎读数。
       const more = await evaluate(`(function () {
         const node = document.querySelector('[aria-label="这条轨的其它操作"]');
@@ -246,7 +247,7 @@ async function main() {
       await sleep(500);
       const item = await evaluate(`(function () {
         const hit = Array.from(document.querySelectorAll('[role="menuitem"]'))
-          .find(function (n) { return (n.textContent || '').indexOf('按镜头粗剪这一轨') >= 0; });
+          .find(function (n) { return (n.textContent || '').indexOf(${JSON.stringify(MENU_LABEL)}) >= 0; });
         if (!hit) return null;
         const r = hit.getBoundingClientRect();
         return { text: hit.textContent.trim(), disabled: hit.disabled === true,
@@ -254,15 +255,28 @@ async function main() {
           box: { left: Math.round(r.left), right: Math.round(r.right), width: Math.round(r.width), height: Math.round(r.height) } };
       })()`);
       facts.menu = item;
-      if (!item) throw new Error("轨菜单里没有「按镜头粗剪这一轨」");
+      if (!item) throw new Error("轨菜单里没有「" + MENU_LABEL + "」");
       if (SHOT) {
         await cdp.send("Page.captureScreenshot", { format: "png" }, 30000).then((shot) => {
           if (shot && shot.data) fs.writeFileSync(SHOT, Buffer.from(shot.data, "base64"));
         }).catch(() => {});
       }
-      if (item.disabled) throw new Error("粗剪整轨是灰的");
+      if (item.disabled) throw new Error(MENU_LABEL + "是灰的");
       await clickAt(item);
       const before = facts.before.revision;
+      if (ACTION === "edl") {
+        // 只读导出：等口播提示，工程 revision 应当一动不动。
+        await sleep(1200);
+        facts.toast = await evaluate(`(function () {
+          const host = document.querySelector('.toast-host');
+          return host ? host.textContent.trim().slice(0, 160) : null;
+        })()`);
+        facts.after = await projectState();
+        facts.clips = Object.values(facts.after.clips || {}).map(function (clip) {
+          return { id: clip.id, position_ticks: clip.position_ticks, duration_ticks: clip.duration_ticks };
+        }).sort(function (a, b) { return a.position_ticks - b.position_ticks; });
+        return;
+      }
       for (let attempt = 0; attempt < 90; attempt += 1) {
         await sleep(500);
         const now = await projectState();

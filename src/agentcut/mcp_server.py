@@ -413,6 +413,23 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         )
 
     @server.tool(annotations=read)
+    async def project_edl(
+        project_id: Identifier,
+        track_id: Identifier,
+        sequence_id: Identifier | None = None,
+    ) -> dict[str, Any]:
+        """One picture track as a CMX3600 edit list for another editor.
+
+        Read-only. Straight cuts at 100 % speed on an integer frame rate only: a transition, a
+        speed change or a non-picture clip is refused by name (with the clips that cause it)
+        rather than dropped from the list, because an EDL that loses a shot is worse than none.
+        """
+        query = f"?track_id={quote(track_id, safe='')}"
+        if sequence_id is not None:
+            query += f"&sequence_id={quote(sequence_id, safe='')}"
+        return await call("GET", f"/v1/projects/{project_id}/edl{query}")
+
+    @server.tool(annotations=read)
     async def track_rough_cut(
         project_id: Identifier, track_id: Identifier, request: RoughCutRequest
     ) -> dict[str, Any]:

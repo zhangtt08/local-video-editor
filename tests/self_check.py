@@ -413,6 +413,7 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
                 "clip_scenes",
                 "clip_rough_cut",
                 "track_rough_cut",
+                "project_edl",
                 "audio_beats",
                 "mask_stack_track",
                 "preview_frame",
@@ -463,6 +464,10 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
             assert tools["track_rough_cut"].annotations.readOnlyHint is True
             assert "sequence_id" in json.dumps(tools["track_rough_cut"].inputSchema)
             assert "keep_ms" in json.dumps(tools["track_rough_cut"].inputSchema)
+            # 1.285：剪辑表是纯文本导出，只读；合成里的轨也要点名 sequence_id。
+            assert tools["project_edl"].annotations.readOnlyHint is True
+            assert "sequence_id" in json.dumps(tools["project_edl"].inputSchema)
+            assert "track_id" in json.dumps(tools["project_edl"].inputSchema)
             assert "sequence_id" in json.dumps(tools["clip_scenes"].inputSchema)
             assert "threshold" in json.dumps(tools["clip_scenes"].inputSchema)
             # 1.268: beats are an answer, not a write. The marks become the existing marker.set

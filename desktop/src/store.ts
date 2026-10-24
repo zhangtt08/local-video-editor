@@ -994,6 +994,25 @@ export async function roughCutTrack(trackId: string) {
   }
 }
 
+/** 剪辑表：把这一轨的直切列表复制成 CMX3600，交给达芬奇 / Premiere；只读，不改工程。
+ *  转场、变速与非画面片段由引擎整条拒绝并点名，界面不自己过滤。 */
+export async function copyTrackEdl(trackId: string) {
+  const project = state.project;
+  if (!engine || !project) return;
+  try {
+    const listed = await engine.trackEdl(project.id, trackId, state.sequenceId);
+    const copied = await bridge.copyText(listed.text);
+    if (!copied) {
+      toast("warn", "无法访问剪贴板", "剪辑表已生成但没能写进剪贴板；换一次点击再试。");
+      return;
+    }
+    toast("ok", `已复制 ${listed.events.length} 条剪辑（EDL）`, `时码按 ${listed.frame_rate} fps 不丢帧写；粘进达芬奇 / Premiere 的 EDL 导入即可。调色、特效与声音不随表走。`);
+  } catch (error) {
+    const { title, detail } = describe(error);
+    toast("error", title, detail);
+  }
+}
+
 function countCuts(commands: Record<string, unknown>[]) {
   return commands.filter((command) => command.op === "clip.ripple_remove").length;
 }

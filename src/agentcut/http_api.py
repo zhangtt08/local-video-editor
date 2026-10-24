@@ -26,7 +26,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from . import asr as asr_module
 from . import autograde as autograde_module
 from . import beats as beats_module
-from . import duck, scenes, silence
+from . import duck, interchange, scenes, silence
 from . import fourpoint as fourpoint_module
 from . import markers as marker_plan
 from . import reframe as reframe_plan
@@ -1622,6 +1622,24 @@ def create_app(
         )
         mutation = projects.mutate(project_id, batch).model_dump()
         return {**mutation, "rough": body}
+
+    @app.get("/v1/projects/{project_id}/edl", dependencies=auth)
+    def project_edl(
+        project_id: Identifier,
+        track_id: Identifier,
+        projects: Store,
+        sequence_id: Identifier | None = None,
+    ):
+        """One picture track as a CMX3600 edit list: straight cuts, 100 % speed, whole frame rates.
+
+        Read-only: the answer is text for another editor, not a change to this project. Edits a
+        CMX3600 cannot say (a transition, a speed change, a non-picture clip) are refused together
+        with the clips that cause it rather than silently dropped from the list.
+        """
+        root = projects.get(project_id)
+        project = sequence_view(root, sequence_id)
+        listed = interchange.build_edl(project, track_id)
+        return {**listed, "project_id": project_id, "revision": root.revision}
 
     @app.post("/v1/projects/{project_id}/audio/beats", dependencies=auth)
     def audio_beats(project_id: Identifier, request: BeatRequest, projects: Store):

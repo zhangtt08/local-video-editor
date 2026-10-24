@@ -284,6 +284,7 @@ def main() -> None:
     # 1.283：粗剪那一格秒数与它的标签也得真的在包里。
     assert "粗剪每镜" in body, "the shipped renderer never carries the rough-cut keep field"
     assert "按镜头粗剪这一轨" in body, "the shipped renderer lacks the track rough-cut entry"
+    assert "复制这一轨的 EDL（剪辑表）" in body, "the shipped renderer lacks the EDL entry"
     # 1.242：这句话在 1.237/1.238 之后就是假话（框点与跟随都能让那几块动起来）。源码里由
     # desktop_maskstack_check 钉着它不许回来；这里钉的是**装进包的那一份**里也没有它——
     # 一句过时的实话比没有句子更坏，因为它会替一条已经不存在的限制做主。

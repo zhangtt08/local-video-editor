@@ -16,6 +16,7 @@ HTTP 使用 `Authorization: Bearer <AGENTCUT_TOKEN>`。JSON 请求严格校验�
 | POST /v1/projects/{id}/edits | timeline_edit | 批量命令 |
 | POST /v1/projects/{id}/restore | project_restore | 历史恢复为新版本 |
 | POST /v1/projects/{id}/clips/{c}/silence | clip_silence | 只读扫描静音并取回剪切命令（`apply`/`dry_run` 在该工具里固定为 false） |
+| GET /v1/projects/{id}/edl?track_id={t} | project_edl | 一条画面轨的 CMX3600 剪辑表（1.285）：整帧不丢帧，直切、100% 速度、视频片段；转场/变速/非画面/分数帧率按名字拒绝并点名，读一遍不改 revision |
 | POST /v1/projects/{id}/tracks/{t}/rough-cut | track_rough_cut | 整轨粗剪（1.284）：逐片段右到左取同一份粗剪计划，合并成一个批次；不能扫的片段带原因跳过，一条都剪不动时 `ROUGH_NONE`；`apply` 才写入，工具侧固定只读 |
 | POST /v1/projects/{id}/clips/{c}/rough-cut | clip_rough_cut | 按镜头粗剪（1.283）：同一套颜色差找硬切，每个镜头只留前 `keep_ms`（默认 1500，100–30000），计划是从右往左的普通 `clip.split` + 带 `ripple` 的 `clip.trim`；`apply` 才写入，工具侧固定只读 |
 | POST /v1/projects/{id}/clips/{c}/scenes | clip_scenes | 按镜头切分（1.282）：引擎用**颜色差**找硬切（64×36 RGB 相邻帧差；纯红→纯绿 scene 分是 0.0、这里是 0.50），门槛/最短镜头/切点上限只在契约里（`capabilities.limits.scene_*`）；交回普通 `clip.split` 计划，`apply` 才写入，工具侧固定只读 |

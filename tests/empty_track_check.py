@@ -245,15 +245,15 @@ def main() -> None:
                 "the track header must ask the shared predicate, not guess"
             )
             # 1.279 起那几件事（统一响度 / 剪掉停顿 / 自动闪避）从轨道头收进了「更多」菜单；
-            # 1.284 又多了整轨粗剪（只在画面轨上摆）。判据跟着形状走——四条菜单项都读同一个
-            # `emptyTrack`，标题都交回它的原话。
-            assert wiring.count("disabled: !!emptyTrack,") == 4, "four whole-track menu entries"
-            assert wiring.count("title: emptyTrack ??") == 4, "each gated entry carries the reason"
+            # 1.284 又多了整轨粗剪、1.285 多了 EDL（都只在画面轨上摆）。判据跟着形状走——五条
+            # 菜单项都读同一个 `emptyTrack`，标题都交回它的原话。
+            assert wiring.count("disabled: !!emptyTrack,") == 5, "five whole-track menu entries"
+            assert wiring.count("title: emptyTrack ??") == 5, "each gated entry carries the reason"
             assert "disabled={!clips.length}" not in wiring, "a second, drifting copy of the rule"
             print(
                 f"PASS: {refusals} track refusals name the track, all four routes agree on "
                 f"「{HOLDS}」, a track with one clip is never refused that way (revision stays "
-                f"{revision}); the header greys the four whole-track buttons out on an empty "
+                f"{revision}); the header greys the five whole-track buttons out on an empty "
                 f"track too"
             )
 
