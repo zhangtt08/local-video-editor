@@ -164,6 +164,7 @@ const PATHS: Record<string, ReactNode> = {
   ),
   chevron: <path d="M6 4l4 4-4 4" />,
   spark: <path d="M8 2l1.6 4.4L14 8l-4.4 1.6L8 14l-1.6-4.4L2 8l4.4-1.6z" />,
+  more: <g fill="currentColor" stroke="none"><circle cx="3" cy="8" r="1.35" /><circle cx="8" cy="8" r="1.35" /><circle cx="13" cy="8" r="1.35" /></g>,
   flag: <path d="M4.2 2.2v10.4M4.2 2.6h7.4l-1.7 2.5 1.7 2.5H4.2z" />,
   link: (
     <g>

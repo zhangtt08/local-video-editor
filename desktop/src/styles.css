@@ -1,29 +1,32 @@
 /* AgentCut editing workbench: neutral dark surfaces, teal focus, semantic track colors. */
 
 :root {
-  --bg: #15171a;
-  --panel: #202226;
-  --line: #303338;
-  --line-strong: #41454c;
-  --ink: #eceef1;
-  --ink-2: #abb0ba;
-  --ink-3: #8c929e;
-  --accent: #41c6bc;
-  --accent-deep: #67ded3;
-  --accent-soft: #193c3b;
-  --danger: #ef7d83;
-  --danger-soft: #44272b;
-  --ok: #63bf8b;
-  --ok-soft: #213e30;
-  --warn-soft: #3d3425;
-  --warn-ink: #e8bb70;
+  /* 1.279：表面从「一张贴一张的灰板」改成「深色画布上抬起来的卡片」。亮阶仍是
+     bg < sunk < panel < elev < float，门禁照旧钉着；变的是相邻两阶的距离与圆角：
+     卡片放在更暗的画布上，分隔靠留白与抬升，不再靠一圈比面板更亮的描边。 */
+  --bg: #0e0f12;
+  --panel: #17181c;
+  --line: #26282e;
+  --line-strong: #3a3d46;
+  --ink: #f2f3f5;
+  --ink-2: #b3b7c0;
+  --ink-3: #8d929c;
+  --accent: #4fd1c5;
+  --accent-deep: #7ee7dc;
+  --accent-soft: #163a38;
+  --danger: #f08086;
+  --danger-soft: #452529;
+  --ok: #6ac894;
+  --ok-soft: #1e3b2d;
+  --warn-soft: #3b3324;
+  --warn-ink: #ecc27c;
   /* 1.207：苹果那套的层次靠「抬起来的表面」说话，不是再加一条边框。这一档以前没有主人，
      于是样式表里长出了 9 处各写各的 #2b2e34、5 处 #1b1d21、2 处 #303640——同一件事四个名字，
      改一处漏三处。现在悬停/选中读 --elev，浮起来的那一层读 --float，沉下去的信息条读 --sunk，
      带一点品牌色的选中读 --accent-soft。亮度阶梯 bg < sunk < panel < elev < float，门禁钉着它。 */
-  --sunk: #1b1d21;
-  --elev: #2b2e34;
-  --float: #303640;
+  --sunk: #1e2025;
+  --elev: #2a2c33;
+  --float: #34363e;
 
   --clip-video-bg: #294556;
   --clip-video-edge: #406783;
@@ -55,19 +58,19 @@
   --fs-glyph: 24px;
   --r-xs: 8px;
   --r-sm: 10px;
-  --r-md: 14px;
-  --r-lg: 20px;
+  --r-md: 16px;
+  --r-lg: 22px;
   --r-pill: 999px;
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, .28);
-  --shadow-md: 0 12px 32px rgba(0, 0, 0, .38);
-  --edge-hi: inset 0 1px 0 rgba(255, 255, 255, .04);
-  --dur: .18s;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .35);
+  --shadow-md: 0 18px 44px rgba(0, 0, 0, .5);
+  --edge-hi: inset 0 1px 0 rgba(255, 255, 255, .05);
+  --dur: .2s;
   --ease: cubic-bezier(.32, .72, 0, 1);
   /* 1.259：片段底下留给针道的那一截高。主人是 `keyframeLanes.NEEDLE_AREA_PIXELS`（界面按它摆针），
      这一档只是把它交给 CSS——淡角柄据此停在针道**之上**，不再盖住最左边那一枚针。 */
   --needle-area: 37px;
-  --tb-h: 44px;
-  --sb-h: 30px;
+  --tb-h: 48px;
+  --sb-h: 32px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -99,12 +102,14 @@ input, select, textarea { font: inherit; color: inherit; }
 ::-webkit-scrollbar-track { background: transparent; }
 
 /* ---------- 应用外框 + 无边框窗口 ---------- */
+/* 1.279：窗口是一整块深色画布，工作台的三块是浮在上面的圆角卡片。卡片之间留 8px
+   呼吸位，分隔靠留白与抬升而不是每块各围一圈亮边——这是苹果那套窗口的第一眼。 */
 .app-frame {
   height: 100dvh;
   display: grid;
   grid-template-rows: var(--tb-h) minmax(0, 1fr) var(--sb-h);
   background: var(--bg);
-  border: 1px solid #353941;
+  border: 1px solid #2a2d34;
   position: relative;
 }
 .app-body { min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
@@ -125,9 +130,10 @@ input, select, textarea { font: inherit; color: inherit; }
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 0 0 10px;
-  background: var(--panel);
+  padding: 0 0 0 12px;
+  background: color-mix(in srgb, var(--panel) 72%, var(--bg));
   border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(20px) saturate(1.1);
   -webkit-app-region: drag;
   user-select: none;
 }
@@ -422,13 +428,25 @@ canvas.composite-raw { width: 100%; height: 100%; object-fit: contain; display: 
 .key-readout.blocked { color: #ffdada; background: #5a1f24; }
 .insp-section > summary { cursor: pointer; margin-bottom: 8px; }
 .keyframe-btn:disabled { opacity: .4; cursor: not-allowed; }
-.workbench-bar { height: 44px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.workbench-bar { height: 48px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 16px; background: transparent; border-bottom: none; }
 .workbench-bar b { font-size: var(--fs-body); font-weight: 600; }
 .workbench-bar .dim { font-size: var(--fs-label); }
-.splitter { background: var(--bg); touch-action: none; outline-offset: -2px; }
-.splitter:hover, .splitter:focus-visible { background: var(--accent-soft); }
-.splitter.vertical { width: 5px; cursor: col-resize; border-left: 1px solid var(--line); }
-.splitter.horizontal { height: 5px; cursor: row-resize; border-top: 1px solid var(--line); }
+.splitter { position: relative; background: transparent; touch-action: none; outline-offset: -2px; }
+.splitter::after { content: ""; position: absolute; border-radius: var(--r-pill); background: transparent; transition: background var(--dur) var(--ease); }
+.splitter.vertical::after { left: 50%; top: 12px; bottom: 12px; width: 3px; transform: translateX(-50%); }
+.splitter.horizontal::after { top: 50%; left: 12px; right: 12px; height: 3px; transform: translateY(-50%); }
+.splitter:hover, .splitter:focus-visible { background: transparent; outline: none; }
+.splitter:hover::after, .splitter:focus-visible::after { background: var(--accent); }
+.splitter.vertical { width: 5px; cursor: col-resize; }
+.splitter.horizontal { height: 5px; cursor: row-resize; }
+/* 1.279：宽窗里工作台是「深色画布上的三块圆角卡片」——留白与抬升做分隔，8px 呼吸位；
+   1040 那一档不留呼吸位也不加边：那一格每一像素都在画面与时间线上。 */
+@media (min-width: 1200px) {
+  .editor-main { padding: 8px 8px 0; }
+  .editor-main > .panel, .editor-main > .center-col { border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; box-shadow: 0 1px 0 rgba(255, 255, 255, .03); }
+  .editor .timeline { margin: 0 8px 8px; border: 1px solid var(--line); border-radius: var(--r-lg); }
+  .transport { margin: 0 10px 10px; }
+}
 .editor.source-open { --preview-reserve: 528px; }
 /* 时间线是**可以压缩的那一块**：窗口再矮，监视器也得留下看得清画面的高度。
    量出来的那一对（同一个真浏览器窗口、发布包自己允许的最小尺寸 1040×660，里面 1016×568）：
@@ -516,11 +534,11 @@ select { color-scheme: dark; }
 /* 预览 */
 .center-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .preview-col { display: flex; flex-direction: column; flex: 1; min-height: 0; container-type: inline-size; }
-.monitor-wrap { container-type: size; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; background: #121417; padding: 16px; }
+.monitor-wrap { container-type: size; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; background: transparent; padding: 16px; }
 .monitor {
   position: relative; height: auto; max-height: 100%; max-width: 100%; aspect-ratio: 16 / 9;
-  background: black; isolation: isolate; border: 1px solid var(--line-strong); border-radius: var(--r-md);
-  overflow: hidden; display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow-md);
+  background: black; isolation: isolate; border: 1px solid rgba(255, 255, 255, .09); border-radius: var(--r-md);
+  overflow: hidden; display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow-md), 0 0 0 1px rgba(0, 0, 0, .5);
 }
 .monitor video, .monitor img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .monitor-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; color: #7d7d88; text-align: center; padding: 20px; }
@@ -529,7 +547,11 @@ select { color-scheme: dark; }
 .monitor-badge { position: absolute; left: 8px; bottom: 8px; font-size: var(--fs-micro); padding: 2px 7px; border-radius: var(--r-sm); background: rgba(12, 12, 16, .68); color: #dcdce4; }
 .monitor-muted { position: absolute; right: 8px; top: 8px; font-size: var(--fs-label); padding: 3px 9px; border-radius: var(--r-pill); background: rgba(12, 12, 16, .68); color: #ffd27d; }
 
-.transport { flex: none; display: flex; align-items: center; gap: 5px; padding: 7px 10px; border-top: 1px solid var(--line); background: var(--panel); }
+.transport { flex: none; display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-top: 1px solid var(--line); background: var(--panel); }
+@media (min-width: 1200px) {
+  .transport { margin: 0 10px 10px; border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: var(--sunk); box-shadow: var(--shadow-sm), var(--edge-hi); }
+  .preview-foot { border-top: none; background: transparent; }
+}
 .source-edit { flex: none; padding: 7px 10px; border-top: 1px solid var(--line); background: var(--panel); display: grid; gap: 6px; }
 .source-range, .source-actions { display: flex; align-items: center; gap: 6px; }
 .source-range input[type="range"] { flex: 1; min-width: 50px; }
@@ -553,10 +575,12 @@ select { color-scheme: dark; }
 .preview-foot { flex: none; display: flex; align-items: center; gap: 10px; padding: 4px 10px; font-size: var(--fs-label); color: var(--ink-3); border-top: 1px solid var(--line); background: var(--sunk); }
 
 /* 检查器 */
-.insp-section { padding: 11px 12px; border-bottom: 1px solid var(--line); }
+/* 1.279：一节就是一组——上下各 14px、组与组之间一条很淡的分隔；控件之间 9px，
+   读起来是一列而不是一张网格。字仍只用刻度里那三档。 */
+.insp-section { padding: 14px; border-bottom: 1px solid var(--line); }
 .insp-section:last-child { border-bottom: none; }
-.row-title { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-.field { display: grid; grid-template-columns: 68px minmax(0, 1fr); align-items: center; gap: 8px; margin-bottom: 7px; }
+.row-title { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.field { display: grid; grid-template-columns: 68px minmax(0, 1fr); align-items: center; gap: 8px; margin-bottom: 9px; }
 /* 那一行说明是第三个子元素，不指认的话会被排到**下一行的 68px 标签列**里——1.211 的跨屏扫描量到
    导出面板那句「选择成片的保存位置…」是 68px 宽、画 5 行。让它自己占满一行（`.fade-row .hint` 同一做法）。 */
 .field > .hint { grid-column: 1 / -1; margin-top: 0; }
@@ -574,7 +598,7 @@ select { color-scheme: dark; }
 .empty-note { border: 1px dashed var(--line-strong); border-radius: var(--r-md); padding: 18px 16px; text-align: center; color: var(--ink-3); font-size: var(--fs-body); line-height: 1.7; }
 .empty-note.tiny { padding: 10px; font-size: var(--fs-label); }
 .empty-icon { color: var(--ink-3); margin-bottom: 6px; }
-.insp-actions { display: flex; gap: 6px; row-gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.insp-actions { display: flex; gap: 8px; row-gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
 
 .cmd-list { display: flex; flex-direction: column; gap: 5px; margin-bottom: 9px; }
 .cmd-chip { display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: var(--fs-label); background: var(--elev); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 5px 7px; }
@@ -614,8 +638,13 @@ select { color-scheme: dark; }
 
 /* 时间线 */
 .timeline { border-top: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; height: 296px; flex: none; min-height: 0; }
-.tl-toolbar { height: 38px; flex: none; display: flex; align-items: center; gap: 6px; padding: 0 10px; border-bottom: 1px solid var(--line); }
-.tl-toolbar .divider-v { width: 1px; height: 18px; background: var(--line); border-radius: var(--r-pill); margin: 0 1px; }
+.tl-toolbar { height: 44px; flex: none; display: flex; align-items: center; gap: 6px; padding: 0 12px; border-bottom: 1px solid var(--line); }
+/* 1.279：工具条按「同一件事」收进一枚沉下去的胶囊（macOS 工具栏那一手）：
+   选择/切割一枚、剪贴一枚、标记一枚、撤销一枚。空处不留分隔线——组与组之间靠留白。 */
+.tool-well { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border-radius: var(--r-pill); background: var(--sunk); }
+.tool-well .btn, .tool-well .icon-btn { border-color: transparent; background: transparent; box-shadow: none; }
+.tool-well .btn:hover:not(:disabled), .tool-well .icon-btn:hover:not(:disabled) { background: var(--elev); }
+.tool-well .btn.active, .tool-well .icon-btn.active { background: var(--accent-soft); color: var(--accent-deep); }
 .tl-hint { display: inline-flex; align-items: center; }
 .zoom-ctrl { display: flex; align-items: center; gap: 4px; color: var(--ink-3); }
 /* 滑杆只留宽度：样子由文件末尾那一节统一给（以前这里 3px 轨、12px 头，源片区间那条靠 accent-color 原生画，
@@ -672,17 +701,19 @@ select { color-scheme: dark; }
 .text-presets .btn { padding: 3px 10px; }
 
 .clip .clip-top {
-  position: absolute; top: 4px; left: 9px; right: 9px;
+  position: absolute; top: 5px; left: 9px; right: 9px;
   display: flex; align-items: center; gap: 5px; overflow: hidden;
   pointer-events: none; z-index: 2;
 }
+/* 1.279：片段上的名字是**要读的字**，不是画在图形里的刻度——抬到 13px 那一档，
+   并且永远只占一行；放不下就省略，不与时长叠成两行小字。 */
 .clip .clip-label {
   flex: 1 1 auto; min-width: 0;
-  font-size: var(--fs-micro); font-weight: 600;
+  font-size: var(--fs-label); font-weight: 600;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  padding: 1px 7px; border-radius: var(--r-pill); background: rgba(14, 24, 31, .82);
+  padding: 1px 8px; border-radius: var(--r-pill); background: rgba(10, 18, 24, .82);
 }
-.clip .clip-dur { flex: none; font-size: var(--fs-micro); opacity: .9; padding: 1px 6px; border-radius: var(--r-pill); background: rgba(14, 24, 31, .7); white-space: nowrap; }
+.clip .clip-dur { flex: none; font-size: var(--fs-label); opacity: .92; padding: 1px 7px; border-radius: var(--r-pill); background: rgba(10, 18, 24, .7); white-space: nowrap; }
 .clip svg.wave { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .filmstrip { position: absolute; inset: 0; display: flex; overflow: hidden; pointer-events: none; }
 .filmstrip img { height: 100%; flex: 1 0 auto; object-fit: cover; min-width: 26px; opacity: .82; }
@@ -726,7 +757,7 @@ select { color-scheme: dark; }
 .drop-indicator { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 
 /* 状态栏 */
-.statusbar { height: var(--sb-h); background: var(--panel); border-top: 1px solid var(--line); display: flex; align-items: center; gap: 12px; padding: 0 10px; font-size: var(--fs-label); color: var(--ink-3); }
+.statusbar { height: var(--sb-h); background: transparent; border-top: none; display: flex; align-items: center; gap: 12px; padding: 0 12px; font-size: var(--fs-label); color: var(--ink-3); }
 .statusbar .mono { font-size: var(--fs-label); }
 .statusbar .sep { width: 1px; height: 11px; background: var(--line); }
 .status-item { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-2); }

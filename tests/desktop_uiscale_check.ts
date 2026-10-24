@@ -141,6 +141,8 @@ const GRAPHIC = [
   ".key-readout", ".coach-n", ".lib-kind", ".lib-flag", ".monitor-badge", ".ruler-label",
   ".clip .clip-label", ".clip .clip-dur", ".ghost-tag", ".fade-readout", ".playhead .ph-time",
   ".curve-plot text", ".ruler-marker b", ".grade-graph .gg-io", ".gg-card .gg-drag",
+  // 1.278：右键菜单右侧的键帽——与针牌同类，是画在菜单里的记号，不是一行要读的说明。
+  ".ctx-chord",
 ];
 const stacked: string[] = [];
 const bare = css.replace(/\/\*[\s\S]*?\*\//g, "");
@@ -167,7 +169,7 @@ const gapOf = (selector: string) => {
   return Number(hit![1]);
 };
 assert.ok(gapOf("\\.tl-toolbar \\{") >= 5, `时间线工具条那一排只有 ${gapOf("\\.tl-toolbar \\{")}px 间隔，挤成一堆不算圆润`);
-assert.ok(/\.tl-toolbar \.divider-v \{[^}]*border-radius: var\(--r-pill\)/.test(css), "工具条里那道竖分隔不是圆的");
+assert.ok(/\.tool-well \{[^}]*border-radius: var\(--r-pill\)/.test(css), "工具条里那一组不是一枚胶囊（1.279 起按同一件事收进胶囊，不再插竖线）");
 assert.ok(/\.lib-thumb \{[^}]*border-radius: var\(--r-md\)/.test(css), "素材缩略图那一块不是 1.199 那一档圆角");
 
 // 7) 1.202：首页、工程表、交付面板与 Agent 页那一档也放宽——间距不许压回去

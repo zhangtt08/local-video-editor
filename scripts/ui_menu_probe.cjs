@@ -314,7 +314,25 @@ async function main() {
       await sleep(150);
     }
 
-    // ⑥ 夹在视口里：在右下角那一格按下右键，菜单要翻到指针上方，整个盒子仍在窗口内。
+    // ⑥ 轨道头：「更多」那颗按钮打开同一份浮层；轨道名进标题，三颗按钮就够了。
+    facts.trackHeadButtons = await evaluate("document.querySelectorAll('.tl-head [aria-label]').length");
+    const trackButton = await evaluate(`(function () {
+      const btn = document.querySelector('.tl-head [aria-label="这条轨的其它操作"]');
+      if (!btn) return null;
+      const r = btn.getBoundingClientRect();
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+    })()`);
+    facts.trackButton = trackButton;
+    if (trackButton) {
+      await click(trackButton.x, trackButton.y, "left");
+      await sleep(300);
+      facts.trackMenu = await evaluate(MENU_READ);
+      await key("Escape", "Escape");
+      await sleep(150);
+      facts.trackMenuAfterEscape = await evaluate(MENU_READ);
+    }
+
+    // ⑦ 夹在视口里：在右下角那一格按下右键，菜单要翻到指针上方，整个盒子仍在窗口内。
     await evaluate(`(function () {
       const node = document.querySelector('.clip[data-id]');
       if (!node) return false;

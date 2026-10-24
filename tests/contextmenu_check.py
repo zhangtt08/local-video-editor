@@ -253,6 +253,18 @@ def main() -> None:
             assert facts.get("menuAtEnd") is None, "最后那一份菜单没收掉"
             print(f"   右下角：菜单翻到指针上方，右缘 {rect['right']} ≤ {size['w'] - 8}，"
                   f"下缘 {rect['bottom']} ≤ {size['h'] - 4}")
+
+            # ⑩ 轨道头只留三颗按钮；「更多」打开的是同一份浮层，标题写着是哪条轨。
+            assert facts.get("trackHeadButtons") == 3, f"轨道头上还有 {facts.get('trackHeadButtons')} 颗按钮——七颗挤在 112px 里"
+            track = facts.get("trackMenu")
+            assert track, "轨道头的「更多」没有打开菜单"
+            assert track["label"] == "轨道操作", track["label"]
+            assert "轨道操作" in track["title"] and "画面" in track["title"], track["title"]
+            track_labels = [item["label"] for item in track["items"]]
+            for wanted in ("统一这一轨的响度", "剪掉这一轨的停顿", "删除这条轨道"):
+                assert wanted in track_labels, f"轨道菜单少了「{wanted}」：{track_labels}"
+            assert facts.get("trackMenuAfterEscape") is None, "Escape 没关掉轨道菜单"
+            print(f"   轨道头 {facts['trackHeadButtons']} 颗按钮；「更多」给出 {len(track_labels)} 项，Escape 关得掉")
             print(f"   Escape 之后焦点回到片段 {facts['focusAfterEscape']}；"
                   f"追加副本 revision {before['revision']} → {after['revision']}、"
                   f"片段 {before['clips']} → {after['clips']}")

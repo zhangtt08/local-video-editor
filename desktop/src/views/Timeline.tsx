@@ -79,7 +79,7 @@ import { openContextMenu, type MenuEntry } from "../ContextMenu";
 import { canDetachAudio, canLinkClips } from "../clipRules";
 import { copyBlocker, pasteBlocker, pasteTargets } from "../attributePaste";
 import { AttributeDialog } from "./AttributeDialog";
-import { EMPTY_TRACK_HINT, FIELD_LABEL, LAYER_KEY_LABEL, PROPERTY_RANK, layerNeedles, trackToolBlocker, fadeDragBatch, fadeDragTicks, fadeProperties, fadeWindows, type FadeProperty, type FadeSide, type LayerNeedle } from "../effects";
+import { FIELD_LABEL, LAYER_KEY_LABEL, PROPERTY_RANK, layerNeedles, trackToolBlocker, fadeDragBatch, fadeDragTicks, fadeProperties, fadeWindows, type FadeProperty, type FadeSide, type LayerNeedle } from "../effects";
 import { selectionQuantum, timelineTracks } from "../selection";
 
 const HEAD = 112;
@@ -361,50 +361,57 @@ export function Timeline() {
     <section ref={rootRef} className="timeline" aria-label="时间线">
       {clamped ? <p className="timeline-clamped" role="status">窗口太矮：这条时间线已经让到这一屏的下限（你要 <b className="mono">{Math.round(clamped.wanted)} px</b>，现在只剩 <b className="mono">{Math.round(clamped.got)} px</b>），往上拖那条边不会再变高——把窗口拉高，或退出「素材预览」那一屏（它比常态多占一截画面的高度）。</p> : null}
       <div className="tl-toolbar">
-        <IconBtn icon="cursor" label={`选择工具（${chordWords(keymap()["tool-select"])}）：拖动片段改位置，拖左右边缘改时长`} active={edit.tool === "select"} onClick={() => prefs.setTool("select")} />
-        <IconBtn icon="razor" label={`分割工具（${chordWords(keymap()["tool-razor"])}）：点片段即在点击处切一刀，切成两段可独立删除`} active={edit.tool === "razor"} onClick={() => prefs.setTool("razor")} />
-        <button className="btn tiny subtle" disabled={!canSplit} title={`在播放头处分割选中片段（${chordWords(keymap().split)}）`} onClick={() => splitSelection(playhead.value)}>分割</button>
-        <IconBtn icon="copy" label={`复制选中片段（${chordWords(keymap().copy)}）`} disabled={!app.selectedClip} onClick={copySelection} />
-        <button className="btn tiny subtle" disabled={!app.clipboardCount} onClick={pasteSelection} title={`粘贴到播放头（${chordWords(keymap().paste)}）`}>粘贴</button>
-        <button
-          className="btn tiny subtle"
-          disabled={Boolean(attributeStop)}
-          title={attributeStop ?? "把这一段当前的调色链、效果与变换、关键帧、遮罩、淡、变速、文字样式记下来，再粘到别的段上（达芬奇 / 剪映那句「粘贴属性」）"}
-          onClick={copyAttributes}
-        >
-          复制属性
-        </button>
-        <button
-          className="btn tiny subtle"
-          disabled={Boolean(attributePasteStop)}
-          title={attributePasteStop ?? `把记下的那几类粘到选中的 ${attributeTargets.length} 段上（来源自己不算目标）`}
-          onClick={() => setAttributeOpen(true)}
-        >
-          粘贴属性
-        </button>
-        <IconBtn icon="trash" label={`删除选中片段，保留空隙（${chordWords(keymap()["delete-selection"])}）`} disabled={!app.selectedClip} onClick={() => removeSelection()} />
-        <button className="btn tiny subtle" disabled={!app.selectedClip} title={`删除并向左补齐本轨后续片段（${chordWords(keymap()["ripple-delete"])}）`} onClick={() => removeSelection(true)}>涟漪删除</button>
+        <span className="tool-well" role="group" aria-label="工具">
+          <IconBtn icon="cursor" label={`选择工具（${chordWords(keymap()["tool-select"])}）：拖动片段改位置，拖左右边缘改时长`} active={edit.tool === "select"} onClick={() => prefs.setTool("select")} />
+          <IconBtn icon="razor" label={`分割工具（${chordWords(keymap()["tool-razor"])}）：点片段即在点击处切一刀，切成两段可独立删除`} active={edit.tool === "razor"} onClick={() => prefs.setTool("razor")} />
+        </span>
+        <span className="tool-well" role="group" aria-label="剪辑">
+          <button className="btn tiny subtle" disabled={!canSplit} title={`在播放头处分割选中片段（${chordWords(keymap().split)}）`} onClick={() => splitSelection(playhead.value)}>分割</button>
+          <IconBtn icon="copy" label={`复制选中片段（${chordWords(keymap().copy)}）`} disabled={!app.selectedClip} onClick={copySelection} />
+          <button className="btn tiny subtle" disabled={!app.clipboardCount} onClick={pasteSelection} title={`粘贴到播放头（${chordWords(keymap().paste)}）`}>粘贴</button>
+          <button
+            className="btn tiny subtle"
+            disabled={Boolean(attributeStop)}
+            title={attributeStop ?? "把这一段当前的调色链、效果与变换、关键帧、遮罩、淡、变速、文字样式记下来，再粘到别的段上（达芬奇 / 剪映那句「粘贴属性」）"}
+            onClick={copyAttributes}
+          >
+            复制属性
+          </button>
+          <button
+            className="btn tiny subtle"
+            disabled={Boolean(attributePasteStop)}
+            title={attributePasteStop ?? `把记下的那几类粘到选中的 ${attributeTargets.length} 段上（来源自己不算目标）`}
+            onClick={() => setAttributeOpen(true)}
+          >
+            粘贴属性
+          </button>
+          <IconBtn icon="trash" label={`删除选中片段，保留空隙（${chordWords(keymap()["delete-selection"])}）`} disabled={!app.selectedClip} onClick={() => removeSelection()} />
+          <button className="btn tiny subtle" disabled={!app.selectedClip} title={`删除并向左补齐本轨后续片段（${chordWords(keymap()["ripple-delete"])}）`} onClick={() => removeSelection(true)}>涟漪删除</button>
+        </span>
         {app.selectedClips.length > 1 ? <span className="tag accent">{app.selectedClips.length} 段</span> : null}
-        <span className="divider-v" />
-        <IconBtn icon="magnet" label={`磁吸（${chordWords(keymap()["toggle-snap"])}）：拖动时自动贴到整帧、相邻片段边缘与标记，避免留下 1 帧缝`} active={edit.snap} onClick={() => prefs.toggleSnap()} />
-        <IconBtn icon="flag" label="在指针处打一个标记（M）：人和 Agent 用同一个整数刻度说「这里」，标记还会成为磁吸边缘" onClick={() => addMarker()} />
-        <IconBtn icon="razor" label="在每个标记处切开落在它里面的片段：一次事务、一次撤销；落在边缘或空隙上的标记不产生切点" disabled={!(app.project?.markers ?? []).length} onClick={() => void splitAtMarkers()} />
-        <button className={`btn tiny subtle${edit.linkedSelection ? " active" : ""}`} aria-pressed={edit.linkedSelection} title="联动选择：组合与链接一起选中；音画链接一起修剪、分割。Alt 点选可临时单选。" onClick={() => prefs.toggleLinkedSelection()}>联动</button>
-        <span className="divider-v" />
-        <IconBtn icon="undo" label="撤销：用历史恢复回到上一步（版本号继续增加，不会倒退）" disabled={!app.undo.length} onClick={undo} />
-        <IconBtn icon="redo" label={`重做：回到撤销前的那一版（${chordWords(keymap().redo)}）`} disabled={!app.redo.length} onClick={redoStep} />
-        <IconBtn
-          icon="zoomIn"
-          label="适应窗口：把整条时间线放进可视范围"
-          onClick={() => prefs.fitTo(timelineEnd(project), (scrollRef.current?.clientWidth ?? 1200) - HEAD)}
-        />
-        <span className="divider-v" />
-        <button className="btn subtle" title="再加一层画面：叠标题、画中画需要第二条画面轨" onClick={() => addTrack("video")}>
-          <Icon name="plus" size={12} /> 画面轨
-        </button>
-        <button className="btn subtle" title="再加一条声音轨：配乐与旁白分开控制音量" onClick={() => addTrack("audio")}>
-          <Icon name="plus" size={12} /> 声音轨
-        </button>
+        <span className="tool-well" role="group" aria-label="吸附与标记">
+          <IconBtn icon="magnet" label={`磁吸（${chordWords(keymap()["toggle-snap"])}）：拖动时自动贴到整帧、相邻片段边缘与标记，避免留下 1 帧缝`} active={edit.snap} onClick={() => prefs.toggleSnap()} />
+          <IconBtn icon="flag" label="在指针处打一个标记（M）：人和 Agent 用同一个整数刻度说「这里」，标记还会成为磁吸边缘" onClick={() => addMarker()} />
+          <IconBtn icon="razor" label="在每个标记处切开落在它里面的片段：一次事务、一次撤销；落在边缘或空隙上的标记不产生切点" disabled={!(app.project?.markers ?? []).length} onClick={() => void splitAtMarkers()} />
+          <button className={`btn tiny subtle${edit.linkedSelection ? " active" : ""}`} aria-pressed={edit.linkedSelection} title="联动选择：组合与链接一起选中；音画链接一起修剪、分割。Alt 点选可临时单选。" onClick={() => prefs.toggleLinkedSelection()}>联动</button>
+        </span>
+        <span className="tool-well" role="group" aria-label="历史与视图">
+          <IconBtn icon="undo" label="撤销：用历史恢复回到上一步（版本号继续增加，不会倒退）" disabled={!app.undo.length} onClick={undo} />
+          <IconBtn icon="redo" label={`重做：回到撤销前的那一版（${chordWords(keymap().redo)}）`} disabled={!app.redo.length} onClick={redoStep} />
+          <IconBtn
+            icon="zoomIn"
+            label="适应窗口：把整条时间线放进可视范围"
+            onClick={() => prefs.fitTo(timelineEnd(project), (scrollRef.current?.clientWidth ?? 1200) - HEAD)}
+          />
+        </span>
+        <span className="tool-well" role="group" aria-label="加轨道">
+          <button className="btn subtle" title="再加一层画面：叠标题、画中画需要第二条画面轨" onClick={() => addTrack("video")}>
+            <Icon name="plus" size={12} /> 画面轨
+          </button>
+          <button className="btn subtle" title="再加一条声音轨：配乐与旁白分开控制音量" onClick={() => addTrack("audio")}>
+            <Icon name="plus" size={12} /> 声音轨
+          </button>
+        </span>
         <span className="spacer" />
         {app.mode === "batch" ? (
           <span className="tag accent" title="动作先进待提交批次，预演通过再写入">批次模式</span>
@@ -682,6 +689,43 @@ function TrackRow({
     });
   };
 
+  /** 1.279：轨道头原先挤着七颗 20px 图标（112px 的格里放不下），现在只留三颗：
+   *  锁定、显隐/静音、更多。分析类动作（统一响度、去空白、自动闪避）与删除收进这一份菜单——
+   *  仍是同一个 store 函数、同一个 ContextMenu，不为「更多」再造一套弹层。 */
+  const trackMenu = (anchor: HTMLButtonElement) => {
+    const rect = anchor.getBoundingClientRect();
+    const entries: MenuEntry[] = [
+      {
+        kind: "item", label: "统一这一轨的响度", icon: "volume", disabled: !!emptyTrack,
+        title: emptyTrack ?? "逐片段测量这条轨的响度，一次写入各自的增益把它们统一到 -16 LUFS（只改音量倍数，不加压缩器）",
+        run: () => alignTrackLoudness(track.id),
+      },
+      {
+        kind: "item", label: "剪掉这一轨的停顿", icon: "razor", disabled: !!emptyTrack,
+        title: emptyTrack ?? "剪掉这条轨上所有 0.25 秒以上的停顿并把后面的内容左移：只影响本轨，其它轨保持原位",
+        run: () => cutTrackSilence(track.id),
+      },
+    ];
+    if (track.kind === "audio") {
+      entries.push({
+        kind: "item", label: "自动闪避（给说话让路）", icon: "volume", disabled: !!emptyTrack,
+        title: emptyTrack ?? "这条轨按 9 dB 让路，写成音量关键帧（说话结束后 0.6 秒抬回来），只改本轨",
+        run: () => duckTrack(track.id),
+      });
+    }
+    entries.push(
+      { kind: "sep", id: "delete" },
+      { kind: "item", label: "删除这条轨道", icon: "trash", danger: true, title: "必须先清空它上面的片段", run: () => removeTrack(track.id) },
+    );
+    openContextMenu({
+      at: { x: rect.left, y: rect.bottom + 4 },
+      title: `${track.name} · 轨道操作`,
+      label: "轨道操作",
+      returnTo: anchor,
+      entries,
+    });
+  };
+
   return (
     <div className={`tl-row${track.kind === "audio" ? " audio-row" : ""}`} style={{ height: ROW }}>
       <div className={`tl-head${track.kind === "audio" ? " audio-track" : ""}`} style={{ top: (index + 1) * ROW }}>
@@ -706,39 +750,15 @@ function TrackRow({
               onClick={() => updateTrack(track.id, { muted: !track.muted }, track.muted ? "取消静音" : "静音轨道")}
             />
           )}
-          <IconBtn
-            icon="volume"
-            label={
-              !emptyTrack
-                ? "逐片段测量这条轨的响度，一次写入各自的增益把它们统一到 -16 LUFS（只改音量倍数，不加压缩器）"
-                : EMPTY_TRACK_HINT
-            }
-            disabled={!!emptyTrack}
-            onClick={() => alignTrackLoudness(track.id)}
-          />
-          <IconBtn
-            icon="split"
-            label={
-              !emptyTrack
-                ? "剪掉这条轨上所有 0.25 秒以上的停顿并把后面的内容左移：只影响本轨，其它轨保持原位"
-                : EMPTY_TRACK_HINT
-            }
-            disabled={!!emptyTrack}
-            onClick={() => cutTrackSilence(track.id)}
-          />
-          {track.kind === "audio" ? (
-            <IconBtn
-              icon="volume"
-              label={
-                !emptyTrack
-                  ? "自动闪避：别的声音轨说话时，这条轨按 9 dB 让路，写成音量关键帧（说话结束后 0.6 秒抬回来），只改本轨"
-                  : EMPTY_TRACK_HINT
-              }
-              disabled={!!emptyTrack}
-              onClick={() => duckTrack(track.id)}
-            />
-          ) : null}
-          <IconBtn icon="trash" label="删除轨道（必须先清空它上面的片段）" danger onClick={() => removeTrack(track.id)} />
+          <button
+            type="button"
+            className="icon-btn tiny"
+            aria-label="这条轨的其它操作"
+            title="这条轨的其它操作：统一响度、剪掉停顿、自动闪避、删除轨道"
+            onClick={(event) => trackMenu(event.currentTarget)}
+          >
+            <Icon name="more" size={12} />
+          </button>
         </div>
       </div>
       <div
