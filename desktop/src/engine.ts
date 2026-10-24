@@ -1341,6 +1341,24 @@ export class Engine {
     }>("POST", `/v1/projects/${projectId}/clips/${clipId}/scenes`, body, 300000);
   }
 
+  /** 整轨粗剪：逐片段右到左各取一份计划，合成一个批次；不能扫的片段带原因跳过。 */
+  roughCutTrackPlan(projectId: string, trackId: string, body: Record<string, unknown>) {
+    return this.request<{
+      committed: boolean;
+      rough: {
+        keep_ms: number;
+        keep_ticks: number;
+        clips: {
+          clip_id: string;
+          skipped?: string;
+          cuts?: { at_ticks: number; source_seconds: number }[];
+          commands?: Record<string, unknown>[];
+        }[];
+        commands: Record<string, unknown>[];
+      };
+    }>("POST", `/v1/projects/${projectId}/tracks/${trackId}/rough-cut`, body, 900000);
+  }
+
   /** 粗剪：每个镜头只留前 keep_ms，计划是普通 clip.split 加带 ripple 的 clip.trim。 */
   roughCutPlan(projectId: string, clipId: string, body: Record<string, unknown>) {
     return this.request<{

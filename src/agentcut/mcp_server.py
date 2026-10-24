@@ -413,6 +413,26 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         )
 
     @server.tool(annotations=read)
+    async def track_rough_cut(
+        project_id: Identifier, track_id: Identifier, request: RoughCutRequest
+    ) -> dict[str, Any]:
+        """Keep each shot's head on every clip of one track and get the ordinary commands.
+
+        Read-only here: `apply` and `dry_run` are forced off, so nothing is written. Clips are
+        planned right to left so a clip's own coordinates are untouched by edits to its right; only
+        this track moves. Clips that cannot be scanned are skipped with the reason instead of
+        failing the whole track. Review or edit the returned `commands`, then submit them with
+        `timeline_edit` to keep one atomic revision.
+        """
+        body = request.model_dump(mode="json") | {"apply": False, "dry_run": False}
+        return await call(
+            "POST",
+            f"/v1/projects/{project_id}/tracks/{track_id}/rough-cut",
+            body,
+            timeout=900,
+        )
+
+    @server.tool(annotations=read)
     async def audio_beats(project_id: Identifier, request: BeatRequest) -> dict[str, Any]:
         """Listen to one asset or clip and get the ticks where its beats fall.
 

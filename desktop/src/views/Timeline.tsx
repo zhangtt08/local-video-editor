@@ -62,6 +62,7 @@ import {
   rollClip,
   openSequence,
   cutTrackSilence,
+  roughCutTrack,
   duckTrack,
   alignTrackLoudness,
   addMarker,
@@ -695,6 +696,11 @@ function TrackRow({
   const trackMenu = (anchor: HTMLButtonElement) => {
     const rect = anchor.getBoundingClientRect();
     const entries: MenuEntry[] = [
+      {
+        kind: "item", label: "按镜头粗剪这一轨", icon: "razor", disabled: !!emptyTrack,
+        title: emptyTrack ?? "这条轨上每一段画面都只留每个镜头的前 1.5 秒（默认值来自能力表），把留下的头接起来：一次提交一个版本、只动本轨；单段的秒数在检查器里改",
+        run: () => roughCutTrack(track.id),
+      },
       {
         kind: "item", label: "统一这一轨的响度", icon: "volume", disabled: !!emptyTrack,
         title: emptyTrack ?? "逐片段测量这条轨的响度，一次写入各自的增益把它们统一到 -16 LUFS（只改音量倍数，不加压缩器）",

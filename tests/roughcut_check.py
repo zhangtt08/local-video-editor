@@ -135,6 +135,57 @@ def seed(
     return pid, done.json()["project"]["revision"]
 
 
+def seed_track(client: TestClient, source: Path, still_source: Path) -> tuple[str, str]:
+    """Two 3 s video clips (0 s and 5 s) plus one still on the same track."""
+    SEEDS["n"] += 1
+    tag = f"track-{SEEDS['n']}"
+    video = client.post("/v1/media/import", json={"path": str(source)}).json()["verified"]
+    still = client.post("/v1/media/import", json={"path": str(still_source)}).json()["verified"]
+    made = client.post(
+        "/v1/projects",
+        json={
+            "request_id": f"rc-track-new-{tag}",
+            "name": f"整轨粗剪 {tag}",
+            "settings": {"width": 320, "height": 180},
+        },
+    )
+    assert made.status_code == 200, (made.status_code, made.text[:900])
+    project = made.json()["project"]
+    pid = project["id"]
+    commands = [
+        {"op": "track.add", "track": {"id": "t", "kind": "video", "name": "画面"}},
+        {
+            "op": "asset.import", "asset_id": "v", "label": "v",
+            "probe_id": video["probe_id"], "verified": video,
+        },
+        {
+            "op": "asset.import", "asset_id": "i", "label": "i",
+            "probe_id": still["probe_id"], "verified": still,
+        },
+        {
+            "op": "clip.add",
+            "clip": {"id": "a", "asset_id": "v", "track_id": "t",
+                     "position_ticks": 0, "duration_ticks": 3 * SECOND},
+        },
+        {
+            "op": "clip.add",
+            "clip": {"id": "b", "asset_id": "v", "track_id": "t",
+                     "position_ticks": 5 * SECOND, "duration_ticks": 3 * SECOND},
+        },
+        {
+            "op": "clip.add",
+            "clip": {"id": "s", "asset_id": "i", "track_id": "t",
+                     "position_ticks": 9 * SECOND, "duration_ticks": 2 * SECOND},
+        },
+    ]
+    done = client.post(
+        f"/v1/projects/{pid}/edits",
+        json={"request_id": f"rc-track-seed-{tag}", "expected_revision": 0, "commands": commands},
+    )
+    assert done.status_code == 200, done.text
+    return pid, done.json()["project"]["revision"]
+
+
 def cut(client: TestClient, pid: str, revision: int, request: str, **body):
     payload = {"request_id": request, "expected_revision": revision, **body}
     return client.post(f"/v1/projects/{pid}/clips/c/rough-cut", json=payload)
@@ -248,6 +299,41 @@ def main() -> None:
                 },
             )
             assert out.status_code == 422, out.text
+
+            # ⑧ 整轨：两段画面从右往左各取一份计划；图片那一段带原因跳过，一个版本写完整条轨。
+            track_pid, track_revision = seed_track(client, solid_source, still_source)
+            plan = client.post(
+                f"/v1/projects/{track_pid}/tracks/t/rough-cut",
+                json={"request_id": "rc-track-plan", "expected_revision": track_revision,
+                      "keep_ms": 1000},
+            )
+            assert plan.status_code == 200, plan.text
+            report = plan.json()
+            assert report["committed"] is False, report
+            skipped = [item for item in report["rough"]["clips"] if item.get("skipped")]
+            assert [item["clip_id"] for item in skipped] == ["s"], report["rough"]["clips"]
+            assert len(report["rough"]["commands"]) > 0, report["rough"]
+            assert client.get(f"/v1/projects/{track_pid}").json()["revision"] == track_revision
+            done = client.post(
+                f"/v1/projects/{track_pid}/tracks/t/rough-cut",
+                json={"request_id": "rc-track-apply", "expected_revision": track_revision,
+                      "keep_ms": 1000, "apply": True},
+            )
+            assert done.status_code == 200, done.text
+            track_project = done.json()["project"]
+            assert track_project["revision"] == track_revision + 1, track_project["revision"]
+            moved = {clip["id"]: clip for clip in track_project["clips"].values()}
+            assert set(moved) == {"a", "b", "s"}, moved
+            assert moved["a"]["position_ticks"] == 0, moved["a"]
+            assert moved["a"]["duration_ticks"] == SECOND, moved["a"]
+            assert moved["b"]["duration_ticks"] == SECOND, moved["b"]
+            # b 先收尾（5..6，图片随之 9→7），a 收尾再把 b 3..4、图片 7→5；图片自己没被扫。
+            assert moved["b"]["position_ticks"] == 3 * SECOND, moved["b"]
+            assert moved["s"]["position_ticks"] == 5 * SECOND, moved["s"]
+            assert moved["s"]["duration_ticks"] == 2 * SECOND, moved["s"]
+            print(
+                "   整轨：a 0..1、b 3..4、图片跳过并被两次 ripple 带到 5 秒，一个 revision"
+            )
 
     print(
         f"PASS: 按镜头粗剪（{APP_VERSION}）——三段各留 1 秒并首尾相接、一镜到底只留头、"

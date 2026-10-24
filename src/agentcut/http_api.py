@@ -1531,6 +1531,98 @@ def create_app(
         mutation = projects.mutate(project_id, batch).model_dump()
         return {**mutation, "rough": {**body, "commands": commands}}
 
+    @app.post("/v1/projects/{project_id}/tracks/{track_id}/rough-cut", dependencies=auth)
+    def rough_cut_track(
+        project_id: Identifier, track_id: Identifier, request: RoughCutRequest, projects: Store
+    ):
+        """Keep the head of every shot on one track and pack each clip's heads together.
+
+        Clips are planned right to left, so a clip's own coordinates are untouched by edits that
+        only move what is to its right. Only this track moves; clips that cannot be scanned are
+        skipped with the reason, the same judgement the single-clip route makes. Ordinary
+        `clip.split` / `clip.trim` commands only, one batch and one revision.
+        """
+        engine = require_media()
+        root = projects.get(project_id)
+        project = sequence_view(root, request.sequence_id)
+        if next((track for track in project.tracks if track.id == track_id), None) is None:
+            raise EditorError("NOT_FOUND", "track is not in this project", 404, track_id=track_id)
+        if not any(item.track_id == track_id for item in project.clips.values()):
+            raise EditorError("NOT_FOUND", "this track holds no clips", 404, track_id=track_id)
+        frame_ticks = project.settings.frame_ticks
+        keep_ticks = scenes.keep_ticks_for(frame_ticks, request.keep_ms)
+        commands: list[dict] = []
+        scanned: list[dict] = []
+        for clip in sorted(
+            (item for item in project.clips.values() if item.track_id == track_id),
+            key=lambda item: -item.position_ticks,
+        ):
+            problem = picture_scan_problem(project, clip)
+            if problem:
+                scanned.append({"clip_id": clip.id, "skipped": problem})
+                continue
+            if clip.link_id is not None:
+                scanned.append(
+                    {
+                        "clip_id": clip.id,
+                        "skipped": "linked to another clip; unlink it first or cut it separately",
+                    }
+                )
+                continue
+            source = Path(project.assets[clip.asset_id].verified.path)
+            if not source.is_file():
+                raise EditorError(
+                    "MEDIA_MISSING",
+                    "source file is gone",
+                    410,
+                    clip_id=clip.id,
+                    asset_id=clip.asset_id,
+                    asset_label=source.name,
+                )
+            result = scenes.analyse(
+                engine.ffmpeg,
+                source,
+                clip,
+                frame_ticks,
+                threshold=request.threshold,
+                min_scene_ms=request.min_scene_ms,
+            )
+            plan = scenes.rough_cut_plan(clip, result["cuts"], frame_ticks, keep_ticks)
+            commands.extend(plan)
+            scanned.append(
+                {
+                    "clip_id": clip.id,
+                    "cuts": result["cuts"],
+                    "keep_ticks": keep_ticks,
+                    "commands": plan,
+                }
+            )
+        body = {
+            "clips": scanned,
+            "keep_ms": request.keep_ms,
+            "keep_ticks": keep_ticks,
+            "commands": commands,
+        }
+        if request.apply and not commands:
+            raise EditorError(
+                "ROUGH_NONE",
+                "every shot on this track is already shorter than the keep",
+                422,
+                track_id=track_id,
+                keep_ms=request.keep_ms,
+            )
+        if not request.apply:
+            return {"committed": False, "project": root.model_dump(), "rough": body}
+        batch = EditBatch(
+            request_id=request.request_id,
+            expected_revision=request.expected_revision,
+            sequence_id=request.sequence_id,
+            commands=commands,  # type: ignore[arg-type]
+            dry_run=request.dry_run,
+        )
+        mutation = projects.mutate(project_id, batch).model_dump()
+        return {**mutation, "rough": body}
+
     @app.post("/v1/projects/{project_id}/audio/beats", dependencies=auth)
     def audio_beats(project_id: Identifier, request: BeatRequest, projects: Store):
         """Listen to one asset or clip and return where its beats fall, in timeline ticks.

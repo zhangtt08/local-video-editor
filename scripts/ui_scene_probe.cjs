@@ -226,6 +226,54 @@ async function main() {
     }
     facts.before = await projectState();
 
+    if (ACTION === "track") {
+      // 轨道头「其它操作」→ 菜单里的「按镜头粗剪这一轨」：两下真鼠标，再回引擎读数。
+      const more = await evaluate(`(function () {
+        const node = document.querySelector('[aria-label="这条轨的其它操作"]');
+        if (!node) return null;
+        node.scrollIntoView({ block: 'nearest' });
+        const r = node.getBoundingClientRect();
+        return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2),
+          width: Math.round(r.width), height: Math.round(r.height) };
+      })()`);
+      facts.more = more;
+      if (!more) throw new Error("轨道头没有「其它操作」");
+      const clickAt = async (spot) => {
+        await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: spot.x, y: spot.y, button: "left", buttons: 1, clickCount: 1 });
+        await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: spot.x, y: spot.y, button: "left", buttons: 0, clickCount: 1 });
+      };
+      await clickAt(more);
+      await sleep(500);
+      const item = await evaluate(`(function () {
+        const hit = Array.from(document.querySelectorAll('[role="menuitem"]'))
+          .find(function (n) { return (n.textContent || '').indexOf('按镜头粗剪这一轨') >= 0; });
+        if (!hit) return null;
+        const r = hit.getBoundingClientRect();
+        return { text: hit.textContent.trim(), disabled: hit.disabled === true,
+          x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2),
+          box: { left: Math.round(r.left), right: Math.round(r.right), width: Math.round(r.width), height: Math.round(r.height) } };
+      })()`);
+      facts.menu = item;
+      if (!item) throw new Error("轨菜单里没有「按镜头粗剪这一轨」");
+      if (SHOT) {
+        await cdp.send("Page.captureScreenshot", { format: "png" }, 30000).then((shot) => {
+          if (shot && shot.data) fs.writeFileSync(SHOT, Buffer.from(shot.data, "base64"));
+        }).catch(() => {});
+      }
+      if (item.disabled) throw new Error("粗剪整轨是灰的");
+      await clickAt(item);
+      const before = facts.before.revision;
+      for (let attempt = 0; attempt < 90; attempt += 1) {
+        await sleep(500);
+        const now = await projectState();
+        if (now.revision > before) { facts.after = now; break; }
+      }
+      if (!facts.after) facts.after = await projectState();
+      facts.clips = Object.values(facts.after.clips || {}).map(function (clip) {
+        return { id: clip.id, position_ticks: clip.position_ticks, duration_ticks: clip.duration_ticks };
+      }).sort(function (a, b) { return a.position_ticks - b.position_ticks; });
+    } else {
+
     // ① 选中那段画面：按在卡片上半截（下半截留给针道）。
     const card = await evaluate(`(function () {
       const node = document.querySelector('.clip:not(.ghost)');
@@ -350,6 +398,7 @@ async function main() {
     facts.clips = Object.values(facts.after.clips || {}).map(function (clip) {
       return { id: clip.id, position_ticks: clip.position_ticks, duration_ticks: clip.duration_ticks };
     }).sort(function (a, b) { return a.position_ticks - b.position_ticks; });
+    }
   } finally {
     if (cdp) cdp.close();
     try { edge.kill(); } catch {}

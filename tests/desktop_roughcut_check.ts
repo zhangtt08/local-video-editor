@@ -25,6 +25,7 @@ const engine = read("desktop/src/engine.ts");
 const store = read("desktop/src/store.ts");
 const inspector = read("desktop/src/views/Inspector.tsx");
 const help = read("desktop/src/views/Help.tsx");
+const timeline = read("desktop/src/views/Timeline.tsx");
 const css = read("desktop/src/styles.css");
 
 // ① 检测还是那一处、那一组数。
@@ -87,6 +88,22 @@ assert.match(inspector, /rough_keep_ms_default \?\? 1500/, "默认秒数没有�
 assert.match(inspector, /void roughCut\(clip\.id, Math\.round\(wanted \* 1000\)\)/, "按钮没有调 store");
 assert.match(inspector, /id="rough-keep"/, "没有那格秒数");
 assert.ok(help.includes('{ key: "剪辑·按镜头粗剪"'), "帮助页没有这一条");
+// 1.284：整轨入口——同一条路由的整轨版、菜单项、store 函数与能力位。
+assert.match(api, /@app\.post\("\/v1\/projects\/\{project_id\}\/tracks\/\{track_id\}\/rough-cut"/,
+  "没有整轨那条路由");
+assert.match(api, /key=lambda item: -item\.position_ticks/, "整轨没有从右往左排");
+assert.match(api, /scanned\.append\(\{"clip_id": clip\.id, "skipped": problem\}\)/, "不能扫的片段没有带原因跳过");
+assert.match(mcp, /async def track_rough_cut\(/, "MCP 没有 track_rough_cut");
+assert.match(engine, /roughCutTrackPlan\(projectId: string, trackId: string, body: Record<string, unknown>\)/,
+  "引擎客户端没有 roughCutTrackPlan");
+assert.match(engine, /\/v1\/projects\/\$\{projectId\}\/tracks\/\$\{trackId\}\/rough-cut/, "整轨路径不对");
+assert.match(store, /export async function roughCutTrack\(trackId: string\)/, "store 里没有 roughCutTrack");
+assert.match(store, /keepMs = state\.caps\.limits\.rough_keep_ms_default \?\? 1500/, "整轨没有读能力表的默认秒数");
+assert.match(store, /submit\(commands as Command\[\], `粗剪整轨：\$\{done\} 段`\)/, "整轨没有整批提交");
+assert.match(inspector, /row-action/, "检查器那两行没有按内容给按钮留宽");
+assert.match(timeline, /label: "按镜头粗剪这一轨"/, "轨道菜单里没有这一项");
+assert.match(timeline, /roughCutTrack\(track\.id\)/, "菜单项没有调 store");
+assert.ok(help.includes('{ key: "剪辑·整轨粗剪"'), "帮助页没有整轨那一条");
 // 1.283 真窗口量到过：这一行的第四格是按钮，沿用 26px 那一格会把「粗剪」推出面板。
 assert.match(inspector, /className="effect-row row-action">\s*<label htmlFor="rough-keep"/, "粗剪那一行没按内容给最后一列留宽");
 assert.match(inspector, /className="effect-row row-action"><label htmlFor="clip-fit"/, "适配到那一行也没修");

@@ -962,6 +962,38 @@ export async function roughCut(clipId: string, keepMs: number) {
   }
 }
 
+/** 整轨粗剪：这条轨上的画面片段从右往左各取一份引擎计划，合成一个批次、一个版本。
+ *  不能扫的片段（声音、图片、合成、变速、链接）由引擎逐段报告原因；只动本轨。 */
+export async function roughCutTrack(trackId: string) {
+  const project = state.project;
+  if (!engine || !project || !state.caps) return;
+  set({ busy: "粗剪整轨…" });
+  try {
+    const keepMs = state.caps.limits.rough_keep_ms_default ?? 1500;
+    const scanned = await engine.roughCutTrackPlan(project.id, trackId, {
+      request_id: newId("rough-track-"),
+      expected_revision: project.revision,
+      sequence_id: state.sequenceId,
+      keep_ms: keepMs,
+    });
+    const commands = scanned.rough.commands;
+    const skipped = scanned.rough.clips.filter((item) => item.skipped).length;
+    if (!commands.length) {
+      toast("info", "这条轨没有可粗剪的画面",
+        `每一段都比 ${(keepMs / 1000).toFixed(1)} 秒更短${skipped ? `，另有 ${skipped} 段不能扫` : ""}；这一次没有写入任何东西。`);
+      return;
+    }
+    const done = scanned.rough.clips.filter((item) => (item.commands ?? []).length > 0).length;
+    submit(commands as Command[], `粗剪整轨：${done} 段`);
+    toast("info", `粗剪了 ${done} 段`, `每镜留前 ${(keepMs / 1000).toFixed(1)} 秒，后段左移收拢；只动这一轨，撤销一步整批退回。`);
+  } catch (error) {
+    const { title, detail } = describe(error);
+    toast("error", title, detail);
+  } finally {
+    set({ busy: "" });
+  }
+}
+
 function countCuts(commands: Record<string, unknown>[]) {
   return commands.filter((command) => command.op === "clip.ripple_remove").length;
 }
