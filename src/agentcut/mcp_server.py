@@ -50,6 +50,7 @@ from .contracts import (
     RenderRequest,
     RestoreProject,
     Revision,
+    SceneRequest,
     SequenceRef,
     SilenceRequest,
     SpeechCaptionsRequest,
@@ -365,6 +366,27 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         return await call(
             "POST",
             f"/v1/projects/{project_id}/clips/{clip_id}/silence",
+            body,
+            timeout=600,
+        )
+
+    @server.tool(annotations=read)
+    async def clip_scenes(
+        project_id: Identifier, clip_id: Identifier, request: SceneRequest
+    ) -> dict[str, Any]:
+        """Find the shot changes in one clip's picture and get the ordinary split commands.
+
+        Read-only here: `apply` and `dry_run` are forced off, so nothing is written. The cuts are
+        measured as colour change (not FFmpeg's luma-only `scene` score), which is what separates
+        a red shot from a green one that is just as bright. Review or edit the returned
+        `commands`, then submit them with `timeline_edit` to keep one atomic revision.
+        `sequence_id` reads the clip from inside that nested composition; the commands then have
+        to be submitted with the same `sequence_id`.
+        """
+        body = request.model_dump(mode="json") | {"apply": False, "dry_run": False}
+        return await call(
+            "POST",
+            f"/v1/projects/{project_id}/clips/{clip_id}/scenes",
             body,
             timeout=600,
         )

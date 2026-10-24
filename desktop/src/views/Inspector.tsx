@@ -83,6 +83,7 @@ import {
   updateSequence,
   reframeClip, stabilizeClip, trackMasks, trackExtraMask,
   cutSilence,
+  splitScenes,
   beatMarks,
   beatCut,
   autoCaptions,
@@ -129,7 +130,7 @@ export function Inspector() {
           <span className="panel-label">片段</span>
           {clip ? <span className="tag mono">{humanDuration(clip.duration_ticks)}</span> : null}
         </div>
-        {!clip ? <div className="empty-note tiny">点时间线上的片段，这里可以改它的起止</div> : <><p className="ellipsis" title={clip.text?.body ?? project?.assets[clip.asset_id]?.label}>{clip.text?.body ?? project?.assets[clip.asset_id]?.label}</p><details><summary className="panel-label">时间与剪辑</summary><fieldset className="effects-fields" disabled={Boolean(app.busy || !readyProject || project?.tracks.find((t) => t.id === clip.track_id)?.locked)}><ClipFields clip={clip} /></fieldset></details></>}
+        {!clip ? <div className="empty-note tiny">点时间线上的片段，这里可以改它的起止</div> : <><p className="ellipsis" title={clip.text?.body ?? project?.assets[clip.asset_id]?.label}>{clip.text?.body ?? project?.assets[clip.asset_id]?.label}</p><details open><summary className="panel-label">时间与剪辑</summary><fieldset className="effects-fields" disabled={Boolean(app.busy || !readyProject || project?.tracks.find((t) => t.id === clip.track_id)?.locked)}><ClipFields clip={clip} /></fieldset></details></>}
       </section> : null}
 
       {clip ? <SpeedFields key={`speed-${clip.id}`} clipId={clip.id} /> : null}
@@ -248,6 +249,9 @@ function ClipFields({ clip }: { clip: Clip }) {
           </button> : null}
           {app.caps?.features?.speech_captions && (asset?.kind === "audio" || (asset?.kind === "video" && asset.verified?.has_audio && clip.embedded_audio !== false)) ? <button className="btn" disabled={Boolean(clip.speed_curve)} title={clip.speed_curve ? "带变速曲线的片段还不能自动字幕：时间不是线性的，字会对不上画面" : "用本机语音模型听这段的说话，生成一条可编辑的字幕轨；识别在本地完成，不会上传声音"} onClick={() => autoCaptions(clip.id)}>
             <Icon name="captions" /> 自动字幕
+          </button> : null}
+          {app.caps?.features?.scene_split && asset?.kind === "video" && !asset.sequence_id ? <button className="btn" disabled={Boolean(clip.speed_curve)} title={clip.speed_curve ? "带变速曲线的片段还不能按镜头切分：时间不是线性的，切点映射不回时间线；先在曲线编辑器里清掉速度曲线" : "用引擎的颜色差检测找这一段里的硬切（不是只看亮度，纯红接纯绿也认得出），在每一处切点切开；一次提交一个版本，撤销一步整批退回"} onClick={() => void splitScenes(clip.id)}>
+            <Icon name="split" /> 按镜头切分
           </button> : null}
         </div>
         <div className="insp-actions">

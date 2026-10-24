@@ -6583,3 +6583,5 @@ Agent 用 `clip.mask_stack` 写得进去，人在界面上只能加一块、删�
 **包账（01:26 那一趟链，重试一次才成）**：`build_engine --verify` → `npm run dist` → 根 `AgentCut.exe` 与便携版逐字节相同（185,133,559 B，sha256 前缀 42f06484057e687b）；`released_package_check`、`packed_engine_surface_check`（包里那支引擎真 HTTP 交回 1.229.0 / schema 25）、`ui_shape_check` 38 屏 green 全过。第一次那一趟红在 `npm run dist` 的 TLS 掉线，红之后 `released_package_check` 立刻红在「包里那支引擎不是刚建出来的那一支」——**建失败会把包留在半旧不新的状态**，这条不是假警报。
 假红写进了账（`released_package_check` 红在两份引擎字节对不上，而 PyInstaller 不是逐字节
 可复现的），判法就是那一条：树不静就不建，量到什么写什么。
+
+1.282（2026-10-24）：按镜头切分——`scenes.py` 用 64×36 RGB 相邻帧的平均通道差找硬切（FFmpeg 的 luma-only `scene` 分对纯红→纯绿量到 0.0，这里 0.50），门槛/最短镜头/上限只在契约（`SCENE_THRESHOLD_*`、`SCENE_MIN_MS_DEFAULT`、`SCENE_MAX_CUTS`，经 `capabilities.limits.scene_*` 下发）；计划是右到左的普通 `clip.split`，HTTP 只读与 `apply` 两条路、MCP `clip_scenes` 强制只读、检查器一颗按钮走同一个 store 函数。`scene_check.py` 用红/绿/蓝三段真视频量到 2.0/4.0 s 两个切点、apply 一个 revision 三段相接、50% 速度折到 4.0 s、无切点与错类型各按名字拒绝；`desktop_scene_check.ts` 钉「谁在判断、哪里只有一份」。真页面 `sceneui_check.py`：按钮 118×32、字号 14、圆角 10、命中点是自己，按下 r1→r2、三段 2/2/2 秒；这一跑抓出「时间与剪辑」默认折叠导致按钮点不到，改成默认展开并加壳检。发布账：1.282.0 / schema 33，根 exe 与便携版 185,202,597 B（sha256 前缀 d6e1db915b9f33f7），安装版 185,363,303 B。

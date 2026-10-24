@@ -935,6 +935,39 @@ function countCuts(commands: Record<string, unknown>[]) {
   return commands.filter((command) => command.op === "clip.ripple_remove").length;
 }
 
+/** 按镜头切分：引擎用颜色差找硬切（纯红→纯绿 scene 分是 0.0，颜色差 0.50），计划是一串
+ *  普通 clip.split，一次提交一个版本、撤销一步整批退回。门槛读能力表，界面不写第二份。 */
+export async function splitScenes(clipId: string) {
+  const project = state.project;
+  if (!engine || !project || !state.caps) return;
+  set({ busy: "扫描镜头…" });
+  try {
+    const scanned = await engine.scenePlan(project.id, clipId, {
+      request_id: newId("scene-"),
+      expected_revision: project.revision,
+      sequence_id: state.sequenceId,
+      threshold: state.caps.limits.scene_threshold_default ?? 0.18,
+      min_scene_ms: state.caps.limits.scene_min_ms_default ?? 400,
+    });
+    const commands = scanned.scenes.commands;
+    if (!commands.length) {
+      toast("info", "没有找到硬切", "这一段是一镜到底，或者画面变化低于门槛；这一次没有写入任何东西。");
+      return;
+    }
+    const pieces = commands.length + 1;
+    submit(commands as Command[], `按镜头切成 ${pieces} 段`);
+    const capped = scanned.scenes.truncated
+      ? `到上限 ${state.caps.limits.scene_max_cuts ?? ""} 处就停了，可以调高门槛再扫一遍。`
+      : "切点落在帧上，各段首尾相接；撤销一步整批退回。";
+    toast("info", `切成 ${pieces} 段`, capped);
+  } catch (error) {
+    const { title, detail } = describe(error);
+    toast("error", title, detail);
+  } finally {
+    set({ busy: "" });
+  }
+}
+
 /** 自动字幕：本地语音模型把这段的说话转成一条字幕轨，一次提交一个版本，撤销即删整轨。
  *  重跑时替换上一轮生成的同一条轨（按工程+片段+语言记住轨 id），不会把相同字幕摞两层。 */
 export async function autoCaptions(clipId: string) {

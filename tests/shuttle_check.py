@@ -27,7 +27,11 @@ from agentcut.contracts import APP_VERSION  # noqa: E402
 
 RENDERER = ROOT / "desktop/dist/renderer"
 PROBE = ROOT / "scripts/ui_shuttle_probe.cjs"
-EDGE = Path(os.environ.get("AGENTCUT_EDGE", r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"))
+EDGE = Path(
+    os.environ.get(
+        "AGENTCUT_EDGE", r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+    )
+)
 FFMPEG = ROOT / "desktop/resources/bin/ffmpeg.exe"
 FFPROBE = ROOT / "desktop/resources/bin/ffprobe.exe"
 TOKEN = "shuttlecheck" + "s" * 52
@@ -78,16 +82,26 @@ def seed(folder: Path) -> str:
     pid = made["project"]["id"]
     commands = [
         {"op": "track.add", "track": {"id": "v", "kind": "video", "name": "画面"}},
-        {"op": "asset.import", "asset_id": "s", "label": "strip", "probe_id": probe["probe_id"], "verified": probe},
+        {
+            "op": "asset.import", "asset_id": "s", "label": "strip",
+            "probe_id": probe["probe_id"], "verified": probe,
+        },
         {
             "op": "clip.add",
-            "clip": {"id": "c", "asset_id": "s", "track_id": "v", "position_ticks": 0, "duration_ticks": 12 * SECOND},
+            "clip": {
+                "id": "c", "asset_id": "s", "track_id": "v",
+                "position_ticks": 0, "duration_ticks": 12 * SECOND,
+            },
         },
     ]
     request(
         f"/v1/projects/{pid}/edits",
         TOKEN,
-        {"request_id": "shuttle-seed", "expected_revision": made["project"]["revision"], "commands": commands},
+        {
+            "request_id": "shuttle-seed",
+            "expected_revision": made["project"]["revision"],
+            "commands": commands,
+        },
         "POST",
     )
     return pid
@@ -187,7 +201,9 @@ def main() -> None:
             # ② J 之后牌子是 -1x，时间码真的往回走。
             reverse = facts["reverse"]
             assert reverse["chip"] == "-1x", reverse
-            assert reverse["beforeSeconds"] is not None and reverse["afterSeconds"] is not None, reverse
+            assert (
+                reverse["beforeSeconds"] is not None and reverse["afterSeconds"] is not None
+            ), reverse
             assert reverse["afterSeconds"] < reverse["beforeSeconds"] - 0.15, reverse
 
             # ③ K 之后牌子消失，两次采样时间码相同（不再动）。

@@ -26,7 +26,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from . import asr as asr_module
 from . import autograde as autograde_module
 from . import beats as beats_module
-from . import duck, silence
+from . import duck, scenes, silence
 from . import fourpoint as fourpoint_module
 from . import markers as marker_plan
 from . import reframe as reframe_plan
@@ -90,6 +90,7 @@ from .contracts import (
     RenderRequest,
     RestoreProject,
     Revision,
+    SceneRequest,
     SequenceRef,
     ShapeMask,
     SilenceRequest,
@@ -98,6 +99,7 @@ from .contracts import (
     audio_scan_problem,
     capabilities,
     parse_frame_rate,
+    picture_scan_problem,
     render_presets,
 )
 from .grade import parse_cube
@@ -1386,6 +1388,71 @@ def create_app(
         )
         mutation = projects.mutate(project_id, batch).model_dump()
         return {**mutation, "silence": {**result, "commands": commands}}
+
+    @app.post("/v1/projects/{project_id}/clips/{clip_id}/scenes", dependencies=auth)
+    def scene_scan(
+        project_id: Identifier, clip_id: Identifier, request: SceneRequest, projects: Store
+    ):
+        """Find the shot changes in one clip's picture and hand back the split commands.
+
+        The detector reads colour, not luma: pure red to pure green scores 0.0 on FFmpeg's
+        `scene` score but 0.50 here, and graphics/slides are exactly where that matters. The
+        plan is ordinary `clip.split` commands applied right to left, so the reducer remains the
+        only place that decides what a cut does to the source clock, keyframes and links.
+        """
+        engine = require_media()
+        root = projects.get(project_id)
+        project = sequence_view(root, request.sequence_id)
+        clip = project.clips.get(clip_id)
+        if clip is None:
+            raise EditorError("NOT_FOUND", "clip is not in this project", 404, clip_id=clip_id)
+        problem = picture_scan_problem(project, clip)
+        if problem:
+            raise EditorError("INVALID_SCENE_TARGET", problem, 422, clip_id=clip_id)
+        asset = project.assets[clip.asset_id]
+        source = Path(asset.verified.path)
+        if not source.is_file():
+            raise EditorError(
+                "MEDIA_MISSING",
+                "source file is gone",
+                410,
+                clip_id=clip.id,
+                asset_id=clip.asset_id,
+                asset_label=source.name,
+            )
+        result = scenes.analyse(
+            engine.ffmpeg,
+            source,
+            clip,
+            project.settings.frame_ticks,
+            threshold=request.threshold,
+            min_scene_ms=request.min_scene_ms,
+            from_ticks=request.from_ticks,
+            to_ticks=request.to_ticks,
+        )
+        commands = scenes.cut_plan(clip, result["cuts"])
+        if request.apply and not commands:
+            raise EditorError(
+                "SCENE_NONE",
+                "no shot change stands out at this threshold; the picture is one continuous take",
+                422,
+                clip_id=clip_id,
+            )
+        if not request.apply:
+            return {
+                "committed": False,
+                "project": root.model_dump(),
+                "scenes": {**result, "commands": commands},
+            }
+        batch = EditBatch(
+            request_id=request.request_id,
+            expected_revision=request.expected_revision,
+            sequence_id=request.sequence_id,
+            commands=commands,  # type: ignore[arg-type]
+            dry_run=request.dry_run,
+        )
+        mutation = projects.mutate(project_id, batch).model_dump()
+        return {**mutation, "scenes": {**result, "commands": commands}}
 
     @app.post("/v1/projects/{project_id}/audio/beats", dependencies=auth)
     def audio_beats(project_id: Identifier, request: BeatRequest, projects: Store):

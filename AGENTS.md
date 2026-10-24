@@ -185,7 +185,44 @@
      把 20,000 段那扇契约门往上调（先给界面加窗口化并重量写放大：本轮实测 12,500 段 1.975 s、
      20,000 段 3.58 s、整份读回 1.085 s / 12.92 MB）。
 
-## 上一轮停放点（1.281：J/K/L 走带——倒放、2×/4×/8×、变速静音）
+## 上一轮停放点（1.282：按镜头切分——颜色差找硬切，计划是普通 clip.split）
+
+- **缺的是哪一手**：剪映的「自动踩点/分镜」在 AgentCut 里没有对应物：人要一段段找镜头自己剪。
+  这一档先把「按画面切」补齐，并且沿用这个项目的老规矩——判断只有一处、计划由引擎给、reducer 是唯一写入者。
+- **为什么不是 FFmpeg 的 `scene` 分**：那是只看亮度的 SAD。本机随包 6.1.1 上量过：纯红 `#ff0000`
+  到纯绿 `#008000`（Y≈76 vs ≈75）`scdet` 报 **0.0**（只报了 4.0 s 那个绿→蓝的切点），颜色差是
+  **0.50**。图形、幻灯片和纯色动画正是它失灵的材料，所以 `scenes.py` 自己解码：30 fps、64×36 RGB、
+  相邻帧的平均通道差（0..255 归一）。
+- **一份数、两条读法**：`SCENE_THRESHOLD_DEFAULT = 0.18`、`SCENE_THRESHOLD_MIN = 0.02`、
+  `SCENE_THRESHOLD_MAX = 0.9`、`SCENE_MIN_MS_DEFAULT = 400`、`SCENE_MAX_CUTS = 200` 只在
+  `contracts.py` 写一次；`SceneRequest` 的带与 `capabilities.limits.scene_*` 读同一组，
+  `scenes.py` 从契约导入（壳检不许它再写一份 0.18）。
+- **时间怎么折**：片段读的是源的一段窗口，切点按恒定速度除一次折回片段本地，四舍五入到帧、
+  向内避开首尾帧；`min_scene_ms` 吃掉同一次切换里的闪烁。速度曲线按名字拒绝（`INVALID_SCENE_TARGET`），
+  不猜。图片、文字、声音与合成片段也在同一处守卫里拒绝（`picture_scan_problem`）。
+- **计划与写入**：`cut_plan` 生成**从右往左**的普通 `clip.split`（带 `right_clip_id`），所以每一刀
+  按切点当时的坐标落位、各段首尾相接；HTTP 默认只读（`committed: false`），`apply` 把同一份计划交给
+  reducer，一个批次一个 revision；没切点时 `apply` 回 `SCENE_NONE`，半个字节都不写。
+- **两端与 Agent**：MCP 新增 `clip_scenes`（强制 `apply`/`dry_run` 为 false），命令交回 `timeline_edit`；
+  检查器那颗「按镜头切分」只在 `caps.features.scene_split`、视频素材、非合成时出现，速度曲线让按钮变灰；
+  store 的 `splitScenes` 读 `scene_threshold_default` / `scene_min_ms_default`，空计划只提示不提交。
+- **证据**：`tests/scene_check.py`（真视频 2 s 红 / 2 s 绿 / 2 s 蓝）量到 2.0/4.0 s 两个切点、只读不涨版本、
+  apply 一个版本三段相接、50% 速度折到时间线的 4.0 s、一镜到底回空计划且 `SCENE_NONE`、图片与声音
+  `INVALID_SCENE_TARGET`；`tests/desktop_scene_check.ts` 钉「谁在判断、哪里只有一份」；`self_check.py`
+  的 MCP 工具表与只读断言同步加上 `clip_scenes`。
+- **真页面那一腿**：`tests/sceneui_check.py` + `scripts/ui_scene_probe.cjs` —— 构建好的渲染层 + 真引擎，
+  点选那段画面、按命中点按按钮：按钮 118×32px、字号 14px、圆角 10px、中心点就是它自己；按下之后
+  r1 → r2、三段 2.0/2.0/2.0 秒首尾相接，截图落盘。第一次跑红在「按钮中心点不到自己」——片段操作
+  住在「时间与剪辑」那一节里，而它是默认折叠的 `<details>`；闭合 details 的子节点仍报矩形，所以
+  盒子读得到、点不到，人选中片段也看不见这些按钮。修法是那一节默认展开（`<details open>`），
+  壳检加一条钉住，`ui_shape_check` 56 屏重扫仍绿（叠行 0、字压字 0、下拉被切 0）。
+- **顺带修掉的交付缺陷**：`desktop_trackscroll_check.ts` 的读法假设 LF，而 `Timeline.tsx` 是 CRLF，
+  于是 1.281 的包里这条门禁一直是红的（「选中片段之后没有人把那一行带进视野」）；读入时统一换行，
+  断言一字未改。另外 `tests/contextmenu_check.py`、`tests/shuttle_check.py`、`tests/scene_check.py`
+  里超过 100 列的行折好，`ruff check` 回到全绿。
+- **边界如实说**：扫的是画面变化，同色同亮度的两个镜头分不开；切完不自动加转场；速度曲线还不扫。
+
+## 停放点（1.281：J/K/L 走带——倒放、2×/4×/8×、变速静音）
 
 - **缺的是哪一手**：`K` 停、`L` 正放本来就有，但没有 `J` 倒放、没有连按加速——达芬奇与 Premiere
   的 J/K/L 是剪辑台上最常用的一只手。这一档补齐，并把「速度」做成状态而不是三处各写一串 if。

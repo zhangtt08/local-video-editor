@@ -80,7 +80,10 @@ def seed_project(token: str) -> str:
     pid = made["project"]["id"]
     commands = [
         {"op": "track.add", "track": {"id": "v", "kind": "video", "name": "画面"}},
-        {"op": "asset.register", "asset": {"id": "m", "kind": "image", "label": "图板", "reference": "untrusted"}},
+        {
+            "op": "asset.register",
+            "asset": {"id": "m", "kind": "image", "label": "图板", "reference": "untrusted"},
+        },
     ]
     for index, clip_id in enumerate(("k1", "k2")):
         commands.append({
@@ -93,7 +96,11 @@ def seed_project(token: str) -> str:
     request(
         f"/v1/projects/{pid}/edits",
         token,
-        {"request_id": "menu-seed", "expected_revision": made["project"]["revision"], "commands": commands},
+        {
+            "request_id": "menu-seed",
+            "expected_revision": made["project"]["revision"],
+            "commands": commands,
+        },
         "POST",
     )
     return pid
@@ -188,8 +195,11 @@ def main() -> None:
             assert facts.get("clipsOnScreen", 0) >= 2, facts.get("clipsOnScreen")
             page = facts.get("menu")
             assert page, "右键之后菜单没有画出来"
-            print(f"   菜单 {page['rect']['width']}×{page['rect']['height']}，圆角 {page['radius']}px，"
-                  f"{len(page['items'])} 项，焦点在「{page['focusedLabel']}」")
+            print(
+                f"   菜单 {page['rect']['width']}×{page['rect']['height']}，"
+                f"圆角 {page['radius']}px，{len(page['items'])} 项，"
+                f"焦点在「{page['focusedLabel']}」"
+            )
 
             # ① 身份与标题：这是「片段操作」，标题写的是被点的那一段。
             assert page["role"] == "menu", page["role"]
@@ -204,18 +214,23 @@ def main() -> None:
                 assert wanted in labels, f"菜单少了「{wanted}」：{labels}"
             duplicate = menu_by_label(page, "追加整组副本")
             assert duplicate["hint"].startswith("Ctrl / ⌘ + "), duplicate["hint"]
-            assert menu_by_label(page, "粘贴到播放头")["hint"].endswith("V"), menu_by_label(page, "粘贴到播放头")
+            paste_hint = menu_by_label(page, "粘贴到播放头")["hint"]
+            assert paste_hint.endswith("V"), paste_hint
             assert duplicate["font"] >= FONT_FLOOR, duplicate["font"]
-            assert all(item["height"] >= 34 for item in page["items"]), [item["height"] for item in page["items"]]
+            heights = [item["height"] for item in page["items"]]
+            assert all(item["height"] >= 34 for item in page["items"]), heights
 
             # ③ 焦点进得去、方向键在能按的项之间走、回来还在原处。
             assert page["focused"] == "menuitem", page["focused"]
-            assert facts.get("afterArrowDown") and facts.get("afterArrowDown") != page["focusedLabel"], facts.get("afterArrowDown")
-            assert facts.get("afterArrowUp") == page["focusedLabel"], (facts.get("afterArrowUp"), page["focusedLabel"])
+            down = facts.get("afterArrowDown")
+            assert down and down != page["focusedLabel"], down
+            up = facts.get("afterArrowUp")
+            assert up == page["focusedLabel"], (up, page["focusedLabel"])
 
             # ④ 右键落在没选中的片段上：选中的是它，且只有它。
             assert facts.get("selectedAfterRightClick") == 1, facts.get("selectedAfterRightClick")
-            assert facts.get("clipPressedAfterRightClick") == "true", facts.get("clipPressedAfterRightClick")
+            pressed = facts.get("clipPressedAfterRightClick")
+            assert pressed == "true", pressed
 
             # ⑤ 菜单整个盒子在视口里。
             box, size = page["rect"], facts["viewport"]
@@ -231,7 +246,8 @@ def main() -> None:
             # ⑦ Escape 关掉，焦点交回那个片段。
             assert facts.get("menuBeforeEscape"), "第二次右键没开出来"
             assert facts.get("menuAfterEscape") is None, "Escape 没关掉菜单"
-            assert facts.get("focusAfterEscape") == facts["clip"]["id"], facts.get("focusAfterEscape")
+            focus = facts.get("focusAfterEscape")
+            assert focus == facts["clip"]["id"], focus
 
             # ⑧ 空白处是另一份菜单，标题写明是哪一轨。
             lane = facts.get("laneMenu")
@@ -255,7 +271,9 @@ def main() -> None:
                   f"下缘 {rect['bottom']} ≤ {size['h'] - 4}")
 
             # ⑩ 轨道头只留三颗按钮；「更多」打开的是同一份浮层，标题写着是哪条轨。
-            assert facts.get("trackHeadButtons") == 3, f"轨道头上还有 {facts.get('trackHeadButtons')} 颗按钮——七颗挤在 112px 里"
+            assert facts.get("trackHeadButtons") == 3, (
+                f"轨道头上还有 {facts.get('trackHeadButtons')} 颗按钮——七颗挤在 112px 里"
+            )
             track = facts.get("trackMenu")
             assert track, "轨道头的「更多」没有打开菜单"
             assert track["label"] == "轨道操作", track["label"]
@@ -264,7 +282,10 @@ def main() -> None:
             for wanted in ("统一这一轨的响度", "剪掉这一轨的停顿", "删除这条轨道"):
                 assert wanted in track_labels, f"轨道菜单少了「{wanted}」：{track_labels}"
             assert facts.get("trackMenuAfterEscape") is None, "Escape 没关掉轨道菜单"
-            print(f"   轨道头 {facts['trackHeadButtons']} 颗按钮；「更多」给出 {len(track_labels)} 项，Escape 关得掉")
+            print(
+                f"   轨道头 {facts['trackHeadButtons']} 颗按钮；"
+                f"「更多」给出 {len(track_labels)} 项，Escape 关得掉"
+            )
             print(f"   Escape 之后焦点回到片段 {facts['focusAfterEscape']}；"
                   f"追加副本 revision {before['revision']} → {after['revision']}、"
                   f"片段 {before['clips']} → {after['clips']}")

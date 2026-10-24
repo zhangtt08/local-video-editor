@@ -71,7 +71,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.281.0"
+APP_VERSION = "1.282.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -573,6 +573,21 @@ GBLUR_STEPS = 6
 # enough that a long ramp is scheduled in wide steps rather than one step per frame.
 
 SPATIAL_SCHEDULE_MAX = 24
+
+# 1.282：按镜头切分。颜色差的门槛、最短镜头与切点上限只在这里写一次：请求模型的带、能力表
+# 下发的默认值与引擎的检测读的是同一组数，界面不写第二份。门槛的上下界是「检测还读得出东西」
+# 与「不会把一段长镜头切成碎末」之间那段；最短镜头吃掉同一次切换里的闪烁。
+
+SCENE_THRESHOLD_DEFAULT = 0.18
+
+SCENE_THRESHOLD_MIN = 0.02
+
+SCENE_THRESHOLD_MAX = 0.9
+
+SCENE_MIN_MS_DEFAULT = 400
+
+# A long take can flicker; the ceiling is what both the scanner and the button read.
+SCENE_MAX_CUTS = 200
 
 # The unsharp staircase gets its own, smaller ceiling because a step here is a pair of stages, not
 
@@ -5410,6 +5425,38 @@ def audio_scan_problem(project, clip) -> str | None:
 
 
 
+def picture_scan_problem(project, clip) -> str | None:
+
+    """Why this clip's picture cannot be scanned for shot changes, or None when it can.
+
+
+
+    The scanner decodes the clip's own source window as RGB frames, so only a video clip with a
+
+    server-verified media record has something to read: a still has one frame and no cut, a
+
+    composition has no file of its own, and a speed curve has no single ratio to map back with.
+
+    """
+
+    asset = project.assets.get(clip.asset_id)
+
+    if asset is None or asset.kind != "video":
+
+        return "only a video clip has a picture that can change from one shot to the next"
+
+    if asset.verified is None:
+
+        return "register the server-verified asset before scanning its picture"
+
+    if clip.speed_curve:
+
+        return "a clip with a speed curve cannot be scanned yet: time is not linear there"
+
+    return None
+
+
+
 
 
 class LoudnessRequest(Contract):
@@ -5780,6 +5827,49 @@ class SilenceRequest(Contract):
 
     dry_run: bool = False
 
+
+
+class SceneRequest(Contract):
+
+    """Find the shot changes inside one clip and hand back the commands that split at them.
+
+    The picture is measured as colour, not as luma: a cut between two flat colours with the same
+
+    brightness (pure red to pure green) scores 0.0 on FFmpeg's `scene` score but 0.50 here, so the
+
+    scanner runs in the engine (`scenes.py`) and this model only carries its knobs.
+
+    The plan is made of ordinary `clip.split` commands, right to left, so the reducer stays the
+
+    only place that decides what a cut does; `apply` submits the plan as one batch and one
+
+    revision, while a client that wants different boundaries can edit the commands first.
+
+    """
+
+    request_id: Identifier
+
+    expected_revision: Revision
+
+    # Read the ids below -- and apply the batch -- inside one nested composition.
+
+    sequence_id: Identifier | None = None
+
+    threshold: Annotated[
+
+        float, Field(ge=SCENE_THRESHOLD_MIN, le=SCENE_THRESHOLD_MAX)
+
+    ] = SCENE_THRESHOLD_DEFAULT
+
+    min_scene_ms: Annotated[int, Field(ge=100, le=5000)] = SCENE_MIN_MS_DEFAULT
+
+    from_ticks: Ticks = 0
+
+    to_ticks: Ticks | None = None
+
+    apply: bool = False
+
+    dry_run: bool = False
 
 
 
@@ -7383,6 +7473,11 @@ def capabilities(
 
             "silence_detection": media_ready,
 
+            # 1.282：按镜头切分靠一次真解码读出颜色差，没有媒体引擎就没有这一手。界面只在这一格
+            # 报得出时摆那颗按钮，老引擎不认这条路由。
+
+            "scene_split": media_ready,
+
             "loudness_metering": media_ready,
 
             # A local speech model turns one clip's own audio into an SRT the importer lands.
@@ -7625,6 +7720,15 @@ def capabilities(
 
             # 1.280：整轨音量那一条滑杆的两端。界面读这两个数，不自己写 0…200%。
             "track_volume_max": TRACK_VOLUME_MAX,
+
+            # 1.282：按镜头切分那颗按钮写进去的数。门槛、最短镜头与上限都由引擎下发，界面不
+            # 自带第二份；`scene_max_cuts` 也是「这一趟最多切几刀」的唯一来源。
+
+            "scene_threshold_default": SCENE_THRESHOLD_DEFAULT,
+
+            "scene_min_ms_default": SCENE_MIN_MS_DEFAULT,
+
+            "scene_max_cuts": SCENE_MAX_CUTS,
 
             "track_volume_default": TRACK_VOLUME_DEFAULT,
 

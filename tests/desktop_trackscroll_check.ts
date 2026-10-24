@@ -15,7 +15,8 @@ declare const REPO_ROOT: string;
 const read = (...parts: string[]) => {
   const found = parts.map((part) => resolve(process.cwd(), part)).find(existsSync) ?? resolve(REPO_ROOT, parts[0]);
   assert.ok(existsSync(found!), `找不到源文件：${parts.join(" 或 ")}`);
-  return readFileSync(found!, "utf8");
+  // 源文件是 CRLF；对结构的断言不该随行尾符变红。
+  return readFileSync(found!, "utf8").replace(/\r\n/g, "\n");
 };
 
 const timeline = read("desktop/src/views/Timeline.tsx", "../../desktop/src/views/Timeline.tsx");

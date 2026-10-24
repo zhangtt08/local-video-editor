@@ -410,6 +410,7 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
                 "output_root_add",
                 "output_roots_read",
                 "clip_silence",
+                "clip_scenes",
                 "audio_beats",
                 "mask_stack_track",
                 "preview_frame",
@@ -449,6 +450,11 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
             assert "clip_stabilize" in tools, "the Agent lost the stabiliser tool"
             assert "max_crop" in json.dumps(tools["clip_stabilize"].inputSchema)
             assert tools["clip_silence"].annotations.readOnlyHint is True
+            # 1.282: shot changes are a plan the Agent reviews, so the tool stays read-only and
+            # `timeline_edit` remains the one writer; the schema has to accept a nested clip.
+            assert tools["clip_scenes"].annotations.readOnlyHint is True
+            assert "sequence_id" in json.dumps(tools["clip_scenes"].inputSchema)
+            assert "threshold" in json.dumps(tools["clip_scenes"].inputSchema)
             # 1.268: beats are an answer, not a write. The marks become the existing marker.set
             # commands, so this tool must be read-only and must accept a nested composition.
             assert tools["audio_beats"].annotations.readOnlyHint is True
