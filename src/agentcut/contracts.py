@@ -71,7 +71,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.290.0"
+APP_VERSION = "1.291.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -5384,6 +5384,29 @@ class AutoGradeRequest(Contract):
 
 
 
+class InterchangeImportRequest(Contract):
+    """One interchange document, read whatever format it turns out to be.
+
+    ``format`` is optional: the engine recognises OTIO / FCPXML / FCP7-Premiere XML /
+    CMX3600 EDL / 剪映 draft from the document itself and says which one it settled on.
+    A document that matches none of them is refused by name instead of being guessed at.
+    """
+
+    document: str | dict[str, Any] | None = None
+
+    format: Literal["otio", "fcpxml", "xmeml", "edl", "jianying"] | None = None
+
+    sequence_id: SequenceRef | None = None
+
+    apply: bool = False
+
+    request_id: Identifier | None = None
+
+    expected_revision: Revision | None = None
+
+    dry_run: bool = False
+
+
 class OtioImportRequest(Contract):
 
     """An OpenTimelineIO timeline, planned as ordinary commands before anything is written."""
@@ -7651,6 +7674,12 @@ def capabilities(
             "otio_import": True,
 
             "fcpxml_export": True,
+
+            # 1.292：一个入口读进 OTIO / FCPXML / FCP7(Premiere) XML / EDL / 剪映明文草稿，
+
+            # 格式由文档自己说；交回来的计划仍是普通命令，apply 一个 revision。
+
+            "interchange_import": True,
 
             "loudness_metering": media_ready,
 

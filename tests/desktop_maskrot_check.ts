@@ -277,11 +277,11 @@ assert.ok(pictureSrc.includes("const body = spun ? { ...mask, width: spun.width,
 assert.ok(storeSrc.includes('["mask_rotation", "rotation"],'),
   "拖旋转这一笔不再走「已打针就写播放头那一帧」那一条规则（为角度另写一套剪辑规则）");
 assert.ok(stylesSrc.includes(".mask-handle.rotate-handle"), "那颗手柄没有自己的样式（看不见也抓不着）");
-const titlebarSrc = read("desktop/src/TitleBar.tsx");
+const titlebarSrc = read("desktop/src/shell/TopBar.tsx");
 assert.ok(titlebarSrc.includes('onClick={() => openEditorPanel("export")}'),
-  "标题栏那颗「导出」不再走那一个组合意图（切面板与跳视图分开写就漏一半）");
+  "顶栏那颗「导出」不再走那一个组合意图（切面板与跳视图分开写就漏一半）");
 assert.ok(!/onClick=\{\(\) => setEditorPanel\("export"\)\}/.test(titlebarSrc),
-  "标题栏还直接调 setEditorPanel：现在它不再负责跳视图，按钮会点着没反应");
+  "顶栏还直接调 setEditorPanel：现在它不再负责跳视图，按钮会点着没反应");
 assert.ok(!/view === "home" \|\| view === "editor"/.test(storeSrc),
   "restoreDeepLink 里还剩一条自己拼的视图名单");
 assert.ok(/landLinkedTick\(tick\);\s*\n\s*return true;/.test(storeSrc),

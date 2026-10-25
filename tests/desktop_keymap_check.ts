@@ -194,12 +194,12 @@ assert.ok(timeline.includes("chordWords(keymap().split)"), "tooltip-live: 那颗
 assert.ok(timeline.includes("chordWords(keymap().copy)") && timeline.includes("chordWords(keymap().paste)"), "复制/粘贴那两句也一样");
 assert.ok(!timeline.includes("（Ctrl+B）") && !timeline.includes("（Ctrl+C）") && !timeline.includes("（Ctrl+V）"), "视图里不许留着写死的键名：改了键之后那句就成了假话");
 assert.ok(timeline.includes("chordWords(keymap().redo)"), "redo-live: 重做那颗也跟着表念");
-const titlebar = readFileSync(SRC + "desktop/src/TitleBar.tsx", "utf8");
+const titlebar = readFileSync(SRC + "desktop/src/shell/TopBar.tsx", "utf8");
 const inspector = readFileSync(SRC + "desktop/src/views/Inspector.tsx", "utf8");
 const engineHint = readFileSync(SRC + "desktop/src/engine.ts", "utf8");
 assert.ok(titlebar.includes('chordWords(keymap()["export-panel"])'), "导出按钮的悬停念的也是当前键位");
 assert.ok(inspector.includes("chordWords(keymap().duplicate)"), "检查器那句「复制一段」也是");
-for (const [name, src] of [["Timeline", timeline], ["TitleBar", titlebar], ["Inspector", inspector]] as const) {
+for (const [name, src] of [["Timeline", timeline], ["TopBar", titlebar], ["Inspector", inspector]] as const) {
   assert.ok(!/（Ctrl\+[A-Z]/.test(src), `${name} 里不许再留着写死的键名`);
   assert.ok(!/[（(](V|C|S|X|Delete|Shift\+Delete)[)）]/.test(src), `${name}-tool-live: 工具与删除键名也不许写死`);
 }

@@ -873,6 +873,31 @@ export function errorHints(): Record<string, string> {
       OTIO_EMPTY: "这份 OTIO 里没有可导入的轨道或片段。先在对方软件里放几段素材再导出；这一趟没有写任何东西。",
       OTIO_TRACK_COUNT: "这份时间线的轨道比工程里多。先给工程加够同类型的轨道，再导入；这一趟没有写任何东西。",
       OTIO_MEDIA_UNMATCHED: "有些片段指向本工程还没导入的文件。先把这些文件导入素材库，再跑一次计划；这一趟没有写任何东西。",
+      // 1.292：工程格式进口的每一条拒绝都要有一句人话——认不出格式、时码算法不对、
+      // 草稿被加密，这些都不是「再点一次」能解决的，必须说清出路在哪。
+      INTERCHANGE_UNKNOWN: "这份文档认不出是哪种工程格式。可以在源软件里导出 FCPXML、EDL 或 OTIO 再试；也可以显式告诉引擎它是哪一种。",
+      INTERCHANGE_NO_DOCUMENT: "没有收到要读的文档。把那份工程文件的文本交进来（OTIO 与剪映草稿也可以直接给 JSON）。",
+      INTERCHANGE_MEDIA_AMBIGUOUS: "同一个素材名在这台工程里对应两份素材。先给其中一份改名，或手动指定要哪一份；这一趟没有写任何东西。",
+      INTERCHANGE_CLIP_RANGE: "有些片段的源窗口超出了素材本身。先在源软件里改掉入点，或者把这些段删掉再导；这一趟没有写任何东西。",
+      INTERCHANGE_RATE: "这份文档没有写出可用的帧率。回到源软件确认工程帧率后重新导出。",
+      FCPXML_MALFORMED: "这份 FCPXML 不是格式良好的 XML。请在源软件里重新导出一次；手写或中途截断的文件读不了。",
+      FCPXML_MALFORMED_ENTITIES: "这份 XML 里写了实体声明，出于安全不解析。请在源软件里重新导出为独立文件。",
+      FCPXML_MALFORMED_EXTERNAL_DTD: "这份 XML 引用了外部 DTD，出于安全不解析。请另存为不依赖网络的独立文件后再导。",
+      FCPXML_EMPTY: "这份 FCPXML 里没有可导入的片段（没有 <sequence>、<spine>，或者都是搬不过来的东西）。",
+      FCPXML_TRACK_COUNT: "这份 FCPXML 的画面层或声音轨比工程里的轨道多。先给工程加够轨道，再导入；这一趟没有写任何东西。",
+      FCPXML_TIMECODE: "这份 FCPXML 里有一个时长读不出数。请在源软件里重新导出；它的时码写法不在支持的范围内。",
+      XMEML_MALFORMED: "这份 Premiere / FCP7 XML 不是格式良好的 XML。请在源软件里重新导出一次。",
+      XMEML_MALFORMED_ENTITIES: "这份 XML 里写了实体声明，出于安全不解析。请在源软件里重新导出为独立文件。",
+      XMEML_MALFORMED_EXTERNAL_DTD: "这份 XML 引用了外部 DTD，出于安全不解析。请另存为不依赖网络的独立文件后再导。",
+      XMEML_EMPTY: "这份 XML 里没有可导入的片段。请确认导出时选的是整条序列，而不是只导音频或只导出被选中的片段。",
+      XMEML_TRACK_COUNT: "这份 XML 的视频轨或音频轨比工程里的轨道多。先给工程加够轨道，再导入；这一趟没有写任何东西。",
+      XMEML_RATE: "这份 XML 没有写 <timebase>（帧率）。没有它，帧号折不成时间；请在源软件里确认工程设置后重新导出。",
+      EDL_TRACK_COUNT: "这份剪辑表的通道数比工程里的轨道多。先给工程加够轨道，再导入；这一趟没有写任何东西。",
+      EDL_DROP_FRAME: "这份剪辑表用的是丢帧时码，这里不做丢帧算术。请在源软件里按 NON-DROP FRAME 重新导出一次。",
+      JIANYING_ENCRYPTED: "这份剪映草稿是加密的（剪映 6 及以后会加密 draft_content.json），这里不解密。请在剪映里导出 EDL、FCPXML 或 OTIO 再导进来。",
+      JIANYING_MALFORMED: "这份剪映草稿不是预期的 JSON 结构。请确认交进来的是 draft_content.json 本身，而不是整个草稿目录或压缩包。",
+      JIANYING_EMPTY: "这份剪映草稿里没有可导入的片段。多半是轨道全空，或者内容都在贴纸 / 花字这类不读的轨上。",
+      JIANYING_TRACK_COUNT: "这份剪映草稿的轨道比工程里的多。先给工程加够轨道，再导入；这一趟没有写任何东西。",
       OTIO_MEDIA_AMBIGUOUS: "有一个文件名在工程里对应两份素材，导入不知道该接哪一份。把其中一份改名，或先删掉不用的那份。",
       OTIO_CLIP_RANGE: "有些片段的源窗口超出了素材本身的长度。先修好那几段，或换一份时间线；这一趟没有写任何东西。",
       ROUGH_NONE: "每个镜头都比「每镜留」更短，粗剪没有可切的内容。把每镜留调短一点（默认 1.5 秒）再试；这一次没有改写工程。",
@@ -1419,20 +1444,22 @@ export class Engine {
     }>("GET", `/v1/projects/${projectId}/fcpxml${query}`);
   }
 
-  /** OTIO 导入：先交回普通命令；apply 才写库（一次一个 revision）。 */
-  otioImport(projectId: string, body: Record<string, unknown>) {
+  /** 1.292：一个入口读任意一种工程格式。format 省着，让引擎自己认；回执会把它认成了谁带回来。 */
+  interchangeImport(projectId: string, body: Record<string, unknown>) {
     return this.request<{
       committed: boolean;
       project_id: string;
       revision: number;
+      format: string;
       commands: Record<string, unknown>[];
       tracks: { track_id: string; name: string; kind: string; clips: number }[];
       clips: number;
       text_clips: number;
       gaps: number;
-      dropped: { transitions: number; markers: number; effects: number };
+      omitted: { kind: string; reason: string }[];
+      complete: boolean;
       project?: unknown;
-    }>("POST", `/v1/projects/${projectId}/otio/import`, body, 60000);
+    }>("POST", `/v1/projects/${projectId}/import`, body, 60000);
   }
 
   /** 整轨粗剪：逐片段右到左各取一份计划，合成一个批次；不能扫的片段带原因跳过。 */

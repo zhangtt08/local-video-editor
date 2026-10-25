@@ -99,8 +99,11 @@ import { bridge } from "../bridge";
 import { toast } from "../store";
 import { chordWords } from "../keymap";
 
+/** 属性页的四档分区。一次只渲染一档：整列堆十几段就是「没有呼吸感」的那个样子。 */
+export type InspGroup = "basic" | "color" | "motion" | "fx";
+
 /** 检查器：选中什么就解释什么。精确数值默认收起，需要时状态栏一键打开。 */
-export function Inspector() {
+export function Inspector({ group = "basic" }: { group?: InspGroup }) {
   const app = useApp();
   const [nestName, setNestName] = useState<string | null>(null);
   const readyProject = editableProject(app);
@@ -110,16 +113,19 @@ export function Inspector() {
   const sequence = app.sequenceId ? project?.sequences?.[app.sequenceId] : null;
   const compound = clip ? project?.assets[clip.asset_id]?.sequence_id : null;
 
+  const show = (...groups: InspGroup[]) => groups.includes(group);
   return (
     <div className="panel-scroll">
       {nestName !== null ? <Modal title="预合成选中片段" sub="内部图层、关键帧和声音继续保留，可进入合成编辑。" onClose={() => setNestName(null)} footer={<><button className="btn" onClick={() => setNestName(null)}>取消</button><button className="btn primary" disabled={!nestName.trim() || Boolean(app.busy)} onClick={() => { nestSelection(nestName); setNestName(null); }}>创建预合成</button></>}><label className="panel-label" htmlFor="nest-name">合成名称</label><input className="input" id="nest-name" autoFocus maxLength={256} value={nestName} onChange={(e) => setNestName(e.target.value)} /><p className="hint">合成用工程画幅与帧率，透明区域保留；声音一起收进合成。</p></Modal> : null}
+      {show("basic") ? <>
       {sequence ? <section className="insp-section"><span className="panel-label">当前合成</span><fieldset className="effects-fields" disabled={Boolean(app.busy || !readyProject)}><input className="input" key={sequence.id + sequence.name} aria-label="合成名称" defaultValue={sequence.name} maxLength={256} onBlur={(e) => { const name = e.target.value.trim(); if (name && name !== sequence.name) updateSequence({ name }); }} /><NumberField label="合成时长" hint="缩短时不能截断内部片段或已使用的源区间" value={seconds(sequence.duration_ticks)} quantum={project!.settings.timebase * project!.settings.frame_rate.denominator / project!.settings.frame_rate.numerator} min={project!.settings.frame_rate.denominator / project!.settings.frame_rate.numerator} onCommit={(v) => updateSequence({ duration_ticks: ticks(v) })} /></fieldset></section> : null}
       {app.selectedClips.length ? <section className="insp-section"><button className="btn" disabled={Boolean(app.busy || !readyProject)} onClick={() => setNestName(`合成 ${Object.keys(project?.sequences ?? {}).length + 1}`)}>预合成选中片段</button>{compound ? <button className="btn primary" disabled={Boolean(app.busy || app.batch.length)} onClick={() => openSequence(compound)}>进入合成</button> : null}</section> : null}
       {project ? <details className="insp-section" open={!clip && !multiple}><summary className="panel-label">工程设置</summary><ProjectSettings /></details> : null}
       {project ? <TrackMixer /> : null}
       {app.selectedClips.length ? <AssociationFields /> : null}
+      </> : null}
 
-      {multiple ? <section className="insp-section"><div className="row-title"><span className="panel-label">成组剪辑</span><span className="tag accent">{app.selectedClips.length} 个片段</span></div>
+      {show("basic") && multiple ? <section className="insp-section"><div className="row-title"><span className="panel-label">成组剪辑</span><span className="tag accent">{app.selectedClips.length} 个片段</span></div>
         <p className="hint">拖动任一选中片段移动整组，保留间隔与相对轨道。Ctrl/Shift 点选增减，空白处拖动框选。</p>
         <div className="batch-actions"><button className="btn" onClick={copySelection}>复制</button><button className="btn" onClick={duplicateSelection}>追加副本</button><button className="btn" onClick={() => removeSelection()}>删除</button></div>
         <button className="btn" onClick={() => removeSelection(true)}>涟漪删除整组</button>
@@ -127,8 +133,8 @@ export function Inspector() {
         {app.caps?.features?.multicam_sync ? <div className="batch-actions"><button className="btn" disabled={app.selectedClips.length > 8 || Boolean(app.busy)} title={app.selectedClips.length > 8 ? "一次最多对齐 8 路机位" : "按这几段共享的声音算出相对偏移，把其它机位对齐到第一段：需要每段各占一条轨、至少两秒可听的声音；只动这几段，一次提交一个版本"} onClick={() => void alignMulticam()}>{app.selectedClips.length > 8 ? "最多 8 路" : "对齐多机位"}</button></div> : null}
       </section> : null}
 
-      {multiple ? <GroupTrackFields /> : null}
-      {!multiple ? <section className="insp-section">
+      {show("basic") && multiple ? <GroupTrackFields /> : null}
+      {show("basic") && !multiple ? <section className="insp-section">
         <div className="row-title">
           <span className="panel-label">片段</span>
           {clip ? <span className="tag mono">{humanDuration(clip.duration_ticks)}</span> : null}
@@ -136,17 +142,19 @@ export function Inspector() {
         {!clip ? <div className="empty-note tiny">点时间线上的片段，这里可以改它的起止</div> : <><p className="ellipsis" title={clip.text?.body ?? project?.assets[clip.asset_id]?.label}>{clip.text?.body ?? project?.assets[clip.asset_id]?.label}</p><details open><summary className="panel-label">时间与剪辑</summary><fieldset className="effects-fields" disabled={Boolean(app.busy || !readyProject || project?.tracks.find((t) => t.id === clip.track_id)?.locked)}><ClipFields clip={clip} /></fieldset></details></>}
       </section> : null}
 
-      {clip ? <SpeedFields key={`speed-${clip.id}`} clipId={clip.id} /> : null}
-      {clip?.text ? <TextFields key={`text-${clip.id}`} clip={clip} /> : null}
-      {clip ? <TransitionFields key={`transition-${clip.id}`} clip={clip} /> : null}
-      {clip ? <EffectsFields key={clip.id} clip={clip} /> : null}
-      {clip && project?.tracks.find((t) => t.id === clip.track_id)?.kind === "video" ? <MaskFields key={`mask-${clip.id}`} clip={clip} /> : null}
-      {clip && !clip.text && project?.tracks.find((t) => t.id === clip.track_id)?.kind === "video" ? <ChromaFields key={`chroma-${clip.id}`} clip={clip} /> : null}
-      {clip && project?.tracks.find((t) => t.id === clip.track_id)?.kind === "video" ? <BlendFields clip={clip} /> : null}
-      {clip && project?.assets[clip.asset_id]?.kind !== "audio" ? <ColorFields clip={clip} /> : null}
-      {clip && project?.assets[clip.asset_id]?.kind !== "audio" ? <GradeFields clipId={clip.id} /> : null}
+      {show("basic") && clip ? <SpeedFields key={`speed-${clip.id}`} clipId={clip.id} /> : null}
+      {show("basic") && clip?.text ? <TextFields key={`text-${clip.id}`} clip={clip} /> : null}
+      {show("basic") && clip ? <TransitionFields key={`transition-${clip.id}`} clip={clip} /> : null}
+      {show("basic") && clip ? <EffectsFields key={`basic-${clip.id}`} clip={clip} group="basic" /> : null}
+      {show("basic") && clip && project?.tracks.find((t) => t.id === clip.track_id)?.kind === "video" ? <BlendFields clip={clip} /> : null}
+      {show("motion") && clip ? <EffectsFields key={`motion-${clip.id}`} clip={clip} group="motion" /> : null}
+      {show("fx") && clip ? <EffectsFields key={`fx-${clip.id}`} clip={clip} group="fx" /> : null}
+      {show("fx") && clip && project?.tracks.find((t) => t.id === clip.track_id)?.kind === "video" ? <MaskFields key={`mask-${clip.id}`} clip={clip} /> : null}
+      {show("fx") && clip && !clip.text && project?.tracks.find((t) => t.id === clip.track_id)?.kind === "video" ? <ChromaFields key={`chroma-${clip.id}`} clip={clip} /> : null}
+      {show("color") && clip && project?.assets[clip.asset_id]?.kind !== "audio" ? <ColorFields clip={clip} /> : null}
+      {show("color") && clip && project?.assets[clip.asset_id]?.kind !== "audio" ? <GradeFields clipId={clip.id} /> : null}
 
-      <BatchPanel />
+      {show("basic") ? <BatchPanel /> : null}
     </div>
   );
 
@@ -323,7 +331,7 @@ function AssociationFields() {
 }
 
 
-function EffectsFields({ clip }: { clip: Clip }) {
+function EffectsFields({ clip, group }: { clip: Clip; group: InspGroup }) {
   const app = useApp();
   const play = usePlay();
   const [interpolation, setInterpolation] = useState<Keyframe["interpolation"]>("linear");
@@ -380,11 +388,17 @@ function EffectsFields({ clip }: { clip: Clip }) {
   }, [clip, project, at, play.playing]);
   const currentValues: Record<AnimatedEffect, number> = sampled?.at === at && sampled.clip === clip ? sampled.values : effects;
   const sampleReady = !clip.keyframes?.length || Boolean(sampled?.at === at && sampled.clip === clip);
+  const GROUP_TITLE: Record<InspGroup, string> = {
+    basic: asset?.kind === "audio" ? "声音" : "变换",
+    color: "调色",
+    motion: "关键帧与动画",
+    fx: "特效",
+  };
   return <section className="insp-section effects-section">
-    <div className="row-title"><span className="panel-label">{asset?.kind === "audio" ? "声音" : "变换与动画"}</span><span className="spacer" />
-      <button className="btn tiny subtle" disabled={locked} title="重置静态属性；保留已设置的关键帧" onClick={() => setClipEffects(clip.id, DEFAULT_EFFECTS)}>重置属性</button></div>
+    <div className="row-title"><span className="panel-label">{GROUP_TITLE[group]}</span><span className="spacer" />
+      {group === "basic" ? <button className="btn tiny subtle" disabled={locked} title="重置静态属性；保留已设置的关键帧" onClick={() => setClipEffects(clip.id, DEFAULT_EFFECTS)}>重置属性</button> : null}</div>
     <fieldset disabled={locked || !sampleReady} className="effects-fields">
-      {EFFECT_FIELDS.filter((f) => asset?.kind !== "audio" || f.property === "gain").map((f) => {
+      {group === "basic" ? EFFECT_FIELDS.filter((f) => asset?.kind !== "audio" || f.property === "gain").map((f) => {
         const frame = knobFrame(f.property);
         return <div className="effect-row" key={f.property}>
           <label htmlFor={`fx-${f.property}`}>{f.label}</label>
@@ -393,17 +407,18 @@ function EffectsFields({ clip }: { clip: Clip }) {
           <span className="dim">{f.unit}</span>
           {knobButton(f.property, null, f.label, currentValues[f.property], "")}
         </div>;
-      })}
-      {blurMax > 0 && asset?.kind !== "audio" ? (() => {
+      }) : null}
+      {group === "fx" && blurMax > 0 && asset?.kind !== "audio" ? (() => {
         const shown = (knobFrame("blur")?.value ?? effects.blur ?? 0) * 100;
+        const px = ((shown / 100) * (project?.settings.height ?? 0)).toFixed(1);
         return <div className="effect-row">
           <label htmlFor="fx-blur">{FIELD_LABEL.blur}</label>
           <EffectInput id="fx-blur" value={shown} min={0} max={blurMax} step={0.5} onCommit={(value) => commitKnob("blur", value / 100, () => setClipEffects(clip.id, { blur: value / 100 }))} />
-          <span className="dim">% 高 · ≈{((shown / 100) * (project?.settings.height ?? 0)).toFixed(1)} px</span>
-          {knobButton("blur", "blur_keyframes", FIELD_LABEL.blur, effects.blur ?? 0, "导出把这条曲线编译成一格一步的柔焦窗，预览走的是同一份窗表")}
+          <span className="dim" title={`按画面高 ${(project?.settings.height ?? 0)} px 折算，此刻约 ${px} px`}>% 高</span>
+          {knobButton("blur", "blur_keyframes", FIELD_LABEL.blur, effects.blur ?? 0, "导出把这条曲线编译成一格一步的柔焦窗，两端共用那一份窗表")}
         </div>;
       })() : null}
-          {app.caps?.features?.clip_stabilize && asset?.kind !== "audio" ? <span className="stabilize-row">
+          {app.caps?.features?.clip_stabilize && group === "fx" && asset?.kind !== "audio" ? <span className="stabilize-row">
             <button className="btn tiny" disabled={Boolean(app.busy) || stabBlock !== null}
               title={stabBlock ?? (clip.stabilization ? "这段已经稳定过：再按一次按下面的强度重算一遍，替换掉上一次的抵消，不会叠两层" : "让引擎读这段画面，量出相机自己的抖动，再写入反过来的平移与缩放把它抵消；强度 0 表示不动画面，允许裁切是愿意为消抖让画面放大多少。撤销一步回到稳定前")}
               onClick={() => void stabilizeClip(clip.id, stabilizeStrength / 100, stabilizeCrop / 100)}>{clip.stabilization ? "重新稳定" : "画面稳定"}</button>
@@ -418,7 +433,7 @@ function EffectsFields({ clip }: { clip: Clip }) {
             </label>
             {clip.stabilization ? <span className="dim stabilize-state" role="status">已稳定 · 强度 {Math.round(clip.stabilization.strength * 100)}% · 抵消 {clip.stabilization.translation_correction.toFixed(3)} 画面宽 · {clip.stabilization.points} 个点{clip.stabilization.roll_correction ? ` · 转动 ${clip.stabilization.roll_correction.toFixed(2)}°` : ""}</span> : null}
           </span> : null}
-            {sharpen.amount > 0 && asset?.kind !== "audio" ? <>
+            {group === "fx" && sharpen.amount > 0 && asset?.kind !== "audio" ? <>
         <div className="effect-row">
           <label htmlFor="fx-sharpen">{FIELD_LABEL.sharpen}</label>
           <EffectInput id="fx-sharpen" value={(knobFrame("sharpen")?.value ?? effects.sharpen ?? 0) * 100} min={0} max={sharpen.amount * 100} step={5} onCommit={(value) => commitKnob("sharpen", value / 100, () => setClipEffects(clip.id, { sharpen: value / 100 }))} />
@@ -428,20 +443,20 @@ function EffectsFields({ clip }: { clip: Clip }) {
         <div className="effect-row">
           <label htmlFor="fx-sharpen-radius">{FIELD_LABEL.sharpen_radius}</label>
           <EffectInput id="fx-sharpen-radius" value={(knobFrame("sharpen_radius")?.value ?? effects.sharpen_radius ?? 0) * 100} min={0} max={sharpen.radiusPercent} step={0.25} onCommit={(value) => commitKnob("sharpen_radius", value / 100, () => setClipEffects(clip.id, { sharpen_radius: value / 100 }))} />
-          <span className="dim">% 高 · ≈{((knobFrame("sharpen_radius")?.value ?? effects.sharpen_radius ?? 0) * (project?.settings.height ?? 0)).toFixed(1)} px</span>
+          <span className="dim" title={`按画面高 ${(project?.settings.height ?? 0)} px 折算，此刻约 ${((knobFrame("sharpen_radius")?.value ?? effects.sharpen_radius ?? 0) * (project?.settings.height ?? 0)).toFixed(1)} px`}>% 高</span>
           {knobButton("sharpen_radius", "sharpen_keyframes", FIELD_LABEL.sharpen_radius, effects.sharpen_radius ?? 0, "半径就是那一次高斯采样的宽度，与强度同进同一张窗表")}
         </div>
       </> : null}
-      {carriesAudio && denoiseCeiling > 0 ? <div className="effect-row">
+      {group === "fx" && carriesAudio && denoiseCeiling > 0 ? <div className="effect-row">
         <label htmlFor="fx-denoise">降噪</label>
         <EffectInput id="fx-denoise" value={effects.denoise ?? 0} min={0} max={denoiseCeiling} step={1} onCommit={(value) => setClipEffects(clip.id, { denoise: value })} />
         <span className="dim">dB · 只在导出里生效，浏览器预览不降噪</span>
       </div> : null}
     </fieldset>
-    <div className="animation-head"><span className="panel-label">关键帧</span><span className="spacer" />
+    {group === "motion" ? <>
+    <div className="animation-head" title="移动播放头，点 ◇ 记录属性；选中已有关键帧后修改数值。"><span className="panel-label">关键帧</span><span className="spacer" />
       <button className="btn tiny subtle" onClick={() => setGraphOpen(true)}>曲线编辑</button>
       <select className="input" aria-label="新关键帧插值" value={interpolation} onChange={(e) => setInterpolation(e.target.value as Keyframe["interpolation"])}><option value="linear">线性</option><option value="ease">缓入缓出</option><option value="hold">保持</option><option value="bezier">贝塞尔</option></select></div>
-    <p className="hint">移动播放头，点 ◇ 记录属性。选中已有关键帧后修改数值。</p>
     <div className="keyframe-list">
       {frames.sort((a, b) => a.at_ticks - b.at_ticks).map((k) => <div key={`${k.property}-${k.at_ticks}`} className="keyframe-item">
         <button onClick={() => { playhead.pause(); playhead.set(clip.position_ticks + k.at_ticks - offset); }}>
@@ -452,7 +467,8 @@ function EffectsFields({ clip }: { clip: Clip }) {
       </div>)}
     </div>
     <MotionControls clip={clip} locked={locked} />
-    <details className="slide-controls"><summary className="panel-label">源画面划动与滑移</summary><fieldset disabled={locked} className="effects-fields">
+    </> : null}
+    {group === "basic" ? <details className="slide-controls"><summary className="panel-label">源画面划动与滑移</summary><fieldset disabled={locked} className="effects-fields">
       <div className="effect-row"><label htmlFor="slide-frames">步长</label><input id="slide-frames" className="input" type="number" min={1} max={Math.max(1, Math.floor(clip.duration_ticks / (project ? frameTicks(project.settings.frame_rate) : 1)))} step={1} value={slideFrames} onChange={(e) => setSlideFrames(Math.max(1, Math.round(Number(e.target.value) || 1)))} /><span>帧</span></div>
       <div className="insp-actions">
         <button className="btn tiny" disabled={slidingBlocked} title="只换这段素材播到哪一格：片段位置与时长都不动" onClick={() => slipClip(clip.id, -slideFrames)}>划动 ←</button>
@@ -461,8 +477,8 @@ function EffectsFields({ clip }: { clip: Clip }) {
         <button className="btn tiny" disabled={slidingBlocked} title="整段右移：右边让出、左边收回，总长不变" onClick={() => slideClip(clip.id, slideFrames)}>滑移 →</button>
       </div>
       <p className="hint">{slidingBlocked ? "带变速曲线或已链接声音的片段不能划动/滑移：请直接修剪，或先解除链接。" : "划动改素材起点；滑移改这段在时间线上的位置，两侧各自补/让同样的帧数。"}</p>
-    </fieldset></details>
-    <FadeControls clip={clip} locked={locked} properties={fadeProperties(clip, asset)} />
+    </fieldset></details> : null}
+    {group === "motion" ? <FadeControls clip={clip} locked={locked} properties={fadeProperties(clip, asset)} /> : null}
   </section>;
 }
 

@@ -125,50 +125,10 @@ input, select, textarea { font: inherit; color: inherit; }
 .rz-bottom-left { bottom: 0; left: 0; width: 6px; height: 6px; cursor: nesw-resize; }
 .rz-bottom-right { bottom: 0; right: 0; width: 6px; height: 6px; cursor: nwse-resize; }
 
-/* ---------- 标题栏 ---------- */
-.titlebar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 0 0 12px;
-  background: color-mix(in srgb, var(--panel) 72%, var(--bg));
-  border-bottom: 1px solid var(--line);
-  backdrop-filter: blur(20px) saturate(1.1);
-  -webkit-app-region: drag;
-  user-select: none;
-}
-.titlebar .brand { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: var(--fs-body); }
-.tb-left, .tb-right { display: flex; align-items: center; gap: 8px; }
-.tb-sep { width: 1px; height: 16px; background: var(--line); }
-.tb-sep.tall { height: 22px; }
-.tb-project {
-  -webkit-app-region: no-drag;
-  display: flex; align-items: baseline; gap: 7px;
-  font-size: var(--fs-body); font-weight: 600; color: var(--ink);
-  padding: 3px 7px; border-radius: var(--r-sm);
-}
-.tb-project:hover { background: var(--elev); }
-.tb-project.idle { color: var(--ink-3); font-weight: 500; }
-.tb-project-id { font-size: var(--fs-micro); color: var(--ink-3); }
-.tb-input {
-  font-size: var(--fs-body); font-weight: 600; width: 220px;
-  border: 1px solid var(--accent); border-radius: var(--r-sm); padding: 3px 7px;
-  -webkit-app-region: no-drag;
-}
-.tb-sub { font-size: var(--fs-label); color: var(--ink-3); }
-.rev-chip {
-  font-size: var(--fs-label); font-weight: 600; color: var(--accent-deep);
-  background: var(--accent-soft); padding: 2px 8px; border-radius: var(--r-pill);
-}
-
-.tb-tabs { display: flex; gap: 2px; -webkit-app-region: no-drag; }
-.tb-tab {
-  display: inline-flex; align-items: center; gap: 6px;
-  height: 30px; padding: 0 14px; border-radius: var(--r-pill);
-  font-size: var(--fs-body); color: var(--ink-2);
-}
-.tb-tab:hover { background: var(--elev); color: var(--ink); }
-.tb-tab.active { background: var(--accent-soft); color: var(--accent-deep); font-weight: 600; }
+/* 1.291：旧的「标题栏」那一整块随 `TitleBar.tsx` 一起删了——2.0 的壳是 LeftRail + TopBar，
+   那十几个类（.titlebar / .tb-left / .tb-project / .rev-chip / .tb-tabs …）已经没有主人。
+   留着不会画到屏幕上，只会让下一个改样式的人在两条公式之间挑一条。
+   引擎状态那一颗灯（.conn）是唯一活下来的，它现在归 TopBar。 */
 
 .conn {
   -webkit-app-region: no-drag;
@@ -587,7 +547,8 @@ select { color-scheme: dark; }
 /* 检查器 */
 /* 1.279：一节就是一组——上下各 14px、组与组之间一条很淡的分隔；控件之间 9px，
    读起来是一列而不是一张网格。字仍只用刻度里那三档。 */
-.insp-section { padding: 14px; border-bottom: 1px solid var(--line); }
+/* .insp-section 的 padding 只有一个主人（下面 2.0 那一档 18/16）；这里只留分隔线。 */
+.insp-section { border-bottom: 1px solid var(--line); }
 .insp-section:last-child { border-bottom: none; }
 .row-title { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .field { display: grid; grid-template-columns: 68px minmax(0, 1fr); align-items: center; gap: 8px; margin-bottom: 9px; }
@@ -1510,7 +1471,6 @@ html[data-theme="light"] .rail-icon { background: rgba(28, 20, 52, .05); }
   box-shadow: 0 6px 18px rgba(109, 40, 217, .45);
 }
 .rail-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rail-live { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px rgba(92, 230, 168, .16); }
 
 .rail-storage {
   display: flex; align-items: center; gap: 11px;
@@ -1531,26 +1491,6 @@ html[data-theme="light"] .storage-ring span { background: #fff; color: var(--ink
 .storage-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .storage-text b { font-size: var(--fs-label); font-weight: 600; }
 .storage-text span { font-size: var(--fs-label); color: var(--ink-3); white-space: nowrap; }
-
-.rail-user {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 8px; margin-top: 6px;
-  border-radius: var(--r-md);
-  -webkit-app-region: no-drag;
-}
-.rail-user:hover { background: rgba(255, 255, 255, .04); }
-.rail-avatar {
-  width: 34px; height: 34px; flex: none; border-radius: 50%;
-  display: grid; place-items: center;
-  background: linear-gradient(135deg, #fbcfe8, #a78bfa 62%, #6366f1);
-  color: #23153f; font-weight: 700; font-size: var(--fs-body);
-  box-shadow: 0 4px 14px rgba(139, 92, 246, .35);
-}
-.rail-user-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
-.rail-user-text b { font-size: var(--fs-label); font-weight: 600; white-space: nowrap; }
-.rail-user-text span { font-size: var(--fs-label); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rail-user-text .ok { color: var(--ok); }
-.rail-user-text .off { color: var(--danger); }
 
 /* ---------------- 顶栏 ---------------- */
 .topbar {
@@ -1589,12 +1529,8 @@ html[data-theme="light"] .storage-ring span { background: #fff; color: var(--ink
 }
 .chip-seq:hover { background: var(--elev); color: var(--ink); }
 .chip-seq.active { background: var(--accent-soft); border-color: rgba(167, 139, 250, .4); color: var(--accent-deep); }
-.chip-batch { font-size: var(--fs-label); color: var(--warn-ink); background: var(--warn-soft); border-radius: var(--r-pill); padding: 3px 9px; }
-.rev-chip {
-  font-size: var(--fs-label); color: var(--ink-3);
-  border: 1px solid var(--line); border-radius: var(--r-pill);
-  padding: 2px 8px;
-}
+/* 批次里还有未提交的命令——一颗灯，不占一句小字。 */
+.batch-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--warn-ink); box-shadow: 0 0 0 3px var(--warn-soft); }
 
 .topbar-right { display: flex; align-items: center; gap: 8px; }
 .tb-icon-group { display: inline-flex; align-items: center; gap: 2px; padding: 3px; border-radius: var(--r-pill); background: rgba(255, 255, 255, .05); border: 1px solid var(--line); }
@@ -1776,26 +1712,15 @@ html[data-theme="light"] .rp-tabs button.active { color: #fff; }
 .prop-tab-row button.active { background: var(--accent-soft); color: var(--accent-deep); border-color: rgba(167, 139, 250, .32); }
 .rp-body { flex: 1; min-height: 0; overflow-y: auto; }
 
-.ai-panel { display: flex; flex-direction: column; gap: 12px; padding: 0 14px 18px; }
-.ai-hero {
-  position: relative; overflow: hidden;
-  display: flex; gap: 12px; align-items: center;
-  padding: 14px;
-  border-radius: var(--r-md);
-  background:
-    radial-gradient(220px 140px at 92% 0%, rgba(216, 255, 102, .16), transparent 70%),
-    linear-gradient(120deg, rgba(139, 92, 246, .22), rgba(139, 92, 246, .04));
-  border: 1px solid rgba(167, 139, 250, .32);
+.ai-panel { display: flex; flex-direction: column; gap: 18px; padding: 0 16px 22px; }
+.ai-more {
+  align-self: flex-start;
+  font-size: var(--fs-label); color: var(--ink-2);
+  padding: 4px 12px; border-radius: var(--r-pill);
+  border: 1px solid var(--line); background: transparent;
 }
-.ai-hero-orb {
-  width: 34px; height: 34px; flex: none; border-radius: 50%;
-  background: conic-gradient(from 200deg, #d8ff66, #a78bfa, #6d28d9, #d8ff66);
-  box-shadow: 0 0 22px rgba(167, 139, 250, .5);
-}
-.ai-hero > div { display: flex; flex-direction: column; gap: 3px; }
-.ai-hero b { font-size: var(--fs-strong); font-weight: 620; }
-.ai-hero span { font-size: var(--fs-label); color: var(--ink-2); line-height: 1.5; }
-.ai-list { display: flex; flex-direction: column; gap: 8px; }
+.ai-more:hover { color: var(--ink); border-color: var(--line-strong); }
+.ai-list { display: flex; flex-direction: column; gap: 10px; }
 .ai-card {
   display: flex; align-items: center; gap: 12px;
   padding: 12px 13px; text-align: left;
@@ -1818,9 +1743,10 @@ html[data-theme="light"] .ai-card { background: #fbf9ff; color: var(--ink); }
 .ai-card-text b { font-size: var(--fs-body); font-weight: 600; }
 .ai-card-text span { font-size: var(--fs-label); color: var(--ink-3); line-height: 1.45; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ai-card > svg { color: var(--ink-3); flex: none; }
-.ai-sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 6px; }
+.ai-sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .ai-sec-head b { font-size: var(--fs-strong); font-weight: 620; }
-.ai-sec-head span { font-size: var(--fs-label); color: var(--ink-3); }
+.ai-sec-head button { font-size: var(--fs-label); color: var(--ink-2); }
+.ai-sec-head button:hover { color: var(--ink); }
 .style-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .style-card {
   display: flex; flex-direction: column; gap: 6px; padding: 0;
@@ -1837,8 +1763,6 @@ html[data-theme="light"] .ai-card { background: #fbf9ff; color: var(--ink); }
 .style-card:hover .style-swatch { transform: translateY(-2px); box-shadow: 0 12px 22px rgba(3, 2, 12, .4); }
 .style-name { font-size: var(--fs-label); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .style-card:hover .style-name { color: var(--ink); }
-.ai-foot { display: flex; align-items: flex-start; gap: 7px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--sunk); color: var(--ink-3); font-size: var(--fs-label); line-height: 1.55; }
-.ai-foot code { font-family: var(--mono); color: var(--ink-2); }
 
 /* ---------------- 时间线 ---------------- */
 .tl-toolbar { height: 54px; padding: 0 12px; gap: 8px; border-bottom: 1px solid var(--line); background: transparent; }
@@ -1918,7 +1842,7 @@ html[data-theme="light"] .btn { background: #fff; color: var(--ink); }
 .tag { border-radius: var(--r-pill); }
 .tag.accent { background: var(--accent-soft); color: var(--accent-deep); }
 .panel-label { letter-spacing: .02em; text-transform: none; font-size: var(--fs-label); color: var(--ink-2); }
-.insp-section { padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.insp-section { padding: 18px 16px; border-bottom: 1px solid var(--line); }
 .insp-section > summary { color: var(--ink-2); }
 .insp-section > summary::marker { color: var(--ink-3); }
 .panel.right, .panel.right .panel-head { border: 0; }
@@ -1989,12 +1913,10 @@ html[data-theme="light"] .toast.warn { background: #fdf1d8; color: #7a4c00; }
 @media (max-width: 1240px) {
   .rail { width: 78px; padding: 18px 10px 12px; align-items: center; }
   .rail-brand { padding: 0 0 18px; }
-  .rail-brand-text, .rail-label, .rail-live, .rail-user-text, .storage-text { display: none; }
+  .rail-brand-text, .rail-label, .storage-text { display: none; }
   .rail-item { width: 52px; justify-content: center; padding: 0; }
   .rail-icon { width: 34px; height: 34px; }
   .rail-storage { padding: 8px; justify-content: center; }
-  .rail-user { justify-content: center; padding: 8px; }
-  .rail-user > svg { display: none; }
   .editor2 {
     grid-template-columns: minmax(210px, min(var(--assets-w, 260px), 30vw)) 4px minmax(260px, 1fr) 4px minmax(280px, min(var(--right-w, 300px), 32vw));
     gap: 8px;
@@ -2005,7 +1927,7 @@ html[data-theme="light"] .toast.warn { background: #fdf1d8; color: #7a4c00; }
   .ai-card-text span { display: none; }
 }
 @media (max-width: 1120px) {
-  .crumb-seq, .rev-chip, .chip-batch { display: none; }
+  .crumb-seq { display: none; }
   .tb-chip { display: none; }
 }
 
@@ -2042,10 +1964,9 @@ html[data-theme="light"] .btn.active {
 .tl-head .tname svg { color: var(--ink-3); flex: none; }
 .tl-head.audio-track .tname svg { color: var(--clip-audio-stripe); }
 
-/* 2.0 补 3：AI 列表更紧凑，让「剪辑风格」在默认窗口里完整露出来 */
-.ai-panel { gap: 10px; padding-bottom: 16px; }
-.ai-hero { padding: 12px; }
-.ai-list { gap: 6px; }
+/* 2.0 补 3 的那一档「让 AI 列表更紧凑」已经不需要了：默认只露四张卡，
+   呼吸位交回上面那条 .ai-panel 的 gap。 */
+.ai-panel { padding-bottom: 20px; }
 .ai-card { padding: 10px 12px; gap: 10px; }
 .ai-card-icon { width: 30px; height: 30px; }
 .ai-card-text span { font-size: var(--fs-label); }
@@ -2063,7 +1984,6 @@ html[data-theme="light"] .btn.active {
 }
 .exchange-head { display: flex; flex-direction: column; gap: 2px; }
 .exchange-head b { font-size: var(--fs-body); font-weight: 620; }
-.exchange-head span { font-size: var(--fs-label); color: var(--ink-3); }
 .exchange-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 10px; }
 .exchange-btn {
   display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
@@ -2079,7 +1999,8 @@ html[data-theme="light"] .exchange-btn { background: #fff; color: var(--ink-2); 
 .exchange-btn span { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .exchange-btn b { font-size: var(--fs-label); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .exchange-btn em { font-style: normal; font-size: var(--fs-label); color: var(--ink-3); display: none; }
-.exchange-hint { margin-top: 8px; color: var(--ink-3); line-height: 1.55; }
+/* 1.292：`.exchange-hint` 那一句被删了——三条按钮各自的悬停已经把「先出计划再应用」
+   与「对不上就整份拒绝」说清楚，屏上不需要再来一行小字复述。 */
 .exchange-plan { display: flex; flex-direction: column; gap: 6px; }
 .exchange-plan-row { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: var(--r-sm); background: var(--sunk); font-size: var(--fs-label); }
 .exchange-plan-row b { flex: 1; font-weight: 600; }
@@ -2106,12 +2027,8 @@ html[data-theme="light"] .exchange-btn { background: #fff; color: var(--ink-2); 
 .editor2 .monitor-wrap { flex: 1 1 0; min-height: 0; overflow: hidden; padding: 10px; }
 
 /* 2.0 补 7：AI 页里也带一份片段属性（参考图就是这样一列到底），顶栏那枚引擎小灯 */
-.ai-props { border-top: 1px solid var(--line); margin: 8px 0 0; padding-top: 10px; }
-.ai-props-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 0 14px 6px; }
-.ai-props-head b { font-size: var(--fs-strong); font-weight: 620; }
-.ai-props-head span { font-size: var(--fs-label); color: var(--ink-3); text-align: right; }
-.ai-props .panel-scroll { overflow: visible; }
-.ai-props .insp-section { padding: 12px 14px; }
+/* 1.291：`.ai-props` 那一块（连同它把段落 padding 压回 12/14 的那一条）没有主人了——
+   属性页现在归 RightPanel 的四档页签，一屏只画一档，不需要再靠挤来塞东西。 */
 .conn.compact { width: 30px; height: 30px; padding: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: 1px solid var(--line); }
 .conn.compact .dot { width: 8px; height: 8px; border-radius: 50%; }
 .conn.compact.on .dot { background: var(--ok); box-shadow: 0 0 0 3px rgba(92, 230, 168, .16); }
@@ -2166,7 +2083,6 @@ html, body, #root { overflow: hidden; }
   .rail-item { height: 40px; }
   .rail-tools { margin-top: 8px; padding-top: 8px; }
   .rail-storage { display: none; }
-  .rail-user { padding: 6px 8px; }
 }
 
 /* 2.0 补 14：模板库与设置 */

@@ -3297,3 +3297,15 @@ mask_rotation_schedule_segments` 当前是 12），`GET /v1/projects/{id}/previe
 * `POST /v1/projects/{project_id}/otio/import` — 请求体 `{document, sequence_id?, apply?, request_id?, expected_revision?, dry_run?}`。默认只规划：先为它接管的每条轨道生成 `clip.remove`，再按 Gap 推进的绝对位置逐段生成 `clip.add`。素材按文件名匹配本工程已验证的素材；匹配不到（`OTIO_MEDIA_UNMATCHED`）、一个名字两份素材（`OTIO_MEDIA_AMBIGUOUS`）、轨道比工程多（`OTIO_TRACK_COUNT`）、源窗口越界（`OTIO_CLIP_RANGE`）都整份拒绝。`apply=true` 要带 `request_id` 与 `expected_revision`，写入走普通 `/edits`：一个 revision、一次撤销整体退回。
 
 MCP：`project_otio`、`project_fcpxml`（只读），`otio_import_plan`（强制只读，把命令交回 `timeline_edit`）。能力位：`features.otio_export` / `otio_import` / `fcpxml_export`。
+
+### 1.292 工程格式进口：一个入口，四种读法
+
+* `POST /v1/projects/{project_id}/import` — 请求体 `{document, format?, sequence_id?, apply?, request_id?, expected_revision?, dry_run?}`。`document` 是**文本**（OTIO 与剪映草稿也可以直接给 JSON 对象）；`format` 可以省略，引擎按文档自己写的东西认（`OTIO_SCHEMA` 前缀、根元素、CMX3600 事件行、`tracks` + `materials` 同时在场），认不出来按 `INTERCHANGE_UNKNOWN` 拒绝并说明可以显式传 `format`。回执总是带 `format`（认成了谁）与 `omitted` / `complete`（这一版没能搬过来的东西，逐类点名），所以读者知道交回来的是整刀还是一半。
+  * 支持的读法：`otio`、`fcpxml`（1.x 单文件；`<spine>` 的 `layer` 折成画面轨、`<lane>` 折成声音轨、`<title>` 落成文字片段、`<gap>` 只推位置不算片段）、`xmeml`（FCP7 / Premiere「导出 XML」：`<in>/<out>` 是源窗口、`<start>/<end>` 是记录窗口，`<media>` 与直接挂在 `<sequence>` 下两种写法都读）、`edl`（CMX3600：`rec_in` 落位置、`src_in..src_out` 落源窗口与时长，`* FROM CLIP NAME:` 用来对素材）、`jianying`（剪映 / CapCut 明文 `draft_content.json`：微秒制的 `target_timerange` / `source_timerange`，`material_id` 对到 `materials.videos|audios|texts`）。
+  * 位置一律按文档写的**绝对值**落，不做累加游标，所以一个 layer / lane / channel 里的空隙不会把后面所有段推移。
+  * 拒绝口径：素材名匹配不到（`{FCPXML|XMEML|EDL|JIANYING}_MEDIA_UNMATCHED`）、一个名字两份素材（`INTERCHANGE_MEDIA_AMBIGUOUS`）、源窗口越界（`INTERCHANGE_CLIP_RANGE`）、轨道比工程多（`*_TRACK_COUNT`）、整份没有可导入的片段（`*_EMPTY`）、没交文档（`INTERCHANGE_NO_DOCUMENT`）。丢帧时码（`EDL_DROP_FRAME`）、分数帧率工程（`EDL_RATE`）、自称 encrypted 或压根不是 JSON 的剪映 6+ 草稿（`JIANYING_ENCRYPTED`）**整条拒绝而不是猜一套算术**。
+  * 这一版明确搬不过来的东西进 `omitted` 而不是被静默丢掉：转场、插件效果、变速（FCPXML 的 `speed`、xmeml  clipitem 里的 `rate`、EDL 的 `D`/`W`/`K` 事件、草稿的 `speed` 与 `animations`）、遮罩形状、FCPXML 的复合 `<asset>`（内层 `<spine>`）、xmeml 里没有 `<file>` 的生成器。
+  * 两个 XML 读法收的是外部文本，所以解析之前先设防：出现 `<!ENTITY`（内实体放大与外部实体的唯一入口）按 `{FCPXML|XMEML}_MALFORMED_ENTITIES` 拒绝，`<!DOCTYPE … SYSTEM|PUBLIC>` 按 `{FCPXML|XMEML}_MALFORMED_EXTERNAL_DTD` 拒绝。这条路由只收 document 文本、不接受文件路径，不成为媒体导入之外第二条读文件的口子。
+  * `apply=true` 要带 `request_id` 与 `expected_revision`，写入走普通 `/edits`：一个 revision、一次撤销整体退回。默认只规划。
+
+MCP：`interchange_import_plan`（强制只读，`apply` / `dry_run` 关掉，把 `commands` 交回 `timeline_edit` 提交）。能力位：`features.interchange_import`。`.prproj` / Resolve 的 `.drb` / `.blend` / `.aep` 没有可靠的公开解析器，因此**不做**；这些软件都能导 FCPXML / EDL / OTIO，走上面这一条门。

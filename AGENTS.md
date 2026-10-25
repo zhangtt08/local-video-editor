@@ -5466,3 +5466,39 @@ do 掉了：立方体接回图里，见「八轮前的停放点（1.153）」。
 - **量具跟着新布局改的三处**：`clipSpot` 只在看不见时才滚、且贴最近边（居中会把片段左缘连同针藏到轨道头下）；标尺 seek 先在可见带里点，再按片段中点用键盘补齐到单帧；`ui_deep_probe` 把合着的 `<details>` 里的孩子当「不在画面上」（矩形会撒谎，但人点不到）。
 - **实测**：`ui_shape_check` **56 屏全绿**（1456 与 1040 两档；地板 12.5px、叠行 1、缺口有名 4、下拉被切 0、字压字 0）；7 项真页面 UI 检查（场景/粗剪/挑动/多机位/混音台/深交互/右键菜单）与 `packaged_ui_check` 全绿；`desktop_ts_check` 全部壳检绿。模板与设置真点过：选一段画面 → 套风格 r37→r38；设置里切浅色，`html[data-theme]` 立刻是 light；模板里的入场卡有 7 张。
 - **发版**：`APP_VERSION` / `desktop/package.json` 1.290.0，schema 仍是 33。`build_engine --verify --no-uv` 通过（冻结引擎自报 1.290.0）；`npm run dist` 后根 `AgentCut.exe` 与便携版 `cmp` 逐字节相同（**185,249,062 B**，sha256 前缀 `c941b939dccdc32a`），安装版 185,409,767 B（前缀 `12e765be03f8ddfc`）；`released_package_check`（asar 1.290.0、84 个文件、73 句人话）、`packed_engine_surface_check`（包里引擎真 HTTP 交回 1.290.0 / schema 33）与 `packaged_ui_check`（真窗口：22px 卡片、10px 呼吸位、五枚工具胶囊、轨道头三颗按钮、正文 14px）全绿。
+
+
+## 1.291：界面按「呼吸感」再收一刀，工程格式从四个方向读进来
+
+用户看了 1.289/1.290 那一版之后给的话是：「排版没有呼吸感太拥挤了」「本地引擎部署这种小字没必要增加，徒增廉价感」「功能堆叠过于多」。这一轮就是照这三句改的，并且把它们变成能判红的东西。
+
+- **实现细节从可见面上撤走。** 删掉 AI 面板的宣传块（`ai-hero`：「Agent 剪辑 / 每个动作都写成普通命令：可撤销、可交给 Agent 接着改」）和页脚（`ai-foot`：把 `timeline_edit`、只读分析路由念给人听）；左栏那张「本地剪辑台 / 引擎在线 v1.290.0」的用户卡整块删掉——引擎状态顶栏已经有一颗 `.conn` 灯，三处说同一件事就是堆叠；顶栏的 `r37` revision 胶囊与「N 条待提交」胶囊删成一颗 `batch-dot`，数字进悬停；时间线头上的「批次模式/即时模式」收成「批次/即时」；Agent 改写时间线那条横幅不再把两个 r 数写在脸上，进 `title`。七张 AI 卡的可见副标题原本写的是算法（「包络互相关」「从右往左切开」「一个批次一个 revision」），现在屏上只说会发生什么（「按同期声把这几段对齐到同一拍」），算法与上限进每张卡自己的 `hover`。顺带抓到一处真缺陷：卡片算了 `desc` 却从没画出来，画的是 `reason`——两个字段一个主人，改成一格说人话、一格说悬停。
+- **属性页那四档从锚点变成真分组。** `基础/调色/动画/特效` 以前只是 `scrollIntoView` 到某段标题，十几段 `insp-section` 全在一列里堆着——这就是「功能堆叠过多」的主源。现在 `Inspector` 收一个 `InspGroup`，`show(...)` 是唯一判断，一次只渲染该档；`EffectsFields` 同一只组件按 `group` 分成变换（基础）/ 关键帧与动画 / 特效三段，所以数值、◇、拒绝口径仍是一处算法，不会两套数。`RightPanel` 里那份锚点词表（`words: [...]`）删了——页签与滚动是两套真相时，红绿都说明不了问题。
+- **AI 卡默认四张，其余进「更多」。** 参考图那一列就是四张；七张全露是把选择权推给人。`primary: true` 恰好四条，`shown` 一处判断，那颗「更多」带 `aria-expanded`。
+- **一条被删掉的紧凑补丁。** 1.289 之后样式表里有一档「让 AI 列表更紧凑，让「剪辑风格」在默认窗口里完整露出来」，把 `.ai-panel` 的 gap 压到 10px、`.ai-list` 压到 6px。卡片收口之后它没有存在理由，删；`.insp-section` 的竖向内边距从 14px 抬到 18px，并且**同一选择器三条 padding 规则收成一条**（旧的 14px 那条与 `.ai-props .insp-section { padding: 12px 14px }` 都没有主人了，`.ai-props` 整块随之删除）。
+- **新门禁 `tests/desktop_breathing_check.ts`。** 钉四件事：分区只有一处判断（`InspGroup` 是唯一名册、`group={propTab}` 是唯一交接、`scrollIntoView` 与 `words:` 已绝迹）；旧壳与它的七个类（`.ai-hero` `.ai-foot` `.rev-chip` `.chip-batch` `.rail-live` `.rail-user` `.rail-avatar`）在**去掉注释之后**的样式表里没有主人；AI 卡那两格可见字符串（`line` / `blocked`）不含 14 个实现说法（`包络` `互相关` `从右往左` `capabilities` `clip.grade` `timeline_edit` `revision` `LUFS` `百分位` …）而 `hover` 那一格必须含——这样「挪进悬停」和「把话删了」分得开；默认 4 张卡 + 3 张收口 + `.insp-section` ≥18px + 那条紧凑补丁不许回来。这一档自己先红过两次，两次都是它抓得对：一次是 `.rev-chip` 确实还留在旧标题栏块里，一次是它把**注释里提到的类名**算成了残留——于是判据改成先剥 `/* */`，数针不再数注释。
+- **`TitleBar.tsx` 删了。** 它已经不上屏，但 `desktop_keymap_check.ts` 与 `desktop_maskrot_check.ts` 还在读它——那两档钉的不变量（导出按钮悬停念当前键位、`openEditorPanel("export")` 那一只手）是真要在的，所以把作用域迁到 `shell/TopBar.tsx`，判据一条没放软；旧标题栏那一整块 CSS（`.titlebar` `.tb-left` `.tb-project` `.tb-tabs` `.rev-chip` 等）随源文件一起删。
+
+### 工程格式：一个入口，四种读法
+
+「适配大多数工程文件格式方便 agent 模仿剪辑」这一条，1.289 只做了出口。这一轮补进口，并且先做过一轮开源调研（OpenFilm / OpenCut / OpenChatCut / video-use / kinocut / OTIO 适配器生态 / pyJianYingDraft）再动手：FCPXML 是唯一「官方 DTD + 多家实现交叉验证」的富格式，FCP7 XML 是 Adobe 自己文档化的互通通道，剪映明文草稿是短视频模仿的刚需，而 `.prproj` / `.drb` / `.blend` / `.aep` 没有可靠公开解析器——**所以不做**，文档里引导人从软件内导 FCPXML/EDL/OTIO。
+
+- `interchange.fcpxml_import_plan` / `fcp7xml_import_plan` / `edl_import_plan` / `jianying_import_plan`，加上 `detect_interchange` 与一个分发 `read_interchange`。HTTP 一条 `POST /v1/projects/{id}/import`（`format` 可省，文档自己说它是谁），MCP 一只同名只读工具 `interchange_import_plan`，能力位 `features.interchange_import`。
+- 四个读法共用**一个** `_ImportLedger`：素材怎么对到本机已核过的媒体夹、源窗口怎么按帧夹、对不上/一对多/越界记在哪——这三处正是「悄悄猜一下」会藏身的地方，所以只有一处实现。出口仍只有 `clip.remove` + `clip.add`，apply 走同一条 `/edits`、一个 revision。
+- 位置一律按文档写的**绝对值**落（FCPXML 的 `offset`、xmeml 的 `start`、EDL 的 `rec_in`、草稿的 `target_timerange.start`），不做累加游标——所以一个 layer/lane/channel 里的空隙不会把后面所有段推移。
+- **说不准的东西逐类点名**：FCPXML 的 `transition`/`effect`/`speed`/`alpha`/compound `<spine>`、xmeml 的 `rate`/`effect`/无 `<file>` 的生成器、EDL 的 `D`/`W`/`K` 事件、草稿的 `speed`/`animations`，都进 `omitted` 并置 `complete=false`。丢帧时码（EDL 的 `FCM: DROP-FRAME` 或时码里那枚 `;`）、分数帧率工程、加密的剪映 6+ 草稿**整条按名字拒绝**，不猜一套 DF 算术。
+- **XML 在解析之前先设防**：这两个读法收的是外部文本，所以 `_parse_xml` 在任何解析发生前拒掉 `<!ENTITY`（内实体的 billion-laughs 与外部实体的唯一入口）和指向网络的 `<!DOCTYPE ... SYSTEM|PUBLIC>`，各自按 `*_ENTITIES` / `*_EXTERNAL_DTD` 回。这条不是摆设：实测两枚都红在自家码上。
+- 只收 document 文本，**不开文件路径**——这条路由不该变成媒体导入之外第二条没被审过的读文件口子。
+- `tests/interchange_check.py` 的判据不是「四种格式各自没崩」，而是**四种说法指同一刀**：同一份两轨三段的剪辑，用 FCPXML / xmeml / CMX3600 / 剪映草稿各写一遍读进来，落库签名（轨道、位置、源入点、时长、素材）逐项相同。四趟里 FCPXML 那一趟还必须报 `omitted=[transition]` 且 `complete=false`。另有五条拒绝（实体声明 / 认不出的文档 / 丢帧 / 素材不在本机 / 没交文档）各自按名字回、版本一步不涨，和两条加密草稿的拒绝。
+
+### 顺手修掉的一枚量具账
+
+1.288 之后 `chromapreview_check` 的对照腿从 0.0 级涨到 5.6 级。实测截图 291×163：绿色起点沿 (13,0)→(9,1)→(6,3)→(3,6)→(1,10) 走出半径约 12px 的圆弧——1.289 把监视器做成圆角卡片，而绿点中心在画面 (10,10)、±0.02 的取样片整个压在切角里，读回的是卡片底色 (16,16,29) 混进画面。那是 CSS 装饰不是色彩管线，所以把点挪到 (250,30)，**容差 4 一字未动**。重测：对照 0.0 级、挂键不压 1.0 级、压一半 1.0 级，绿点两端的洞仍是 (0,0,255) 蓝底、near31 的 g 从 224 掉到 112——判据照旧看得见这一只手在画。
+
+### 实测
+
+- `tsc --noEmit` 干净；`ruff check src tests scripts agent` 全绿；`stylewidth_check` 欠账三档 0。
+- `tests/desktop_ts_check.py` 全部壳检绿（含新增的 `desktop_breathing_check.ts`）。
+- `tests/ui_shape_check.py` **56 屏 `SUMMARY green`**（1456 与 1040 两档；地板 12.5px、叠行合计 1、字压字合计 **0**、缺口有名 4、下拉被切 0）。这一轮自己抓到并修掉一处真缺陷：柔焦与清晰半径那两格把「% 高 · ≈43.2 px」画在单位位上，压住了右边那颗 ◇（重叠 5.2×32 px）——像素折算进悬停，屏上只留「% 高」。
+- 量具跟着真分组改的三处：`clickByText` / `panelSpot` / 浮层那一腿找不到控件时**自己逐档点属性页签**（翻完四档仍找不到才报「不在这一屏上」），文字层与调色节点那两腿补了同样的翻页；这不是放软判据，是「控件在另一档里」与「控件不存在」本来就是两件事。
+- `tests/interchange_check.py` 全绿（四格式同一刀 + 五条拒绝 + 两条加密草稿）。

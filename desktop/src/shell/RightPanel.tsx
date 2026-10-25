@@ -4,7 +4,7 @@ import { Icon } from "../ui";
 import { setEditorPanel, useApp } from "../store";
 import { AIPanel } from "./AIPanel";
 import { ExportPanel } from "../views/ExportPanel";
-import { Inspector } from "../views/Inspector";
+import { Inspector, type InspGroup } from "../views/Inspector";
 import { ScopePanel } from "../views/ScopePanel";
 
 type Tab = "ai" | "inspect" | "export" | "scope";
@@ -16,12 +16,12 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "scope", label: "示波器", icon: "image" },
 ];
 
-const PROPERTY_TABS = [
-  { id: "basic", label: "基础", words: ["时间与剪辑", "组合与链接"] },
-  { id: "color", label: "调色", words: ["调色", "画面色彩", "色度键", "色彩管理"] },
-  { id: "motion", label: "动画", words: ["动画", "关键帧", "淡入淡出", "稳定"] },
-  { id: "fx", label: "特效", words: ["柔焦", "清晰", "降噪", "遮罩", "轨道合成"] },
-] as const;
+const PROPERTY_TABS: { id: InspGroup; label: string }[] = [
+  { id: "basic", label: "基础" },
+  { id: "color", label: "调色" },
+  { id: "motion", label: "动画" },
+  { id: "fx", label: "特效" },
+];
 
 /** 右侧工作区：AI 动作、片段属性、交付与示波器共用一列，顶部页签是同一件事的四个入口。 */
 export function RightPanel() {
@@ -33,8 +33,7 @@ export function RightPanel() {
     // 默认落在 AI 剪辑（参考图那一列）；属性页一键就到，量具打开工程后会自己切过去。
     return "ai";
   });
-  const [propTab, setPropTab] = useState<(typeof PROPERTY_TABS)[number]["id"]>("basic");
-  const body = useRef<HTMLDivElement | null>(null);
+  const [propTab, setPropTab] = useState<InspGroup>("basic");
 
   const seenPanel = useRef(app.editorPanel);
   useEffect(() => {
@@ -47,12 +46,6 @@ export function RightPanel() {
   const choose = (next: Tab) => {
     setTab(next);
     if (next !== "ai") setEditorPanel(next);
-  };
-
-  const jump = (words: readonly string[]) => {
-    const nodes = Array.from(body.current?.querySelectorAll<HTMLElement>(".insp-section > summary, .insp-section > .panel-label, .panel-label") ?? []);
-    const hit = nodes.find((node) => words.some((word) => node.textContent?.includes(word)));
-    hit?.scrollIntoView({ block: "start", behavior: "smooth" });
   };
 
   return (
@@ -84,7 +77,7 @@ export function RightPanel() {
                 type="button"
                 aria-pressed={propTab === item.id}
                 className={propTab === item.id ? "active" : ""}
-                onClick={() => { setPropTab(item.id); jump(item.words); }}
+                onClick={() => setPropTab(item.id)}
               >
                 {item.label}
               </button>
@@ -93,7 +86,7 @@ export function RightPanel() {
         </div>
       ) : null}
 
-      <div className="rp-body" ref={body}>
+      <div className="rp-body">
         {tab === "ai" ? (
           <AIPanel />
         ) : tab === "export" ? (
@@ -101,7 +94,7 @@ export function RightPanel() {
         ) : tab === "scope" ? (
           <ScopePanel />
         ) : (
-          <Inspector />
+          <Inspector group={propTab} />
         )}
       </div>
     </aside>

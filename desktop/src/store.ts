@@ -2637,16 +2637,17 @@ export async function exportTimelineFcpxml(): Promise<void> {
   }
 }
 
-export async function planTimelineOtio(document: Record<string, unknown>) {
+/** 1.292：一份别的软件导出的工程，先让引擎认格式并交回计划，不直接写。
+ *  规划出来的命令就是普通命令：一个批次一个 revision，撤销一次整体退回。 */
+export async function planTimelineImport(document: string | Record<string, unknown>) {
   if (!engine || !state.project) return null;
-  return engine.otioImport(state.project.id, { document, apply: false, sequence_id: state.sequenceId });
+  return engine.interchangeImport(state.project.id, { document, apply: false, sequence_id: state.sequenceId });
 }
 
-/** 规划出来的命令就是普通命令：一个批次一个 revision，撤销一次整体退回。 */
-export function applyTimelineOtio(commands: Command[]) {
+export function applyTimelineImport(commands: Command[], format: string) {
   const project = state.project;
   if (!project || !commands.length) return;
-  editAtRevision(commands, project.id, project.revision, "导入 OTIO 时间线");
+  editAtRevision(commands, project.id, project.revision, `导入工程（${format}）`);
 }
 
 export function copySelection() {

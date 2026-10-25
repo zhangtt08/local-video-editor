@@ -393,12 +393,34 @@ async function sweepOne(size, hostPort, probeSource) {
     // 为什么要每颗之前都回一次：上面那几颗里有的是**换页**（动画曲线换编辑页、示波器换右列），
     // Escape 不把页换回来；点顶部标签页还会把选中丢掉。1.223 补「画面中编辑」时被前一颗吃掉、
     // 1.224 补「选中」那一步又被换页吃掉，都是这一条没做到。
+    // 1.291：属性页的四档（基础/调色/动画/特效）现在是**真分组**——一次只渲染一档，
+    // 所以「找不到那颗按钮」有两种意思：产品上真没有，或者它在这一档之外。
+    // 量具自己把这一条分清楚：先按当前页签找，找不到就逐档点过去，找到即停。
+    // 四档都点完仍然找不到，才是真的没有——那时照旧报「那颗按钮不在这一屏上」。
+    const findSpot = (matcher) => evaluate("(() => { const want = " + JSON.stringify(matcher)
+      + ";const list = Array.from(document.querySelectorAll('button, [role=tab], input, select'));"
+      + "const hit = list.find((n) => (n.textContent || '').trim() === want"
+      + " || (n.getAttribute('aria-label') || '') === want || (n.getAttribute('id') || '') === want);"
+      + "if (!hit) return null; const r = hit.getBoundingClientRect();"
+      + "return {x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2)}; })()");
+    const propTabs = () => evaluate("(() => Array.from(document.querySelectorAll('.prop-tab-row button'))"
+      + ".map((n) => { const r = n.getBoundingClientRect();"
+      + "return {text: (n.textContent || '').trim(), x: Math.round(r.left + r.width / 2),"
+      + " y: Math.round(r.top + r.height / 2)}; }).filter((n) => n.text && n.x))()");
+    const reveal = async (matcher) => {
+      let spot = await findSpot(matcher);
+      if (spot) return spot;
+      for (const tab of await propTabs()) {
+        if (tab.text === matcher) continue;
+        await click(tab.x, tab.y);
+        await sleep(450);
+        spot = await findSpot(matcher);
+        if (spot) return spot;
+      }
+      return null;
+    };
     const clickByText = async (name) => {
-      const spot = await evaluate("(() => { const want = " + JSON.stringify(name) + ";"
-        + "const hit = Array.from(document.querySelectorAll('button, [role=tab]'))"
-        + ".find((n) => (n.textContent || '').trim() === want);"
-        + "if (!hit) return null; const r = hit.getBoundingClientRect();"
-        + "return {x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2)}; })()");
+      const spot = await reveal(name);
       if (!spot) return false;
       await click(spot.x, spot.y);
       await sleep(500);
@@ -417,9 +439,22 @@ async function sweepOne(size, hostPort, probeSource) {
       + "if (right <= left || bottom <= top) return null;"
       + "return {x: Math.round((left + right) / 2), y: Math.round((top + bottom) / 2)}; })()");
 
+    // 1.291：按选择器找的那一腿同样要先翻属性页签——那一格现在只在自己那一档里渲染。
+    const revealBySelector = async (selector) => {
+      const here = () => evaluate("(function(){return Boolean(document.querySelector("
+        + JSON.stringify(selector) + "));})()");
+      if (await here()) return;
+      for (const tab of await propTabs()) {
+        await click(tab.x, tab.y);
+        await sleep(450);
+        if (await here()) return;
+      }
+    };
     // 2.0：检查器里的按钮先滚进视野，再验一次「那一点真的落在它身上」；被盖住就把盖它那一层
     // 带回来（不是「点了就算数」）。
-    const panelSpot = (selector) => evaluate("(function(){var el=document.querySelector("
+    const panelSpot = async (selector) => {
+      await revealBySelector(selector);
+      return evaluate("(function(){var el=document.querySelector("
       + JSON.stringify(selector) + ");if(!el)return {error:'missing'};"
       + "el.scrollIntoView({block:'center'});var r=el.getBoundingClientRect();"
       + "var x=Math.round(r.left+r.width/2),y=Math.round(r.top+r.height/2);"
@@ -429,6 +464,7 @@ async function sweepOne(size, hostPort, probeSource) {
       + " disabled: Boolean(el.disabled), pressed: el.getAttribute('aria-pressed'),"
       + " rect: [Math.round(r.left),Math.round(r.top),Math.round(r.width),Math.round(r.height)],"
       + " over: top?top.tagName+'.'+String(top.className||'').slice(0,30):null};})()");
+    };
 
     const waitForClip = async (id, timeout = 6000) => {
       const started = Date.now();
@@ -527,12 +563,25 @@ async function sweepOne(size, hostPort, probeSource) {
       await openDetails();
       return null;
     };
+    // 浮层那一腿认的是「文字里含这一串」，与上面那一腿的精确同名不是一把尺，所以另开一只。
+    const revealPartial = async (text) => {
+      const here = () => evaluate("(function(){var want=" + JSON.stringify(text)
+        + ";return Array.from(document.querySelectorAll('button, [role=tab]'))"
+        + ".some(function(n){return (n.textContent || '').trim().indexOf(want) >= 0;});})()");
+      if (await here()) return;
+      for (const tab of await propTabs()) {
+        await click(tab.x, tab.y);
+        await sleep(450);
+        if (await here()) return;
+      }
+    };
     for (const label of EXTRAS) {
       const trouble = await baseState();
       if (trouble) {
         rows.push({ screen: label, panel: flag("panel", ""), size, data: null, error: trouble });
         continue;
       }
+      await revealPartial(label);
       const finder = "(() => { const want = " + JSON.stringify(label) + ";" +
         "const nodes = Array.from(document.querySelectorAll('button, [role=tab]'));" +
         "const hit = nodes.find((n) => (n.textContent || '').trim().indexOf(want) >= 0);" +
@@ -591,6 +640,8 @@ async function sweepOne(size, hostPort, probeSource) {
           await click(spot.x, spot.y);
           await sleep(600);
           await openDetails();
+          // 1.291：文字层那四颗色块归「基础」那一档；前面几腿可能把页签翻走了，先翻回来再量。
+          await revealBySelector("input[type=color]");
           // 那四颗色块在检查器那一列的折线以下：矩形照样给得出，但探针的 `visible()`
           // 会把「中心点出了滚动格」的那一层判成没画（那是 1.220 定的诚实判据）。
           // 所以先把那一格真滚进视野——不滚的话，这一屏量到 0 颗色块，判据就成了空话。
@@ -646,6 +697,8 @@ async function sweepOne(size, hostPort, probeSource) {
       const trouble = await baseState();
       if (trouble) rows.push({ screen: label, panel: flag("panel", ""), size, data: null, error: trouble });
       else {
+        // 1.291：调色节点归「调色」那一档，前面几腿会把页签翻走——先翻回来再点卡。
+        await revealBySelector(".gg-card .gg-pick");
         const clicked = await evaluate("(function(){"
           + "var cards=document.querySelectorAll('.gg-card .gg-pick');"
           + "var hit=cards[" + String(Math.max(0, Number(GRADECARD) - 1)) + "];"

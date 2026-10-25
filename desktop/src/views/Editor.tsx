@@ -80,9 +80,9 @@ export function Editor() {
       style={{ "--timeline-height": `${layout[2]}px`, "--assets-w": `${layout[0]}px`, "--right-w": `${layout[1]}px` } as CSSProperties}
     >
       {app.remoteAhead && app.project && app.remoteAhead > app.project.revision ? (
-        <div className="remote-banner" role="status">
+        <div className="remote-banner" role="status" title={`Agent 写到了 r${app.remoteAhead}，你手上这份是 r${app.project.revision}`}>
           <Icon name="robot" size={14} />
-          <span>Agent 已把这条时间线改到 <b className="mono">r{app.remoteAhead}</b>（你看到的是 r{app.project.revision}）</span>
+          <span>Agent 已更新这条时间线</span>
           <span className="spacer" />
           <button className="btn tiny" onClick={() => void openProject(app.project!.id)} title="载入最新版本，你的未提交批次会保留在批次里">载入最新</button>
           <button className="btn tiny subtle" onClick={() => setView("history")} title="看是谁在什么时候改的">查看变更</button>
@@ -110,7 +110,7 @@ export function Editor() {
             ))}
           </nav>
           <span className={`tag ${app.mode === "batch" ? "accent" : "off"}`} title={app.mode === "batch" ? "动作先进待提交批次，预演通过再写入" : "每个动作立刻写成一条命令批次并提交"}>
-            {app.mode === "batch" ? "批次模式" : "即时模式"}
+            {app.mode === "batch" ? "批次" : "即时"}
           </span>
           <span className="spacer" />
           <div className="seg mini"><button aria-pressed={!app.graphOpen} className={!app.graphOpen ? "active" : ""} onClick={() => setGraphOpen(false)}>时间线</button><button aria-pressed={app.graphOpen} className={app.graphOpen ? "active" : ""} onClick={() => setGraphOpen(true)}>动画曲线</button></div>

@@ -18,9 +18,11 @@ non-drop decision and its own arithmetic, so it is refused by name rather than r
 
 from __future__ import annotations
 
+import json
 import math
 import re
 import uuid
+import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 from xml.sax.saxutils import quoteattr
@@ -614,3 +616,727 @@ def otio_import_plan(project, document: dict) -> dict:
         "dropped": dropped,
         "revision": project.revision,
     }
+
+
+# ---------------------------------------------------------------------------
+# 1.292：把别人的工程读进来 —— FCPXML / FCP7(Premiere) XML / EDL / 剪映草稿
+#
+# 为什么这一族是差异化的正面：Agent 要「模仿剪辑」，最省力的路不是让它在文档里重新
+# 发明一遍别人剪好的节奏，而是把那份节奏直接读成一条可审的计划。所以这四个读法遵守
+# 同一条纪律：
+#   ① 只交普通命令（清空它接管的轨道 + 逐段 ``clip.add``），apply 走同一条 ``/edits``，
+#      一次一个 revision —— 这里没有第二条写入路径；
+#   ② 素材只按文件名对到**本机已核过**的媒体夹里；对不上、对上一对二，都点名拒绝，不猜；
+#   ③ 这份格式里根本没有的东西（调色、遮罩、变速曲线、插件）逐类点名报在 ``omitted`` 里，
+#      并置 ``complete=False`` —— 宁可说「这一段我没搬过来」，也不悄悄交出一半的时间线。
+# 一个名字（``_ImportLedger``）决定「这一段能不能说、怎么说、说不成记在哪」。
+# ---------------------------------------------------------------------------
+
+
+def _assets_by_name(project) -> dict[str, list[Asset]]:
+    """One place decides how a name written in another tool finds an asset here."""
+    by_name: dict[str, list[Asset]] = {}
+    for asset in project.assets.values():
+        path = _media_path(asset)
+        names = {asset.label.lower()}
+        if path:
+            names.add(_basename(path).lower())
+        for name in names:
+            by_name.setdefault(name, []).append(asset)
+    return by_name
+
+
+class _ImportLedger:
+    """Accumulates ordinary ``clip.add`` commands plus an honest account of what was left out.
+
+    Every interchange reader fills this instead of repeating the matching, the source-window
+    clamp and the refusal bookkeeping — those three are where a silent guess would hide.
+    """
+
+    def __init__(self, project, source: str) -> None:
+        self.project = project
+        self.source = source
+        self.by_name = _assets_by_name(project)
+        self.commands: list[dict] = []
+        self.tracks: list[dict] = []
+        self.omitted: list[dict] = []
+        self.unmatched: list[dict] = []
+        self.ambiguous: list[dict] = []
+        self.bad_range: list[dict] = []
+        self.clips = 0
+        self.text_clips = 0
+        self.gaps = 0
+        self._seen_tracks: set[str] = set()
+
+    # —— 记账 ————————————————————————————————————————————————
+    def omit(self, kind: str, reason: str, **what) -> None:
+        kept = {key: value for key, value in what.items() if value is not None}
+        self.omitted.append({"kind": kind, "reason": reason, **kept})
+
+    def clear_track(self, track) -> None:
+        """The reader owns this track's contents: remove what is there before adding."""
+        if track.id in self._seen_tracks:
+            return
+        self._seen_tracks.add(track.id)
+        for clip in sorted(
+            (item for item in self.project.clips.values() if item.track_id == track.id),
+            key=lambda item: item.id,
+        ):
+            self.commands.append({"op": "clip.remove", "clip_id": clip.id})
+        self.tracks.append({"track_id": track.id, "name": track.name,
+                            "kind": track.kind, "clips": 0})
+
+    def _row(self, track) -> dict | None:
+        for row in self.tracks:
+            if row["track_id"] == track.id:
+                return row
+        return None
+
+    def gap(self, track, seconds: float) -> None:
+        """A gap is a hole, not a clip: it counts, and it never inflates a track's clip count."""
+        del seconds
+        self.gaps += 1
+        row = self._row(track) if track is not None else None
+        if row is not None:
+            row.setdefault("gaps", 0)
+            row["gaps"] += 1
+
+    # —— 那一段能不能说 ——
+    def add(self, track, *, name: str, seconds: float, duration: float,
+            source_in: float = 0.0, asset_name: str | None = None,
+            text: str | None = None) -> bool:
+        """Queue one clip on ``track``; return False when it is refused by name instead."""
+        if duration <= 0 or seconds < 0:
+            self.bad_range.append({"name": name, "reason": "invalid range",
+                                   "start": seconds, "duration": duration})
+            return False
+        base: dict = {}
+        if text is not None:
+            base = {"text": {"body": text}}
+        else:
+            key = (asset_name or name or "").lower()
+            if not key:
+                self.unmatched.append({"name": name, "reason": "no media name in this item"})
+                return False
+            matches = self.by_name.get(key, [])
+            if not matches:
+                self.unmatched.append({"name": name, "media": asset_name or name})
+                return False
+            if len(matches) > 1:
+                self.ambiguous.append({"name": name, "media": asset_name or name,
+                                       "candidates": [item.id for item in matches]})
+                return False
+            asset = matches[0]
+            base = {"asset_id": asset.id}
+            if asset.duration_ticks:
+                start_ticks = int(_snap(source_in * TIMEBASE, self.project))
+                room = max(0, int(asset.duration_ticks) - start_ticks)
+                if duration * TIMEBASE > room:
+                    duration = room / TIMEBASE
+        position = _snap(seconds * TIMEBASE, self.project)
+        source_in_ticks = _snap(source_in * TIMEBASE, self.project)
+        duration_ticks = _snap(duration * TIMEBASE, self.project)
+        if duration_ticks <= 0:
+            self.bad_range.append({"name": name, "reason": "the source window starts at or past "
+                                                           "this asset's end", "start": source_in})
+            return False
+        item = Clip.model_validate({
+            **base,
+            "id": f"{self.source}_{uuid.uuid4().hex[:12]}",
+            "track_id": track.id,
+            "position_ticks": position,
+            "source_in_ticks": source_in_ticks,
+            "duration_ticks": duration_ticks,
+        })
+        self.commands.append({"op": "clip.add", "clip": item.model_dump(mode="json")})
+        self.clips += 1
+        if item.text is not None:
+            self.text_clips += 1
+        row = self._row(track)
+        if row is not None:
+            row["clips"] += 1
+        return True
+
+    # —— 交账 ——
+    def finish(self, *, empty_code: str, unmatched_code: str) -> dict:
+        if self.unmatched:
+            raise EditorError(
+                unmatched_code,
+                "some items point at files this project has not imported; nothing was planned. "
+                "Import those files first, then run the plan again.",
+                422,
+                items=self.unmatched,
+            )
+        if self.ambiguous:
+            raise EditorError(
+                "INTERCHANGE_MEDIA_AMBIGUOUS",
+                "a media name matches more than one asset here; rename one or pick by hand",
+                422,
+                items=self.ambiguous,
+            )
+        if self.bad_range:
+            raise EditorError(
+                "INTERCHANGE_CLIP_RANGE",
+                "some items do not fit their source media; nothing was planned",
+                422,
+                items=self.bad_range,
+            )
+        if not self.clips:
+            raise EditorError(empty_code, "this document has no clips that can be imported", 422)
+        return {
+            "commands": self.commands,
+            "tracks": self.tracks,
+            "clips": self.clips,
+            "text_clips": self.text_clips,
+            "gaps": self.gaps,
+            "omitted": self.omitted,
+            "complete": not self.omitted,
+            "revision": self.project.revision,
+        }
+
+
+def _iso_seconds(value: str | None) -> float:
+    """FCPXML writes rational seconds: ``1s``, ``1001/30000s``, ``PT1.5S``. None when unreadable."""
+    if not value:
+        return 0.0
+    text = value.strip()
+    if text.endswith("s"):
+        text = text[:-1]
+    if "/" in text:
+        head, _, tail = text.partition("/")
+        try:
+            return float(head) / float(tail)
+        except (TypeError, ValueError, ZeroDivisionError):
+            raise EditorError("FCPXML_TIMECODE",
+                              f"cannot read this duration: {value!r}", 422) from None
+    try:
+        return float(text)
+    except ValueError:
+        raise EditorError("FCPXML_TIMECODE", f"cannot read this duration: {value!r}", 422) from None
+
+
+def _strip_tag(name: str) -> str:
+    return name.rsplit("}", 1)[-1]
+
+
+_DTD_ENTITY = re.compile(r"<!ENTITY", re.IGNORECASE)
+_DTD_EXTERNAL = re.compile(r"<!DOCTYPE[^>]*\b(SYSTEM|PUBLIC)\b", re.IGNORECASE)
+
+
+
+def _frames_to_seconds(value: str | None, timebase: int) -> float:
+    if timebase <= 0:
+        raise EditorError("INTERCHANGE_RATE", "this document declares no usable frame "
+                                              "rate", 422)
+    return int(value or 0) / timebase
+
+
+def fcpxml_import_plan(project, document: str) -> dict:
+    """Read an FCPXML sequence into ordinary commands, naming what it cannot carry.
+
+    FCPXML is the one interchange with a published DTD that Final Cut, Resolve, Kdenlive,
+    Premiere (via export) and Shotcut all write, so it covers the most ground per line of
+    parsing. Items are placed by their absolute ``offset`` — no cursor arithmetic, so an
+    overlapping ``layer`` cannot drift.
+    """
+    # The two XML prolog constructs that make a parser do unbounded work are refused before
+    # any parsing happens. Each reader names its own code literally: the vocabulary gate
+    # follows a code from the raise to the Chinese hint, so a shared helper would hide it.
+    if _DTD_ENTITY.search(document):
+        raise EditorError("FCPXML_MALFORMED_ENTITIES",
+                          "entity declarations are not accepted in an interchange document", 422)
+    if _DTD_EXTERNAL.search(document):
+        raise EditorError("FCPXML_MALFORMED_EXTERNAL_DTD",
+                          "this document refers to an external DTD; save it as a standalone "
+                          "file and try again", 422)
+    try:
+        root = ElementTree.fromstring(document)
+    except ElementTree.ParseError as error:
+        raise EditorError("FCPXML_MALFORMED",
+                          f"this is not well-formed XML: {error}", 422) from None
+    if _strip_tag(root.tag) != "fcpxml":
+        raise EditorError("FCPXML_MALFORMED", "the root element is not <fcpxml>", 422,
+                          found=root.tag)
+    ledger = _ImportLedger(project, "fcpxml")
+    resources = root.find("resources")
+    assets: dict[str, dict] = {}
+    formats: dict[str, dict] = {}
+    compound: set[str] = set()
+    for node in resources if resources is not None else []:
+        tag = _strip_tag(node.tag)
+        if tag == "asset":
+            assets[node.get("id") or ""] = dict(node.attrib)
+            if any(_strip_tag(child.tag) == "spine" for child in node):
+                compound.add(node.get("id") or "")
+        elif tag == "format":
+            formats[node.get("id") or ""] = dict(node.attrib)
+    sequences = [node for node in root.iter() if _strip_tag(node.tag) == "sequence"]
+    if not sequences:
+        raise EditorError("FCPXML_EMPTY", "this document has no <sequence>", 422)
+    if len(sequences) > 1:
+        ledger.omit("sequence", "only the first sequence is read", count=len(sequences) - 1)
+    sequence = sequences[0]
+    spine = next((node for node in sequence if _strip_tag(node.tag) == "spine"), None)
+    if spine is None:
+        raise EditorError("FCPXML_EMPTY", "this sequence has no <spine>", 422)
+
+    video_tracks = [track for track in project.tracks if track.kind == "video"]
+    audio_tracks = [track for track in project.tracks if track.kind == "audio"]
+    layers = sorted({int(item.get("layer") or 1)
+                     for item in spine if _strip_tag(item.tag) in {"asset-clip", "asset-ref",
+                                                                   "title", "map"}})
+    if len(layers) > len(video_tracks):
+        raise EditorError("FCPXML_TRACK_COUNT",
+                          "this sequence has more picture layers than the project: add tracks "
+                          "first, then import", 422,
+                          wanted=len(layers), available=len(video_tracks))
+    lane_count = sum(1 for item in spine if _strip_tag(item.tag) == "lane")
+    if lane_count > len(audio_tracks):
+        raise EditorError("FCPXML_TRACK_COUNT",
+                          "this sequence has more audio lanes than the project: add tracks "
+                          "first, then import", 422,
+                          wanted=lane_count, available=len(audio_tracks))
+
+    for order, layer in enumerate(layers):
+        track = video_tracks[order]
+        ledger.clear_track(track)
+        items = [item for item in spine
+                 if _strip_tag(item.tag) in {"asset-clip", "asset-ref", "title", "map"}
+                 and int(item.get("layer") or 1) == layer]
+        for item in sorted(items, key=lambda node: _iso_seconds(node.get("offset"))):
+            tag = _strip_tag(item.tag)
+            for child in item:
+                child_tag = _strip_tag(child.tag)
+                if child_tag == "speed":
+                    ledger.omit("speed", "a speed change is a curve here, not an average rate",
+                                at=item.get("offset"))
+                elif child_tag in {"effect", "color-board"}:
+                    ledger.omit("effect", "colour and plugin effects do not travel in FCPXML",
+                                name=child.get("name"))
+                elif child_tag == "adjust-volume":
+                    ledger.omit("volume", "a keyframed volume is not carried",
+                                name=child.get("name"))
+                elif child_tag == "alpha":
+                    ledger.omit("mask", "a mask shape is not carried", name=child.get("name"))
+            if tag == "title":
+                body = "".join(node.text or "" for node in item.iter()
+                               if _strip_tag(node.tag) == "text")
+                ledger.add(track, name=item.get("name") or "title",
+                           seconds=_iso_seconds(item.get("offset")),
+                           duration=_iso_seconds(item.get("duration")),
+                           text=body or (item.get("name") or ""))
+                continue
+            ref = item.get("ref") or ""
+            record = assets.get(ref)
+            if record is None:
+                ledger.omit("missing-asset", "this item refers to a resource id not in "
+                                             "<resources>", ref=ref or None)
+                continue
+            if ref in compound:
+                ledger.omit("compound", "a nested <spine> is a compound clip; it is not "
+                                        "flattened here", name=record.get("name"))
+                continue
+            src = record.get("src") or ""
+            ledger.add(track, name=record.get("name") or ref,
+                       seconds=_iso_seconds(item.get("offset")),
+                       duration=_iso_seconds(item.get("duration")),
+                       source_in=_iso_seconds(item.get("start") or record.get("start")),
+                       asset_name=_basename(unquote(urlparse(src).path)) if src else None)
+        for item in spine:
+            if _strip_tag(item.tag) == "gap" and int(item.get("layer") or 1) == layer:
+                ledger.gap(track, _iso_seconds(item.get("duration")))
+    for lane_order, lane in enumerate(node for node in spine if _strip_tag(node.tag) == "lane"):
+        track = audio_tracks[lane_order]
+        ledger.clear_track(track)
+        for item in sorted((node for node in lane if _strip_tag(node.tag) in {"audio-clip",
+                                                                            "asset-clip",
+                                                                            "audio-src"}),
+                           key=lambda node: _iso_seconds(node.get("offset"))):
+            ref = item.get("ref") or ""
+            record = assets.get(ref) or {}
+            src = record.get("src") or ""
+            ledger.add(track, name=record.get("name") or ref,
+                       seconds=_iso_seconds(item.get("offset")),
+                       duration=_iso_seconds(item.get("duration")),
+                       source_in=_iso_seconds(item.get("start") or record.get("start")),
+                       asset_name=_basename(unquote(urlparse(src).path)) if src else None)
+    for node in root.iter():
+        if _strip_tag(node.tag) in {"transition"}:
+            ledger.omit("transition", "a transition is not carried; re-add it here",
+                        name=node.get("name"))
+    return ledger.finish(empty_code="FCPXML_EMPTY", unmatched_code="FCPXML_MEDIA_UNMATCHED")
+
+
+def fcp7xml_import_plan(project, document: str) -> dict:
+    """Read an FCP7 / Premiere «Export XML» (xmeml) sequence into ordinary commands.
+
+    Adobe documents this as the interchange with FCP7, and OTIO's own ``fcp_xml`` adapter is
+    built on the same reading, so the shape is stable: frame integers, one ``<track>`` per
+    track, ``<in>/<out>`` for the source window and ``<start>/<end>`` for the record window.
+    """
+    if _DTD_ENTITY.search(document):
+        raise EditorError("XMEML_MALFORMED_ENTITIES",
+                          "entity declarations are not accepted in an interchange document", 422)
+    if _DTD_EXTERNAL.search(document):
+        raise EditorError("XMEML_MALFORMED_EXTERNAL_DTD",
+                          "this document refers to an external DTD; save it as a standalone "
+                          "file and try again", 422)
+    try:
+        root = ElementTree.fromstring(document)
+    except ElementTree.ParseError as error:
+        raise EditorError("XMEML_MALFORMED",
+                          f"this is not well-formed XML: {error}", 422) from None
+    if _strip_tag(root.tag) != "xmeml":
+        raise EditorError("XMEML_MALFORMED", "the root element is not <xmeml>", 422,
+                          found=root.tag)
+    ledger = _ImportLedger(project, "xmeml")
+    sequence = next((node for node in root.iter() if _strip_tag(node.tag) == "sequence"), None)
+    if sequence is None:
+        raise EditorError("XMEML_EMPTY", "this document has no <sequence>", 422)
+    timebase = 0
+    rate = next((node for node in sequence.iter() if _strip_tag(node.tag) == "rate"), None)
+    if rate is not None:
+        base = next((node for node in rate if _strip_tag(node.tag) == "timebase"), None)
+        if base is not None and base.text:
+            timebase = int(float(base.text))
+    if timebase <= 0:
+        raise EditorError("XMEML_RATE", "this sequence declares no <timebase>; set the frame "
+                                        "rate in the source application and export again", 422)
+    files: dict[str, str] = {}
+    for node in root.iter():
+        if _strip_tag(node.tag) != "file":
+            continue
+        path = next((child.text for child in node
+                     if _strip_tag(child.tag) in {"pathurl", "filepath"} and child.text), None)
+        if path:
+            files[node.get("id") or ""] = path
+    pools = {"video": [track for track in project.tracks if track.kind == "video"],
+             "audio": [track for track in project.tracks if track.kind == "audio"]}
+    # Adobe writes <media><video><track>, older FCP7 writers put <video> straight under
+    # <sequence>; both are read, and only the direct children of that one container count,
+    # so a nested sequence's tracks cannot be mistaken for this one's.
+    container = next((node for node in sequence if _strip_tag(node.tag) == "media"), sequence)
+    for group in container:
+        group_tag = _strip_tag(group.tag)
+        if group_tag not in pools:
+            continue
+        pool = pools[group_tag]
+        tracks = [node for node in group if _strip_tag(node.tag) == "track"]
+        if len(tracks) > len(pool):
+            raise EditorError("XMEML_TRACK_COUNT",
+                              f"this sequence has more {group_tag} tracks than the project: add "
+                              "tracks first, then import", 422,
+                              wanted=len(tracks), available=len(pool))
+        for order, track_node in enumerate(tracks):
+            track = pool[order]
+            ledger.clear_track(track)
+            for item in track_node:
+                tag = _strip_tag(item.tag)
+                if tag == "gapitem":
+                    ledger.gap(track, _frames_to_seconds(item.findtext("end"), timebase)
+                               - _frames_to_seconds(item.findtext("start"), timebase))
+                    continue
+                if tag != "clipitem":
+                    continue
+                for child in item:
+                    child_tag = _strip_tag(child.tag)
+                    if child_tag == "rate":
+                        ledger.omit("speed", "a stretched clip is a curve here",
+                                    name=item.get("name"))
+                    elif child_tag in {"effect", "filter"}:
+                        ledger.omit("effect", "plugin effects do not travel in this format",
+                                    name=child.get("name") or child.findtext("effectid"))
+                file_node = next((child for child in item if _strip_tag(child.tag) == "file"), None)
+                if file_node is None:
+                    ledger.omit("generator", "a clip with no <file> is generated in the source "
+                                             "app", name=item.get("name"))
+                    continue
+                ref = file_node.get("id") or ""
+                path = files.get(ref) or (file_node.text or "")
+                start = _frames_to_seconds(item.findtext("start"), timebase)
+                end = _frames_to_seconds(item.findtext("end"), timebase)
+                ledger.add(track, name=item.get("name") or ref,
+                           seconds=start,
+                           duration=end - start,
+                           source_in=_frames_to_seconds(item.findtext("in"), timebase),
+                           asset_name=_basename(unquote(urlparse(path).path)) if path else None)
+    return ledger.finish(empty_code="XMEML_EMPTY", unmatched_code="XMEML_MEDIA_UNMATCHED")
+
+
+_EDL_EVENT = re.compile(
+    r"^(?P<event>\d{3})\s+(?P<reel>\S+)\s+(?P<channel>[AB][AB]?|V)\s+"
+    r"(?P<kind>[VCWD])\s+(?P<src_in>\d{2}:\d{2}:\d{2}[:;]\d{2})\s+"
+    r"(?P<src_out>\d{2}:\d{2}:\d{2}[:;]\d{2})\s+"
+    r"(?P<rec_in>\d{2}:\d{2}:\d{2}[:;]\d{2})\s+"
+    r"(?P<rec_out>\d{2}:\d{2}:\d{2}[:;]\d{2})(?:\s+(?P<trail>.*))?$"
+)
+_EDL_FROM = re.compile(r"^\*\s+FROM CLIP NAME:\s*(.+?)\s*$", re.IGNORECASE)
+
+
+def _tc_seconds(frame: str, fps: int) -> float:
+    """CMX3600 timecode is HH:MM:SS:FF; a ';' in the frames field means drop-frame."""
+    parts = frame.split(":")
+    if fps <= 0:
+        raise EditorError("EDL_RATE", "this list declares no usable frame rate", 422)
+    if parts[3].startswith(";"):
+        raise EditorError("EDL_DROP_FRAME", "drop-frame timecode is not read yet; export this "
+                                            "list as NON-DROP FRAME", 422)
+    whole = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+    return whole + int(parts[3]) / fps
+
+
+def edl_import_plan(project, document: str) -> dict:
+    """Read a CMX3600 list back: the same narrow claim its writer makes, in the other direction.
+
+    Straight cuts on integer, non-drop frames are what an EDL actually carries. A dissolve,
+    a wipe or a drop-frame list is refused by name rather than approximated — the writer of
+    this format refuses them too, so a reader that guessed would accept its own refusal.
+    """
+    numerator, denominator = _rate_numbers(project)
+    if numerator % denominator:
+        raise EditorError("EDL_RATE", "this project runs at a fractional frame rate; drop-frame "
+                                      "arithmetic is not read yet", 422,
+                          found=f"{numerator}/{denominator}")
+    fps = numerator // denominator
+    ledger = _ImportLedger(project, "edl")
+    video_tracks = [track for track in project.tracks if track.kind == "video"]
+    audio_tracks = [track for track in project.tracks if track.kind == "audio"]
+    names: dict[str, str] = {}
+    current_reel = ""
+    channels = {"video": [], "audio": []}
+    events: list[dict] = []
+    for raw in document.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.upper().startswith("TITLE:"):
+            continue
+        if line.upper().startswith("FCM:"):
+            if "DROP" in line.upper() and "NON" not in line.upper():
+                raise EditorError("EDL_DROP_FRAME", "this list is drop-frame; export it as "
+                                                    "NON-DROP FRAME", 422, found=line)
+            continue
+        named = _EDL_FROM.match(line)
+        if named:
+            if current_reel:
+                names[current_reel] = named.group(1)
+            continue
+        matched = _EDL_EVENT.match(line)
+        if not matched:
+            continue
+        event = matched.groupdict()
+        current_reel = event["reel"]
+        events.append(event)
+    if not events:
+        raise EditorError("EDL_EMPTY", "no CMX3600 events were found in this list", 422)
+    for event in events:
+        kind = event["kind"].upper()
+        if kind in {"D", "W", "K"}:
+            ledger.omit("transition", "a dissolve / wipe / key event is not read",
+                        event=event["event"], kind=kind)
+            continue
+        bucket = "video" if event["channel"] == "V" else "audio"
+        if event["channel"] not in channels[bucket]:
+            channels[bucket].append(event["channel"])
+    if len(channels["video"]) > len(video_tracks) or len(channels["audio"]) > len(audio_tracks):
+        raise EditorError("EDL_TRACK_COUNT",
+                          "this list has more channels than the project has tracks: add tracks "
+                          "first, then import", 422,
+                          wanted={"video": len(channels["video"]), "audio": len(channels["audio"])},
+                          available={"video": len(video_tracks), "audio": len(audio_tracks)})
+    for bucket, pool in (("video", video_tracks), ("audio", audio_tracks)):
+        for channel in channels[bucket]:
+            ledger.clear_track(pool[channels[bucket].index(channel)])
+    for event in events:
+        if event["kind"].upper() in {"D", "W", "K"}:
+            continue
+        bucket = "video" if event["channel"] == "V" else "audio"
+        pool = video_tracks if bucket == "video" else audio_tracks
+        track = pool[channels[bucket].index(event["channel"])]
+        src_in = _tc_seconds(event["src_in"], fps)
+        src_out = _tc_seconds(event["src_out"], fps)
+        rec_in = _tc_seconds(event["rec_in"], fps)
+        if src_out <= src_in:
+            ledger.bad_range.append({"event": event["event"], "reason": "source out is at or "
+                                                                       "before source in"})
+            continue
+        ledger.add(track, name=event["event"],
+                   seconds=rec_in,
+                   duration=src_out - src_in,
+                   source_in=src_in,
+                   asset_name=names.get(event["reel"]) or event["reel"])
+    return ledger.finish(empty_code="EDL_EMPTY", unmatched_code="EDL_MEDIA_UNMATCHED")
+
+
+_JIANYYING_ENCRYPTED = ("encrypted", "draft_content.json is encrypted")
+
+
+def jianying_import_plan(project, document) -> dict:
+    """Read a 剪映 / CapCut ``draft_content.json`` (the plain-text ones) into ordinary commands.
+
+    Drafts written by 剪映 6 and later are encrypted; this reader does not try to decrypt them
+    and says so by name. What it does read is the plaintext shape every community writer uses:
+    microsecond ranges, ``material_id`` -> ``materials.*``, per-track segment lists.
+    """
+    if isinstance(document, (str, bytes)):
+        try:
+            document = json.loads(document)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise EditorError(
+                "JIANYING_ENCRYPTED",
+                "this draft is not JSON text; 剪映 6+ encrypts draft_content.json and this "
+                "reader does not. Export an EDL, FCPXML or OTIO from the source app instead",
+                422,
+            ) from None
+    if not isinstance(document, dict):
+        raise EditorError("JIANYING_MALFORMED", "a draft must be a JSON object", 422)
+    if document.get("encrypted"):
+        raise EditorError("JIANYING_ENCRYPTED", "this draft declares itself encrypted; nothing "
+                                                "was read", 422)
+    tracks = document.get("tracks")
+    if not isinstance(tracks, list) or not tracks:
+        raise EditorError("JIANYING_EMPTY", "this draft has no tracks", 422)
+    materials = document.get("materials") or {}
+    by_material: dict[str, dict] = {}
+    for group in ("videos", "audios", "texts", "flames"):
+        for item in materials.get(group) or []:
+            if isinstance(item, dict) and item.get("id"):
+                by_material[str(item["id"])] = item
+    ledger = _ImportLedger(project, "jianying")
+    pools = {"video": [track for track in project.tracks if track.kind == "video"],
+             "audio": [track for track in project.tracks if track.kind == "audio"]}
+    wanted = {"video": 0, "audio": 0}
+    for track in tracks:
+        kind = str(track.get("type") or "").lower()
+        if kind in {"video", "audio"}:
+            wanted[kind] += 1
+    if wanted["video"] > len(pools["video"]) or wanted["audio"] > len(pools["audio"]):
+        raise EditorError("JIANYING_TRACK_COUNT",
+                          "this draft has more tracks than the project: add tracks first, then "
+                          "import", 422,
+                          wanted=wanted,
+                          available={"video": len(pools["video"]), "audio": len(pools["audio"])})
+    seen = {"video": 0, "audio": 0}
+    for track in tracks:
+        kind = str(track.get("type") or "").lower()
+        if kind not in pools:
+            ledger.omit("track", "a sticker / caption style track is not read", kind=kind)
+            continue
+        target = pools[kind][seen[kind]]
+        seen[kind] += 1
+        ledger.clear_track(target)
+        for segment in track.get("segments") or []:
+            if not isinstance(segment, dict):
+                continue
+            material = by_material.get(str(segment.get("material_id") or "")) or {}
+            target_range = segment.get("target_timerange") or {}
+            source_range = segment.get("source_timerange") or {}
+            start = float(target_range.get("start") or 0) / 1_000_000
+            duration = float(target_range.get("duration") or 0) / 1_000_000
+            source_in = float(source_range.get("start") or 0) / 1_000_000
+            if segment.get("speed", 1) not in (1, 1.0, None):
+                ledger.omit("speed", "a draft speed is folded into the source window, not a "
+                                     "curve", at=start)
+            if material.get("animations"):
+                ledger.omit("keyframes", "draft keyframes are not carried",
+                            name=material.get("path"))
+            body = material.get("content")
+            path = material.get("path") or ""
+            if isinstance(path, dict):
+                path = path.get("resource") or ""
+            if body and kind == "video":
+                ledger.add(target, name=str(segment.get("id") or "text"), seconds=start,
+                           duration=duration, text=str(body))
+                continue
+            ledger.add(target, name=str(segment.get("id") or "clip"), seconds=start,
+                       duration=duration, source_in=source_in,
+                       asset_name=_basename(unquote(urlparse(str(path)).path)) if path else None)
+    return ledger.finish(empty_code="JIANYING_EMPTY", unmatched_code="JIANYING_MEDIA_UNMATCHED")
+
+
+# ---------------------------------------------------------------------------
+# 一个入口，先认格式再谈导入
+#
+# 「适配大多数工程文件格式」对 Agent 有用的形状是：交一份路径或一段文本过来，引擎说得出
+# 这是哪一种、能搬什么、搬不了的是哪几段——而不是要 Agent 先自己猜对参数名。所以这里只有
+# 一个判断（detect_interchange）和一个分发（read_interchange），四个读法共用同一条
+# 「只交普通命令」的出口。
+# ---------------------------------------------------------------------------
+
+def detect_interchange(text: str) -> str:
+    """Name the format of an interchange document, or refuse to guess.
+
+    Each answer is decided on something only that format writes — an OTIO schema key, a
+    root element, a CMX3600 event line, a draft's ``tracks`` + ``materials`` pair — so two
+    formats can never claim the same bytes.
+    """
+    head = text.lstrip()
+    if head.startswith("{") or head.startswith("["):
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            raise EditorError(
+                "INTERCHANGE_UNKNOWN",
+                "this looks like JSON but does not parse; it may be an encrypted 剪映 draft "
+                "(剪映 6+ encrypts draft_content.json) — export OTIO, FCPXML or an EDL instead",
+                422,
+            ) from None
+        if isinstance(parsed, dict):
+            schema = str(parsed.get("OTIO_SCHEMA") or "")
+            if schema.startswith("Timeline."):
+                return "otio"
+            if isinstance(parsed.get("tracks"), list) and "materials" in parsed:
+                return "jianying"
+        raise EditorError("INTERCHANGE_UNKNOWN",
+                          "this JSON is not a timeline this engine reads", 422,
+                          keys=sorted(parsed)[:8] if isinstance(parsed, dict) else None)
+    if "<" in head[:400]:
+        probe = head[:4000].lower()
+        if "<fcpxml" in probe:
+            return "fcpxml"
+        if "<xmeml" in probe:
+            return "xmeml"
+    lines = [line for line in text.splitlines() if line.strip()]
+    events = [line for line in lines if _EDL_EVENT.match(line.strip())]
+    if events and len(events) >= max(1, len(lines) // 4):
+        return "edl"
+    raise EditorError(
+        "INTERCHANGE_UNKNOWN",
+        "cannot tell what this document is; pass format=otio|fcpxml|xmeml|edl|jianying "
+        "to say so explicitly",
+        422,
+        first=(lines[0][:60] if lines else None),
+    )
+
+
+def read_interchange(project, document, format: str | None = None) -> dict:
+    """Plan any supported interchange document as ordinary commands.
+
+    Returns the plan plus the format it settled on, so a caller can see what was read
+    rather than trusting a parameter. Nothing is written here.
+    """
+    if isinstance(document, dict):
+        text = json.dumps(document)
+        guessed = "otio" if str(document.get("OTIO_SCHEMA") or "").startswith("Timeline.") \
+            else "jianying"
+    else:
+        text = document
+        guessed = ""
+    chosen = format or guessed or detect_interchange(text)
+    readers = {
+        "otio": lambda: otio_import_plan(project, json.loads(text) if isinstance(
+            document, str) else document),
+        "fcpxml": lambda: fcpxml_import_plan(project, text),
+        "xmeml": lambda: fcp7xml_import_plan(project, text),
+        "edl": lambda: edl_import_plan(project, text),
+        "jianying": lambda: jianying_import_plan(project, text if isinstance(document, str)
+                                                 else document),
+    }
+    if chosen not in readers:
+        raise EditorError("INTERCHANGE_UNKNOWN",
+                          f"this engine does not read {chosen!r}", 422,
+                          supported=sorted(readers))
+    plan = readers[chosen]()
+    return {"format": chosen, **plan}
+
+

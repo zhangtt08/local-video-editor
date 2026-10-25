@@ -71,6 +71,7 @@ from .contracts import (
     GradeApplyTrackRequest,
     Identifier,
     ImportRequest,
+    InterchangeImportRequest,
     LayerProperty,
     LoudnessRequest,
     LutParse,
@@ -1833,6 +1834,49 @@ def create_app(
         root = projects.get(project_id)
         project = sequence_view(root, request.sequence_id)
         plan = interchange.otio_import_plan(project, request.document)
+        if not request.apply:
+            return {
+                "committed": False,
+                "project_id": project_id,
+                "revision": root.revision,
+                **plan,
+            }
+        reference = request.sequence_id
+        known = reference in root.sequences if reference is not None else False
+        batch = EditBatch(
+            request_id=request.request_id,
+            expected_revision=request.expected_revision,
+            sequence_id=reference if known else None,
+            sequence_name=reference if reference is not None and not known else None,
+            commands=plan["commands"],  # type: ignore[arg-type]
+            dry_run=request.dry_run,
+        )
+        mutation = projects.mutate(project_id, batch).model_dump()
+        return {**mutation, **plan}
+
+    @app.post("/v1/projects/{project_id}/import", dependencies=auth)
+    def project_interchange_import(
+        project_id: Identifier,
+        request: InterchangeImportRequest,
+        projects: Store,
+    ):
+        """Read any supported project format into ordinary commands, naming what it cannot carry.
+
+        OTIO, FCPXML, FCP7/Premiere XML, CMX3600 EDL and plaintext 剪映 drafts all come in through
+        here; ``format`` may be left out because the document says what it is. The reply always
+        echoes ``format`` plus ``omitted`` / ``complete``, so a caller can see what was not moved
+        instead of trusting that a timeline arrived intact. ``apply`` writes one revision.
+
+        Only the document text is accepted — this route never opens a path, so it cannot become a
+        second, less-audited way to read files next to the media importer's own roots.
+        """
+        root = projects.get(project_id)
+        project = sequence_view(root, request.sequence_id)
+        if request.document is None:
+            raise EditorError("INTERCHANGE_NO_DOCUMENT",
+                              "pass document: the interchange text (or JSON for OTIO / a draft)",
+                              422)
+        plan = interchange.read_interchange(project, request.document, request.format)
         if not request.apply:
             return {
                 "committed": False,

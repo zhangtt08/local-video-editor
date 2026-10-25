@@ -32,6 +32,7 @@ from .contracts import (
     GradeApplyTrackRequest,
     Identifier,
     ImportRequest,
+    InterchangeImportRequest,
     LayerProperty,
     LoudnessRequest,
     LutParse,
@@ -484,6 +485,24 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         """
         body = request.model_dump(mode="json") | {"apply": False, "dry_run": False}
         return await call("POST", f"/v1/projects/{project_id}/otio/import", body)
+
+    @server.tool(annotations=read)
+    async def interchange_import_plan(
+        project_id: Identifier,
+        request: InterchangeImportRequest,
+    ) -> dict[str, Any]:
+        """Read any supported project file as ordinary commands (read-only here).
+
+        OTIO, FCPXML, FCP7 / Premiere «Export XML», CMX3600 EDL and a plaintext 剪映 draft all
+        come through this one door; leave `format` out and the document says what it is. The
+        reply echoes `format` plus `omitted` / `complete`, so you can see what did NOT move
+        instead of trusting that a timeline arrived intact. `apply` and `dry_run` are forced
+        off: review `commands`, then submit them with `timeline_edit` for one atomic revision.
+        """
+        body = request.model_dump(mode="json", exclude_none=True) | {
+            "apply": False, "dry_run": False,
+        }
+        return await call("POST", f"/v1/projects/{project_id}/import", body)
 
     @server.tool(annotations=read)
     async def track_rough_cut(

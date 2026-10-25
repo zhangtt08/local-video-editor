@@ -271,6 +271,152 @@ def main() -> None:
             assert client.get(f"/v1/projects/{pid}").json()["revision"] == revision + 1
             print("   拒绝：非 OTIO / 找不到素材 / 轨道不够 / 应用缺回执，版本都没动")
 
+            # ⑤ 1.292：四种别人写的工程，读进同一个项目，应该收敛成**逐字段相同**的时间线。
+            # 断言的不是「各自没崩」，而是「四种说法指的是同一刀」——任何一家把源入点、
+            # 记录位置或时长折错一格，签名就对不上。
+            expected = {
+                ("v", 0, 0, 2 * SECOND, "s"),
+                ("v", 3 * SECOND, SECOND, 2 * SECOND, "s"),
+                ("snd", 0, 0, 2 * SECOND, "w"),
+            }
+            fcpxml_doc = """<?xml version="1.0" encoding="UTF-8"?>
+<fcpxml version="1.9">
+  <resources>
+    <format id="r0" frameDuration="1/30s" width="320" height="180"/>
+    <asset id="r1" name="solid.mp4" src="file:///elsewhere/solid.mp4" start="0s"
+           duration="6s" format="r0" hasVideo="1" hasAudio="1"/>
+    <asset id="r2" name="tone.wav" src="file:///elsewhere/tone.wav" start="0s"
+           duration="6s" format="r0" hasAudio="1"/>
+  </resources>
+  <library><event><project><sequence id="s0" format="r0" tcFormat="NDF" duration="5s">
+    <spine>
+      <asset-clip ref="r1" offset="0s" start="0s" duration="2s" format="r0" name="A"/>
+      <gap offset="2s" duration="1s"/>
+      <asset-clip ref="r1" offset="3s" start="1s" duration="2s" format="r0" name="B"/>
+      <transition name="cross dissolve" offset="2s" duration="0.5s"/>
+      <lane id="l1" offset="0s" duration="5s">
+        <audio-clip ref="r2" offset="0s" start="0s" duration="2s" format="r0" name="T"/>
+      </lane>
+    </spine>
+  </sequence></project></event></library>
+</fcpxml>"""
+            xmeml_doc = """<?xml version="1.0" encoding="UTF-8"?>
+<xmeml version="4"><sequence id="q">
+  <rate><timebase>30</timebase><ntsc>FALSE</ntsc></rate>
+  <media><video><track format="p2">
+    <clipitem id="c1"><name>solid.mp4</name><in>0</in><out>60</out>
+      <start>0</start><end>60</end>
+      <file id="f1"><pathurl>file:///elsewhere/solid.mp4</pathurl></file></clipitem>
+    <clipitem id="c2"><in>30</in><out>90</out><start>90</start><end>150</end>
+      <file id="f1"/></clipitem>
+  </track></video>
+  <audio><track><clipitem id="c3"><in>0</in><out>60</out><start>0</start><end>60</end>
+      <file id="f2"><pathurl>file:///elsewhere/tone.wav</pathurl></file></clipitem>
+  </track></audio></media>
+</sequence></xmeml>"""
+            edl_doc = (
+                "TITLE: AgentCut\n"
+                "FCM: NON-DROP FRAME\n"
+                "001  SOLI     V     C        00:00:00:00 00:00:02:00 "
+                "00:00:00:00 00:00:02:00\n"
+                "* FROM CLIP NAME: solid.mp4\n"
+                "002  SOLI     V     C        00:00:01:00 00:00:03:00 "
+                "00:00:03:00 00:00:05:00\n"
+                "* FROM CLIP NAME: solid.mp4\n"
+                "003  TONE     A     C        00:00:00:00 00:00:02:00 "
+                "00:00:00:00 00:00:02:00\n"
+                "* FROM CLIP NAME: tone.wav\n"
+            )
+            draft_doc = {
+                "tracks": [
+                    {"type": "video", "segments": [
+                        {"id": "g1", "material_id": "m1",
+                         "target_timerange": {"start": 0, "duration": 2_000_000},
+                         "source_timerange": {"start": 0, "duration": 2_000_000}},
+                        {"id": "g2", "material_id": "m1",
+                         "target_timerange": {"start": 3_000_000, "duration": 2_000_000},
+                         "source_timerange": {"start": 1_000_000, "duration": 2_000_000}},
+                    ]},
+                    {"type": "audio", "segments": [
+                        {"id": "g3", "material_id": "a1",
+                         "target_timerange": {"start": 0, "duration": 2_000_000}},
+                    ]},
+                ],
+                "materials": {
+                    "videos": [{"id": "m1", "path": "C:/elsewhere/solid.mp4"}],
+                    "audios": [{"id": "a1", "path": "C:/elsewhere/tone.wav"}],
+                },
+            }
+            cases = [
+                ("fcpxml", fcpxml_doc),
+                ("xmeml", xmeml_doc),
+                ("edl", edl_doc),
+                ("jianying", draft_doc),
+            ]
+            here = client.get(f"/v1/projects/{pid}").json()["revision"]
+            for name, document in cases:
+                planned = client.post(
+                    f"/v1/projects/{pid}/import", json={"document": document},
+                )
+                assert planned.status_code == 200, f"{name}: {planned.text}"
+                answer = planned.json()
+                assert answer["format"] == name, (name, answer["format"])
+                assert answer["committed"] is False, answer
+                # 认格式靠文档自己说：不传 format 也要认得。
+                assert answer["clips"] == 3, (name, answer["clips"], answer["tracks"])
+                if name == "fcpxml":
+                    assert answer["complete"] is False, answer
+                    assert [item["kind"] for item in answer["omitted"]] == ["transition"], \
+                        answer["omitted"]
+                applied = client.post(
+                    f"/v1/projects/{pid}/import",
+                    json={"document": document, "format": name, "apply": True,
+                          "request_id": f"imp-{name}", "expected_revision": here},
+                )
+                assert applied.status_code == 200, f"{name}: {applied.text}"
+                here = applied.json()["project"]["revision"]
+                got = signature(applied.json()["project"])
+                assert got == expected, f"{name} 读进来的不是同一刀：{sorted(got)}"
+            assert here == client.get(f"/v1/projects/{pid}").json()["revision"]
+            print(f"   四种格式（{', '.join(name for name, _ in cases)}）读进来是同一刀："
+                  f"两轨三段、源入点与记录位置逐项相同，一次一个版本")
+
+            # ⑥ 说不准的东西按名字交回，且一个字节都不写。
+            refusals = [
+                ({"document": "<!DOCTYPE a [<!ENTITY x 'y'>]><fcpxml/>"},
+                 "FCPXML_MALFORMED_ENTITIES"),
+                ({"document": "hello, not a timeline"}, "INTERCHANGE_UNKNOWN"),
+                ({"document": edl_doc.replace("FCM: NON-DROP FRAME", "FCM: DROP-FRAME")},
+                 "EDL_DROP_FRAME"),
+                ({"document": fcpxml_doc.replace("/elsewhere/solid.mp4", "/nowhere/gone.mp4")},
+                 "FCPXML_MEDIA_UNMATCHED"),
+                ({}, "INTERCHANGE_NO_DOCUMENT"),
+            ]
+            frozen = client.get(f"/v1/projects/{pid}").json()["revision"]
+            for payload, code in refusals:
+                bad = client.post(f"/v1/projects/{pid}/import", json=payload)
+                assert bad.status_code == 422, f"{code}: {bad.status_code} {bad.text}"
+                assert bad.json()["error"]["code"] == code, (code, bad.json()["error"])
+            assert client.get(f"/v1/projects/{pid}").json()["revision"] == frozen, \
+                "有一条拒绝写进了库"
+            print(f"   拒绝：实体声明 / 认不出的文档 / 丢帧时码 / 素材不在本机 / 没交文档，"
+                  f"{len(refusals)} 条各自按名字回，版本一步没涨")
+
+            # ⑦ 加密的剪映草稿不猜：点名说清楚，并指出出路。
+            sealed = client.post(
+                f"/v1/projects/{pid}/import",
+                json={"document": "\u0000ÿþ not json at all"},
+            )
+            assert sealed.status_code == 422, sealed.text
+            assert sealed.json()["error"]["code"] == "INTERCHANGE_UNKNOWN", sealed.json()
+            declared = client.post(
+                f"/v1/projects/{pid}/import",
+                json={"document": {"encrypted": 1, "tracks": []}, "format": "jianying"},
+            )
+            assert declared.status_code == 422, declared.text
+            assert declared.json()["error"]["code"] == "JIANYING_ENCRYPTED", declared.json()
+            print("   加密草稿：认不出来的 JSON 与自称 encrypted 的草稿各自按名字拒绝，不猜内容")
+
         print("interchange_check: all green")
 
 

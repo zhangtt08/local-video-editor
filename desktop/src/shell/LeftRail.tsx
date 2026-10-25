@@ -89,7 +89,6 @@ export function LeftRail() {
           >
             <span className="rail-icon"><Icon name={item.icon} size={16} /></span>
             <span className="rail-label">{item.label}</span>
-            {item.key === "agent" ? <span className="rail-live" title="同一个引擎，Agent 与人是同一个写入口" /> : null}
           </button>
         ))}
       </nav>
@@ -119,17 +118,6 @@ export function LeftRail() {
           <b>存储空间</b>
           <span>{prettyBytes(app.cacheUsage.used_bytes)} / {prettyBytes(app.cacheUsage.limit_bytes || 200 * 1024 * 1024 * 1024)}</span>
         </div>
-      </div>
-
-      <div className="rail-user" title={app.info?.base_url ?? "引擎未连接"}>
-        <span className="rail-avatar" aria-hidden="true">A</span>
-        <div className="rail-user-text">
-          <b>本地剪辑台</b>
-          <span className={app.phase === "ready" ? "ok" : "off"}>
-            {app.phase === "ready" ? `引擎在线${app.caps?.app_version ? ` v${app.caps.app_version}` : ""}` : "引擎未连接"}
-          </span>
-        </div>
-        <Icon name="chevron" size={12} />
       </div>
     </aside>
   );

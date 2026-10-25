@@ -75,8 +75,9 @@ export function TopBar() {
             ))}
           </nav>
         ) : null}
-        {project ? <span className="rev-chip mono" title="每次写入 revision +1，历史只进不退">r{project.revision}</span> : null}
-        {app.batch.length ? <span className="chip-batch" title="批次里还有未提交的命令">{app.batch.length} 条待提交</span> : null}
+        {app.batch.length ? (
+          <span className="batch-dot" title={`批次里还有 ${app.batch.length} 条未提交的命令，先去交付面板或时间线里提交`} aria-label={`${app.batch.length} 条待提交`} />
+        ) : null}
       </div>
 
       <div className="topbar-right">
