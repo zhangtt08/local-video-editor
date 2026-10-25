@@ -71,7 +71,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.295.0"
+APP_VERSION = "1.296.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -7745,6 +7745,10 @@ def capabilities(
             # 1.295：帧级确定性自检。它要真的重画，所以跟着媒体引擎走，不是永远为真。
 
             "frame_stability": media_ready,
+
+            # 1.296：一张总览图看完整条剪辑。同样要真的画帧，所以跟着媒体引擎走。
+
+            "timeline_overview": media_ready,
 
             "loudness_metering": media_ready,
 

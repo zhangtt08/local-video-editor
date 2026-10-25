@@ -556,6 +556,56 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         )
 
     @server.tool(annotations=read)
+    async def timeline_overview(
+        project_id: Identifier,
+        count: int = 6,
+        from_ticks: Ticks | None = None,
+        to_ticks: Ticks | None = None,
+        sequence_id: SequenceRef | None = None,
+    ) -> dict[str, Any]:
+        """Look at the whole cut as one contact sheet instead of N separate frames.
+
+        `preview_frame` answers "what does this instant look like"; this answers "does the edit
+        look right" in a single round trip. Every cell is the same PNG the frame route would
+        return for that tick, tiled by FFmpeg — nothing here re-implements compositing, so a
+        grade or a mask missing from the sheet is missing from the delivery too. `cells` lists
+        the tick of each cell in reading order (left to right, then down) and `grid` gives the
+        layout, so the image never has to be guessed at.
+        """
+        params = [f"count={count}"]
+        if from_ticks is not None:
+            params.append(f"from_ticks={from_ticks}")
+        if to_ticks is not None:
+            params.append(f"to_ticks={to_ticks}")
+        if sequence_id is not None:
+            params.append(f"sequence_id={quote(sequence_id, safe='')}")
+        response = await raw(
+            "GET", f"/v1/projects/{project_id}/overview?" + "&".join(params), timeout=600
+        )
+        body = response.content
+        if body[:8] != b"\x89PNG\r\n\x1a\n":
+            raise ToolError(
+                json.dumps(
+                    {"code": "MEDIA_FAILED", "message": "the overview is not a PNG"},
+                    ensure_ascii=False,
+                )
+            )
+        return {
+            "png_base64": base64.b64encode(body).decode(),
+            "grid": response.headers.get("x-overview-grid", ""),
+            "cells": [
+                int(item)
+                for item in response.headers.get("x-overview-cells", "").split(",")
+                if item
+            ],
+            "width": int.from_bytes(body[16:20], "big"),
+            "height": int.from_bytes(body[20:24], "big"),
+            "bytes": len(body),
+            "sha256": hashlib.sha256(body).hexdigest(),
+            "revision": int(response.headers.get("x-project-revision", "0")),
+        }
+
+    @server.tool(annotations=read)
     async def track_rough_cut(
         project_id: Identifier, track_id: Identifier, request: RoughCutRequest
     ) -> dict[str, Any]:

@@ -26,7 +26,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from . import asr as asr_module
 from . import autograde as autograde_module
 from . import beats as beats_module
-from . import duck, interchange, scenes, silence, stability, transcript
+from . import duck, interchange, overview, scenes, silence, stability, transcript
 from . import fourpoint as fourpoint_module
 from . import markers as marker_plan
 from . import reframe as reframe_plan
@@ -1981,6 +1981,46 @@ def create_app(
             lambda at: media.render_frame(project, at, request.sequence_id),
             times=request.at_ticks,
             revision=root.revision,
+        )
+
+    @app.get("/v1/projects/{project_id}/overview", dependencies=auth)
+    def project_overview(
+        project_id: Identifier,
+        projects: Store,
+        count: int = 6,
+        from_ticks: Ticks | None = None,
+        to_ticks: Ticks | None = None,
+        sequence_id: SequenceRef | None = None,
+    ):
+        """One contact sheet of the whole cut: N frames tiled into a single PNG.
+
+        `preview_frame` answers "what does this instant look like"; this answers "does the cut
+        look right" in one round trip. Every cell is the same byte-for-byte frame the frame route
+        would return, and the header `X-Overview-Cells` lists the tick of each cell in reading
+        order (left to right, then down), so nobody has to guess the layout.
+        """
+        root = projects.get(project_id)
+        project = sequence_view(root, sequence_id)
+        times = overview.pick_times(
+            project, count, from_ticks=from_ticks, to_ticks=to_ticks
+        )
+        media = require_media()
+        sheet = overview.render_overview(
+            media.ffmpeg,
+            lambda at: media.render_frame(project, at, sequence_id)[0],
+            times,
+            (project.settings.width, project.settings.height),
+        )
+        columns, rows = overview.grid(len(times))
+        return Response(
+            sheet,
+            media_type="image/png",
+            headers={
+                "X-Overview-Grid": f"{columns}x{rows}",
+                "X-Overview-Cells": ",".join(str(at) for at in times),
+                "X-Project-Revision": str(project.revision),
+                "Cache-Control": "no-store",
+            },
         )
 
     @app.post("/v1/projects/{project_id}/audio/beats", dependencies=auth)
