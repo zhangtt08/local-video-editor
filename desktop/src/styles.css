@@ -982,7 +982,6 @@ table.table tr.current td { background: var(--accent-soft); }
 .sc-caps { margin-top: 9px; font-size: var(--fs-label); color: var(--ink-3); line-height: 1.6; }
 .sc-btns { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
 .howto { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 11px 13px; }
-.howto ol { margin: 8px 0 10px 16px; font-size: var(--fs-body); color: var(--ink-2); line-height: 1.85; }
 .coach-arrow { color: var(--ink-3); margin-left: 7px; }
 .page.agent { max-width: 940px; }
 .card.advanced { margin-top: 4px; }
@@ -1973,7 +1972,11 @@ html[data-theme="light"] .toast.warn { background: #fdf1d8; color: #7a4c00; }
 
 /* 2.0 补：素材栏三段式（标题 / 来源 / 类型），监视器头部横向滚动，退出全屏只在全屏时出现 */
 .panel-title { font-size: var(--fs-strong); font-weight: 620; letter-spacing: -.01em; }
-.asset-source-row { display: flex; align-items: center; gap: 8px; padding: 0 14px 4px; }
+.asset-filters .seg { flex: none; }
+.asset-filters .asset-search { flex: 1 1 120px; min-width: 0; }
+/* 类型那一组自己占一行：卡片只有 ~280px 宽，把四颗芯片与来源、搜索挤在同一行会折行，
+   折完行数一点没少——那一版被截图否掉了。 */
+.asset-filters .asset-kinds { display: flex; flex: 1 1 100%; gap: 2px; }
 .asset-source-row .seg { flex: 1; }
 .asset-source-row .seg button { height: 28px; font-size: var(--fs-label); }
 .asset-filters { flex-wrap: wrap; row-gap: 8px; padding-top: 6px; }

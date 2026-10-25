@@ -73,26 +73,17 @@ export function Assets() {
         </button>
       </div>
 
-      <div className="asset-source-row">
+      {/* 来源那一档以前独占一行，只放两颗按钮——这张卡于是四行芯片才见到内容。
+          现在第一行是「看哪一份名单 + 搜什么」，第二行是「名单里看哪一类」：三行。
+          （第一版把四颗类型芯片也塞进第一行，卡片只有 ~280px 宽，直接折成两行——
+          行数一点没少，那一版被 `ui_shape_check` 的截图否掉了。） */}
+      <div className="asset-filters" role="group" aria-label="素材库筛选">
         <div className="seg mini" role="tablist" aria-label="素材来源">
           <button type="button" className={tab === "library" ? "active" : ""} onClick={() => setTab("library")} title="本机已探测的文件，可直接拖上时间线">素材库</button>
           <button type="button" className={tab === "project" ? "active" : ""} onClick={() => setTab("project")} title="当前工程已登记的素材：它们决定了片段能取用的范围">
             工程素材 <span className="tag mono">{project ? Object.keys(project.assets).length : 0}</span>
           </button>
         </div>
-      </div>
-
-      <div className="asset-filters" role="tablist" aria-label="按类型筛选">
-        {FILTERS.map((item) => (
-          <button
-            key={item.value}
-            type="button"
-            className={`btn ${filter === item.value ? "active" : ""}`}
-            onClick={() => setAssetFilter(item.value)}
-          >
-            {item.label}
-          </button>
-        ))}
         <input
           className="input asset-search"
           placeholder="搜索素材"
@@ -100,6 +91,18 @@ export function Assets() {
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
+        <div className="asset-kinds" role="group" aria-label="按类型筛选">
+          {FILTERS.map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              className={`btn ${filter === item.value ? "active" : ""}`}
+              onClick={() => setAssetFilter(item.value)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
       </div>
       {query && !library.length && !assets.length ? (
         <div className="asset-noresult">

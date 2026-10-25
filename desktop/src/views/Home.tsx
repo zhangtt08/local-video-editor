@@ -133,13 +133,16 @@ export function Home() {
               <span className="spacer" />
               <span className="mono dim">{app.info ? `:${app.info.port}` : ""}</span>
             </div>
-            <div className="sc-rows">
-              <Row label="FFmpeg" ok={ffmpeg} text={ffmpeg ? "已就绪，可预览与导出" : "未找到，仅能剪辑"} />
-              <Row label="素材库" ok={Boolean(app.library.length)} text={app.library.length ? `${app.library.length} 个已探测文件` : "还没有导入文件"} />
-              <Row label="输出" ok text={app.info?.output_dir ? shortPath(app.info.output_dir) : "引擎默认目录"} />
-            </div>
+            {/* 三行诊断（FFmpeg / 素材库 / 输出）以前摊在首页脸上：它们说的是引擎装在哪、
+                能不能导出，是「连接与存储详情」那一档的内容，不是第一次打开这里的人要读的。
+                收进同一个 disclosure，脸上只留那颗灯与端口。 */}
             <details className="sc-more">
               <summary>连接与存储详情</summary>
+              <div className="sc-rows">
+                <Row label="FFmpeg" ok={ffmpeg} text={ffmpeg ? "已就绪，可预览与导出" : "未找到，仅能剪辑"} />
+                <Row label="素材库" ok={Boolean(app.library.length)} text={app.library.length ? `${app.library.length} 个已探测文件` : "还没有导入文件"} />
+                <Row label="输出" ok text={app.info?.output_dir ? shortPath(app.info.output_dir) : "引擎默认目录"} />
+              </div>
               <KV label="接口" value={app.info?.base_url ?? ""} onCopy={() => void copy(app.info?.base_url ?? "", "接口地址")} />
               <KV label="密钥" value={appInfo.token()} secret onCopy={() => void copy(appInfo.token(), "密钥")} />
               <KV label="素材目录" value={(app.info?.media_roots ?? []).join("、")} />
@@ -165,14 +168,9 @@ export function Home() {
             </details>
           </div>
 
+          {/* 「怎么用」那四行是把 F1 那一页的话抄在首页脸上——抄的那份还更短、更容易与真帮助不一致。
+              现在只留进帮助那一只手，字不再堆第二遍。 */}
           <div className="howto">
-            <div className="panel-label">怎么用</div>
-            <ol>
-              <li>建工程：选画幅与帧率，轨道自动备好</li>
-              <li>拖素材上时间线，蓝色画面、绿色声音</li>
-              <li>空格预览，剪刀分割，拖边缘改长短</li>
-              <li>右侧「导出」出 MP4；「Agent」页让 AI 来剪</li>
-            </ol>
             <button className="btn subtle full" onClick={() => toggleHelp(true)}>
               <Icon name="keyboard" size={12} /> 区域说明与快捷键（F1）
             </button>
