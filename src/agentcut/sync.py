@@ -118,9 +118,49 @@ def best_lag(reference: list[float], other: list[float], max_lag: int) -> tuple[
     return best_lag_value, best_score
 
 
-def lag_ticks(lag_cells: int) -> int:
-    """Envelope cells to timeline ticks, rounded onto the exact integer clock."""
-    return int(round(lag_cells * HOP * TIMEBASE / DECODE_RATE))
+def lag_ticks(lag_samples: int) -> int:
+    """Decoded samples (1 kHz) to timeline ticks, rounded onto the exact integer clock."""
+    return int(round(lag_samples * TIMEBASE / DECODE_RATE))
+
+
+def _sample_correlation(reference: list[int], other: list[int], lag: int) -> float:
+    """Normalised correlation on the raw 1 kHz samples, centred over the overlap."""
+    start = max(0, -lag)
+    end = min(len(reference), len(other) - lag)
+    count = end - start
+    if count < MIN_OVERLAP_CELLS * HOP:
+        return -1.0
+    left_mean = sum(reference[start:end]) / count
+    right_mean = sum(other[start + lag : end + lag]) / count
+    cross = 0.0
+    left_energy = 0.0
+    right_energy = 0.0
+    for index in range(start, end):
+        left = reference[index] - left_mean
+        right = other[index + lag] - right_mean
+        cross += left * right
+        left_energy += left * left
+        right_energy += right * right
+    if left_energy <= 1e-9 or right_energy <= 1e-9:
+        return -1.0
+    return cross / math.sqrt(left_energy * right_energy)
+
+
+def refine(reference: list[int], other: list[int], coarse_cells: int) -> int:
+    """The coarse envelope peak refined on raw samples within one cell either side.
+
+    A 10 ms envelope cannot tell 0.73 s from 0.80 s inside one cell, and snapping that to frames put
+    the angle on the wrong frame. The samples are already decoded, so the last step is cheap.
+    """
+    centre = coarse_cells * HOP
+    best = centre
+    best_score = -1.0
+    for lag in range(centre - 2 * HOP, centre + 2 * HOP + 1):
+        score = _sample_correlation(reference, other, lag)
+        if score > best_score:
+            best_score = score
+            best = lag
+    return best
 
 
 def analyse(
@@ -141,7 +181,8 @@ def analyse(
 
     start, length = window(reference)
     source = project.assets[reference.asset_id].verified.path
-    reference_envelope = envelope(_pcm(ffmpeg, source, start, length))
+    reference_samples = _pcm(ffmpeg, source, start, length)
+    reference_envelope = envelope(reference_samples)
     if len(reference_envelope) < MIN_OVERLAP_CELLS:
         raise EditorError(
             "SYNC_TARGET",
@@ -155,7 +196,8 @@ def analyse(
             continue
         start, length = window(clip)
         asset = project.assets[clip.asset_id]
-        other_envelope = envelope(_pcm(ffmpeg, asset.verified.path, start, length))
+        other_samples = _pcm(ffmpeg, asset.verified.path, start, length)
+        other_envelope = envelope(other_samples)
         if len(other_envelope) < MIN_OVERLAP_CELLS:
             found.append(
                 {
@@ -164,7 +206,8 @@ def analyse(
                 }
             )
             continue
-        lag, score = best_lag(reference_envelope, other_envelope, max_lag)
+        coarse, score = best_lag(reference_envelope, other_envelope, max_lag)
+        lag = refine(reference_samples, other_samples, coarse)
         # A move has to land on the frame grid, so the offset is snapped here once — the plan never
         # asks the reducer for a position it is bound to refuse.
         delta = int(round(lag_ticks(lag) / frame_ticks)) * frame_ticks

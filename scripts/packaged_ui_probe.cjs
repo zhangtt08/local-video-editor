@@ -52,7 +52,7 @@ function connect(webSocketUrl) {
         const id = (nextId += 1);
         const timer = setTimeout(() => {
           if (pending.has(id)) { pending.delete(id); rejectCall(new Error("no answer for " + method)); }
-        }, budget || 30000);
+        }, budget || 60000);
         pending.set(id, (message) => {
           clearTimeout(timer);
           if (message.error) rejectCall(new Error(method + ": " + JSON.stringify(message.error)));
@@ -66,7 +66,20 @@ function connect(webSocketUrl) {
 }
 
 async function evaluate(cdp, expression) {
-  const answer = await cdp.send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
+  // 满载的套件里，渲染进程偶尔慢到第一次求值超时；重试一次比把一整档判红更接近真相。
+  let answer;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      answer = await cdp.send(
+        "Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true }, 60000
+      );
+      break;
+    } catch (error) {
+      const message = String(error && error.message ? error.message : error);
+      if (attempt === 1 || !message.includes("no answer")) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 800));
+    }
+  }
   if (answer.exceptionDetails) throw new Error(JSON.stringify(answer.exceptionDetails).slice(0, 600));
   return answer.result.value;
 }

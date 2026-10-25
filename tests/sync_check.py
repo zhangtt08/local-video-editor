@@ -41,7 +41,7 @@ def burst(folder: Path, name: str, offset_ms: int) -> Path:
     target = folder / name
     run([
         str(FFMPEG), "-v", "error", "-y", "-nostdin",
-        "-f", "lavfi", "-i", "anoisesrc=d=0.1:c=pink:r=48000:a=0.8",
+        "-f", "lavfi", "-i", "anoisesrc=d=0.1:c=pink:r=48000:a=0.8:seed=1234",
         "-af", f"adelay={offset_ms}|{offset_ms},apad=whole_dur=5", "-t", "5", str(target),
     ])
     return target
