@@ -392,6 +392,13 @@ export function Timeline() {
         },
         { kind: "sep", id: "tracks" },
         {
+          // 这颗开关在检查器「组合与链接」那一栏有同一个函数、同一份状态的孪生按钮，
+          // 所以收进菜单不算把人唯一的手藏起来。
+          kind: "item", label: edit.linkedSelection ? "联动选择：开" : "联动选择：关", icon: "link",
+          title: "组合与链接一起选中；音画链接一起修剪、分割。Alt 点选可临时单选。",
+          run: () => prefs.toggleLinkedSelection(),
+        },
+        {
           kind: "item", label: "再加一层画面", icon: "film",
           title: "叠标题、画中画需要第二条画面轨", run: () => addTrack("video"),
         },
@@ -418,8 +425,8 @@ export function Timeline() {
         </span>
         <span className="tool-well" role="group" aria-label="剪辑">
           <IconBtn icon="split" word="分割" label={`在播放头处分割选中片段（${chordWords(keymap().split)}）`} disabled={!canSplit} onClick={() => splitSelection(playhead.value)} />
-          <IconBtn icon="copy" word="复制" label={`复制选中片段（${chordWords(keymap().copy)}）`} disabled={!app.selectedClip} onClick={copySelection} />
-          <IconBtn icon="paste" word="粘贴" label={`粘贴到播放头（${chordWords(keymap().paste)}）`} disabled={!app.clipboardCount} onClick={pasteSelection} />
+          <IconBtn icon="copy" label={`复制选中片段（${chordWords(keymap().copy)}）`} disabled={!app.selectedClip} onClick={copySelection} />
+          <IconBtn icon="paste" label={`粘贴到播放头（${chordWords(keymap().paste)}）`} disabled={!app.clipboardCount} onClick={pasteSelection} />
           <IconBtn icon="trash" word="删除" label={`删除选中片段，保留空隙（${chordWords(keymap()["delete-selection"])}）`} disabled={!app.selectedClip} onClick={() => removeSelection()} />
           <IconBtn icon="ripple" word="补位" label={`删除并向左补齐本轨后续片段（${chordWords(keymap()["ripple-delete"])}）`} disabled={!app.selectedClip} onClick={() => removeSelection(true)} />
         </span>
@@ -427,22 +434,23 @@ export function Timeline() {
         <span className="tool-well" role="group" aria-label="吸附与标记">
           <IconBtn icon="magnet" word="磁吸" label={`磁吸（${chordWords(keymap()["toggle-snap"])}）：拖动时自动贴到整帧、相邻片段边缘与标记，避免留下 1 帧缝`} active={edit.snap} onClick={() => prefs.toggleSnap()} />
           <IconBtn icon="flag" word="标记" label="在指针处打一个标记（M）：人和 Agent 用同一个整数刻度说「这里」，标记还会成为磁吸边缘" onClick={() => addMarker()} />
-          <IconBtn icon="link" word="联动" label="联动选择：组合与链接一起选中；音画链接一起修剪、分割。Alt 点选可临时单选。" active={edit.linkedSelection} onClick={() => prefs.toggleLinkedSelection()} />
         </span>
         <span className="tool-well" role="group" aria-label="历史">
           <IconBtn icon="undo" label="撤销：用历史恢复回到上一步（版本号继续增加，不会倒退）" disabled={!app.undo.length} onClick={undo} />
           <IconBtn icon="redo" label={`重做：回到撤销前的那一版（${chordWords(keymap().redo)}）`} disabled={!app.redo.length} onClick={redoStep} />
         </span>
-        <button
-          type="button"
-          className="icon-btn worded"
-          aria-label="更多剪辑动作"
-          title="复制属性、按标记切开、加轨道、适应窗口——用得没上面那些勤，收在这里"
-          onClick={(event) => toolMenu(event.currentTarget)}
-        >
-          <Icon name="more" />
-          <span className="icon-word">更多</span>
-        </button>
+        <span className="tool-well" role="group" aria-label="更多">
+          <button
+            type="button"
+            className="icon-btn worded"
+            aria-label="更多剪辑动作"
+            title="复制属性、按标记切开、联动选择、加轨道、适应窗口——用得没上面那些勤，收在这里"
+            onClick={(event) => toolMenu(event.currentTarget)}
+          >
+            <Icon name="more" />
+            <span className="icon-word">更多</span>
+          </button>
+        </span>
         <span className="spacer" />
         <span className="zoom-ctrl">
           <IconBtn icon="zoomOut" label={`缩小（${chordWords(keymap()["zoom-out"])}）`} onClick={() => prefs.zoomBy(0.8)} />

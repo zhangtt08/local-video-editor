@@ -263,9 +263,23 @@ async function sweepOne(size, hostPort, probeSource) {
     // 等应用真把工程读进来：状态栏那一条只有加载完才有项目名。
     if (THEME !== "") {
       const want = THEME === "light" ? "light" : "dark";
-      await evaluate(`localStorage.setItem("agentcut.theme", ${JSON.stringify(want)})`);
+      // 用 CDP 在**新文档的脚本之前**把偏好写下，再刷新一次——直接 evaluate 一句
+      // `localStorage.setItem` 会撞上文档还没换过来的那一瞬（file:// 上读 localStorage
+      // 是 SecurityError），那一瞬早晚会被下一次采样撞上，所以贴完还得回头看一眼。
+      await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
+        source: `try{localStorage.setItem("agentcut.theme", ${JSON.stringify(want)});}catch(e){}`,
+      });
       await cdp.send("Page.reload", {});
-      await sleep(1200);
+      let applied = "";
+      for (let wait = 0; wait < 60 && applied !== want; wait += 1) {
+        await sleep(250);
+        try {
+          applied = String((await evaluate("document.documentElement.dataset.theme || ''")) || "");
+        } catch {
+          applied = "";
+        }
+      }
+      if (applied !== want) throw new Error(`量具没能把主题贴上：要 ${want}，量到 ${applied || "空"}`);
     }
     // 等的是「屏幕上真的有字」，不是某个壳层节点存在——1.205 那一轮「五屏全报量不到」的根因
     // 就是把「能回话」当成了「画出来了」。

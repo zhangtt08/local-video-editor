@@ -24,7 +24,10 @@ from agentcut.contracts import APP_VERSION  # noqa: E402
 
 EXE = ROOT / "desktop/release/win-unpacked/AgentCut.exe"
 PROBE = ROOT / "scripts/packaged_ui_probe.cjs"
-LABELS = ("工具", "剪辑", "吸附与标记", "历史与视图", "加轨道")
+# 装机窗口里那五颗工具胶囊的名字，按屏幕上的顺序点出来。1.294 把「历史与视图 / 加轨道」
+# 两胶囊收进「更多」（复制属性、按标记切开、加轨道、适应窗口都在那份菜单里，走的还是同一批
+# store 函数），1.296 又给「更多」补上自己的胶囊——名单跟着改，但少一颗、换名字、调顺序仍红。
+LABELS = ("工具", "剪辑", "吸附与标记", "历史", "更多")
 
 
 def fail(message: str) -> None:

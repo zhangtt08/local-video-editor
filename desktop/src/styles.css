@@ -1802,7 +1802,7 @@ html[data-theme="light"] .ai-card { background: #fbf9ff; color: var(--ink); }
 .tool-well .btn, .tool-well .icon-btn { height: 30px; border-radius: var(--r-pill); }
 /* 工具条上那些动作各带一个中文词：一排没有词的图标，人得挨个悬停才知道哪颗是补位、哪颗是删除。
    窄窗（≤1240）里把词收掉退回图标——那一档整条工具条本来就要横着滚。 */
-.icon-btn.worded { width: auto; min-width: 34px; padding: 0 10px; gap: 6px; }
+.icon-btn.worded { width: auto; min-width: 32px; padding: 0 8px; gap: 4px; }
 .icon-btn.worded .icon-word { font-size: var(--fs-label); line-height: 1; white-space: nowrap; }
 @media (max-width: 1240px) {
   .tl-toolbar .icon-word { display: none; }
