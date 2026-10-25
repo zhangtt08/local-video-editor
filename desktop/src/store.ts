@@ -428,6 +428,7 @@ export async function boot() {
   try {
     const caps = await engine.capabilities();
     set({ phase: "ready", caps });
+    markBuild(caps);
     await refreshProjects();
     await restoreDeepLink();
   } catch (error) {
@@ -436,8 +437,7 @@ export async function boot() {
   }
 }
 
-async function restoreDeepLink() {
-  // 深链 ?project= / ?view= 优先；否则回到上次打开的工程，软件重启不该让人重新找一遍。
+async function restoreDeepLink() {  // 深链 ?project= / ?view= 优先；否则回到上次打开的工程，软件重启不该让人重新找一遍。
   let wanted = "";
   try {
     wanted = urlParam("project") || (localStorage.getItem("agentcut.lastProject") ?? "");
@@ -468,6 +468,13 @@ async function restoreDeepLink() {
   }
 }
 
+/** 构建标记：版本号不画在脸上（那正是「本地引擎部署」式的小字），但装机包到底跑的哪一版
+ *  必须可核对。留一份机器可读的凭据在 `<html>` 上，验收就不必把小字塞回界面。 */
+function markBuild(caps: Capabilities | null): void {
+  const version = caps?.app_version ? String(caps.app_version) : "";
+  if (version) document.documentElement.dataset.appVersion = version;
+}
+
 /** 引擎被外壳重新拉起后，接口地址会变；重建客户端并刷新界面。 */
 async function bootAfterReady(info: BackendInfo) {
   engine = new Engine(info.base_url, info.token || (await bridge.token()));
@@ -475,6 +482,7 @@ async function bootAfterReady(info: BackendInfo) {
   try {
     const caps = await engine.capabilities();
     set({ caps, phase: "ready", remoteAhead: null });
+    markBuild(caps);
     await refreshProjects();
     const current = state.project;
     if (current) {

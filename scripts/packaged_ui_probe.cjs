@@ -129,14 +129,30 @@ async function main() {
     await cdp.send("Runtime.enable");
     await cdp.send("Page.enable");
     let body = "";
+    // 1.291：版本号不再画在界面上（「引擎在线 v1.290.0」那种小字正是被删掉的东西），
+    // 但装机包跑的到底是不是这一版，必须还能核对。构建标记写在 `<html data-app-version>`
+    // 上，由 capabilities 落地那一处贴上去——所以这里认的是它，不是屏幕上的一行字。
+    // 顺带修掉一枚过期探针：原来那句写死等 1.279.x，从 1.280 起永远等不到，
+    // 每一趟都白跑满 60 次 × 1.5 秒（90 秒）才继续。
+    const wantVersion = String(WANT_VERSION || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    let marker = "";
     for (let attempt = 0; attempt < 60; attempt += 1) {
+      marker = String(await evaluate(
+        cdp,
+        "document.documentElement.dataset.appVersion || ''",
+      ));
       body = String(await evaluate(cdp, "document.body.innerText"));
-      if (/1\.279\.\d/.test(body)) break;
+      if (wantVersion && marker.startsWith(WANT_VERSION)) break;
       await sleep(1500);
     }
-    const versionPattern = new RegExp(WANT_VERSION.replace(/\./g, "\\.") + "[0-9]*", "g");
-    facts.versionOnScreen = (body.match(versionPattern) || [])[0] || null;
-    if (!facts.versionOnScreen) throw new Error("真窗口里念不出 " + (WANT_VERSION || "当前版本"));
+    facts.versionMarker = marker;
+    facts.versionOnScreen = wantVersion && marker.startsWith(WANT_VERSION) ? marker : null;
+    if (!facts.versionOnScreen) {
+      throw new Error(
+        "真窗口里没有这一版的构建标记（<html data-app-version>）：想要 "
+        + (WANT_VERSION || "当前版本") + "，量到的是 " + (marker || "空"),
+      );
+    }
 
     // 引擎自己的令牌：Electron 把它写在 userData 里（这里就是 --user-data-dir 那一份）。
     let token = "";

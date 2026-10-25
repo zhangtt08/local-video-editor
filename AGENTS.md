@@ -5502,3 +5502,12 @@ do 掉了：立方体接回图里，见「八轮前的停放点（1.153）」。
 - `tests/ui_shape_check.py` **56 屏 `SUMMARY green`**（1456 与 1040 两档；地板 12.5px、叠行合计 1、字压字合计 **0**、缺口有名 4、下拉被切 0）。这一轮自己抓到并修掉一处真缺陷：柔焦与清晰半径那两格把「% 高 · ≈43.2 px」画在单位位上，压住了右边那颗 ◇（重叠 5.2×32 px）——像素折算进悬停，屏上只留「% 高」。
 - 量具跟着真分组改的三处：`clickByText` / `panelSpot` / 浮层那一腿找不到控件时**自己逐档点属性页签**（翻完四档仍找不到才报「不在这一屏上」），文字层与调色节点那两腿补了同样的翻页；这不是放软判据，是「控件在另一档里」与「控件不存在」本来就是两件事。
 - `tests/interchange_check.py` 全绿（四格式同一刀 + 五条拒绝 + 两条加密草稿）。
+
+### 发布账（1.291）
+
+- `APP_VERSION` / `desktop/package.json` **1.291.0**，schema 仍是 33。
+- `.venv/Scripts/python.exe scripts/build_engine.py --verify --no-uv` 通过（venv 里的 PyInstaller 6.22.3；先探过 `import PyInstaller` 才调用，因为 build_engine 会先清空 `resources/bin`）：冻结引擎自报 **1.291.0**，冷启动 **820 ms**、裸启动 704 ms（预算 15000 ms），`tools` / `--help` / `mcp` 三档各自活。
+- `npm run dist` 通过；根 `AgentCut.exe` 与 `desktop/release/AgentCut-便携版.exe` `cmp` 逐字节相同（**185,365,712 B**，sha256 前缀 `555c54a50513c771`），安装版 185,526,378 B（前缀 `3dc06259bf6e527a`）。
+- `released_package_check`（asar 里带着 1.291.0）与 `packed_engine_surface_check`（包里那支引擎真 HTTP 交回 1.291.0 / schema 33）全绿。
+- `packaged_ui_check` 绿，且**从 93.5 秒降到 7.3 秒**。两件事：① 删掉可见版本号之后 DOM 里没有可核对的构建了（量具读的是 `body.innerText`），于是把构建标记挂到 `<html data-app-version>` 上，由 capabilities 落地那一处贴上（两处 set caps 共用同一只 `markBuild`），版本对人仍在「设置」里可看，只是不再常驻在脸上；量具改认这个标记，缺它就按名字红。② 同一处还留着一枚从 1.280 起就永远匹配不上的写死探针 `/1\.279\.\d/`，它让每一趟都白跑满 60 次 × 1.5 秒才继续——判据一条没放软，只是不再拿一次必然失败的等待当成本。
+- 全套：1.291 源码上是 **165/168**，三红全是发布链（包里还是 1.290.0，门禁正确地拒绝过期产物）；按上面重出包之后三档各自转绿。
