@@ -5750,3 +5750,45 @@ do 掉了：立方体接回图里，见「八轮前的停放点（1.153）」。
 - **全套单跑（装机包就位、空闲机器）：171/171 全绿。**
 - 浅色档单独再跑一次同一套形状判据：`SUMMARY green screens=58 地板=12.5px 叠行合计=1 缺口有名=4 下拉被切=0 字压字合计=0 被画遮住=16`。
 - 这一档改的全是脸上：`tsc --noEmit` 干净、`npm run build` 通过、`desktop_ts` / `deepui_check` / `ui_shape_check` 在同一趟里全绿；首页与素材库那两处没有新增任何一档门禁，因为**没有新增任何一条判断**——只是把已有的话挪到了该在的地方。
+
+### 交付清单与体积（1.297 收口）
+
+全套 171/171 绿、装机包核对完、文档落账之后才动手精简目录：**2.6 GB → 412 MB**。删的全是
+`.gitignore` 里已登记的构建输入，源码与交付物一件没动。
+
+留在目录里的：
+
+- `AgentCut.exe`（**185,385,886 B**，sha256 前缀 `f910d1a3587ffca6`）——双击就跑的那一个，与
+  `desktop/release/AgentCut-便携版.exe` 逐字节相同（`cmp` 过），里面装着 Electron 外壳、随包
+  FFmpeg 与冻结引擎。
+- `src/ agent/ scripts/ tests/ docs/ design/ examples/` 全部源码、171 档门禁（其中 95 支界面壳检
+  由 `desktop_ts_check` 一次跑完）、文档与设计稿。
+- `desktop/{src,electron,public,package.json,*.json,*.ts}` 渲染层与外壳源码。
+- `desktop/resources/bin/{ffmpeg.exe,ffprobe.exe,media-stamp.json}`（146 MB）——这两支**不是**
+  可再生产物：它们不入库、也不由任何构建步骤下载，删了整套 Python 门禁就再也跑不起来。留着。
+- `data/`（1.3 MB）是测试跑出来的媒体探测目录，运行时数据，不是源。
+
+删掉的（都能按下面的命令重出来）：
+
+- `desktop/node_modules/`（847 MB）→ `cd desktop && npm ci`
+- `desktop/release/win-unpacked/` + 两份安装包 + blockmap + builder-debug.yml（928 MB）→ `npm run dist`
+- `.venv/`（150 MB）→ `uv sync`
+- `build/`（128 MB，PyInstaller 工作目录）与 `desktop/resources/bin/agentcut/`（161 MB，冻结引擎）
+  → `.venv/Scripts/python.exe scripts/build_engine.py --verify --no-uv`
+- `desktop/dist/`、`desktop/dist-electron/` → `cd desktop && npm run build`
+- `.ruff_cache/` 与所有 `__pycache__/`
+
+重出一版的完整顺序（每一步都在这一轮真跑过）：
+
+1. `uv sync` 与 `cd desktop && npm ci`
+2. `cd desktop && npm run build`（渲染层）
+3. `.venv/Scripts/python.exe scripts/build_engine.py --verify --no-uv`（冻结引擎；它会先清空
+   `desktop/resources/bin`，所以调用前先确认 `import PyInstaller` 在 venv 里，且**别**把
+   `ffmpeg.exe / ffprobe.exe` 一起删了）
+4. `cd desktop && npm run dist`
+5. `cp "desktop/release/AgentCut-便携版.exe" AgentCut.exe && cmp AgentCut.exe "desktop/release/AgentCut-便携版.exe"`
+   ——这一句不能省：`released_package_check` 比的就是「根目录那支 == 便携版」，抄错来源会让门禁红，
+   而 README 那一行早就写着这件事。
+6. 空闲机器单跑 `.venv/Scripts/python.exe tests/suite_check.py`，要 **171/171**；
+   想看浅色档：`AGENTCUT_SHAPE_THEME=light .venv/Scripts/python.exe tests/ui_shape_check.py`，
+   要 `SUMMARY green screens=58`。
