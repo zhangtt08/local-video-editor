@@ -359,6 +359,55 @@ export function Timeline() {
     ? project?.assets[attributeSourceClip.asset_id]?.label || attributeSourceClip.id
     : "";
 
+  /** 工具条上那排「用得没分割勤」的动作收进这一份菜单：仍是同一个 `openContextMenu`、
+   *  同一批 store 函数，不为「更多」再造一套弹层；被禁用的一项把原因写在它自己那一行上。 */
+  const toolMenu = (anchor: HTMLButtonElement) => {
+    const rect = anchor.getBoundingClientRect();
+    const markerCount = (app.project?.markers ?? []).length;
+    openContextMenu({
+      at: { x: rect.left, y: rect.bottom + 4 },
+      title: "时间线 · 更多动作",
+      label: "更多剪辑动作",
+      returnTo: anchor,
+      entries: [
+        {
+          kind: "item", label: "复制属性", icon: "attributes",
+          disabled: Boolean(attributeStop),
+          title: attributeStop ?? "把这一段当前的调色链、效果与变换、关键帧、遮罩、淡、变速、文字样式记下来",
+          run: copyAttributes,
+        },
+        {
+          kind: "item", label: "粘贴属性", icon: "paste",
+          disabled: Boolean(attributePasteStop),
+          title: attributePasteStop ?? `目标现在有 ${attributeTargets.length} 段（来源自己不算目标）`,
+          run: () => setAttributeOpen(true),
+        },
+        { kind: "sep", id: "markers" },
+        {
+          kind: "item", label: "在每个标记处切开", icon: "razor", disabled: !markerCount,
+          title: markerCount
+            ? "一次事务、一次撤销；落在边缘或空隙上的标记不产生切点"
+            : "这条时间线上还没有标记：先在指针处打一个（M）",
+          run: () => void splitAtMarkers(),
+        },
+        { kind: "sep", id: "tracks" },
+        {
+          kind: "item", label: "再加一层画面", icon: "film",
+          title: "叠标题、画中画需要第二条画面轨", run: () => addTrack("video"),
+        },
+        {
+          kind: "item", label: "再加一条声音轨", icon: "music",
+          title: "配乐与旁白分开控制音量", run: () => addTrack("audio"),
+        },
+        { kind: "sep", id: "view" },
+        {
+          kind: "item", label: "适应窗口", icon: "zoomIn", title: "把整条时间线放进可视范围",
+          run: () => prefs.fitTo(timelineEnd(project), (scrollRef.current?.clientWidth ?? 1200) - HEAD),
+        },
+      ],
+    });
+  };
+
   return (
     <section ref={rootRef} className="timeline" aria-label="时间线">
       {clamped ? <p className="timeline-clamped" role="status">窗口太矮：这条时间线已经让到这一屏的下限（你要 <b className="mono">{Math.round(clamped.wanted)} px</b>，现在只剩 <b className="mono">{Math.round(clamped.got)} px</b>），往上拖那条边不会再变高——把窗口拉高，或退出「素材预览」那一屏（它比常态多占一截画面的高度）。</p> : null}
@@ -368,30 +417,32 @@ export function Timeline() {
           <IconBtn icon="razor" label={`分割工具（${chordWords(keymap()["tool-razor"])}）：点片段即在点击处切一刀，切成两段可独立删除`} active={edit.tool === "razor"} onClick={() => prefs.setTool("razor")} />
         </span>
         <span className="tool-well" role="group" aria-label="剪辑">
-          <IconBtn icon="split" label={`在播放头处分割选中片段（${chordWords(keymap().split)}）`} disabled={!canSplit} onClick={() => splitSelection(playhead.value)} />
-          <IconBtn icon="copy" label={`复制选中片段（${chordWords(keymap().copy)}）`} disabled={!app.selectedClip} onClick={copySelection} />
-          <IconBtn icon="paste" label={`粘贴到播放头（${chordWords(keymap().paste)}）`} disabled={!app.clipboardCount} onClick={pasteSelection} />
-          <IconBtn icon="attributes" label={attributeStop ?? "复制属性：把这一段当前的调色链、效果与变换、关键帧、遮罩、淡、变速、文字样式记下来"} disabled={Boolean(attributeStop)} onClick={copyAttributes} />
-          <IconBtn icon="paste" label={attributePasteStop ?? `粘贴属性到选中的 ${attributeTargets.length} 段（来源自己不算目标）`} disabled={Boolean(attributePasteStop)} onClick={() => setAttributeOpen(true)} />
-          <IconBtn icon="trash" label={`删除选中片段，保留空隙（${chordWords(keymap()["delete-selection"])}）`} disabled={!app.selectedClip} onClick={() => removeSelection()} />
-          <IconBtn icon="ripple" label={`删除并向左补齐本轨后续片段（${chordWords(keymap()["ripple-delete"])}）`} disabled={!app.selectedClip} onClick={() => removeSelection(true)} />
+          <IconBtn icon="split" word="分割" label={`在播放头处分割选中片段（${chordWords(keymap().split)}）`} disabled={!canSplit} onClick={() => splitSelection(playhead.value)} />
+          <IconBtn icon="copy" word="复制" label={`复制选中片段（${chordWords(keymap().copy)}）`} disabled={!app.selectedClip} onClick={copySelection} />
+          <IconBtn icon="paste" word="粘贴" label={`粘贴到播放头（${chordWords(keymap().paste)}）`} disabled={!app.clipboardCount} onClick={pasteSelection} />
+          <IconBtn icon="trash" word="删除" label={`删除选中片段，保留空隙（${chordWords(keymap()["delete-selection"])}）`} disabled={!app.selectedClip} onClick={() => removeSelection()} />
+          <IconBtn icon="ripple" word="补位" label={`删除并向左补齐本轨后续片段（${chordWords(keymap()["ripple-delete"])}）`} disabled={!app.selectedClip} onClick={() => removeSelection(true)} />
         </span>
         {app.selectedClips.length > 1 ? <span className="tag accent">{app.selectedClips.length} 段</span> : null}
         <span className="tool-well" role="group" aria-label="吸附与标记">
-          <IconBtn icon="magnet" label={`磁吸（${chordWords(keymap()["toggle-snap"])}）：拖动时自动贴到整帧、相邻片段边缘与标记，避免留下 1 帧缝`} active={edit.snap} onClick={() => prefs.toggleSnap()} />
-          <IconBtn icon="flag" label="在指针处打一个标记（M）：人和 Agent 用同一个整数刻度说「这里」，标记还会成为磁吸边缘" onClick={() => addMarker()} />
-          <IconBtn icon="razor" label="在每个标记处切开落在它里面的片段：一次事务、一次撤销；落在边缘或空隙上的标记不产生切点" disabled={!(app.project?.markers ?? []).length} onClick={() => void splitAtMarkers()} />
-          <IconBtn icon="link" label="联动选择：组合与链接一起选中；音画链接一起修剪、分割。Alt 点选可临时单选。" active={edit.linkedSelection} onClick={() => prefs.toggleLinkedSelection()} />
+          <IconBtn icon="magnet" word="磁吸" label={`磁吸（${chordWords(keymap()["toggle-snap"])}）：拖动时自动贴到整帧、相邻片段边缘与标记，避免留下 1 帧缝`} active={edit.snap} onClick={() => prefs.toggleSnap()} />
+          <IconBtn icon="flag" word="标记" label="在指针处打一个标记（M）：人和 Agent 用同一个整数刻度说「这里」，标记还会成为磁吸边缘" onClick={() => addMarker()} />
+          <IconBtn icon="link" word="联动" label="联动选择：组合与链接一起选中；音画链接一起修剪、分割。Alt 点选可临时单选。" active={edit.linkedSelection} onClick={() => prefs.toggleLinkedSelection()} />
         </span>
-        <span className="tool-well" role="group" aria-label="历史与视图">
+        <span className="tool-well" role="group" aria-label="历史">
           <IconBtn icon="undo" label="撤销：用历史恢复回到上一步（版本号继续增加，不会倒退）" disabled={!app.undo.length} onClick={undo} />
           <IconBtn icon="redo" label={`重做：回到撤销前的那一版（${chordWords(keymap().redo)}）`} disabled={!app.redo.length} onClick={redoStep} />
-          <IconBtn icon="zoomIn" label="适应窗口：把整条时间线放进可视范围" onClick={() => prefs.fitTo(timelineEnd(project), (scrollRef.current?.clientWidth ?? 1200) - HEAD)} />
         </span>
-        <span className="tool-well" role="group" aria-label="加轨道">
-          <IconBtn icon="film" label="再加一层画面：叠标题、画中画需要第二条画面轨" onClick={() => addTrack("video")} />
-          <IconBtn icon="music" label="再加一条声音轨：配乐与旁白分开控制音量" onClick={() => addTrack("audio")} />
-        </span>
+        <button
+          type="button"
+          className="icon-btn worded"
+          aria-label="更多剪辑动作"
+          title="复制属性、按标记切开、加轨道、适应窗口——用得没上面那些勤，收在这里"
+          onClick={(event) => toolMenu(event.currentTarget)}
+        >
+          <Icon name="more" />
+          <span className="icon-word">更多</span>
+        </button>
         <span className="spacer" />
         <span className="zoom-ctrl">
           <IconBtn icon="zoomOut" label={`缩小（${chordWords(keymap()["zoom-out"])}）`} onClick={() => prefs.zoomBy(0.8)} />

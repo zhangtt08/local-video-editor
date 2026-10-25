@@ -48,6 +48,11 @@ const SIZES = (flag("sizes", "1456x808") || "").split(",");
 const OUT = path.resolve(flag("out", "ui_shape_sweep.json"));
 const EDGE = flag("edge", "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe");
 const SHOTS = flag("shots", "");
+// 拍哪一档主题：空 = 不动 localStorage（跟着应用默认走，深色）。非空时在这一趟一开始就把它
+// 写进本机偏好并刷新一次——主题只在启动时读一次，不刷新就等于没换。
+const THEME = flag("theme", "");
+/** 门禁那张「每一屏该画出什么」的表（`PAINTED` 的值），逐条并进下面那一份计数名单。 */
+const EXTRA_MARKERS = flag("painted", "") === "" ? [] : JSON.parse(flag("painted", ""));
 const EXTRAS = args.reduce((acc, item, index) => (item === "--extra" ? acc.concat(args[index + 1]) : acc), []);
 const PROBE = path.resolve(flag("probe", path.join(__dirname, "ui_shape_probe.js")));
 // 每一档扫描收尾时若那棵浏览器树还锁着 profile，就把路径记在这儿——量具自己没打扫干净，
@@ -256,6 +261,12 @@ async function sweepOne(size, hostPort, probeSource) {
       return answer.result ? answer.result.value : null;
     };
     // 等应用真把工程读进来：状态栏那一条只有加载完才有项目名。
+    if (THEME !== "") {
+      const want = THEME === "light" ? "light" : "dark";
+      await evaluate(`localStorage.setItem("agentcut.theme", ${JSON.stringify(want)})`);
+      await cdp.send("Page.reload", {});
+      await sleep(1200);
+    }
     // 等的是「屏幕上真的有字」，不是某个壳层节点存在——1.205 那一轮「五屏全报量不到」的根因
     // 就是把「能回话」当成了「画出来了」。
     let painted = null;
@@ -298,7 +309,10 @@ async function sweepOne(size, hostPort, probeSource) {
       // 1.252：选中那一块的虚线框。
       ".mask-extra-outline",
       // 1.261：条上那一枚框点现在是一只手——认 button，span 不算（改了才画得出来）。
-      "button.clip-boxkey"];
+      "button.clip-boxkey",
+      // 门禁那边每一屏认的那处东西由 `--painted` 传进来，这里只并表不另立一份：
+      // 加一屏只改 `tests/ui_shape_check.py` 的 PAINTED 一处，这一腿跟着长。
+      ...EXTRA_MARKERS];
     const run = async (screen) => {
       const data = await evaluate("(function(){ " + probeSource + " return measureAgentCutUi(); })()");
       // 「点了才画」那一档必须能证明**真的画了东西**：只数文字节点的话，
@@ -326,7 +340,7 @@ async function sweepOne(size, hostPort, probeSource) {
         // 证据要能给人眼复核：判据是量出来的，但「挡住」还是「量具看错」值得留一张图。
         const shot = await cdp.send("Page.captureScreenshot", { format: "png" }, 30000);
         if (shot && shot.data) {
-          const file = path.join(SHOTS, (flag("panel", "") || "p") + "-" + String(screen).replace(/[\\/:*?"<>|\u0000-\u001f]/g, "") + "-" + size + ".png");
+          const file = path.join(SHOTS, (THEME ? THEME + "-" : "") + (flag("panel", "") || "p") + "-" + String(screen).replace(/[\\/:*?"<>|\u0000-\u001f]/g, "") + "-" + size + ".png");
           fs.mkdirSync(SHOTS, { recursive: true });
           fs.writeFileSync(file, Buffer.from(shot.data, "base64"));
         }

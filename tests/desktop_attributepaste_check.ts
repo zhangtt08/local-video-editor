@@ -207,10 +207,14 @@ for (const [, label] of table.matchAll(/"label": "([^"]+)"/g)) {
 }
 
 assert.ok(toolbar.includes("复制属性") && toolbar.includes("粘贴属性"), "工具条上那两只手不在");
-assert.ok(
-  toolbar.includes("disabled={Boolean(attributeStop)}") && toolbar.includes("disabled={Boolean(attributePasteStop)}"),
-  "两颗按钮没挂在那一处唯一的判断上",
-);
+// 1.294 起那两只手摆在「更多」那份菜单里，写法从 JSX 属性变成菜单项的字段。判据跟着换成
+// 「这一项的 disabled 挂在那一处唯一的判断上」——两种写法都认，但把判断摘掉仍然是红的。
+for (const judge of ["attributeStop", "attributePasteStop"]) {
+  assert.ok(
+    new RegExp(`disabled\\s*[:=]\\s*\\{?Boolean\\(${judge}\\)\\}?`).test(toolbar),
+    `有一颗按钮没挂在那一处唯一的判断 ${judge} 上`,
+  );
+}
 assert.ok(toolbar.includes("attributeSourceCopy()"), "工具条读的来源不是 store 那一份");
 assert.ok(sheet.includes(".attribute-row {"), "对话框那一排的样式规则不存在（画不出就等于没有）");
 assert.ok(sheet.includes(".attribute-refusals {"), "拒绝那几行的样式规则不存在（那几行画不出来就是没说）");

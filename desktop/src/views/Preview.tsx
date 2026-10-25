@@ -480,5 +480,5 @@ function PreviewLayer({ clip, track, project, plan, url, ticks, playing, monitor
 
 export function PreviewFooter() {
   const app = useApp(); const play = usePlay();
-  return <div className="preview-foot"><span className="mono">{humanDuration(Math.max(0, timelineEnd(app.project) - play.ticks))} 剩余</span><span className="spacer" /><span>合成预览 · 位置 / 缩放 / 旋转 / 透明度 / 音量</span></div>;
+  return <div className="preview-foot"><span className="mono" title="合成预览：直接在画面里拖就是位置，角柄是缩放，转一圈是旋转，检查器里的透明度与音量同样落在这一格画面上。">{humanDuration(Math.max(0, timelineEnd(app.project) - play.ticks))} 剩余</span><span className="spacer" /></div>;
 }

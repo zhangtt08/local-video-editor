@@ -278,6 +278,7 @@ export function Btn({
 export function IconBtn({
   icon,
   label,
+  word,
   onClick,
   disabled,
   active,
@@ -285,6 +286,9 @@ export function IconBtn({
 }: {
   icon: string;
   label: string;
+  /** 摆在图标旁边的中文词。悬停里的 `label` 说的是「按了会怎样」，这一格说的是「这是什么」——
+      一排没有词的图标，人得挨个悬停才知道哪个是补位；窄窗里样式表会把这一格收掉，退回图标。 */
+  word?: string;
   onClick?: () => void;
   disabled?: boolean;
   active?: boolean;
@@ -293,7 +297,7 @@ export function IconBtn({
   return (
     <button
       type="button"
-      className={`icon-btn${active ? " active" : ""}${danger ? " danger" : ""}`}
+      className={`icon-btn${word ? " worded" : ""}${active ? " active" : ""}${danger ? " danger" : ""}`}
       onClick={onClick}
       disabled={disabled}
       title={label}
@@ -301,6 +305,7 @@ export function IconBtn({
       aria-pressed={active}
     >
       <Icon name={icon} />
+      {word ? <span className="icon-word">{word}</span> : null}
     </button>
   );
 }

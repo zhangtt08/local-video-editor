@@ -52,8 +52,12 @@ PANELS = ("inspect", "export")
 # 浮层那一档：真点开才画布，所以量之前要先点。1.205 那轮就是「点了没开起来」被当成量不到。
 # 「画面中编辑」与「重置布局」是 1.223 补进来的两屏：前者把遮罩参考线与其上的三颗顶点操作
 # 画进画面（点了才画的那类），后者把布局恢复默认之后再量一屏——两处的控件与文字以前都不在
-# 任何一屏的取样里。
-OVERLAYS = ("动画曲线", "示波器", "快捷键", "画面中编辑", "重置布局", "预合成选中片段", "字幕")
+# 任何一屏的取样里。「文稿」是 1.294 补的那一页：右侧第五页从前不在任何一屏的取样里，
+# 也就是说它哪天把句子挤成两行、把按钮挤下线，没有一档门禁会红。
+OVERLAYS = (
+    "动画曲线", "示波器", "快捷键", "画面中编辑", "重置布局",
+    "预合成选中片段", "字幕", "文稿",
+)
 # 每一颗浮层该**画出**的那处东西（类名，构建后仍在）。判据写在这里而不是只数几何：
 # 「点了才画」那一档，一颗换页的按钮和一颗什么都没干的按钮，字数能量出一样的数。
 PAINTED = {
@@ -67,6 +71,8 @@ PAINTED = {
     # 那两扇弹层以前从没进过任何一屏的取样（1.227）：各认自己的标题，点开一扇错的也算不过。
     "预合成选中片段": 'div.dialog[aria-label="预合成选中片段"]',
     "字幕": 'div.dialog[aria-label="导入 SRT 字幕"]',
+    # 文稿那一页：认这一页自己的容器，不认「屏幕上有字」——字在别的屏上一样有。
+    "文稿": ".transcript",
     # 文字层那一屏（1.227）：只有选中一条文字片段才画得出那四颗色块。
     # 认色块而不是认「有字」——字在别的屏上一样有。
     "文字层": "input[type=color]",
@@ -308,6 +314,9 @@ def sweep(pid: str, folder: Path, panel: str, extras: tuple[str, ...] = (),
           boxgeo: str = "", boxdbl: bool = False) -> list[dict]:
     out = folder / f"ui_shape_sweep-{panel}.json"
     shots = os.environ.get("AGENTCUT_SHAPE_SHOTS", "")
+    # 主题默认不传（跟着应用那一档走，深色）。传 light 就是拿同一整套判据在浅色上再量一遍：
+    # 两档主题是同一批令牌换值，浅色里长出来的黑边、看不见的小字，只有真量一次才知道。
+    theme = os.environ.get("AGENTCUT_SHAPE_THEME", "")
     node = subprocess.run(
         [
             "node", str(SWEEP),
@@ -336,6 +345,10 @@ def sweep(pid: str, folder: Path, panel: str, extras: tuple[str, ...] = (),
             *(["--boxgeo", boxgeo] if boxgeo else []),
             *(["--boxdbl", "1"] if boxdbl else []),
             *(["--shots", shots] if shots else []),
+            *(["--theme", theme] if theme else []),
+            # 这张表在这里说一次就够了：量具那边只把自己那份基础名单加上这一份并起来数。
+            # 1.294 加「文稿」那一屏时先红过一次，红的就是「两表各抄一份、加一屏要改两处」。
+            "--painted", json.dumps(sorted(set(PAINTED.values()))),
         ],
         capture_output=True,
         text=True,

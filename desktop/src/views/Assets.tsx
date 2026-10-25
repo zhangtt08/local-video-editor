@@ -171,7 +171,7 @@ export function Assets() {
       <div className="asset-foot">
         {tab === "library" ? (
           <div className="mono dim" title="拖到时间线即可上轨；探测只读元数据与缩略图，不修改原文件。">
-            共 {app.library.length} 个素材 · 悬停看不改原文件
+            共 {app.library.length} 个素材
           </div>
         ) : (
           <div className="mono dim" title="工程素材记录的是「服务端验证过的文件」，Agent 无法伪造它；verified 记录由 /v1/media/import 产生。">
