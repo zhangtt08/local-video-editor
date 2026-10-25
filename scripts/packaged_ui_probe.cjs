@@ -180,7 +180,7 @@ async function main() {
         await clickAt(cdp, spot.x, spot.y);
         for (let wait = 0; wait < 30; wait += 1) {
           await sleep(500);
-          if (await evaluate(cdp, "Boolean(document.querySelector('.editor'))")) { opened = true; break; }
+          if (await evaluate(cdp, "Boolean(document.querySelector('.editor2'))")) { opened = true; break; }
         }
       }
     }
@@ -188,10 +188,10 @@ async function main() {
     await sleep(1500);
 
     facts.editor = await evaluate(cdp, `(function () {
-      var host = document.querySelector('.editor');
-      var main = document.querySelector('.editor-main');
-      var panel = document.querySelector('.editor-main > .panel');
-      var timeline = document.querySelector('.editor .timeline');
+      var host = document.querySelector('.editor2');
+      var main = host;
+      var panel = document.querySelector('.ed-assets > .panel');
+      var timeline = document.querySelector('.ed-timeline');
       var transport = document.querySelector('.transport');
       var wells = document.querySelectorAll('.tl-toolbar .tool-well');
       var heads = document.querySelectorAll('.tl-head:not(.corner) [aria-label]');
@@ -200,7 +200,7 @@ async function main() {
         viewport: { width: window.innerWidth, height: window.innerHeight },
         panelRadius: panel ? parseFloat(css(panel).borderTopLeftRadius) : 0,
         panelBorder: panel ? css(panel).borderTopWidth : '',
-        mathGutter: main ? parseFloat(css(main).paddingLeft) : 0,
+        mathGutter: main ? parseFloat(css(main).columnGap) : 0,
         timelineRadius: timeline ? parseFloat(css(timeline).borderTopLeftRadius) : 0,
         transportRadius: transport ? parseFloat(css(transport).borderTopLeftRadius) : 0,
         tools: wells.length,

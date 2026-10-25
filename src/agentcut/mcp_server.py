@@ -39,6 +39,7 @@ from .contracts import (
     MaskTrackRequest,
     MasterLoudnessRequest,
     MutationResult,
+    OtioImportRequest,
     Project,
     ProjectUpdate,
     Property,
@@ -442,6 +443,47 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         if sequence_id is not None:
             query += f"&sequence_id={quote(sequence_id, safe='')}"
         return await call("GET", f"/v1/projects/{project_id}/edl{query}")
+
+    @server.tool(annotations=read)
+    async def project_otio(
+        project_id: Identifier,
+        sequence_id: SequenceRef | None = None,
+    ) -> dict[str, Any]:
+        """The whole timeline as OpenTimelineIO JSON.
+
+        Read-only. Gaps are real children, so record times survive a round trip; each clip
+        also carries its own AgentCut record under metadata, so colour, masks and keyframes
+        are not flattened to a cut list.
+        """
+        query = f"?sequence_id={quote(sequence_id, safe='')}" if sequence_id else ""
+        return await call("GET", f"/v1/projects/{project_id}/otio{query}")
+
+    @server.tool(annotations=read)
+    async def project_fcpxml(
+        project_id: Identifier,
+        sequence_id: SequenceRef | None = None,
+    ) -> dict[str, Any]:
+        """Final Cut Pro XML 1.9 for the whole timeline.
+
+        Read-only. `omitted` names every clip this exporter cannot say (speed ramps,
+        transitions, text), and `complete` is false whenever the list is non-empty.
+        """
+        query = f"?sequence_id={quote(sequence_id, safe='')}" if sequence_id else ""
+        return await call("GET", f"/v1/projects/{project_id}/fcpxml{query}")
+
+    @server.tool(annotations=read)
+    async def otio_import_plan(
+        project_id: Identifier,
+        request: OtioImportRequest,
+    ) -> dict[str, Any]:
+        """Plan an OTIO timeline as ordinary commands (read-only here).
+
+        `apply` and `dry_run` are forced off: review the commands, then submit them with
+        `timeline_edit`. Media is matched by file name against verified assets; unknown or
+        ambiguous names are refused by name before anything is planned.
+        """
+        body = request.model_dump(mode="json") | {"apply": False, "dry_run": False}
+        return await call("POST", f"/v1/projects/{project_id}/otio/import", body)
 
     @server.tool(annotations=read)
     async def track_rough_cut(

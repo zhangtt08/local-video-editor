@@ -84,7 +84,13 @@ for (const rule of code.matchAll(ruleRe)) {
       const lin = (v: number) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
       const luminance = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
       // 同一处规则里自己声明了深色的字，那才是真的浅色底卡片；否则字继承正文近白那一档。
-      const darkInk = /\bcolor\s*:\s*#[0-9a-fA-F]{3,8}/.test(rule[2]) && !/(color\s*:\s*#(e|f|d|c)[0-9a-fA-F]{2})/i.test(rule[2]);
+      // 两档主题之后：浅色主题规则里的 var(--ink*) 本身就是深色；深色主题仍只认字面深色。
+      const lightTheme = /^html\[data-theme="light"\]/.test(selector);
+      const inkToken = /\bcolor\s*:\s*var\(--ink(?:-[23])?\)/.test(rule[2]);
+      const darkInk =
+        (/\bcolor\s*:\s*#[0-9a-fA-F]{3,8}/.test(rule[2]) &&
+          !/(color\s*:\s*#(e|f|d|c)[0-9a-fA-F]{2})/i.test(rule[2])) ||
+        (lightTheme && inkToken);
       // 例外只有「盛不住字的图形」：伪元素画的那根线、色轮上那颗点，里面不会有正文。
       const graphic = /::/.test(selector) || selector === ".wheel-dot";
       if (luminance > 0.5 && !darkInk && !graphic) lightBackground.push(`${selector} 的 ${bg[2]}（相对亮度 ${luminance.toFixed(2)}）`);

@@ -265,9 +265,15 @@ async function sweepOne(size, hostPort, probeSource) {
       else await sleep(300);
     }
     if (!painted) throw new Error("the page never painted anything at " + size);
-    const tabsExpression = "Array.from(document.querySelectorAll('nav.tb-tabs button, [role=tab], .tabs button')).map(function (n, i) {" +
+    const tabsExpression = "Array.from(document.querySelectorAll('nav.tb-tabs button, nav.rail-nav [role=tab], .tabs button')).map(function (n, i) {" +
       "var r = n.getBoundingClientRect(); return {i: i, text: (n.textContent||'').trim().slice(0,20), label: n.getAttribute('aria-label')||'', x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2), selected: n.getAttribute('aria-selected')==='true'||/\\bactive\\b/.test(String(n.className||''))};})";
-    const tabs = (await evaluate(tabsExpression)) || [];
+    let tabs = (await evaluate(tabsExpression)) || [];
+    // 深链打开工程是异步的：第一帧可能还停在首页（那里没有右列页签）。等到页签出现再量，
+    // 超时才算「这一屏没有页签」——之前这里一次采样就下结论，等于拿落地抖动当缺陷。
+    for (let wait = 0; wait < 40 && !tabs.length; wait += 1) {
+      await sleep(250);
+      tabs = (await evaluate(tabsExpression)) || [];
+    }
     if (!tabs.length) throw new Error("no view tabs found on the page at " + size);
     const click = async (x, y) => {
       await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
@@ -398,39 +404,123 @@ async function sweepOne(size, hostPort, probeSource) {
       await sleep(500);
       return true;
     };
+    // 2.0：片段卡先滚进时间线可视区，再取「卡片 ∩ 滚动区」的中心——时间线不再横跨右列，
+    // 1040 那一档的卡片可能整张在可视区外，矩形照样给得出，按那个点打下去吃的是别的层。
+    const clipSpot = (id) => evaluate("(() => { const el = document.querySelector('.clip[data-id="
+      + JSON.stringify(id) + "]'); if (!el) return null;"
+      // 只在看不见时才滚，且贴到最近的那一边：居中会把片段左缘（连同针）藏到轨道头底下。
+      + "el.scrollIntoView({block: 'nearest', inline: 'nearest'});"
+      + "const r = el.getBoundingClientRect();"
+      + "const port = document.querySelector('.tl-scroll').getBoundingClientRect();"
+      + "const left = Math.max(r.left, port.left + 4), right = Math.min(r.right, port.right - 4);"
+      + "const top = Math.max(r.top, port.top + 4), bottom = Math.min(r.bottom, port.bottom - 4);"
+      + "if (right <= left || bottom <= top) return null;"
+      + "return {x: Math.round((left + right) / 2), y: Math.round((top + bottom) / 2)}; })()");
+
+    // 2.0：检查器里的按钮先滚进视野，再验一次「那一点真的落在它身上」；被盖住就把盖它那一层
+    // 带回来（不是「点了就算数」）。
+    const panelSpot = (selector) => evaluate("(function(){var el=document.querySelector("
+      + JSON.stringify(selector) + ");if(!el)return {error:'missing'};"
+      + "el.scrollIntoView({block:'center'});var r=el.getBoundingClientRect();"
+      + "var x=Math.round(r.left+r.width/2),y=Math.round(r.top+r.height/2);"
+      + "if(!r.width||!r.height)return {error:'collapsed'};"
+      + "var top=document.elementFromPoint(x,y);"
+      + "return {x:x,y:y,ok: el===top||el.contains(top)||(top&&top.contains(el)),"
+      + " disabled: Boolean(el.disabled), pressed: el.getAttribute('aria-pressed'),"
+      + " rect: [Math.round(r.left),Math.round(r.top),Math.round(r.width),Math.round(r.height)],"
+      + " over: top?top.tagName+'.'+String(top.className||'').slice(0,30):null};})()");
+
+    const waitForClip = async (id, timeout = 6000) => {
+      const started = Date.now();
+      while (Date.now() - started < timeout) {
+        const there = await evaluate("Boolean(document.querySelector('.editor2 .clip[data-id="
+          + JSON.stringify(id) + "]'))");
+        if (there) return true;
+        await sleep(250);
+      }
+      return false;
+    };
+
     const openDetails = async () => {
       await evaluate("(function(){var d=document.querySelectorAll('details');"
         + "for(var i=0;i<d.length;i+=1){d[i].open=true;}return d.length;})()");
       await sleep(400);
     };
-    const baseState = async () => {
+    const baseState = async (depth = 0) => {
       // 「动画曲线」那一颗换的是**中间那一页**：换过去之后时间线整个不画了，
       // `.clip` 那些卡片就不在 DOM 里——所以先按那页自己的「返回时间线」回来（没有这颗就跳过）。
       await clickByText("返回时间线");
       if (!(await clickByText("剪辑"))) return "找不到「剪辑」那一页的标签，浮层没有可复现的起点";
-      if (!(await clickByText("检查器"))) return "点不到「检查器」那一列，浮层量的是别的右列";
+      // 2.0：右列那一页在顶栏叫「属性」（页内标题仍是「片段属性」），老量具按「检查器」找，
+      // 两个名字都认，找不到才算没量到。
+      if (!(await clickByText("检查器")) && !(await clickByText("属性"))) {
+        return "点不到「检查器／属性」那一列，浮层量的是别的右列";
+      }
       // 要点「点了才画」的那几颗，先得有选中：检查器里那一堆控件只在选中一条片段时存在。
       if (!CLIP) return "没有 --clip，浮层那一档不能确定选中状态";
-      const spot = await evaluate("(() => { const el = document.querySelector('.clip[data-id=" +
-        JSON.stringify(CLIP) + "]'); if (!el) return null;" +
-        "const r = el.getBoundingClientRect(); return {x: Math.round(r.left + r.width / 2)," +
-        " y: Math.round(r.top + r.height / 2)}; })()");
+      if (!(await waitForClip(CLIP))) return "重载之后时间线上还没有 .clip[data-id=" + CLIP + "]";
+
+      // 2.0：时间线不再横跨右列（右栏一列到底），1040 那一档片段可能滚在可视区之外——
+      // 矩形照样给得出，但按那个点打下去吃的是别的层。先滚进视野，再取「片段 ∩ 滚动区」的中心。
+      const spot = await clipSpot(CLIP);
       if (!spot) return "时间线上找不到片段卡 .clip[data-id=" + CLIP + "]，「点了才画」那一档没有选中可依赖";
       // 遮罩参考线的条件是「选中这一块 + 画面正放着这一块」：深链把播放头停在 0 秒，
       // 那一格是第一条片段，所以光选中不够——按片段的横向位置在标尺上真点一下，把播放头挪进去。
+      // 2.0：标尺那一行在窄窗里会被轨道头压在左边，滚动之后 spot.x 可能落在头部底下——
+      // 点在那里不会 seek（吃的是头部），播放头留在 0 秒，画面里就不是选中的那一段。
+      // 取「标尺 ∩ 滚动区 ∩ 轨道头右侧」的可见带，再按片段中心夹进去；点完验一次时间码。
       const ruler = await evaluate("(() => { const el = document.querySelector('.tl-ruler');" +
-        "if (!el) return null; const r = el.getBoundingClientRect();" +
+        "const port = document.querySelector('.tl-scroll');" +
+        "const head = document.querySelector('.tl-head.corner');" +
+        "if (!el || !port || !head) return null; const r = el.getBoundingClientRect();" +
+        "const p = port.getBoundingClientRect(); const h = head.getBoundingClientRect();" +
         "if (!r.width || !r.height) return null;" +
         "return {y: Math.round(r.top + r.height / 2)," +
-        " left: Math.round(r.left + 2), right: Math.round(r.right - 2)}; })()");
+        " left: Math.round(Math.max(r.left, p.left, h.right) + 8)," +
+        " right: Math.round(Math.min(r.right, p.right) - 8)}; })()");
       if (!ruler) return "找不到标尺 .tl-ruler，播放头挪不进那一段，浮层量的是没画面的状态";
       const seekX = Math.min(Math.max(spot.x, ruler.left), ruler.right);
       await click(seekX, ruler.y);
-      await sleep(600);
+      await sleep(400);
+      // 标尺那一下落在哪一格会被缩放与滚动带偏（1040 档实测差 10 帧，正好落到两枚框点之间）。
+      // 先读一次时间码，不在片段中点就用键盘补齐：Home 后按 Shift+→，再一次一帧地补到目标格。
+      const state = await engineGet(`/v1/projects/${PROJECT}`);
+      const card = state.clips[CLIP];
+      const rate = state.settings.frame_rate;
+      const frameTicks = 70560000 / rate.numerator * rate.denominator;
+      const targetFrame = Math.round((card.position_ticks + card.duration_ticks / 2) / frameTicks);
+      const frames = async () => Number(await evaluate("(function(){var t=(document.querySelector('.ph-time')||{}).textContent||'';"
+        + "var p=t.trim().split(':');if(p.length!==4)return -1;"
+        + "return ((+p[0])*3600+(+p[1])*60+(+p[2]))*" + rate.numerator + "/" + rate.denominator + "+(+p[3]);})()"));
+      let now = await frames();
+      if (Math.abs(now - targetFrame) > 2) {
+        await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Home", code: "Home", windowsVirtualKeyCode: 36 }, 20000);
+        await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Home", code: "Home", windowsVirtualKeyCode: 36 }, 20000);
+        await sleep(200);
+        let guard = 0;
+        while ((await frames()) < targetFrame && guard < 400) {
+          const jump = (await frames()) + " " + "";
+          const remaining = targetFrame - (await frames());
+          const shift = remaining >= 10 ? 8 : 0;
+          await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39, modifiers: shift }, 20000);
+          await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39, modifiers: shift }, 20000);
+          await sleep(18);
+          guard += 1;
+          if (jump === "") break;
+        }
+        while ((await frames()) > targetFrame) {
+          await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowLeft", code: "ArrowLeft", windowsVirtualKeyCode: 37 }, 20000);
+          await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowLeft", code: "ArrowLeft", windowsVirtualKeyCode: 37 }, 20000);
+          await sleep(18);
+        }
+        now = await frames();
+      }
+      if (now < 0) return "播放头的时间码读不出来";
+      // 点片段卡真的选中它；检查器里那些「点了才画」的控件只在这时存在。
       await click(spot.x, spot.y);
       await sleep(600);
-      const selected = await evaluate("Boolean(document.querySelector('.clip.selected[data-id=" +
-        JSON.stringify(CLIP) + "]'))");
+      const selected = await evaluate("Boolean(document.querySelector('.clip.selected[data-id="
+        + JSON.stringify(CLIP) + "]'))");
       if (!selected) return "点了片段卡但没有 .clip.selected——选中没落上，浮层量的是错的状态";
       // 检查器随选中重挂载（`key={project.id + "/" + clip.id}`），那几段 `<details>` 又合上了，
       // 而「画面中编辑」那颗就藏在合着的段落里——合着的时候它的矩形照样撒谎，所以先开再量。
@@ -463,8 +553,11 @@ async function sweepOne(size, hostPort, probeSource) {
         const here = await evaluate("(() => Array.from(document.querySelectorAll(" +
           "'button, [role=tab]')).map((n) => (n.textContent || '').trim().slice(0, 14))" +
           ".filter(Boolean).slice(0, 40))()");
+        const why = await evaluate("(() => ({ selected: document.querySelectorAll('.clip.selected').length," +
+          " mask: Boolean(document.querySelector('.mask-section')), charters: document.querySelectorAll('.insp-section').length," +
+          " tab: (document.querySelector('.rp-tabs .active') || {}).textContent || null }))()");
         rows.push({ screen: label, panel: flag("panel", ""), size, data: null,
-          error: "那颗按钮不在这一屏上；这一屏有的：" + JSON.stringify(here) });
+          error: "那颗按钮不在这一屏上 " + JSON.stringify(why) + "；这一屏有的：" + JSON.stringify(here) });
         continue;
       }
       if (spot.covered) {
@@ -491,10 +584,7 @@ async function sweepOne(size, hostPort, probeSource) {
       });
       if (trouble) rowOf(trouble);
       else {
-        const spot = await evaluate("(() => { const el = document.querySelector('.clip[data-id=" +
-          JSON.stringify(TEXTCLIP) + "]'); if (!el) return null;" +
-          "const r = el.getBoundingClientRect(); return {x: Math.round(r.left + r.width / 2)," +
-          " y: Math.round(r.top + r.height / 2)}; })()");
+        const spot = await clipSpot(TEXTCLIP);
         if (!spot) rowOf("时间线上找不到文字片段卡 .clip[data-id=" + TEXTCLIP +
           "]——夹具里那条文字片段没画出来");
         else {
@@ -508,7 +598,11 @@ async function sweepOne(size, hostPort, probeSource) {
             + "if(!c)return false;c.scrollIntoView({block:'center',inline:'nearest'});return true;})()");
           await sleep(400);
           if (!swatch) {
-            rowOf("选中文字片段之后检查器里没有 input[type=color]——那一屏没画出文字层");
+            const state = await evaluate("(() => ({selected: document.querySelectorAll('.clip.selected').length," +
+              " tab: (document.querySelector('.rp-tabs .active') || {}).textContent || null," +
+              " body: (document.querySelector('.rp-body') || {}).scrollTop, colors: document.querySelectorAll('input[type=color]').length," +
+              " textSection: Array.from(document.querySelectorAll('.insp-section')).some(e => (e.textContent||'').includes('文字内容'))}))()");
+            rowOf("选中文字片段之后检查器里没有 input[type=color]——那一屏没画出文字层 " + JSON.stringify(state));
           } else if (!(await evaluate("Boolean(document.querySelector('.clip.selected[data-id=" +
             JSON.stringify(TEXTCLIP) + "]'))"))) {
             rowOf("点了文字片段卡之后 .clip.selected 不是它——那一屏量的是错的状态");
@@ -638,7 +732,7 @@ async function sweepOne(size, hostPort, probeSource) {
                 op: "keyframe.remove", clip_id: "k2", property: "mask_feather",
                 at_ticks: k.at_ticks })) });
             await cdp.send("Page.reload", {}, 30000);
-            await sleep(2500);
+            await waitForClip("k2");
           }
         }
       }
@@ -681,7 +775,7 @@ async function sweepOne(size, hostPort, probeSource) {
               expected_revision: after.revision, commands: [{ op: "clip.mask_stack", clip_id: "k2", masks: was }] });
             // 这次放回绕过了界面：重载一次，让页面的 project.revision 跟上引擎，后面的写才不会被 409 拒。
             await cdp.send("Page.reload", {}, 30000);
-            await sleep(2500);
+            await waitForClip("k2");
           }
         }
       }
@@ -693,13 +787,27 @@ async function sweepOne(size, hostPort, probeSource) {
       const trouble = await baseState();
       if (trouble) rowOf(trouble);
       else {
-        const pick = await evaluate("(function(){var el=document.querySelector('[aria-label=\"在画面里选中第 1 块叠加遮罩\"]');"
-          + "if(!el)return null;el.scrollIntoView({block:'center'});var r=el.getBoundingClientRect();"
-          + "return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
-        if (!pick) rowOf("找不到「在画面里选中第 1 块叠加遮罩」");
+        const pick = await panelSpot('[aria-label=\"在画面里选中第 1 块叠加遮罩\"]');
+        if (!pick || pick.error) rowOf("找不到「在画面里选中第 1 块叠加遮罩」" + JSON.stringify(pick || null));
+        else if (!pick.ok) rowOf("「在画面里选中第 1 块叠加遮罩」被 " + pick.over + " 盖着，点不到");
         else {
           await click(pick.x, pick.y);
           await sleep(700);
+          let picked = await evaluate("(function(){var el=document.querySelector('.mask-guide');"
+            + "var b=document.querySelector('[aria-label*=\"取消选中第 1 块\"]');"
+            + "return {guide:Boolean(el),pressed:b?b.getAttribute('aria-pressed'):null};})()");
+          if (!picked || !picked.guide || picked.pressed !== "true") {
+            // 按钮可能还在等上一笔 manifest 落地（disabled 时按下不生效）：等到可按再点一次。
+            await sleep(700);
+            const again = await panelSpot('[aria-label=\"在画面里选中第 1 块叠加遮罩\"]');
+            if (again && !again.error && !again.disabled && again.ok) {
+              await click(again.x, again.y);
+              await sleep(800);
+              picked = await evaluate("(function(){var el=document.querySelector('.mask-guide');"
+                + "var b=document.querySelector('[aria-label*=\"取消选中第 1 块\"]');"
+                + "return {guide:Boolean(el),pressed:b?b.getAttribute('aria-pressed'):null};})()");
+            }
+          }
           const before = await engineGet(`/v1/projects/${PROJECT}`);
           // 这一腿三下手都改的是共享夹具里那一枚。不管量成没量成都要放回去——
           // 上一版只在成功那一支放回，一次红就把脏状态带进了下一档窗口（连着两屏假红）。
@@ -712,13 +820,31 @@ async function sweepOne(size, hostPort, probeSource) {
             });
             // 裸 HTTP 放回绕过界面，页面的 revision 会落后一拍；不重载，下一笔就是 409 被静默拒。
             await cdp.send("Page.reload", {}, 30000);
-            await sleep(1200);
+            await waitForClip("k2");
           };
           const fail = async (message) => { rowOf(message); await restore(); };
           const spot = await evaluate("(function(){var el=document.querySelector('.mask-extra-handle');"
             + "if(!el)return null;var r=el.getBoundingClientRect();"
             + "return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
-          if (!spot) rowOf("选中之后画面里没有 .mask-extra-handle");
+          if (!spot) {
+            const state = await evaluate("(() => ({guide: Boolean(document.querySelector('.mask-guide'))," +
+              " handles: document.querySelectorAll('.mask-extra-handle').length," +
+              " selected: document.querySelectorAll('.clip.selected').length," +
+              " extraSel: Boolean(document.querySelector('.mask-extra-row.selected'))," +
+              " tab: (document.querySelector('.rp-tabs .active') || {}).textContent || null," +
+              " layers: document.querySelectorAll('.preview-layer').length," +
+              " empty: (document.querySelector('.monitor-empty') || {}).textContent || null," +
+              " maskOn: (document.querySelector('button[aria-pressed][class*=btn]') ? Array.from(document.querySelectorAll('button')).filter(b => b.textContent.trim() === '画面中编辑').map(b => b.getAttribute('aria-pressed')) : [])," +
+              " monitor: (document.querySelector('.monitor-head .seg button.active') || {}).textContent || null," +
+              " time: (document.querySelector('.ph-time') || {}).textContent || null," +
+              " pick: " + JSON.stringify(pick) + ", picked: " + JSON.stringify(picked) + "}))()");
+            const shot = await cdp.send("Page.captureScreenshot", { format: "png" }, 30000);
+            const debugDir = path.dirname(OUT);
+            const debugPath = path.join(debugDir, "debug-mask-" + size + ".png");
+            fs.mkdirSync(debugDir, { recursive: true });
+            fs.writeFileSync(debugPath, Buffer.from(shot.data, "base64"));
+            rowOf("选中之后画面里没有 .mask-extra-handle " + JSON.stringify(state));
+          }
           else {
             await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: spot.x, y: spot.y, button: "left", clickCount: 1 });
             for (let step = 1; step <= 4; step += 1) {
@@ -746,6 +872,7 @@ async function sweepOne(size, hostPort, probeSource) {
             if (!followed || !movedKey || !staticSame || !other) await fail("拖动没有按预期："
               + "key=" + JSON.stringify([wasKey && [wasKey.center_x, wasKey.center_y], nowKey && [nowKey.center_x, nowKey.center_y]])
               + " static=" + JSON.stringify([was.center_x, was.center_y, now.center_x, now.center_y])
+              + " time=" + String(await evaluate("(document.querySelector('.ph-time') || {}).textContent || ''"))
               + " screen=" + JSON.stringify(screen) + " spot=" + JSON.stringify(spot));
             else {
               // 同一块再拖右下角：两条边与中心一起变，静止值仍然不动。
@@ -931,13 +1058,14 @@ async function sweepOne(size, hostPort, probeSource) {
       const trouble = await baseState();
       if (trouble) rowOf(trouble);
       else {
-        const pick = await evaluate("(function(){var el=document.querySelector(\"[aria-label='在画面里选中第 1 块叠加遮罩']\");"
-          + "if(!el)return null;el.scrollIntoView({block:'center'});var r=el.getBoundingClientRect();"
-          + "return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
-        if (!pick) rowOf("找不到「在画面里选中第 1 块叠加遮罩」");
+        const pick = await panelSpot("[aria-label='在画面里选中第 1 块叠加遮罩']");
+        if (!pick || pick.error) rowOf("找不到「在画面里选中第 1 块叠加遮罩」" + JSON.stringify(pick || null));
+        else if (!pick.ok) rowOf("「在画面里选中第 1 块叠加遮罩」被 " + pick.over + " 盖着，点不到");
         else {
           await click(pick.x, pick.y);
           await sleep(700);
+          // 上一腿可能还有一写在路上：等它落地再抓这一下，否则 pointerdown 记的版本会过期。
+          await sleep(1200);
           const before = await engineGet(`/v1/projects/${PROJECT}`);
           const restore = async () => {
             const latest = await engineGet(`/v1/projects/${PROJECT}`);
@@ -947,7 +1075,7 @@ async function sweepOne(size, hostPort, probeSource) {
               commands: [{ op: "clip.mask_stack", clip_id: "k2", masks: before.clips["k2"].extra_masks }],
             });
             await cdp.send("Page.reload", {}, 30000);
-            await sleep(1200);
+            await waitForClip("k2");
           };
           const fail = async (message) => { rowOf(message); await restore(); };
           const spot = await evaluate("(function(){var el=document.querySelector('.mask-extra-handle');"
@@ -1122,7 +1250,7 @@ async function sweepOne(size, hostPort, probeSource) {
             });
             // 放回是裸 HTTP：页面的 revision 不跟着走，下一次真写就会被 409 静默拒（1.252 那一课）。
             await cdp.send("Page.reload", {}, 30000);
-            await sleep(1200);
+            await waitForClip("k2");
           };
           const fail = async (message) => { rowOf(message); await restore(); };
           await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: spot.x, y: spot.y, button: "left", clickCount: 1 });

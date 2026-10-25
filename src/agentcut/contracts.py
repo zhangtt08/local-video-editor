@@ -71,7 +71,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.288.0"
+APP_VERSION = "1.290.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -5384,6 +5384,38 @@ class AutoGradeRequest(Contract):
 
 
 
+class OtioImportRequest(Contract):
+
+    """An OpenTimelineIO timeline, planned as ordinary commands before anything is written."""
+
+    document: dict[str, Any]
+
+    sequence_id: SequenceRef | None = None
+
+    apply: bool = False
+
+    request_id: Identifier | None = None
+
+    expected_revision: Revision | None = None
+
+    dry_run: bool = False
+
+
+
+    @model_validator(mode="after")
+
+    def receipt_when_applying(self):
+
+        if self.apply and (self.request_id is None or self.expected_revision is None):
+
+            raise ValueError("apply needs request_id and expected_revision")
+
+        return self
+
+
+
+
+
 def project_content_ticks(project) -> int:
 
     """Where the ruler ends: the furthest clip edge on the timeline being edited.
@@ -7611,6 +7643,14 @@ def capabilities(
             # 1.285：剪辑表是纯文本，不需要媒体引擎；老引擎不认这条读路由，界面就不摆那一项。
 
             "edl_export": True,
+
+            # 1.289：交换格式——OTIO 进出、FCPXML 与 SRT 交出；都不需要媒体引擎。
+
+            "otio_export": True,
+
+            "otio_import": True,
+
+            "fcpxml_export": True,
 
             "loudness_metering": media_ready,
 

@@ -215,6 +215,10 @@ async function main() {
       if (tracks > 0) break;
       await sleep(300);
     }
+    // 2.0：右列默认是「AI 剪辑」，检查器在「属性」那一页；量具先切过去。
+    await evaluate("(function(){var b=Array.from(document.querySelectorAll('.rp-tabs button')).find(" +
+      "function(n){return (n.textContent||'').indexOf('属性')>=0;});if(b){b.click();return true;}return false;})()");
+    await sleep(500);
     // 混音台是检查器里的一节 <details>：点摘要真的展开它。
     const summary = await evaluate(`(function () {
       const nodes = Array.from(document.querySelectorAll('.insp-section > summary'));

@@ -73,10 +73,10 @@ def main() -> None:
         assert facts["versionOnScreen"] == APP_VERSION, facts["versionOnScreen"]
         assert facts["engineVersion"] == APP_VERSION, facts["engineVersion"]
 
-        # ② 拾起来的表面：三块卡片与时间线都走大圆角，宽窗里有 8px 呼吸位。
+        # ② 拾起来的表面：三块卡片与时间线都走大圆角，宽窗里有 10px 呼吸位。
         assert editor["panelRadius"] >= 15, editor["panelRadius"]
         assert editor["timelineRadius"] >= 15, editor["timelineRadius"]
-        assert editor["mathGutter"] == 8, editor["mathGutter"]
+        assert editor["mathGutter"] == 10, editor["mathGutter"]
         assert editor["transportRadius"] >= 100, editor["transportRadius"]
 
         # ③ 工具按事情分组：正好五枚胶囊，名字与那一排的 aria-label 一致。
@@ -98,7 +98,7 @@ def main() -> None:
         assert shot.is_file() and size > 20_000, size
 
     print(
-        f"PASS: 发布包真窗口（{APP_VERSION}）里工作台是圆角卡片 + 8px 呼吸位 + 五枚工具胶囊，"
+        f"PASS: 发布包真窗口（{APP_VERSION}）里工作台是圆角卡片 + 10px 呼吸位 + 五枚工具胶囊，"
         "走带是胶囊，轨道头只有锁定/显隐/更多三颗，正文 14px，截图已落盘"
     )
 

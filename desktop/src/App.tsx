@@ -3,13 +3,16 @@ import { useEffect } from "react";
 import { bridge } from "./bridge";
 import { ContextMenuHost } from "./ContextMenu";
 import { shuttleRate } from "./shuttle";
-import { TitleBar } from "./TitleBar";
+import { LeftRail } from "./shell/LeftRail";
+import { TopBar } from "./shell/TopBar";
 import { AgentView } from "./views/AgentView";
 import { Editor } from "./views/Editor";
 import { HelpOverlay } from "./views/Help";
 import { Home } from "./views/Home";
 import { History } from "./views/History";
 import { StatusBar } from "./views/StatusBar";
+import { TemplateGallery } from "./views/TemplateGallery";
+import { SettingsDialog } from "./views/SettingsDialog";
 import { Icon } from "./ui";
 import { matchCommand } from "./keymap";
 import {
@@ -54,18 +57,23 @@ export function App() {
 
   return (
     <div className="app-frame">
-      <TitleBar />
-      <div className="app-body">
-        {view === "home" ? <Home /> : null}
-        {view === "editor" ? <Editor /> : null}
-        {view === "history" ? <History /> : null}
-        {view === "agent" ? <AgentView /> : null}
+      <LeftRail />
+      <div className="app-main">
+        <TopBar />
+        <div className="app-body">
+          {view === "home" ? <Home /> : null}
+          {view === "editor" ? <Editor /> : null}
+          {view === "history" ? <History /> : null}
+          {view === "agent" ? <AgentView /> : null}
+        </div>
+        <StatusBar />
       </div>
-      <StatusBar />
       <ResizeHandles />
       <ToastHost />
       <ContextMenuHost />
       {app.showHelp ? <HelpOverlay /> : null}
+      {app.templatesOpen ? <TemplateGallery /> : null}
+      {app.settingsOpen ? <SettingsDialog /> : null}
       {app.busy ? (
         <div className="busy-pill" role="status">
           <span className="spinner" />

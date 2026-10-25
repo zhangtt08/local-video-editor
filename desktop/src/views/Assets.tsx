@@ -13,6 +13,8 @@ import {
   addTextClip,
   importCaptions,
   openSequence,
+  setAssetFilter,
+  setCaptionsOpen,
 } from "../store";
 
 const FILTERS = [
@@ -26,7 +28,7 @@ const FILTERS = [
 export function Assets() {
   const app = useApp();
   const [tab, setTab] = useState<"library" | "project">("library");
-  const [filter, setFilter] = useState<"all" | "video" | "image" | "audio">("all");
+  const filter = app.assetFilter;
   const [query, setQuery] = useState("");
   const [subtitle, setSubtitle] = useState<string | null>(null);
   // 选文件那一颗走应用自己的按钮：整个界面只有这里原来是浏览器默认的「选择文件 / 未选择文件」，
@@ -55,35 +57,38 @@ export function Assets() {
 
   return (
     <aside className="panel">
-      {subtitle !== null ? <Modal title="导入 SRT 字幕" sub="时间从工程起点计算；每条字幕进入独立文字片段，支持修改和动画。" onClose={() => setSubtitle(null)} footer={<><button className="btn" onClick={() => setSubtitle(null)}>取消</button><button className="btn primary" disabled={!subtitle.trim()} onClick={() => { importCaptions(subtitle); setSubtitle(null); }}>导入字幕</button></>}>
+      {subtitle !== null || app.captionsOpen ? <Modal title="导入 SRT 字幕" sub="时间从工程起点计算；每条字幕进入独立文字片段，支持修改和动画。" onClose={() => { setSubtitle(null); setCaptionsOpen(false); }} footer={<><button className="btn" onClick={() => { setSubtitle(null); setCaptionsOpen(false); }}>取消</button><button className="btn primary" disabled={!subtitle?.trim()} onClick={() => { importCaptions(subtitle ?? ""); setSubtitle(null); setCaptionsOpen(false); }}>导入字幕</button></>}>
         <input ref={captionFile} type="file" accept=".srt" aria-label="选择 SRT 文件" hidden onChange={(e) => { const file = e.target.files?.[0]; if (file) void file.text().then(setSubtitle); }} />
         <button className="btn" onClick={() => captionFile.current?.click()}>选择字幕文件</button>
-        <textarea autoFocus className="input caption-editor" aria-label="SRT 字幕内容" rows={10} maxLength={500000} placeholder="粘贴 SRT 内容，或选择字幕文件" value={subtitle} onChange={(e) => setSubtitle(e.target.value)} />
+        <textarea autoFocus className="input caption-editor" aria-label="SRT 字幕内容" rows={10} maxLength={500000} placeholder="粘贴 SRT 内容，或选择字幕文件" value={subtitle ?? ""} onChange={(e) => setSubtitle(e.target.value)} />
       </Modal> : null}
       <div className="panel-head">
+        <div className="panel-title">素材库</div>
+        <span className="spacer" />
+        <IconBtn icon="type" label="新建文字片段（打在播放头处）" onClick={addTextClip} disabled={!project} />
+        <IconBtn icon="captions" label="导入 SRT 字幕（每条字幕一个文字片段）" onClick={() => { setSubtitle(""); setCaptionsOpen(true); }} disabled={!project} />
+        <IconBtn icon="refresh" label="重新读取素材库" onClick={() => void loadLibrary()} />
+        <button className="btn primary tiny" onClick={() => void importFiles()} title="选择视频 / 音频 / 图片，复制进本地素材库并逐块探测">
+          <Icon name="plus" size={12} /> 导入
+        </button>
+      </div>
+
+      <div className="asset-source-row">
         <div className="seg mini" role="tablist" aria-label="素材来源">
-          <button type="button" className={tab === "library" ? "active" : ""} onClick={() => setTab("library")} title="本机已探测的文件，可直接拖上时间线">
-            素材库
-          </button>
+          <button type="button" className={tab === "library" ? "active" : ""} onClick={() => setTab("library")} title="本机已探测的文件，可直接拖上时间线">素材库</button>
           <button type="button" className={tab === "project" ? "active" : ""} onClick={() => setTab("project")} title="当前工程已登记的素材：它们决定了片段能取用的范围">
-            工程素材
-            <span className="tag mono">{project ? Object.keys(project.assets).length : 0}</span>
+            工程素材 <span className="tag mono">{project ? Object.keys(project.assets).length : 0}</span>
           </button>
         </div>
-        <span className="spacer" />
-        <IconBtn icon="refresh" label="重新读取素材库" onClick={() => void loadLibrary()} />
-        <IconBtn icon="plus" label="导入素材文件（复制到本地素材库并逐块探测）" onClick={() => void importFiles()} />
       </div>
 
       <div className="asset-filters" role="tablist" aria-label="按类型筛选">
-        <button className="btn" onClick={addTextClip} disabled={!project}>＋ 文字</button>
-        <button className="btn" onClick={() => setSubtitle("")} disabled={!project}>字幕</button>
         {FILTERS.map((item) => (
           <button
             key={item.value}
             type="button"
             className={`btn ${filter === item.value ? "active" : ""}`}
-            onClick={() => setFilter(item.value)}
+            onClick={() => setAssetFilter(item.value)}
           >
             {item.label}
           </button>

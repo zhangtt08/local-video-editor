@@ -80,6 +80,7 @@ from .contracts import (
     MasterLoudnessRequest,
     MediaProbe,
     MutationResult,
+    OtioImportRequest,
     Project,
     ProjectUpdate,
     Property,
@@ -1781,6 +1782,76 @@ def create_app(
         project = sequence_view(root, sequence_id)
         listed = interchange.build_edl(project, track_id)
         return {**listed, "project_id": project_id, "revision": root.revision}
+
+    @app.get("/v1/projects/{project_id}/otio", dependencies=auth)
+    def project_otio(
+        project_id: Identifier,
+        projects: Store,
+        sequence_id: SequenceRef | None = None,
+    ):
+        """The whole timeline as OpenTimelineIO JSON (read-only).
+
+        Gaps are real children, so record times survive a round trip; each clip also carries
+        its own AgentCut record under metadata, so colour, masks and keyframes are not lost.
+        """
+        root = projects.get(project_id)
+        project = sequence_view(root, sequence_id)
+        return {
+            "project_id": project_id,
+            "revision": root.revision,
+            "otio": interchange.build_otio(project),
+        }
+
+    @app.get("/v1/projects/{project_id}/fcpxml", dependencies=auth)
+    def project_fcpxml(
+        project_id: Identifier,
+        projects: Store,
+        sequence_id: SequenceRef | None = None,
+    ):
+        """Final Cut Pro XML 1.9 for the whole timeline (read-only).
+
+        Edits this exporter cannot say are listed in ``omitted`` with their clip ids; the
+        ``complete`` flag says whether the spine is the whole cut.
+        """
+        root = projects.get(project_id)
+        project = sequence_view(root, sequence_id)
+        listed = interchange.build_fcpxml(project)
+        return {**listed, "project_id": project_id, "revision": root.revision}
+
+    @app.post("/v1/projects/{project_id}/otio/import", dependencies=auth)
+    def project_otio_import(
+        project_id: Identifier,
+        request: OtioImportRequest,
+        projects: Store,
+    ):
+        """Plan an OTIO timeline as ordinary commands; apply writes one atomic revision.
+
+        Media is matched by file name against assets this engine already verified. A name
+        that matches nothing, or two different assets, is refused by name before anything
+        is planned. ``apply`` needs a request_id and expected_revision, exactly like /edits.
+        """
+        root = projects.get(project_id)
+        project = sequence_view(root, request.sequence_id)
+        plan = interchange.otio_import_plan(project, request.document)
+        if not request.apply:
+            return {
+                "committed": False,
+                "project_id": project_id,
+                "revision": root.revision,
+                **plan,
+            }
+        reference = request.sequence_id
+        known = reference in root.sequences if reference is not None else False
+        batch = EditBatch(
+            request_id=request.request_id,
+            expected_revision=request.expected_revision,
+            sequence_id=reference if known else None,
+            sequence_name=reference if reference is not None and not known else None,
+            commands=plan["commands"],  # type: ignore[arg-type]
+            dry_run=request.dry_run,
+        )
+        mutation = projects.mutate(project_id, batch).model_dump()
+        return {**mutation, **plan}
 
     @app.post("/v1/projects/{project_id}/audio/beats", dependencies=auth)
     def audio_beats(project_id: Identifier, request: BeatRequest, projects: Store):

@@ -30,21 +30,21 @@ const editor = read("desktop/src/views/Editor.tsx");
 const timeline = read("desktop/src/views/Timeline.tsx");
 
 // ② 算术：装得下回默认，装不下回量到的那一档，量不到才回默认。
-assert.deepEqual(resetLayout(800), [280, 320, DEFAULT_TIMELINE], "窗口装得下 300 时，重置就该回默认那一档");
-assert.deepEqual(resetLayout(212), [280, 320, 212], "1040×660 量到的就是 212——回 212 才不会一按就夹住");
-assert.deepEqual(resetLayout(212.6), [280, 320, 213], "量到的数取整一次，别把半像素写进 CSS");
-assert.deepEqual(resetLayout(0), [280, 320, DEFAULT_TIMELINE], "量不到（盒子还没挂上）才回默认");
-assert.deepEqual(resetLayout(Number.NaN), [280, 320, DEFAULT_TIMELINE], "NaN 不能写进布局");
+assert.deepEqual(resetLayout(800), [300, 340, DEFAULT_TIMELINE], "窗口装得下 300 时，重置就该回默认那一档");
+assert.deepEqual(resetLayout(212), [300, 340, 212], "1040×660 量到的就是 212——回 212 才不会一按就夹住");
+assert.deepEqual(resetLayout(212.6), [300, 340, 213], "量到的数取整一次，别把半像素写进 CSS");
+assert.deepEqual(resetLayout(0), [300, 340, DEFAULT_TIMELINE], "量不到（盒子还没挂上）才回默认");
+assert.deepEqual(resetLayout(Number.NaN), [300, 340, DEFAULT_TIMELINE], "NaN 不能写进布局");
 assert.equal(resetLayout(-500)[2], DEFAULT_TIMELINE, "负数（读坏了）不能写进布局");
-assert.deepEqual(resetLayout(212).slice(0, 2), [280, 320], "两只面板的宽度回的是默认，不是跟着窗口缩");
+assert.deepEqual(resetLayout(212).slice(0, 2), [300, 340], "两只面板的宽度回的是默认，不是跟着窗口缩");
 
 // ① 那一个默认数只许有一个主人。
 assert.ok(editor.includes("resetLayout("), "「重置布局」没走那唯一的一处算术");
 assert.equal((editor.match(/resetLayout\(/g) ?? []).length, 1,
   "只有那一颗按钮该走「回量到的那一档」——开机那一档要的是默认数本身（它没有可量的盒子）");
-assert.ok(editor.includes("[280, 320, DEFAULT_TIMELINE]"),
+assert.ok(editor.includes("[300, 340, DEFAULT_TIMELINE]"),
   "开机那一档没读那唯一的主人（另写了一份默认数）");
-assert.ok(!/\[\s*280\s*,\s*320\s*,\s*300\s*\]/.test(editor), "视图里还留着一份写死的 [280, 320, 300]——一条公式两个主人");
+assert.ok(!/\[\s*280\s*,\s*320\s*,\s*300\s*\]/.test(editor), "视图里还留着一份写死的 [300, 340, 300]——一条公式两个主人");
 assert.ok(!/--timeline-height[^\n]*300px/.test(editor), "视图里不许再写第二条默认高度");
 
 // ④ 「窗口太矮」只许在**有人真要过**那个数时出现：应用自己那个默认数装不下，

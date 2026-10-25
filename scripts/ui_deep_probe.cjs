@@ -185,6 +185,15 @@ const AUDIT = `(function () {
     return /(auto|scroll|hidden)/.test(style.overflowY + style.overflowX);
   };
   const centre = function (node) {
+    // 合着的 <details> 里的孩子仍报矩形，但人点不到；它不是「被别的层盖住」，是不在画面上。
+    let chain = node.parentElement;
+    while (chain && chain !== document.documentElement) {
+      if (chain.tagName === "DETAILS" && !chain.open) {
+        const summary = chain.querySelector(":scope > summary");
+        if (!summary || !summary.contains(node)) return null;
+      }
+      chain = chain.parentElement;
+    }
     const r = node.getBoundingClientRect();
     if (r.width < 2 || r.height < 2) return null;
     const x = Math.round(r.left + r.width / 2);
@@ -379,9 +388,9 @@ async function main() {
     await escape();
     await sleep(300);
 
-    for (const pair of [["导出", "export"], ["示波器", "scopes"], ["检查器", "inspector"]]) {
+    for (const pair of [["导出", "export"], ["示波器", "scopes"], ["属性", "inspector"], ["检查器", "inspector"]]) {
       const picked = await evaluate(`(function () {
-        const hit = Array.from(document.querySelectorAll('.rail-tabs button'))
+        const hit = Array.from(document.querySelectorAll('.rp-tabs button, .rail-tabs button'))
           .find(function (n) { return (n.textContent || '').indexOf(${JSON.stringify(pair[0])}) >= 0; });
         if (!hit) return null;
         const r = hit.getBoundingClientRect();

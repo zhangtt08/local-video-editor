@@ -3289,3 +3289,11 @@ mask_rotation_schedule_segments` 当前是 12），`GET /v1/projects/{id}/previe
 13.7°/帧 20 帧全中、最差 1.10°；15°/帧反向逐帧误差 0.00°；静止全 0；25°/帧写到 350°、
 第 15 帧停下；30°/帧与 40°/帧都能走到 360°。写回的角度都在 ±360° 内，reducer 不拒。
 仍不做：3D/透视旋转、一帧超过 ±45° 的粗扫跨度、一条曲线里的多圈旋转、路径遮罩的角度。
+
+## 1.289 交换格式（OTIO / FCPXML）
+
+* `GET /v1/projects/{project_id}/otio?sequence_id=` — 整条时间线为 OpenTimelineIO JSON。轨道、Gap 与每段的 `source_range` 都是真的；每段还带着自己的 `metadata.agentcut.clip`，所以经这一份文件往返不会把调色、遮罩与关键帧压成一张剪辑表。只读。
+* `GET /v1/projects/{project_id}/fcpxml?sequence_id=` — Final Cut Pro XML 1.9。`omitted` 逐条点名这一版写不进 spine 的片段（文字层、变速、转场），`complete` 为假时读者就知道这是一份直切近似。只读。
+* `POST /v1/projects/{project_id}/otio/import` — 请求体 `{document, sequence_id?, apply?, request_id?, expected_revision?, dry_run?}`。默认只规划：先为它接管的每条轨道生成 `clip.remove`，再按 Gap 推进的绝对位置逐段生成 `clip.add`。素材按文件名匹配本工程已验证的素材；匹配不到（`OTIO_MEDIA_UNMATCHED`）、一个名字两份素材（`OTIO_MEDIA_AMBIGUOUS`）、轨道比工程多（`OTIO_TRACK_COUNT`）、源窗口越界（`OTIO_CLIP_RANGE`）都整份拒绝。`apply=true` 要带 `request_id` 与 `expected_revision`，写入走普通 `/edits`：一个 revision、一次撤销整体退回。
+
+MCP：`project_otio`、`project_fcpxml`（只读），`otio_import_plan`（强制只读，把命令交回 `timeline_edit`）。能力位：`features.otio_export` / `otio_import` / `fcpxml_export`。

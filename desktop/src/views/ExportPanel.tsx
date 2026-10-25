@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { bridge } from "../bridge";
+import { ExchangeSection } from "./ExchangeSection";
 import { Btn, Empty, Field, Icon, Tag } from "../ui";
 import { humanDuration, prettyBytes, rateLabel, TIMEBASE, timecode } from "../time";
 import type { OutputRate, RenderBatchItem, RenderJob } from "../engine";
@@ -253,6 +254,8 @@ export function ExportPanel(): JSX.Element {
           {renderReady ? "渲染就绪" : "渲染不可用"}
         </Tag>
       </div>
+
+      <ExchangeSection />
 
       {!app.caps ? (
         <p className="hint">还在读取引擎能力（/capabilities），预设一会儿就出现在这里。</p>

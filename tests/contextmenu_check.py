@@ -251,7 +251,10 @@ def main() -> None:
 
             # ⑧ 空白处是另一份菜单，标题写明是哪一轨。
             lane = facts.get("laneMenu")
-            assert lane, "空白处右键没有菜单"
+            assert lane, (
+                "空白处右键没有菜单"
+                f"（laneSpot={facts.get('laneSpot')} debug={facts.get('laneDebug')}）"
+            )
             assert lane["label"] == "时间线空白处操作", lane["label"]
             assert "空白处" in lane["title"], lane["title"]
             lane_labels = [item["label"] for item in lane["items"]]

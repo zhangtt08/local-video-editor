@@ -138,6 +138,11 @@ export type AppState = {
   window: WindowState;
   showHelp: boolean;
   assetFilter: "all" | "video" | "image" | "audio";
+  captionsOpen: boolean;
+  templatesOpen: boolean;
+  settingsOpen: boolean;
+  /** 左栏此刻停在哪一格（剪辑 / 素材 / 配音）：同一屏里只有一格亮着，不让「素材」与「剪辑」一起亮。 */
+  railFocus: "edit" | "assets" | "voice" | "export";
   remoteAhead: number | null;
   editorPanel: (typeof EDITOR_PANELS)[number];
   graphOpen: boolean;
@@ -201,6 +206,10 @@ let state: AppState = {
   window: { width: 1480, height: 900, maximized: false },
   showHelp: false,
   assetFilter: "all",
+  captionsOpen: false,
+  templatesOpen: false,
+  settingsOpen: false,
+  railFocus: "edit",
   remoteAhead: null,
   editorPanel: "inspect",
   graphOpen: false,
@@ -1704,6 +1713,35 @@ export function focusLinkedClip(clipId: string, tick = "", panel = ""): boolean 
   return true;
 }
 
+export function setAssetFilter(filter: AppState["assetFilter"]) {
+  set({ assetFilter: filter });
+}
+
+/** 左栏「字幕」与素材面板里的「字幕」是同一个入口：开一次导入 SRT 的弹层。 */
+export function openTemplates() {
+  set({ templatesOpen: true });
+}
+
+export function closeTemplates() {
+  set({ templatesOpen: false });
+}
+
+export function openSettings() {
+  set({ settingsOpen: true });
+}
+
+export function closeSettings() {
+  set({ settingsOpen: false });
+}
+
+export function setRailFocus(focus: AppState["railFocus"]) {
+  set({ railFocus: focus });
+}
+
+export function setCaptionsOpen(open: boolean) {
+  set({ captionsOpen: open });
+}
+
 export function selectAsset(assetId: string | null) {
   const sequenceId = assetId ? state.project?.assets[assetId]?.sequence_id : null;
   if (sequenceId) { openSequence(sequenceId); return; }
@@ -2561,6 +2599,54 @@ function rememberClip(copy: ClipClipboard | null, cold = false): void {
   clipClipboardCold = copy !== null && cold;
   writeBrowser(CLIP_KEY, copy);
   set({ clipboardCount: copy?.clips.length ?? 0 });
+}
+
+/** 1.289：交换格式。导出只读；导入先交回普通命令，审过再走同一条批次。 */
+export async function exportTimelineOtio(): Promise<void> {
+  if (!engine || !state.project) return;
+  try {
+    const result = await engine.projectOtio(state.project.id, state.sequenceId);
+    await copy(JSON.stringify(result.otio, null, 2), "OpenTimelineIO 时间线");
+  } catch (error) {
+    const { title, detail } = describe(error);
+    toast("error", title, detail);
+  }
+}
+
+export async function exportTimelineFcpxml(): Promise<void> {
+  if (!engine || !state.project) return;
+  try {
+    const result = await engine.projectFcpxml(state.project.id, state.sequenceId);
+    const blob = new Blob([result.xml], { type: "application/xml" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `${state.project.name || "timeline"}.fcpxml`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    toast(
+      result.complete ? "ok" : "warn",
+      result.complete ? "已保存 FCPXML" : "已保存 FCPXML（有略去的片段）",
+      result.complete
+        ? `spine 与时间线等长：${(result.duration_ticks / TIMEBASE).toFixed(2)} 秒。`
+        : `${result.omitted.length} 段说不进 spine，文件里的 omitted 不随文件走；逐条列出的是：` +
+          result.omitted.map((item) => item.clip_id).join("、"),
+    );
+  } catch (error) {
+    const { title, detail } = describe(error);
+    toast("error", title, detail);
+  }
+}
+
+export async function planTimelineOtio(document: Record<string, unknown>) {
+  if (!engine || !state.project) return null;
+  return engine.otioImport(state.project.id, { document, apply: false, sequence_id: state.sequenceId });
+}
+
+/** 规划出来的命令就是普通命令：一个批次一个 revision，撤销一次整体退回。 */
+export function applyTimelineOtio(commands: Command[]) {
+  const project = state.project;
+  if (!project || !commands.length) return;
+  editAtRevision(commands, project.id, project.revision, "导入 OTIO 时间线");
 }
 
 export function copySelection() {

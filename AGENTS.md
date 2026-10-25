@@ -5447,3 +5447,22 @@ do 掉了：立方体接回图里，见「八轮前的停放点（1.153）」。
 `self_check.py` 只覆盖它自己拉起的 HTTP/MCP 链路，逐功能的验收在 `tests/*_check.py` 里；一并运行 `uv run python tests/suite_check.py`（可加名字子串只跑相关的几个，例如 `tests/suite_check.py grade marks`），任一子检查失败该入口以非零码退出。渲染层自己的 TypeScript 检查（`tests/desktop_*_check.ts`、`tests/scope_check.ts`）由 `tests/desktop_ts_check.py` 用 desktop 自带的 esbuild + node 跑，因此也在这个入口里——「门禁全绿」不再依赖有人手动去跑壳层检查。
 涉及媒体输出时另验真实媒体、流元数据及声画同步。
 交付说明须列明实际完成、验证证据及未完成的边界；功能未实现时能力接口不得声明可用。
+
+## 1.289：界面按参考图重做（2.0 Aurora），交换格式接进 OTIO / FCPXML
+
+- **先停下迭代、重做表面**：旧的「标题栏 + 三栏 + 底部时间线」换成一整块工作台——左侧导航（项目/素材/剪辑/配音/字幕/导出/历史/Agent/工具，底部缓存环与引擎状态），顶栏面包屑（双击重命名）+ 撤销重做 + 交付档位 + 青柠色导出，中间素材库与监视器并排、时间线横跨整行，右列一列到底（AI 剪辑 / 属性 / 导出 / 示波器）。模板、字号、圆角仍只从刻度取；`.hint` 那条纪律照旧。
+- **两档主题**：`html[data-theme]` + `desktop/src/theme.ts`，只进 localStorage，不进工程状态。深色是霓虹紫，浅色是白卡；两边共用同一套令牌。
+- **AI 面板不是演示按钮**：七张卡分别调 `roughCutTrack` / `splitScenes` / `autoCaptions` / `autoGradeClip` / `duckTrack` / `alignTrackLoudness` / `alignMulticam`；四张剪辑风格卡只写 `clip.patch` 的 color/effects，一次点击一个批次一个 revision（`desktop/src/stylePresets.ts`）。
+- **交换格式**（吸收 OpenCut / OpenChatCut / OpenTimelineIO 的通用做法）：`interchange.build_otio` / `build_fcpxml` / `otio_import_plan`；三条只读路由 + `POST /otio/import`；MCP `project_otio` / `project_fcpxml` / `otio_import_plan`。导入只交普通命令，apply 一个 revision；四种拒绝按名字且不写库。`tests/interchange_check.py` 端到端量过往返签名、字幕正文、FCPXML spine 与四种拒绝。
+- **门禁现状**：`desktop_ts_check` 全部壳检绿（`layoutreset` 的新默认改成 [300,340,350]；token 那一档学会了两档主题里 `var(--ink)` 的语义；uiscale 的最小档只留给图形）；`error_vocabulary_check` 198 码 0 条英文；`docs_facts` / `docs_shape` / `stylewidth` / ruff 全绿；`ui_shape_check` 在 1456 档 **28 屏全绿**；1040 档只剩两条「再叠遮罩拖动」：标尺 / 键盘兜底把播放头落在 5 秒 20 帧而不是夹具约定的 6 秒（差 10 帧），于是拖动按设计在**两枚框点之间新打了一枚**，而门禁只读 2 秒那一枚与静止值，读到的自然是「没变」。这不是产品已经验证的结论，是量具落点的账；下一步把 `baseState` 改成按片段中点直接算 tick（或用框点表里那一枚的时刻按钮），不要继续在坐标上加按键。同一轮把装机那一腿的量具对齐到新壳层（`.editor2`、10px 呼吸位、`.conn` 引擎灯），`packaged_ui_check` 在真发布包上绿。
+- **发版**：`APP_VERSION` / `desktop/package.json` 1.289.0，schema 仍是 33。`.venv/Scripts/python.exe scripts/build_engine.py --verify --no-uv` 通过（冻结引擎自报 1.289.0、冷启动 766 ms、staged 298.9 MB）；`npm run dist` 通过；根 `AgentCut.exe` 与便携版 `cmp` 逐字节相同（**185,247,286 B**，sha256 前缀 `8f929647bd4e41ef`），安装版 185,407,997 B；`released_package_check`（asar 1.289.0、84 个文件、**73 句人说得出的话**）与 `packed_engine_surface_check`（包里那支引擎真 HTTP 交回 1.289.0 / schema 33）全绿。
+- **全套实测**：空闲机单跑 `tests/suite_check.py` **166/168**——两红是 `stylewidth_check`（`tests/contextmenu_check.py` 里我加的那句调试断言超宽，已折行后单跑绿）与 `ui_shape_check`（1456 档 28 屏全绿；1040 档的「画面拖再叠遮罩 / Alt 拖出副本」两条：量具把播放头落在 5 秒 20 帧而夹具要 6 秒，拖动于是按设计在两枚框点之间新打了一枚，门禁只读 2 秒那一枚）。`packaged_ui_check` 在真发布包上绿（`.editor2`、10px 呼吸位、`.conn` 引擎灯、五枚工具胶囊、轨道头三颗按钮、正文 14px）。
+
+## 1.290：模板库与设置两处入口补齐，窄窗布局按实测收口
+
+- **模板**：左栏「模板」打开一扇 760px 的弹层，三页——剪辑风格（四张色板，写 `clip.patch` 的 color/effects）、字幕样式（五档 `TEXT_PRESETS`，只改样式不动正文）、入场/出场（七种 `MOTION_PRESETS` × 0.3/0.5/0.8/1.2 秒，写普通 `keyframe.set`）。全部经 `editAtRevision`：一次一个批次一个 revision。`desktop/src/templateActions.ts` 是这两条写路的唯一主人。
+- **设置**：左栏「设置」一扇 620px 的弹层——主题（深/浅）、时间吸附、联动选择、代理分辨率、派生缓存与清理、安全框、引擎版本/接口/FFmpeg、两个去路（Agent 接入 / 区域说明）。每一项都落在已有的偏好或工程状态上：主题进 localStorage，磁吸与联动进 `EditPrefs`，安全框走 `updateProjectMeta`。
+- **窄窗实测抓到的三处真缺陷，都修了**：① 监视器脚注是 `.preview-col` 的兄弟节点，1040 档溢到时间线卡片上——现在 `.ed-center` 自己就是那张卡片、脚注是它的第三行；② 切到曲线/帮助时整份文档会滚一下，把顶栏带走——`html/body/#root` 与 `.app-frame` 都 `overflow:hidden`；③ 1040×660 左栏放不下头像（被 `app-frame` 竖切）——矮窗（`max-height:760`）去掉存储卡、行高 46→40，头像与设置仍在屏内。
+- **量具跟着新布局改的三处**：`clipSpot` 只在看不见时才滚、且贴最近边（居中会把片段左缘连同针藏到轨道头下）；标尺 seek 先在可见带里点，再按片段中点用键盘补齐到单帧；`ui_deep_probe` 把合着的 `<details>` 里的孩子当「不在画面上」（矩形会撒谎，但人点不到）。
+- **实测**：`ui_shape_check` **56 屏全绿**（1456 与 1040 两档；地板 12.5px、叠行 1、缺口有名 4、下拉被切 0、字压字 0）；7 项真页面 UI 检查（场景/粗剪/挑动/多机位/混音台/深交互/右键菜单）与 `packaged_ui_check` 全绿；`desktop_ts_check` 全部壳检绿。模板与设置真点过：选一段画面 → 套风格 r37→r38；设置里切浅色，`html[data-theme]` 立刻是 light；模板里的入场卡有 7 张。
+- **发版**：`APP_VERSION` / `desktop/package.json` 1.290.0，schema 仍是 33。`build_engine --verify --no-uv` 通过（冻结引擎自报 1.290.0）；`npm run dist` 后根 `AgentCut.exe` 与便携版 `cmp` 逐字节相同（**185,249,062 B**，sha256 前缀 `c941b939dccdc32a`），安装版 185,409,767 B（前缀 `12e765be03f8ddfc`）；`released_package_check`（asar 1.290.0、84 个文件、73 句人话）、`packed_engine_surface_check`（包里引擎真 HTTP 交回 1.290.0 / schema 33）与 `packaged_ui_check`（真窗口：22px 卡片、10px 呼吸位、五枚工具胶囊、轨道头三颗按钮、正文 14px）全绿。

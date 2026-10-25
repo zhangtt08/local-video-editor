@@ -368,58 +368,31 @@ export function Timeline() {
           <IconBtn icon="razor" label={`分割工具（${chordWords(keymap()["tool-razor"])}）：点片段即在点击处切一刀，切成两段可独立删除`} active={edit.tool === "razor"} onClick={() => prefs.setTool("razor")} />
         </span>
         <span className="tool-well" role="group" aria-label="剪辑">
-          <button className="btn tiny subtle" disabled={!canSplit} title={`在播放头处分割选中片段（${chordWords(keymap().split)}）`} onClick={() => splitSelection(playhead.value)}>分割</button>
+          <IconBtn icon="split" label={`在播放头处分割选中片段（${chordWords(keymap().split)}）`} disabled={!canSplit} onClick={() => splitSelection(playhead.value)} />
           <IconBtn icon="copy" label={`复制选中片段（${chordWords(keymap().copy)}）`} disabled={!app.selectedClip} onClick={copySelection} />
-          <button className="btn tiny subtle" disabled={!app.clipboardCount} onClick={pasteSelection} title={`粘贴到播放头（${chordWords(keymap().paste)}）`}>粘贴</button>
-          <button
-            className="btn tiny subtle"
-            disabled={Boolean(attributeStop)}
-            title={attributeStop ?? "把这一段当前的调色链、效果与变换、关键帧、遮罩、淡、变速、文字样式记下来，再粘到别的段上（达芬奇 / 剪映那句「粘贴属性」）"}
-            onClick={copyAttributes}
-          >
-            复制属性
-          </button>
-          <button
-            className="btn tiny subtle"
-            disabled={Boolean(attributePasteStop)}
-            title={attributePasteStop ?? `把记下的那几类粘到选中的 ${attributeTargets.length} 段上（来源自己不算目标）`}
-            onClick={() => setAttributeOpen(true)}
-          >
-            粘贴属性
-          </button>
+          <IconBtn icon="paste" label={`粘贴到播放头（${chordWords(keymap().paste)}）`} disabled={!app.clipboardCount} onClick={pasteSelection} />
+          <IconBtn icon="attributes" label={attributeStop ?? "复制属性：把这一段当前的调色链、效果与变换、关键帧、遮罩、淡、变速、文字样式记下来"} disabled={Boolean(attributeStop)} onClick={copyAttributes} />
+          <IconBtn icon="paste" label={attributePasteStop ?? `粘贴属性到选中的 ${attributeTargets.length} 段（来源自己不算目标）`} disabled={Boolean(attributePasteStop)} onClick={() => setAttributeOpen(true)} />
           <IconBtn icon="trash" label={`删除选中片段，保留空隙（${chordWords(keymap()["delete-selection"])}）`} disabled={!app.selectedClip} onClick={() => removeSelection()} />
-          <button className="btn tiny subtle" disabled={!app.selectedClip} title={`删除并向左补齐本轨后续片段（${chordWords(keymap()["ripple-delete"])}）`} onClick={() => removeSelection(true)}>涟漪删除</button>
+          <IconBtn icon="ripple" label={`删除并向左补齐本轨后续片段（${chordWords(keymap()["ripple-delete"])}）`} disabled={!app.selectedClip} onClick={() => removeSelection(true)} />
         </span>
         {app.selectedClips.length > 1 ? <span className="tag accent">{app.selectedClips.length} 段</span> : null}
         <span className="tool-well" role="group" aria-label="吸附与标记">
           <IconBtn icon="magnet" label={`磁吸（${chordWords(keymap()["toggle-snap"])}）：拖动时自动贴到整帧、相邻片段边缘与标记，避免留下 1 帧缝`} active={edit.snap} onClick={() => prefs.toggleSnap()} />
           <IconBtn icon="flag" label="在指针处打一个标记（M）：人和 Agent 用同一个整数刻度说「这里」，标记还会成为磁吸边缘" onClick={() => addMarker()} />
           <IconBtn icon="razor" label="在每个标记处切开落在它里面的片段：一次事务、一次撤销；落在边缘或空隙上的标记不产生切点" disabled={!(app.project?.markers ?? []).length} onClick={() => void splitAtMarkers()} />
-          <button className={`btn tiny subtle${edit.linkedSelection ? " active" : ""}`} aria-pressed={edit.linkedSelection} title="联动选择：组合与链接一起选中；音画链接一起修剪、分割。Alt 点选可临时单选。" onClick={() => prefs.toggleLinkedSelection()}>联动</button>
+          <IconBtn icon="link" label="联动选择：组合与链接一起选中；音画链接一起修剪、分割。Alt 点选可临时单选。" active={edit.linkedSelection} onClick={() => prefs.toggleLinkedSelection()} />
         </span>
         <span className="tool-well" role="group" aria-label="历史与视图">
           <IconBtn icon="undo" label="撤销：用历史恢复回到上一步（版本号继续增加，不会倒退）" disabled={!app.undo.length} onClick={undo} />
           <IconBtn icon="redo" label={`重做：回到撤销前的那一版（${chordWords(keymap().redo)}）`} disabled={!app.redo.length} onClick={redoStep} />
-          <IconBtn
-            icon="zoomIn"
-            label="适应窗口：把整条时间线放进可视范围"
-            onClick={() => prefs.fitTo(timelineEnd(project), (scrollRef.current?.clientWidth ?? 1200) - HEAD)}
-          />
+          <IconBtn icon="zoomIn" label="适应窗口：把整条时间线放进可视范围" onClick={() => prefs.fitTo(timelineEnd(project), (scrollRef.current?.clientWidth ?? 1200) - HEAD)} />
         </span>
         <span className="tool-well" role="group" aria-label="加轨道">
-          <button className="btn subtle" title="再加一层画面：叠标题、画中画需要第二条画面轨" onClick={() => addTrack("video")}>
-            <Icon name="plus" size={12} /> 画面轨
-          </button>
-          <button className="btn subtle" title="再加一条声音轨：配乐与旁白分开控制音量" onClick={() => addTrack("audio")}>
-            <Icon name="plus" size={12} /> 声音轨
-          </button>
+          <IconBtn icon="film" label="再加一层画面：叠标题、画中画需要第二条画面轨" onClick={() => addTrack("video")} />
+          <IconBtn icon="music" label="再加一条声音轨：配乐与旁白分开控制音量" onClick={() => addTrack("audio")} />
         </span>
         <span className="spacer" />
-        {app.mode === "batch" ? (
-          <span className="tag accent" title="动作先进待提交批次，预演通过再写入">批次模式</span>
-        ) : (
-          <span className="tag off" title="每个动作立刻写成一条命令批次并提交">即时模式</span>
-        )}
         <span className="zoom-ctrl">
           <IconBtn icon="zoomOut" label={`缩小（${chordWords(keymap()["zoom-out"])}）`} onClick={() => prefs.zoomBy(0.8)} />
           <input type="range" min={ZOOM_MIN} max={ZOOM_MAX} value={px} aria-label="时间线缩放" onChange={(event) => prefs.setZoom(Number(event.target.value))} />
@@ -757,7 +730,10 @@ function TrackRow({
     <div className={`tl-row${track.kind === "audio" ? " audio-row" : ""}`} style={{ height: ROW }}>
       <div className={`tl-head${track.kind === "audio" ? " audio-track" : ""}`} style={{ top: (index + 1) * ROW }}>
         <div className="tl-head-main">
-          <span className="tname" title={`轨道 id：${track.id}`}>{track.name}</span>
+          <span className="tname" title={`轨道 id：${track.id}`}>
+            <Icon name={track.kind === "video" ? "film" : "music"} size={12} />
+            {track.name}
+          </span>
           <span className="tkind">{track.kind === "video" ? "画面" : "音频"}</span>
         </div>
         <div className="tl-head-btns">

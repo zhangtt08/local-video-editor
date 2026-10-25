@@ -869,6 +869,12 @@ export function errorHints(): Record<string, string> {
       EDL_RATE: "剪辑表的时码按整帧写：这条时间线是分数帧率，CMX3600 要先定丢帧/不丢帧那一套算法，这一版不猜。把工程换成 24/25/30/50/60，或者直接交付成片。",
       EDL_UNSUPPORTED: "这条轨上有剪辑表说不出的东西（转场、变速或不是画面的片段）。先去掉或合并它们，或者直接交付成片；这一趟没有写任何文件。",
       EDL_EMPTY: "这条轨上还没有片段，剪辑表是空的。先放几段画面进来。",
+      OTIO_UNSUPPORTED: "这份 JSON 不是 OpenTimelineIO 的时间线，或者里面有这一版不认的东西。用别的工具导一份 Timeline 的 OTIO JSON；这一趟没有写任何东西。",
+      OTIO_EMPTY: "这份 OTIO 里没有可导入的轨道或片段。先在对方软件里放几段素材再导出；这一趟没有写任何东西。",
+      OTIO_TRACK_COUNT: "这份时间线的轨道比工程里多。先给工程加够同类型的轨道，再导入；这一趟没有写任何东西。",
+      OTIO_MEDIA_UNMATCHED: "有些片段指向本工程还没导入的文件。先把这些文件导入素材库，再跑一次计划；这一趟没有写任何东西。",
+      OTIO_MEDIA_AMBIGUOUS: "有一个文件名在工程里对应两份素材，导入不知道该接哪一份。把其中一份改名，或先删掉不用的那份。",
+      OTIO_CLIP_RANGE: "有些片段的源窗口超出了素材本身的长度。先修好那几段，或换一份时间线；这一趟没有写任何东西。",
       ROUGH_NONE: "每个镜头都比「每镜留」更短，粗剪没有可切的内容。把每镜留调短一点（默认 1.5 秒）再试；这一次没有改写工程。",
       INVALID_BEAT_TARGET: "这段里没有可听的节拍：要么它不是声音（纯画面素材没有音轨），要么它带着变速曲线——那种片段的一秒源声音不落在固定长度的时间线上，打出来的点会对不上画面。纯画面请换一条声音素材；变速曲线先去曲线编辑器里清掉，或直接对素材本身打点。",
       BEAT_QUIET: "这段声音里没有一枚起音越过门槛：可能是一段持续不断的长音或底噪。把灵敏度调高一点（滑杆往右），或换一段有鼓点/节奏的区间再试；这一次没有写入任何标记。",
@@ -1389,6 +1395,44 @@ export class Engine {
       text: string;
       revision: number;
     }>("GET", `/v1/projects/${projectId}/edl${query}`);
+  }
+
+  /** 整个时间线导出成 OpenTimelineIO JSON（只读）。 */
+  projectOtio(projectId: string, sequenceId?: string | null) {
+    const query = sequenceId ? `?sequence_id=${encodeURIComponent(sequenceId)}` : "";
+    return this.request<{ project_id: string; revision: number; otio: Record<string, unknown> }>(
+      "GET",
+      `/v1/projects/${projectId}/otio${query}`,
+    );
+  }
+
+  /** 整个时间线导出成 FCPXML 1.9 文本（只读）；omitted 说明哪几段没进 spine。 */
+  projectFcpxml(projectId: string, sequenceId?: string | null) {
+    const query = sequenceId ? `?sequence_id=${encodeURIComponent(sequenceId)}` : "";
+    return this.request<{
+      project_id: string;
+      revision: number;
+      xml: string;
+      complete: boolean;
+      duration_ticks: number;
+      omitted: { clip_id: string; reason: string }[];
+    }>("GET", `/v1/projects/${projectId}/fcpxml${query}`);
+  }
+
+  /** OTIO 导入：先交回普通命令；apply 才写库（一次一个 revision）。 */
+  otioImport(projectId: string, body: Record<string, unknown>) {
+    return this.request<{
+      committed: boolean;
+      project_id: string;
+      revision: number;
+      commands: Record<string, unknown>[];
+      tracks: { track_id: string; name: string; kind: string; clips: number }[];
+      clips: number;
+      text_clips: number;
+      gaps: number;
+      dropped: { transitions: number; markers: number; effects: number };
+      project?: unknown;
+    }>("POST", `/v1/projects/${projectId}/otio/import`, body, 60000);
   }
 
   /** 整轨粗剪：逐片段右到左各取一份计划，合成一个批次；不能扫的片段带原因跳过。 */

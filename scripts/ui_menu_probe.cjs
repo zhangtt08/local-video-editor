@@ -290,8 +290,11 @@ async function main() {
     facts.menuAfterEscape = await evaluate(MENU_READ);
     facts.focusAfterEscape = await evaluate("(document.activeElement && document.activeElement.getAttribute && document.activeElement.getAttribute('data-id')) || document.activeElement.tagName.toLowerCase()");
 
-    // ⑤ 空白处：真的点在一片没有片段的地方。先找一段命中点确实是轨道的那一格。
-    const laneSpot = await evaluate(`(function () {
+    // ⑤ 空白处：真的点在一片没有片段的地方。时间线现在只占「素材 + 监视器」那两列，
+    // 空白尾段常在可视区之外——先滚到最右，找一格命中点确实是轨道的，量完再滚回 0。
+    await evaluate("var s=document.querySelector('.tl-scroll'); if(s){s.scrollLeft=s.scrollWidth;} true");
+    await sleep(350);
+    let laneSpot = await evaluate(`(function () {
       const lanes = Array.from(document.querySelectorAll('.tl-lane[data-track-id]'));
       for (const lane of lanes) {
         const rect = lane.getBoundingClientRect();
@@ -303,8 +306,21 @@ async function main() {
           if (hit === lane) return { x: x, y: y, track: lane.getAttribute('data-track-id') };
         }
       }
-      return null;
+      const lanes2 = Array.from(document.querySelectorAll('.tl-lane[data-track-id]'));
+      const sample = lanes2.slice(0, 3).map(function (lane) {
+        const r = lane.getBoundingClientRect();
+        const y = Math.round((Math.max(r.top, 0) + Math.min(r.bottom, window.innerHeight)) / 2);
+        const hits = [];
+        for (let x = Math.round(Math.max(r.left, 0)) + 120; x < Math.min(r.right, window.innerWidth) - 20; x += 120) {
+          const el = document.elementFromPoint(x, y);
+          hits.push(x + ':' + (el ? el.tagName + '.' + String(el.className || '').slice(0, 18) : 'null'));
+        }
+        return { rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)], hits: hits };
+      });
+      return { none: true, lanes: lanes2.length, sample: sample };
     })()`);
+    if (laneSpot && laneSpot.none) facts.laneDebug = laneSpot;
+    if (laneSpot && laneSpot.none) laneSpot = null;
     facts.laneSpot = laneSpot;
     if (laneSpot) {
       await click(laneSpot.x, laneSpot.y, "right");

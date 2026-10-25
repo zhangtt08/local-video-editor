@@ -97,7 +97,10 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
   // free-form outline is different: its vertices are the shape itself and the curves only translate
   // it, so hiding the guide would make a tracked outline impossible to correct. It stays visible and
   // is moved to where the cut actually lands at this frame.
-  const visible = Boolean(editable && mask && app.maskEditing && !play.playing && app.selectedClips.length === 1 && app.selectedClip === clip.id);
+  // 选一块本身就是编辑意图：按下那颗 ◎ 时也会打开「画面中编辑」，但两处状态谁先落地
+  // 不该决定框画不画得出来。所以任一条成立都画（1040 窄窗量到的就是这个顺序）。
+  const selectedIndex = app.maskExtraSel?.clipId === clip.id ? app.maskExtraSel.index : null;
+  const visible = Boolean(editable && mask && (app.maskEditing || selectedIndex !== null) && !play.playing && app.selectedClips.length === 1 && app.selectedClip === clip.id);
   useEffect(() => {
     const element = picture.current;
     maskAnimations.current.forEach((effect) => effect.cancel());
@@ -284,7 +287,6 @@ export function MaskPicture({ clip, image, extra, extraWindows, extraUnits, chil
   const atCap = mask?.shape === "path" && vertices.length >= vertexLimit;
   const frame = frameTicks(app.project?.settings.frame_rate ?? { numerator: 30, denominator: 1 });
   const localAt = Math.max(0, Math.min(clip.duration_ticks, play.ticks - clip.position_ticks));
-  const selectedIndex = app.maskExtraSel?.clipId === clip.id ? app.maskExtraSel.index : null;
   const selectedExtra = selectedIndex === null ? undefined : clip.extra_masks?.[selectedIndex];
   const selectedFrameTick = Math.min(clip.duration_ticks, Math.round(localAt / frame) * frame);
   const selectedKey = selectedExtra

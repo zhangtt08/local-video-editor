@@ -156,6 +156,41 @@ const PATHS: Record<string, ReactNode> = {
       <path d="M11 6.4l3 3.2M14 6.4l-3 3.2" />
     </g>
   ),
+  paste: (
+    <g>
+      <rect x="3.2" y="3.4" width="9.6" height="10" rx="1.5" />
+      <path d="M6.4 6.6h3.2M6.4 9.4h2.2" />
+      <path d="M5.6 3.4V2.4h4.8v1" />
+    </g>
+  ),
+  grid: (
+    <g>
+      <rect x="2.6" y="2.6" width="4.6" height="4.6" rx="1.1" />
+      <rect x="8.8" y="2.6" width="4.6" height="4.6" rx="1.1" />
+      <rect x="2.6" y="8.8" width="4.6" height="4.6" rx="1.1" />
+      <rect x="8.8" y="8.8" width="4.6" height="4.6" rx="1.1" />
+    </g>
+  ),
+  attributes: (
+    <g>
+      <path d="M2.8 4.4h10.4M2.8 8h10.4M2.8 11.6h10.4" />
+      <circle cx="6" cy="4.4" r="1.3" />
+      <circle cx="10" cy="8" r="1.3" />
+      <circle cx="5" cy="11.6" r="1.3" />
+    </g>
+  ),
+  ripple: (
+    <g>
+      <path d="M3 4h7.5M3 8h7.5M3 12h7.5" />
+      <path d="M12.2 3.6v8.8M9.6 10.6l2.6 2.2 -2.6 2.2" />
+    </g>
+  ),
+  type: (
+    <g>
+      <path d="M3 3.6h10M8 3.6v8.8" />
+      <path d="M5.8 12.4h4.4" />
+    </g>
+  ),
   captions: (
     <g>
       <rect x="1.6" y="3.2" width="12.8" height="8.4" rx="1.6" />
@@ -174,7 +209,7 @@ const PATHS: Record<string, ReactNode> = {
   ),
 };
 
-export function Icon({ name, size = 14 }: { name: keyof typeof PATHS | string; size?: number }) {
+export function Icon({ name, size = 14, className }: { name: keyof typeof PATHS | string; size?: number; className?: string }) {
   return (
     <svg
       width={size}
@@ -185,6 +220,7 @@ export function Icon({ name, size = 14 }: { name: keyof typeof PATHS | string; s
       strokeWidth="1.4"
       strokeLinecap="round"
       strokeLinejoin="round"
+      className={className}
       aria-hidden="true"
       focusable="false"
     >
@@ -197,9 +233,15 @@ export function Icon({ name, size = 14 }: { name: keyof typeof PATHS | string; s
 export function BrandMark({ size = 20 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 20 20" fill="none" aria-hidden="true">
-      <rect width="20" height="20" rx="5" fill="#1c1c21" />
-      <path d="M7.2 6.2v7.6l6-3.8-6-3.8z" fill="#fff" />
-      <line x1="13.8" y1="4.2" x2="13.8" y2="15.8" stroke="#2b59d8" strokeWidth="1.7" strokeLinecap="round" />
+      <defs>
+        <linearGradient id="agentcut-brand" x1="0" y1="0" x2="20" y2="20" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#a78bfa" />
+          <stop offset="1" stopColor="#6d28d9" />
+        </linearGradient>
+      </defs>
+      <rect width="20" height="20" rx="6" fill="url(#agentcut-brand)" />
+      <path d="M7.4 5.9v8.2l6.4-4.1-6.4-4.1z" fill="#fff" />
+      <path d="M6.2 5.6v8.8" stroke="#fff" strokeWidth="1.3" strokeLinecap="round" opacity=".55" />
     </svg>
   );
 }
