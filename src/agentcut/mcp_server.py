@@ -29,6 +29,7 @@ from .contracts import (
     ExtraMaskTrackRequest,
     FadeAdoptTrackRequest,
     FourPointRequest,
+    FrameStabilityRequest,
     GradeApplyTrackRequest,
     Identifier,
     ImportRequest,
@@ -534,6 +535,25 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         """
         body = request.model_dump(mode="json") | {"apply": False, "dry_run": False}
         return await call("POST", f"/v1/projects/{project_id}/transcript/cut", body)
+
+    @server.tool(annotations=read)
+    async def frame_stability(
+        project_id: Identifier,
+        request: FrameStabilityRequest,
+    ) -> dict:
+        """Re-render these ticks three times in different orders; did the picture move?
+
+        Use it after a change that touches the render chain (a grade, a mask, a cache eviction) when
+        the question is "is this engine still deterministic", not "what does frame N look like".
+        Each entry of `frames` carries the sha256 of exactly the bytes `preview_frame`
+        would hand back for that tick, plus where the tick actually landed on the frame
+        grid. `distinct` says how many different pictures those ticks produced — one
+        picture for eight ticks is what a cache key that forgot the time looks like.
+        Read-only: nothing here writes project state.
+        """
+        return await call(
+            "POST", f"/v1/projects/{project_id}/frame-stability", request.model_dump(mode="json")
+        )
 
     @server.tool(annotations=read)
     async def track_rough_cut(

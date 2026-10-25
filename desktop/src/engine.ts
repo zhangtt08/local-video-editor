@@ -903,6 +903,8 @@ export function errorHints(): Record<string, string> {
       TRANSCRIPT_NO_SPANS: "没有收到要删的区间。请交出至少一段 {from_ticks, to_ticks}。",
       TRANSCRIPT_SPAN: "有一段区间不向前（结束必须晚于开始）或开始在了零之前。修正这几段再来一次。",
       TRANSCRIPT_NOTHING_TO_CUT: "这些区间一段都剪不动：碰到的每个片段都被拒绝了，理由就在回执的 skipped 里；这一趟没有写任何东西。",
+      STABILITY_NO_TIMES: "没有点名要重画哪几个时刻：给它一串整数 tick（例如 [0, 70560000]），引擎会各画三遍再比。",
+      STABILITY_TOO_MANY: "一次自检最多重画 8 帧：把要看的区间分成几批分别问，别一次塞满。",
       OTIO_MEDIA_AMBIGUOUS: "有一个文件名在工程里对应两份素材，导入不知道该接哪一份。把其中一份改名，或先删掉不用的那份。",
       OTIO_CLIP_RANGE: "有些片段的源窗口超出了素材本身的长度。先修好那几段，或换一份时间线；这一趟没有写任何东西。",
       ROUGH_NONE: "每个镜头都比「每镜留」更短，粗剪没有可切的内容。把每镜留调短一点（默认 1.5 秒）再试；这一次没有改写工程。",

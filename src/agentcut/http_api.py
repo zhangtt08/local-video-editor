@@ -26,7 +26,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from . import asr as asr_module
 from . import autograde as autograde_module
 from . import beats as beats_module
-from . import duck, interchange, scenes, silence, transcript
+from . import duck, interchange, scenes, silence, stability, transcript
 from . import fourpoint as fourpoint_module
 from . import markers as marker_plan
 from . import reframe as reframe_plan
@@ -68,6 +68,7 @@ from .contracts import (
     ExtraMaskTrackRequest,
     FadeAdoptTrackRequest,
     FourPointRequest,
+    FrameStabilityRequest,
     GradeApplyTrackRequest,
     Identifier,
     ImportRequest,
@@ -1959,6 +1960,28 @@ def create_app(
         )
         mutation = projects.mutate(project_id, batch).model_dump()
         return {**mutation, **plan}
+
+    @app.post("/v1/projects/{project_id}/frame-stability", dependencies=auth)
+    def project_frame_stability(
+        project_id: Identifier,
+        request: FrameStabilityRequest,
+        projects: Store,
+    ):
+        """Re-render these ticks three times in different orders and say whether the picture moved.
+
+        The project has many gates proving the export and the preview agree; this is the one that
+        asks whether *one* end is stable with itself. A derived-cache key that drops a dimension
+        shows up here and nowhere else: either the same instant redraws differently, or two
+        instants come back identical. The answer reports both, and `stable` only claims the first.
+        """
+        root = projects.get(project_id)
+        project = sequence_view(root, request.sequence_id)
+        media = require_media()
+        return stability.probe(
+            lambda at: media.render_frame(project, at, request.sequence_id),
+            times=request.at_ticks,
+            revision=root.revision,
+        )
 
     @app.post("/v1/projects/{project_id}/audio/beats", dependencies=auth)
     def audio_beats(project_id: Identifier, request: BeatRequest, projects: Store):

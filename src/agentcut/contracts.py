@@ -71,7 +71,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.294.0"
+APP_VERSION = "1.295.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -5425,6 +5425,20 @@ class TranscriptCutRequest(Contract):
     dry_run: bool = False
 
 
+class FrameStabilityRequest(Contract):
+
+    """Re-render these integer ticks and report whether the picture moved.
+
+    Read-only: this never writes project state. `at_ticks` are timeline ticks; each one is
+    clamped to the frame grid exactly like the frame route, and the answer reports where it
+    actually landed.
+    """
+
+    at_ticks: list[int]
+
+    sequence_id: SequenceRef | None = None
+
+
 class InterchangeImportRequest(Contract):
     """One interchange document, read whatever format it turns out to be.
 
@@ -7727,6 +7741,10 @@ def capabilities(
             "transcript_view": True,
 
             "transcript_cut": True,
+
+            # 1.295：帧级确定性自检。它要真的重画，所以跟着媒体引擎走，不是永远为真。
+
+            "frame_stability": media_ready,
 
             "loudness_metering": media_ready,
 

@@ -3330,3 +3330,26 @@ MCP：`interchange_import_plan`（强制只读，`apply` / `dry_run` 关掉，�
 MCP：`timeline_transcript`、`transcript_cut_plan`（两者强制只读，`apply` / `dry_run` 关在门外；`transcript_cut_plan` 把 `commands` 交回 `timeline_edit` 提交）。能力位：`features.transcript_view` / `features.transcript_cut`。
 
 界面那一侧这是右侧第五页「文稿」：一行一句，勾上就是待删，页头那句报本次会删几句、另有几处空档，按钮只写「剪掉」。这一页存在的理由与上面同一句——**要看见说了什么，不该先把整条时间线当帧读回来**。
+
+## 1.295 帧级确定性自检：同一端自己稳不稳，也要量一次
+
+* `POST /v1/projects/{project_id}/frame-stability` — 请求体 `{at_ticks: [整数 tick], sequence_id?}`。
+  把这几个时刻各重画三遍（正序 / 倒序 / 错位），交回 `{frames: [{at_ticks, rendered_at_ticks,
+  sha256, pixels_bytes}], passes, stable, mismatched, distinct, revision}`。只读，一个字都不写。
+  * `stable` 只说一件事：**同一时刻三趟逐字节相同**。`mismatched` 逐条点名是哪一时刻、第一次与
+    再画一次的哈希前缀各是什么。
+  * `distinct` 是这些时刻**实际画出几张不同的图**。它不是判据而是事实：八枚时刻画出一张图，正是
+    「缓存键里少了时刻这一维」的样子；而一段纯色素材画出同一张图也不是 bug——所以这一格只报数，
+    由调用方按自己的夹具判断，引擎不替人猜。
+  * `rendered_at_ticks` 是落格之后真正画的那一 tick，与 `GET /v1/frame` 的 `X-Frame-Ticks` 同一个数。
+  * 上限一次 8 帧（`stability.MAX_TIMES`），由**引擎**说而不是 pydantic：那条 422 体是英文的
+    「String should match pattern」，人和 Agent 都读不到「分成几批问」这条出路。
+  * 两条拒绝：`STABILITY_NO_TIMES`（没交落点）、`STABILITY_TOO_MANY`（一次要画的帧数超过上限，
+    `details` 带着 `count` 与 `limit`）。
+* MCP：`frame_stability`（只读）。能力位：`features.frame_stability`——它**跟着媒体引擎走**
+  （`media_ready`），不是永远为真：这一档要真的重画，没有 FFmpeg 就没有结论可报。
+
+这一档存在的理由与 1.293 那条文稿面是同一句话的两半：文稿面让 Agent 不必读帧就知道**说了什么**，
+这一档让它一次调用就知道**这台引擎还稳不稳**。项目以前量了很多「两端一致」（导出与预览逐像素对得
+上），但同一端自己稳不稳没有门禁——派生缓存（帧、代理、缩略图共用一套目录）只要少写一个键维度，
+当时整套门禁没有一档会红。

@@ -420,6 +420,7 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
                 "interchange_import_plan",
                 "timeline_transcript",
                 "transcript_cut_plan",
+                "frame_stability",
                 "clips_sync",
                 "audio_beats",
                 "mask_stack_track",
