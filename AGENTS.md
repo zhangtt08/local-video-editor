@@ -5540,3 +5540,11 @@ do 掉了：立方体接回图里，见「八轮前的停放点（1.153）」。
 - 全套单跑（空闲机器）：**166/169**。三红是 `packaged_ui_check` / `packed_engine_surface_check` / `released_package_check`，各自按名字拒「包里还是 1.291.0」这一件过期产物——不是缺陷，是门禁该做的事；按下面的发布链重出包之后三档各自转绿。
 - `ui_shape_check` **56 屏全绿**（322.5 秒，1456 与 1040 两档）。文稿页是这一档新加的那一列内容，它没有把任何一屏的控件挤下线。
 - `transcript_check` 绿（2.0 秒，逐节打印）：3 枚字幕读成 2 句、中间 967 毫秒的空档列为剪口候选；删一句交回 **7 条普通命令、3 条轨在同一些边界上被剪、时间线短 1 秒、版本没动**；应用后留下的后半截从源 5 秒起继续读；`/restore` 一步整体退回；三条拒绝版本一步不涨；锁住的那枚字幕被跳过并写明原因，画面与声音照剪。
+
+### 发布账（1.293）
+
+- `APP_VERSION` 与 `desktop/package.json` **1.293.0**，工程 schema 仍是 **33**（这一档只加读法与路由，没动持久状态）。
+- `.venv/Scripts/python.exe scripts/build_engine.py --verify --no-uv` 通过（venv 里 PyInstaller 6.22.3，调用前先探了 `import PyInstaller`，因为 build_engine 会先清空 `resources/bin`）：冻结引擎自报 **1.293.0**，冷启动 **808 ms**、裸启动 **702 ms**（预算 15000 ms），`tools` / `--help` / `mcp` 三档各自活。
+- `npm run dist` 通过；根 `AgentCut.exe` 与 `desktop/release/AgentCut-便携版.exe` `cmp` 逐字节相同（**185,374,836 B**，sha256 前缀 `a5aba55fca06d478`），安装版 185,535,547 B（前缀 `60365027d95c04c4`）。
+- 三档包检查各自转绿：`released_package_check`（asar 里带着 1.293.0）、`packed_engine_surface_check`（包里那支引擎真 HTTP 交回 1.293.0 / schema 33）、`packaged_ui_check`（真窗口里读得到 `<html data-app-version="1.293.0">`，7.3 秒）。
+- 全套那一句要说准：**166 档在同一份源码上绿过，三档在重出包之后单独重跑绿**——所以 169 档各有实测的绿，但不是同一次跑出来的。交付前按下面这一条重跑一次全套，拿一次真正的 169/169。
