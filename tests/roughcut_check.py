@@ -376,6 +376,47 @@ def main() -> None:
                 "（同一段先静后动的素材）"
             )
 
+            # ⑩ 居中：一段三秒纯色留 1 秒，留下的应是正中那一段（源入点 1 秒）。
+            center_pid, center_revision = seed(client, solid_source, duration=3 * SECOND)
+            centered = cut(
+                client, center_pid, center_revision, "rc-center",
+                keep_ms=1000, place="center", apply=True,
+            )
+            assert centered.status_code == 200, centered.text
+            center_clips = clips_of(centered.json()["project"])
+            assert len(center_clips) == 1, center_clips
+            assert center_clips[0]["source_in_ticks"] == SECOND, center_clips
+            print("   居中：三秒素材留正中 1 秒，读源 1 秒")
+
+            # ⑪ 接缝叠化：三段各 1 秒、每道接缝叠 300 ms（折到整帧），位置随叠化互相咬合。
+            seam_pid, seam_revision = seed(client, shots, duration=6 * SECOND)
+            seamed = cut(
+                client, seam_pid, seam_revision, "rc-seam",
+                keep_ms=1000, transition_ms=300, apply=True,
+            )
+            assert seamed.status_code == 200, seamed.text
+            frame = 2_352_000
+            overlap = 9 * frame
+            seam_clips = clips_of(seamed.json()["project"])
+            assert len(seam_clips) == 3, seam_clips
+            assert [clip["position_ticks"] for clip in seam_clips] == [
+                0,
+                SECOND - overlap,
+                2 * SECOND - 2 * overlap,
+            ], seam_clips
+            transitions = [clip.get("transition_in") for clip in seam_clips]
+            assert transitions[0] is None, transitions
+            assert all(item and item["kind"] == "dissolve" for item in transitions[1:]), transitions
+            assert [item["duration_ticks"] for item in transitions[1:]] == [
+                overlap,
+                overlap,
+            ], transitions
+            tail = seam_clips[-1]["position_ticks"] + seam_clips[-1]["duration_ticks"]
+            print(
+                "   接缝叠化：三段各 1 秒，两道 0.3 秒叠化把后段咬进来，"
+                f"尾端 {round(tail / SECOND, 3)} 秒"
+            )
+
     print(
         f"PASS: 按镜头粗剪（{APP_VERSION}）——三段各留 1 秒并首尾相接、一镜到底只留头、"
         "留得比镜头长时画面一字不动、50% 速度折到时间线且源入点仍对、图片与声音按名字拒绝、"

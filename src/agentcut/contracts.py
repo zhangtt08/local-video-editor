@@ -71,7 +71,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.286.0"
+APP_VERSION = "1.287.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -597,6 +597,12 @@ ROUGH_KEEP_MS_DEFAULT = 1500
 ROUGH_KEEP_MS_MIN = 100
 
 ROUGH_KEEP_MS_MAX = 30000
+
+# 1.287：粗剪接缝的默认叠化长度。0 是硬切（默认），拧上去才在每一道接缝叠一下。
+
+ROUGH_SEAM_MS_DEFAULT = 300
+
+ROUGH_SEAM_MS_MAX = 2000
 
 # The unsharp staircase gets its own, smaller ceiling because a step here is a pair of stages, not
 
@@ -5923,7 +5929,13 @@ class RoughCutRequest(Contract):
 
     # as the strongest movement (a static shot still keeps its head).
 
-    place: Literal["head", "lively"] = "head"
+    place: Literal["head", "lively", "center"] = "head"
+
+    # 0 keeps hard cuts; anything else is one dissolve per seam, capped to half of the shorter
+
+# neighbour.
+
+    transition_ms: Annotated[int, Field(ge=0, le=ROUGH_SEAM_MS_MAX)] = 0
 
     apply: bool = False
 
@@ -7544,6 +7556,12 @@ def capabilities(
 
             "rough_cut_lively": media_ready,
 
+            # 1.287：居中取法与接缝叠化各一格，老引擎不认识就摆不出对应的控件。
+
+            "rough_cut_center": media_ready,
+
+            "rough_cut_seam": media_ready,
+
             # 1.285：剪辑表是纯文本，不需要媒体引擎；老引擎不认这条读路由，界面就不摆那一项。
 
             "edl_export": True,
@@ -7805,6 +7823,8 @@ def capabilities(
             "rough_keep_ms_min": ROUGH_KEEP_MS_MIN,
 
             "rough_keep_ms_max": ROUGH_KEEP_MS_MAX,
+
+            "rough_seam_ms_default": ROUGH_SEAM_MS_DEFAULT,
 
             "track_volume_default": TRACK_VOLUME_DEFAULT,
 

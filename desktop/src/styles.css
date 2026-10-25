@@ -375,6 +375,8 @@ canvas.composite-raw { width: 100%; height: 100%; object-fit: contain; display: 
 /* 1.286：粗剪那一行多了一格取法（留头 / 挑动），把输入框再让出一点，五格仍留在一行里。 */
 .effect-row.rough-row { grid-template-columns: 76px minmax(40px, 1fr) 16px auto auto; }
 .effect-row.rough-row select { width: auto; padding: 4px 6px; }
+/* 1.287：接缝那一行只有标签与一格下拉，独占一行、不挤进上面五格。 */
+.effect-row.rough-seam { grid-template-columns: 76px minmax(0, 1fr); }
 /* 淡入淡出的两行：第四格留给「取消」，没有淡时留空，输入框仍然上下对齐；被拒的话横跨整行。 */
 .fade-rows { margin-bottom: 10px; }
 .fade-rows > .panel-label { margin: 0 0 6px; }

@@ -163,7 +163,8 @@ function ClipFields({ clip }: { clip: Clip }) {
     const [fitSaid, setFitSaid] = useState("");
     // 1.283：每镜留几秒是这一格自己的草稿；空着就走能力表下发的默认值。
     const [roughKeep, setRoughKeep] = useState("");
-    const [roughPlace, setRoughPlace] = useState<"head" | "lively">("head");
+    const [roughPlace, setRoughPlace] = useState<"head" | "lively" | "center">("head");
+    const [roughSeam, setRoughSeam] = useState("0");
     const project = editableProject(app, true) ?? app.project;
     if (!project) return null;
     const asset = project.assets[clip.asset_id];
@@ -235,14 +236,22 @@ function ClipFields({ clip }: { clip: Clip }) {
           <label htmlFor="rough-keep">粗剪每镜</label>
           <input id="rough-keep" className="input mono" type="number" min={0.1} max={30} step={0.1} value={roughKeep} placeholder={((app.caps.limits.rough_keep_ms_default ?? 1500) / 1000).toFixed(1)} disabled={track?.locked} onChange={(event) => setRoughKeep(event.target.value)} />
           <span className="dim">秒</span>
-          {app.caps.features.rough_cut_lively ? <select className="input" aria-label="粗剪取法" title={roughPlace === "lively" ? "挑每个镜头里画面变化最大的那一段；静止的镜头仍留头" : "每个镜头只留开头这么多秒"} value={roughPlace} disabled={track?.locked} onChange={(event) => setRoughPlace(event.target.value === "lively" ? "lively" : "head")}>
+          {app.caps.features.rough_cut_lively ? <select className="input" aria-label="粗剪取法" title={roughPlace === "lively" ? "挑每个镜头里画面变化最大的那一段；静止的镜头仍留头" : roughPlace === "center" ? "每个镜头留正中那一段，两头的余量一样多" : "每个镜头只留开头这么多秒"} value={roughPlace} disabled={track?.locked} onChange={(event) => setRoughPlace(event.target.value === "lively" ? "lively" : event.target.value === "center" ? "center" : "head")}>
             <option value="head">留头</option>
             <option value="lively">挑动</option>
+            {app.caps.features.rough_cut_center ? <option value="center">居中</option> : null}
           </select> : null}
           <button type="button" className="btn" disabled={track?.locked} title={roughPlace === "lively" ? "用同一套颜色差检测找镜头与每一镜的动静，挑出变化最大的那一段留下并接在一起——一次提交一个版本，撤销一步整批退回" : "用同一套颜色差检测找镜头，每个镜头只留前这么多秒，并把留下的头接在一起——一次提交一个版本，撤销一步整批退回"} onClick={() => {
             const wanted = Number(roughKeep) || (app.caps!.limits.rough_keep_ms_default ?? 1500) / 1000;
-            void roughCut(clip.id, Math.round(wanted * 1000), roughPlace);
+            void roughCut(clip.id, Math.round(wanted * 1000), roughPlace, Number(roughSeam));
           }}>粗剪</button>
+        </div> : null}
+        {app.caps?.features?.rough_cut && app.caps.features.rough_cut_seam && asset?.kind === "video" && !asset.sequence_id ? <div className="effect-row row-action rough-seam">
+          <label htmlFor="rough-seam">接缝</label>
+          <select id="rough-seam" className="input" aria-label="粗剪接缝" value={roughSeam} disabled={track?.locked} onChange={(event) => setRoughSeam(event.target.value)}>
+            <option value="0">硬切</option>
+            <option value={String(app.caps.limits.rough_seam_ms_default ?? 300)}>叠化 {(app.caps.limits.rough_seam_ms_default ?? 300) / 1000} 秒</option>
+          </select>
         </div> : null}
         <div className="insp-actions">
           <SplitButton clip={clip} />

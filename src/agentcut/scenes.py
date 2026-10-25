@@ -278,7 +278,12 @@ def keep_ticks_for(frame_ticks: int, keep_ms: int) -> int:
 
 
 def rough_cut_plan(
-    clip, shots: list[dict], frame_ticks: int, keep_ticks: int, place: str = "head"
+    clip,
+    shots: list[dict],
+    frame_ticks: int,
+    keep_ticks: int,
+    place: str = "head",
+    transition_ticks: int = 0,
 ) -> list[dict]:
     """Keep one window of every shot and pack the windows together.
 
@@ -296,7 +301,12 @@ def rough_cut_plan(
             spans.append((shot_from, shot_to, True))
             continue
         latest = shot_to - keep_ticks
-        candidate = int(shot.get("peak_ticks", shot_from)) if place == "lively" else shot_from
+        if place == "lively":
+            candidate = int(shot.get("peak_ticks", shot_from))
+        elif place == "center":
+            candidate = shot_from + (shot_to - shot_from - keep_ticks) // 2
+        else:
+            candidate = shot_from
         start = min(max(candidate // frame_ticks * frame_ticks, shot_from), latest)
         start = start // frame_ticks * frame_ticks
         end = start + keep_ticks
@@ -327,4 +337,28 @@ def rough_cut_plan(
         piece = clip.id if span_start == 0 else piece_ids.get(span_start)
         if piece is not None:
             commands.append({"op": "clip.ripple_remove", "clip_id": piece})
+    kept_spans = [span for span in spans if span[2]]
+    if transition_ticks > 0:
+        # One dissolve per seam, right to left: each one only pulls what is already behind it, so
+        # the seams to the left keep the coordinates this plan was built on. The reducer still
+        # owns the "shorter than both clips" rule; the half-length cap here keeps it out of a
+        # refusal.
+        for (left_start, left_end, _), (right_start, right_end, _) in reversed(
+            list(zip(kept_spans, kept_spans[1:]))
+        ):
+            left_id = clip.id if left_start == 0 else piece_ids.get(left_start)
+            right_id = clip.id if right_start == 0 else piece_ids.get(right_start)
+            shortest = min(left_end - left_start, right_end - right_start)
+            duration = min(transition_ticks, shortest // 2) // frame_ticks * frame_ticks
+            if left_id is None or right_id is None or duration < frame_ticks:
+                continue
+            commands.append(
+                {
+                    "op": "transition.set",
+                    "clip_id": right_id,
+                    "from_clip_id": left_id,
+                    "kind": "dissolve",
+                    "duration_ticks": duration,
+                }
+            )
     return commands

@@ -1512,14 +1512,25 @@ def create_app(
             profile=True,
         )
         keep_ticks = scenes.keep_ticks_for(project.settings.frame_ticks, request.keep_ms)
+        seam_ticks = (
+            scenes.keep_ticks_for(project.settings.frame_ticks, request.transition_ms)
+            if request.transition_ms
+            else 0
+        )
         commands = scenes.rough_cut_plan(
-            clip, result["shots"], project.settings.frame_ticks, keep_ticks, place=request.place
+            clip,
+            result["shots"],
+            project.settings.frame_ticks,
+            keep_ticks,
+            place=request.place,
+            transition_ticks=seam_ticks,
         )
         body = {
             **result,
             "keep_ms": request.keep_ms,
             "keep_ticks": keep_ticks,
             "place": request.place,
+            "transition_ms": request.transition_ms,
         }
         if request.apply and not commands:
             raise EditorError(
@@ -1565,6 +1576,11 @@ def create_app(
             raise EditorError("NOT_FOUND", "this track holds no clips", 404, track_id=track_id)
         frame_ticks = project.settings.frame_ticks
         keep_ticks = scenes.keep_ticks_for(frame_ticks, request.keep_ms)
+        seam_ticks = (
+            scenes.keep_ticks_for(frame_ticks, request.transition_ms)
+            if request.transition_ms
+            else 0
+        )
         commands: list[dict] = []
         scanned: list[dict] = []
         for clip in sorted(
@@ -1611,7 +1627,12 @@ def create_app(
                 profile=True,
             )
             plan = scenes.rough_cut_plan(
-                clip, result["shots"], frame_ticks, keep_ticks, place=request.place
+                clip,
+                result["shots"],
+                frame_ticks,
+                keep_ticks,
+                place=request.place,
+                transition_ticks=seam_ticks,
             )
             commands.extend(plan)
             scanned.append(
@@ -1627,6 +1648,7 @@ def create_app(
             "keep_ms": request.keep_ms,
             "keep_ticks": keep_ticks,
             "place": request.place,
+            "transition_ms": request.transition_ms,
             "commands": commands,
         }
         if request.apply and not commands:

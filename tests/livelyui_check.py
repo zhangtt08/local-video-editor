@@ -112,8 +112,13 @@ def main() -> None:
 
             place = facts.get("place")
             assert place, "检查器里没有「粗剪取法」"
-            assert place["options"] == ["留头", "挑动"], place
+            assert place["options"] == ["留头", "挑动", "居中"], place
             assert place["value"] == "lively", place
+            seam = facts.get("seam")
+            assert seam, "检查器里没有「粗剪接缝」"
+            assert seam["options"][0] == "硬切", seam
+            assert seam["options"][1].startswith("叠化"), seam
+            assert seam["value"] == "0", seam
             button = facts.get("button")
             assert button and button["text"] == "粗剪", button
             assert button["disabled"] is False, button

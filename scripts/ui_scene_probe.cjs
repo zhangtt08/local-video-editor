@@ -315,6 +315,12 @@ async function main() {
       })()`);
       facts.keep = wrote;
       if (!wrote) throw new Error("检查器里没有「粗剪每镜」这一格");
+      facts.seam = await evaluate(`(function () {
+        const node = document.getElementById('rough-seam');
+        if (!node) return null;
+        return { value: node.value,
+          options: Array.from(node.options).map(function (o) { return o.textContent.trim(); }) };
+      })()`);
       if (ACTION === "roughlively") {
         const pick = await evaluate(`(function () {
           const node = document.querySelector('select[aria-label="粗剪取法"]');

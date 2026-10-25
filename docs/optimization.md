@@ -6584,6 +6584,8 @@ Agent 用 `clip.mask_stack` 写得进去，人在界面上只能加一块、删�
 假红写进了账（`released_package_check` 红在两份引擎字节对不上，而 PyInstaller 不是逐字节
 可复现的），判法就是那一条：树不静就不建，量到什么写什么。
 
+1.287（2026-10-24）：粗剪取法补「居中」（`place=center`），接缝可叠化（`transition_ms` → 普通 `transition.set`，默认 0、按相邻两段较短一半封顶、帧对齐）；界面多一格「居中」与一行「接缝」。`roughcut_check.py` 量到居中读源 1 秒、叠化后 0/0.7/1.4 秒与 0.3 秒两道 dissolve、尾端 2.4 秒；`livelyui_check.py` 真页面量到三档取法与接缝下拉。发布账：1.287.0 / schema 33，根 exe 与便携版 185,216,009 B（sha256 前缀 fc7fc92fd928774c），安装版 185,376,714 B。
+
 1.286（2026-10-24）：粗剪取法——`place=head|lively`；检测同一次解码顺带量 0.33 秒窗的动静，每镜挑最闹的一段，静止镜头仍留头；计划改为 split + ripple_remove，源时钟由 split 保留。`roughcut_check.py` 量到同一段先静后动素材：挑动读源 5 s、留头读 0 s；`livelyui_check.py` 真页面选挑动执行，一个 revision 读源 5 s。发布账：1.286.0 / schema 33，根 exe 与便携版 185,214,413 B（sha256 前缀 32070e97ee44734c），安装版 185,375,127 B。
 
 1.285（2026-10-24）：EDL 剪辑表——`interchange.py` 写 CMX3600（整帧不丢帧、8 格卷名、源/记录时码），一条画面轨、直切、100% 速度；转场/变速/非画面/分数帧率各自按名字拒绝并点名。`edl_check.py` 量到两段时码与 `SOLID_MP`、revision 不动；`edlui_check.py` 真页面点菜单复制，revision 仍是 1。发布账：1.285.0 / schema 33，根 exe 与便携版 185,212,553 B（sha256 前缀 d1c1874aea230a94），安装版 185,373,266 B。
