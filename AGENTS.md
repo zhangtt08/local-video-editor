@@ -5511,3 +5511,32 @@ do 掉了：立方体接回图里，见「八轮前的停放点（1.153）」。
 - `released_package_check`（asar 里带着 1.291.0）与 `packed_engine_surface_check`（包里那支引擎真 HTTP 交回 1.291.0 / schema 33）全绿。
 - `packaged_ui_check` 绿，且**从 93.5 秒降到 7.3 秒**。两件事：① 删掉可见版本号之后 DOM 里没有可核对的构建了（量具读的是 `body.innerText`），于是把构建标记挂到 `<html data-app-version>` 上，由 capabilities 落地那一处贴上（两处 set caps 共用同一只 `markBuild`），版本对人仍在「设置」里可看，只是不再常驻在脸上；量具改认这个标记，缺它就按名字红。② 同一处还留着一枚从 1.280 起就永远匹配不上的写死探针 `/1\.279\.\d/`，它让每一趟都白跑满 60 次 × 1.5 秒才继续——判据一条没放软，只是不再拿一次必然失败的等待当成本。
 - 全套：1.291 源码上是 **165/168**，三红全是发布链（包里还是 1.290.0，门禁正确地拒绝过期产物）；按上面重出包之后三档各自转绿。
+
+
+## 1.293：文稿观测面——把「这条片子说了什么」压成一次读
+
+调研那一份（1.292 之后补的 GitHub 一轮）里最值钱的一条不是某个算法，是 OpenFilm 那套「给 Agent 的观察面要按 token 算账」：一个 Agent 要想知道这条时间线说了什么，今天只有两条路——把帧一张张读回来（一次几十万 token，还是说不出哪句话从哪开始），或者自己数 `GET /v1/projects/{id}` 里的字幕片段（几十字符一条、顺序要自己排、空档要自己减）。两条都不该由调用方付。
+
+- `src/agentcut/transcript.py`：`phrase_view(project, merge_gap_ms, silence_ms)` 与 `cut_plan(project, spans)`。视图读的是**已经落在字幕轨上**的那几段字，所以 Agent 与人在同一块屏幕上读同一句话；合并只在跨片段、停顿 ≤ `merge_gap_ms`（默认 350）、合起来 ≤ 120 字时发生，`clip_ids` 记住这一句吃掉的所有片段。空档只报 ≥ `silence_ms`（默认 600）的那些，并且给绝对 tick——那是「能下刀的位置」，不是静音检测的结论（要那个仍是 1.25 的 `audio/silence`）。
+- **删一句话与删一段静音是同一条代数**，所以 `cut_plan` 复用 `silence.cut_plan(clip, gaps, edges=True)`，不写第二份：绝对窗口先换算到片段局部，再落到帧格（起点向上取、终点向下取，刀口两边留完整帧），片段按 `-position_ticks` 从右往左处理，于是左边落刀之后右边那些 `position_ticks` 仍然有效。出口只有 `clip.split` / `clip.ripple_remove` / `clip.remove`，apply 走同一条 `/edits`、一个 revision、`/restore` 一次整体退回。
+- `removed_ticks` 是**时间线短了多少**，不是各轨被切掉的总和（三条轨同删一秒的话是一秒，不是三秒）；重叠与相接的窗口先并成一个。锁轨与带变速曲线的片段进 `skipped[]` 并各带一句原因，**其它轨道照剪**——不因为一段锁着的音频把整刀放弃，也不替它猜一个「那你自己先解锁」。
+- 三条拒绝都不写库：`TRANSCRIPT_EMPTY`（没有可读文本，出路是先跑语音识别）、`TRANSCRIPT_NO_SPANS` / `TRANSCRIPT_SPAN`（没交区间 / 区间不向前）、`TRANSCRIPT_NOTHING_TO_CUT`（碰到的片段全被拒，`details.skipped` 逐条点名）。
+- HTTP `GET /v1/projects/{id}/transcript`、`POST /v1/projects/{id}/transcript/cut`；MCP `timeline_transcript`、`transcript_cut_plan`（强制只读）；能力位 `features.transcript_view` / `transcript_cut`。
+- 界面右侧第五页「文稿」：一行一句，勾上即待删，页头一句报本次删几句、另有几处空档。这一页同时把「有哪几页」收口成一处——`store.EDITOR_PANELS` 是唯一的名单，`RightPanel` 的 `type Tab = EditorPanel` 从它派生，深链按它校验。之前是三张表（联合类型、TABS、深链三元式）各写一遍，加一页要改三处，漏一处就是「链接能到、页签不亮」。
+
+### 门禁
+
+`tests/transcript_check.py` 六节，判据不是「没崩」：① 三枚字幕读成两句、中间 967 毫秒列为剪口；② 计划只交普通命令、画面/声音/字幕三条轨在同一些边界上被剪、删掉的正好 1 秒、版本一步不涨；③ 应用之后那句真的不存在了，`pic` 短成 4 秒，留下的后半截**从源 5 秒起继续读**（源入点跟着走，不是把源窗留在原地）；④ `POST /restore` 一步退回，三句都在、画面仍是 6 秒；⑤ 三条拒绝各按名字回、版本不动；⑥ 锁住的轨里那一枚字幕被跳过并写明 `locked`，另外两条轨照剪。
+
+### 版本号要说清的一件事
+
+`1.292` 那一档（工程格式进口）的活是随 **1.291.0** 的包一起发出去的——版本号没有单独走过 1.292.0。所以装机包里 `capabilities.version` 是从 1.291.0 直接到 1.293.0，文档里出现的「1.292」指的是那一轮工作，不是一个发布号。这一档之后，`APP_VERSION` 与 `desktop/package.json` 一起走，不再出现「文档有、包里没有」的那一档。
+
+### 实测
+
+- `tsc --noEmit` 干净；`npm run build` 通过；`ruff check src tests scripts agent` All checks passed；`stylewidth_check` 三档欠账 0。
+- `error_vocabulary_check`：**225 枚引擎码 / 229 条中文提示 / 0 条落到英文**（另有 4 枚键属于适配层与任务码）。这一档新增的是 4 条码（`TRANSCRIPT_EMPTY`、`TRANSCRIPT_NO_SPANS`、`TRANSCRIPT_SPAN`、`TRANSCRIPT_NOTHING_TO_CUT`），全部按**字面量**写在 raise 那一行，所以门禁能顺着码追到提示——上一档踩过「f-string 拼出来的码它看不见」，这次一开始就避开了。
+- `desktop_ts_check` 全绿（19.2 秒，含 1.291 那档 `desktop_breathing_check` 与本轮改到 `EDITOR_PANELS` 上的 `desktop_maskrot_check`）。
+- 全套单跑（空闲机器）：**166/169**。三红是 `packaged_ui_check` / `packed_engine_surface_check` / `released_package_check`，各自按名字拒「包里还是 1.291.0」这一件过期产物——不是缺陷，是门禁该做的事；按下面的发布链重出包之后三档各自转绿。
+- `ui_shape_check` **56 屏全绿**（322.5 秒，1456 与 1040 两档）。文稿页是这一档新加的那一列内容，它没有把任何一屏的控件挤下线。
+- `transcript_check` 绿（2.0 秒，逐节打印）：3 枚字幕读成 2 句、中间 967 毫秒的空档列为剪口候选；删一句交回 **7 条普通命令、3 条轨在同一些边界上被剪、时间线短 1 秒、版本没动**；应用后留下的后半截从源 5 秒起继续读；`/restore` 一步整体退回；三条拒绝版本一步不涨；锁住的那枚字幕被跳过并写明原因，画面与声音照剪。

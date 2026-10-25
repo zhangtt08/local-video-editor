@@ -1,16 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Icon } from "../ui";
-import { setEditorPanel, useApp } from "../store";
+import { setEditorPanel, useApp, EDITOR_PANELS, type EditorPanel } from "../store";
 import { AIPanel } from "./AIPanel";
+import { TranscriptPanel } from "./TranscriptPanel";
 import { ExportPanel } from "../views/ExportPanel";
 import { Inspector, type InspGroup } from "../views/Inspector";
 import { ScopePanel } from "../views/ScopePanel";
 
-type Tab = "ai" | "inspect" | "export" | "scope";
+// 有哪几页只由 store 那张名单说一次；这里再写一遍联合类型就是第二份表。
+type Tab = EditorPanel;
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "ai", label: "AI 剪辑", icon: "spark" },
+  { id: "transcript", label: "文稿", icon: "captions" },
   { id: "inspect", label: "属性", icon: "info" },
   { id: "export", label: "导出", icon: "export" },
   { id: "scope", label: "示波器", icon: "image" },
@@ -23,13 +26,13 @@ const PROPERTY_TABS: { id: InspGroup; label: string }[] = [
   { id: "fx", label: "特效" },
 ];
 
-/** 右侧工作区：AI 动作、片段属性、交付与示波器共用一列，顶部页签是同一件事的四个入口。 */
+/** 右侧工作区：AI 动作、文稿、片段属性、交付与示波器共用一列，顶部页签是同一件事的入口。 */
 export function RightPanel() {
   const app = useApp();
   const [tab, setTab] = useState<Tab>(() => {
     // 深链点名了哪一页就落在哪一页（`?panel=inspect` 也算），否则默认落在 AI 剪辑。
     const asked = new URLSearchParams(location.search).get("panel");
-    if (asked === "inspect" || asked === "export" || asked === "scope" || asked === "ai") return asked;
+    if (asked && (EDITOR_PANELS as readonly string[]).includes(asked)) return asked as Tab;
     // 默认落在 AI 剪辑（参考图那一列）；属性页一键就到，量具打开工程后会自己切过去。
     return "ai";
   });
@@ -40,12 +43,14 @@ export function RightPanel() {
     // 挂载那一次不抢：默认落在 AI 剪辑，链接里真点名过（export/scope/inspect）才跟着走。
     if (seenPanel.current === app.editorPanel) return;
     seenPanel.current = app.editorPanel;
-    setTab(app.editorPanel === "inspect" ? "inspect" : app.editorPanel === "export" ? "export" : "scope");
+    // 面板与页签现在是同一张名单，不需要再翻一次：翻一次就会漏掉新加的那两页。
+    setTab(app.editorPanel);
   }, [app.editorPanel]);
 
   const choose = (next: Tab) => {
     setTab(next);
-    if (next !== "ai") setEditorPanel(next);
+    // 文稿页自己读引擎，不占「编辑器面板」那一格的状态；其余三档仍是可深链的面板。
+    if (next !== "ai" && next !== "transcript") setEditorPanel(next);
   };
 
   return (
@@ -89,6 +94,8 @@ export function RightPanel() {
       <div className="rp-body">
         {tab === "ai" ? (
           <AIPanel />
+        ) : tab === "transcript" ? (
+          <TranscriptPanel />
         ) : tab === "export" ? (
           <ExportPanel />
         ) : tab === "scope" ? (

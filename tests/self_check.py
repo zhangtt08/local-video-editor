@@ -418,6 +418,8 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
                 "project_fcpxml",
                 "otio_import_plan",
                 "interchange_import_plan",
+                "timeline_transcript",
+                "transcript_cut_plan",
                 "clips_sync",
                 "audio_beats",
                 "mask_stack_track",

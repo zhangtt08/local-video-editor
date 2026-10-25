@@ -898,6 +898,11 @@ export function errorHints(): Record<string, string> {
       JIANYING_MALFORMED: "这份剪映草稿不是预期的 JSON 结构。请确认交进来的是 draft_content.json 本身，而不是整个草稿目录或压缩包。",
       JIANYING_EMPTY: "这份剪映草稿里没有可导入的片段。多半是轨道全空，或者内容都在贴纸 / 花字这类不读的轨上。",
       JIANYING_TRACK_COUNT: "这份剪映草稿的轨道比工程里的多。先给工程加够轨道，再导入；这一趟没有写任何东西。",
+      // 1.293：文稿观测面与「删一行字 = 剪掉那一段」。
+      TRANSCRIPT_EMPTY: "这条时间线上还没有可读的字幕文本。先对带人声的那一段跑一次自动字幕，再来读文稿。",
+      TRANSCRIPT_NO_SPANS: "没有收到要删的区间。请交出至少一段 {from_ticks, to_ticks}。",
+      TRANSCRIPT_SPAN: "有一段区间不向前（结束必须晚于开始）或开始在了零之前。修正这几段再来一次。",
+      TRANSCRIPT_NOTHING_TO_CUT: "这些区间一段都剪不动：碰到的每个片段都被拒绝了，理由就在回执的 skipped 里；这一趟没有写任何东西。",
       OTIO_MEDIA_AMBIGUOUS: "有一个文件名在工程里对应两份素材，导入不知道该接哪一份。把其中一份改名，或先删掉不用的那份。",
       OTIO_CLIP_RANGE: "有些片段的源窗口超出了素材本身的长度。先修好那几段，或换一份时间线；这一趟没有写任何东西。",
       ROUGH_NONE: "每个镜头都比「每镜留」更短，粗剪没有可切的内容。把每镜留调短一点（默认 1.5 秒）再试；这一次没有改写工程。",
@@ -1442,6 +1447,33 @@ export class Engine {
       duration_ticks: number;
       omitted: { clip_id: string; reason: string }[];
     }>("GET", `/v1/projects/${projectId}/fcpxml${query}`);
+  }
+
+  /** 1.293：读这条时间线的「说了什么」；只读，不解码。 */
+  transcript(projectId: string, sequenceId: string | null) {
+    const query = sequenceId ? `?sequence_id=${encodeURIComponent(sequenceId)}` : "";
+    return this.request<{
+      phrases: { index: number; text: string; from_ticks: number; to_ticks: number;
+        from_ms: number; to_ms: number; duration_ms: number; clip_ids: string[] }[];
+      silences: { from_ticks: number; to_ticks: number; duration_ms: number }[];
+      revision: number;
+      phrase_count: number;
+      silence_count: number;
+      caption_clips: number;
+    }>("GET", `/v1/projects/${projectId}/transcript${query}`);
+  }
+
+  /** 1.293：把选中的那几句剪掉——先只交回计划，应用走普通批次。 */
+  transcriptCut(projectId: string, body: Record<string, unknown>) {
+    return this.request<{
+      committed: boolean;
+      revision: number;
+      commands: Record<string, unknown>[];
+      clips: { clip_id: string; track_id: string; removed: number }[];
+      skipped: { clip_id: string; reason: string }[];
+      removed_ticks: number;
+      project?: unknown;
+    }>("POST", `/v1/projects/${projectId}/transcript/cut`, body, 60000);
   }
 
   /** 1.292：一个入口读任意一种工程格式。format 省着，让引擎自己认；回执会把它认成了谁带回来。 */

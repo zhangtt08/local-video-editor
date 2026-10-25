@@ -71,7 +71,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.291.0"
+APP_VERSION = "1.293.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -5384,6 +5384,47 @@ class AutoGradeRequest(Contract):
 
 
 
+class TranscriptRequest(Contract):
+
+    """How to read the spoken shape of a timeline.
+
+    `merge_gap_ms` decides what counts as one breath; `silence_ms` decides which hole between
+    two phrases is worth offering as a cut candidate.
+    """
+
+    sequence_id: SequenceRef | None = None
+
+    merge_gap_ms: Annotated[float, Field(ge=0, le=5000)] = 350.0
+
+    silence_ms: Annotated[float, Field(ge=50, le=30000)] = 600.0
+
+
+class TranscriptSpan(Contract):
+
+    """One absolute timeline range to delete, in ticks."""
+
+    from_ticks: Annotated[int, Field(ge=0)]
+
+    to_ticks: Annotated[int, Field(gt=0)]
+
+
+class TranscriptCutRequest(Contract):
+
+    """Delete these spans from every track they touch, as ordinary commands."""
+
+    spans: Annotated[list[TranscriptSpan], Field(max_length=200)]
+
+    sequence_id: SequenceRef | None = None
+
+    apply: bool = False
+
+    request_id: Identifier | None = None
+
+    expected_revision: Revision | None = None
+
+    dry_run: bool = False
+
+
 class InterchangeImportRequest(Contract):
     """One interchange document, read whatever format it turns out to be.
 
@@ -7680,6 +7721,12 @@ def capabilities(
             # 格式由文档自己说；交回来的计划仍是普通命令，apply 一个 revision。
 
             "interchange_import": True,
+
+            # 1.293：文稿观测面与「删一行字 = 剪掉那一段」。都只读工程状态，不需要媒体引擎。
+
+            "transcript_view": True,
+
+            "transcript_cut": True,
 
             "loudness_metering": media_ready,
 

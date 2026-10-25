@@ -1712,7 +1712,39 @@ html[data-theme="light"] .rp-tabs button.active { color: #fff; }
 .prop-tab-row button.active { background: var(--accent-soft); color: var(--accent-deep); border-color: rgba(167, 139, 250, .32); }
 .rp-body { flex: 1; min-height: 0; overflow-y: auto; }
 
+/* 1.293：文稿页。一行一句，勾与跳都在同一行上；空档只报一个数，不占第二行说明。 */
 .ai-panel { display: flex; flex-direction: column; gap: 18px; padding: 0 16px 22px; }
+.transcript { display: flex; flex-direction: column; gap: 6px; padding: 4px 16px 22px; }
+.tr-head { display: flex; align-items: center; gap: 8px; padding: 2px 0 6px; }
+.tr-head b { font-size: var(--fs-body); font-weight: 620; }
+.tr-head span { font-size: var(--fs-label); color: var(--ink-3); }
+.tr-list { list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.tr-list li {
+  display: flex; align-items: stretch; gap: 4px;
+  border-radius: var(--r-sm);
+}
+.tr-list li.picked { background: var(--accent-soft); }
+.tr-check {
+  flex: none; width: 26px; display: grid; place-items: center;
+  color: var(--accent-deep); border-radius: var(--r-xs);
+}
+.tr-check:hover { background: rgba(255, 255, 255, .06); }
+.tr-body {
+  flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px;
+  padding: 9px 10px; text-align: left; border-radius: var(--r-sm);
+}
+.tr-body:hover { background: rgba(255, 255, 255, .05); }
+.tr-time { flex: none; font-size: var(--fs-label); color: var(--ink-3); }
+.tr-text { min-width: 0; font-size: var(--fs-body); line-height: 1.5; }
+.tr-empty {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 40px 20px; text-align: center; color: var(--ink-2);
+}
+.tr-empty b { font-size: var(--fs-body); font-weight: 600; color: var(--ink); }
+.tr-empty span { font-size: var(--fs-label); color: var(--ink-3); max-width: 30ch; line-height: 1.6; }
+html[data-theme="light"] .tr-check:hover { background: rgba(28, 20, 52, .05); }
+html[data-theme="light"] .tr-body:hover { background: rgba(28, 20, 52, .04); }
+
 .ai-more {
   align-self: flex-start;
   font-size: var(--fs-label); color: var(--ink-2);

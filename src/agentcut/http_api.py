@@ -26,7 +26,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from . import asr as asr_module
 from . import autograde as autograde_module
 from . import beats as beats_module
-from . import duck, interchange, scenes, silence
+from . import duck, interchange, scenes, silence, transcript
 from . import fourpoint as fourpoint_module
 from . import markers as marker_plan
 from . import reframe as reframe_plan
@@ -102,6 +102,7 @@ from .contracts import (
     SpeechCaptionsRequest,
     SyncRequest,
     Ticks,
+    TranscriptCutRequest,
     audio_scan_problem,
     capabilities,
     parse_frame_rate,
@@ -1877,6 +1878,68 @@ def create_app(
                               "pass document: the interchange text (or JSON for OTIO / a draft)",
                               422)
         plan = interchange.read_interchange(project, request.document, request.format)
+        if not request.apply:
+            return {
+                "committed": False,
+                "project_id": project_id,
+                "revision": root.revision,
+                **plan,
+            }
+        reference = request.sequence_id
+        known = reference in root.sequences if reference is not None else False
+        batch = EditBatch(
+            request_id=request.request_id,
+            expected_revision=request.expected_revision,
+            sequence_id=reference if known else None,
+            sequence_name=reference if reference is not None and not known else None,
+            commands=plan["commands"],  # type: ignore[arg-type]
+            dry_run=request.dry_run,
+        )
+        mutation = projects.mutate(project_id, batch).model_dump()
+        return {**mutation, **plan}
+
+    @app.get("/v1/projects/{project_id}/transcript", dependencies=auth)
+    def project_transcript(
+        project_id: Identifier,
+        projects: Store,
+        sequence_id: SequenceRef | None = None,
+        merge_gap_ms: float = 350.0,
+        silence_ms: float = 600.0,
+    ):
+        """Read the spoken shape of this timeline: phrases in order, and the holes between them.
+
+        This is the view an agent should read instead of frames: the caption clips already in the
+        project, merged into phrases a conversation would call one breath, plus the silences
+        between them as cut candidates. Nothing is decoded and nothing is written.
+        """
+        root = projects.get(project_id)
+        project = sequence_view(root, sequence_id)
+        return transcript.phrase_view(
+            project,
+            merge_gap_ms=merge_gap_ms,
+            silence_ms=silence_ms,
+        )
+
+    @app.post("/v1/projects/{project_id}/transcript/cut", dependencies=auth)
+    def project_transcript_cut(
+        project_id: Identifier,
+        request: TranscriptCutRequest,
+        projects: Store,
+    ):
+        """Delete the chosen lines from every track they touch, as ordinary commands.
+
+        Deleting a sentence is the same algebra as deleting a silence, so this reuses that planner:
+        clips are cut right to left at the same boundaries on picture, voice, music and
+        captions, and
+        a caption fully inside a span is removed rather than split to nothing. Locked tracks and
+        clips with a speed curve are skipped with the reason; a plan that cannot cut anything is
+        refused by name. ``apply`` writes one revision through the normal ``/edits`` path.
+        """
+        root = projects.get(project_id)
+        project = sequence_view(root, request.sequence_id)
+        plan = transcript.cut_plan(
+            project, [span.model_dump() for span in request.spans]
+        )
         if not request.apply:
             return {
                 "committed": False,

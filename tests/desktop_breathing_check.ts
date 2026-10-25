@@ -120,8 +120,14 @@ assert.ok(!/\.ai-panel \{ gap: 10px/.test(styles),
   "那条把 AI 列表压紧凑的旧补丁还在：默认只剩四张卡，呼吸位交回令牌那一档");
 
 const shellFiles = readdirSync(resolve(process.cwd(), "desktop/src/shell")).filter((f) => f.endsWith(".tsx"));
-assert.deepEqual(shellFiles.sort(), ["AIPanel.tsx", "LeftRail.tsx", "RightPanel.tsx", "TopBar.tsx"],
+assert.deepEqual(shellFiles.sort(),
+  ["AIPanel.tsx", "LeftRail.tsx", "RightPanel.tsx", "TopBar.tsx", "TranscriptPanel.tsx"],
   "壳层的文件名册变了——新加一块表面就得同时进这一档检查");
+// 五档页签仍然一行放得下：窄的那一档靠 flex 收，不许把字挤成两行。
+// 数的是 TABS 这一块，不是整份文件——属性页那四档也叫 `{ id: "`，混在一起数就是假红。
+const tabBlock = rightPanel.slice(rightPanel.indexOf("const TABS"));
+const tabCount = (tabBlock.slice(0, tabBlock.indexOf("];")).match(/\{ id: "/g) ?? []).length;
+assert.equal(tabCount, 5, "右侧页签的数目变了——上面那条名册与这一判要一起改");
 
 console.log("PASS: 呼吸感这一轮的四处不变量都在——分区只有一处判断（Inspector 收 group、页签只改那一个值）、"
   + `旧壳与它的六个类都没有主人、AI 卡的可见行不含 ${Jargon.length} 个实现说法（黑话只在 hover）、默认 ${primaries} 张卡收口、`

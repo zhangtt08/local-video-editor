@@ -219,8 +219,14 @@ assert.ok(/export function landLinkedPanel\(panel: string\): boolean \{/.test(st
   "landLinkedPanel 不在了（?panel= 没有落点）");
 assert.ok(storeSrc.includes("if (!(EDITOR_PANELS as readonly string[]).includes(panel)) return false;"),
   "认不出的 ?panel= 会往下走——面板该一动不动");
-assert.ok(storeSrc.includes("export const EDITOR_PANELS = [\"inspect\", \"export\", \"scope\"] as const;"),
+assert.ok(storeSrc.includes("export const EDITOR_PANELS = [\"ai\", \"transcript\", \"inspect\", \"export\", \"scope\"] as const;"),
   "面板名单不再是唯一那一张表");
+// 1.293：页签与面板现在是同一张表——RightPanel 里再写一份联合类型就会各自漂移。
+const rightPanelSrc = read("desktop/src/shell/RightPanel.tsx");
+assert.ok(rightPanelSrc.includes("type Tab = EditorPanel;"),
+  "右侧页签又自带一份面板名单（?panel= 与页签会各自漂）");
+assert.ok(!/type Tab = "/.test(rightPanelSrc),
+  "面板联合类型被抄回 RightPanel 那一行了");
 assert.ok(storeSrc.includes("editorPanel: (typeof EDITOR_PANELS)[number];"),
   "AppState 又自带第二份面板名字表");
 assert.ok(!/editorPanel: \"inspect\" \| \"export\" \| \"scope\"/.test(storeSrc),

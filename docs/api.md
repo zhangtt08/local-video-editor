@@ -3309,3 +3309,24 @@ MCP：`project_otio`、`project_fcpxml`（只读），`otio_import_plan`（强�
   * `apply=true` 要带 `request_id` 与 `expected_revision`，写入走普通 `/edits`：一个 revision、一次撤销整体退回。默认只规划。
 
 MCP：`interchange_import_plan`（强制只读，`apply` / `dry_run` 关掉，把 `commands` 交回 `timeline_edit` 提交）。能力位：`features.interchange_import`。`.prproj` / Resolve 的 `.drb` / `.blend` / `.aep` 没有可靠的公开解析器，因此**不做**；这些软件都能导 FCPXML / EDL / OTIO，走上面这一条门。
+
+
+## 1.293 文稿面：一句话说完哪里有人说话，删一句等于删一段
+
+* `GET /v1/projects/{project_id}/transcript?sequence_id=&merge_gap_ms=350&silence_ms=600` — 把这条时间线**说话的形状**一次读完：按时间排序的短语、短语之间的空档、以及各自的毫秒与绝对 tick。只读，不解码任何媒体，一个字都不写。
+  * 短语来自工程里**已经落地**的字幕片段（`captions.import` / 语音识别写进来的那一份），所以 Agent 读到的与人在字幕轨上看到的是同一句话、同一个入点；这一条不是第二套口径。
+  * 合成一句要同时满足两条：间隔 ≤ `merge_gap_ms`（默认 350）与合起来 ≤ 120 字（`transcript.MAX_TEXT_CHARS`）；`clip_ids` 记下这一句吃掉的所有字幕片段 id，所以「一句」与「哪几段字幕」两头都对得上。
+  * `silences` 只报 ≥ `silence_ms`（默认 600）的空档，给的是 `from_ticks` / `to_ticks`：这是「两句话之间能下刀的位置」，不是静音检测的结论。要按真实静音下刀仍是 1.25 那条 `audio/silence`。
+  * 回执带 `phrase_count` / `silence_count` / `caption_clips`（合并前有几条字幕）/ `speech_ticks`（说话总时长）/ `covered_to_ticks`（最后一句落在哪）/ 本轮生效的两个阈值，还有 `revision`；Agent 拿这些数就能决定要不要读第二遍，不用自己数。
+  * 没有可读文本按 `TRANSCRIPT_EMPTY` 拒绝，句子给的出路是「先对带人声的片段跑一次语音识别」，不是「参数错」。
+* `POST /v1/projects/{project_id}/transcript/cut` — 请求体 `{spans:[{from_ticks,to_ticks}], sequence_id?, apply?, request_id?, expected_revision?, dry_run?}`。默认只规划，交回的是**普通命令**：`clip.split` + `clip.ripple_remove`；整段落进窗口的字幕片段直接 `clip.remove`，不会被切成零长。
+  * 删一句话与删一段静音是同一条代数，所以这里**复用** `silence.cut_plan(clip, gaps, edges=True)` 而不是再写一份。`from_ticks` / `to_ticks` 是绝对时间线上的位置：每个片段先把窗口换算到自己的局部坐标，再落到帧格——起点向上取整、终点向下取整，刀口两边留下的都是完整帧，不会剩半帧；换算后不前进的窗口直接不管，所以一小段亚帧的空档不会凭空多一条命令。
+  * 同一个窗口碰到的画面、人声、音乐、字幕在**同样的边界**上各切各的，轨道不会因为删了一句而互相错开；`clips[]` 逐条报哪个片段被切掉多少 tick、是不是整段删除、那一条生成了几条命令。
+  * 片段按 `-position_ticks` 从**右往左**处理，因此左边那些刀落下去之后，还没处理的片段的 `position_ticks` 仍然有效——与整轨去空白同一个约定。
+  * `removed_ticks` 是**时间线因此短了多少**，不是各轨被切掉的总和：三条轨同删一句一秒的话，是一秒的空档，不是三秒。重叠与相接的窗口先并成一个，所以两句之间那点空隙不会被算两遍。
+  * 不猜的拒绝：`TRANSCRIPT_NO_SPANS`（没给窗口，或窗口不是 `{from_ticks,to_ticks}` 对象）、`TRANSCRIPT_SPAN`（窗口不向前 / 起点为负）、`TRANSCRIPT_NOTHING_TO_CUT`（这些窗口碰到的片段全被拒，`details.skipped` 逐条点名）。跳过是带理由的：所在轨被锁（`track … is locked`）、片段带变速曲线（时间在这一段里不是线性的）——两者都进 `skipped[]`，**其它轨道照切**，不会为了一段锁着的音频把整刀放弃。
+  * `apply=true` 要带 `request_id` 与 `expected_revision`，写入走普通 `/edits`：一个 revision、`/restore` 一次整体退回。
+
+MCP：`timeline_transcript`、`transcript_cut_plan`（两者强制只读，`apply` / `dry_run` 关在门外；`transcript_cut_plan` 把 `commands` 交回 `timeline_edit` 提交）。能力位：`features.transcript_view` / `features.transcript_cut`。
+
+界面那一侧这是右侧第五页「文稿」：一行一句，勾上就是待删，页头那句报本次会删几句、另有几处空档，按钮只写「剪掉」。这一页存在的理由与上面同一句——**要看见说了什么，不该先把整条时间线当帧读回来**。

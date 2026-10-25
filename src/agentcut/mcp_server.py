@@ -59,6 +59,8 @@ from .contracts import (
     SpeechCaptionsRequest,
     SyncRequest,
     Ticks,
+    TranscriptCutRequest,
+    TranscriptRequest,
 )
 
 INSTRUCTIONS = (
@@ -503,6 +505,35 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
             "apply": False, "dry_run": False,
         }
         return await call("POST", f"/v1/projects/{project_id}/import", body)
+
+    @server.tool(annotations=read)
+    async def timeline_transcript(project_id: Identifier, request: TranscriptRequest) -> dict:
+        """Read what is said and where: phrases in order, plus the silences between them.
+
+        This is the cheap way to understand a cut — the caption clips already in the project,
+        merged into phrases, with the gaps between them listed as cut candidates. Nothing is
+        decoded, so it is fast, and it reads exactly what the subtitle track shows a person.
+        """
+        params = [f"merge_gap_ms={request.merge_gap_ms}", f"silence_ms={request.silence_ms}"]
+        if request.sequence_id:
+            params.insert(0, f"sequence_id={quote(request.sequence_id, safe='')}")
+        return await call("GET", f"/v1/projects/{project_id}/transcript?" + "&".join(params))
+
+    @server.tool(annotations=read)
+    async def transcript_cut_plan(
+        project_id: Identifier,
+        request: TranscriptCutRequest,
+    ) -> dict:
+        """Plan "delete these lines" as ordinary commands (read-only here).
+
+        Deleting a sentence is the same algebra as deleting a silence: every clip the span touches
+        is cut at the same boundaries on picture, voice, music and captions, so the tracks stay in
+        step. `apply` / `dry_run` are forced off — review `commands`, then submit with
+        `timeline_edit` for one atomic revision. Locked tracks and speed-curve clips come back
+        skipped with the reason.
+        """
+        body = request.model_dump(mode="json") | {"apply": False, "dry_run": False}
+        return await call("POST", f"/v1/projects/{project_id}/transcript/cut", body)
 
     @server.tool(annotations=read)
     async def track_rough_cut(

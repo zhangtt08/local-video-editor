@@ -289,7 +289,8 @@ export function editableProject(app = state, displayOnly = false): Project | nul
  * 右侧那一列有哪几个面板，只在这张表里说一次：`AppState["editorPanel"]` 由它推出来，
  * 深链 `?panel=` 也在同一张表上验一遍——界面不许有第二份名字表。
  */
-export const EDITOR_PANELS = ["inspect", "export", "scope"] as const;
+export const EDITOR_PANELS = ["ai", "transcript", "inspect", "export", "scope"] as const;
+export type EditorPanel = (typeof EDITOR_PANELS)[number];
 
 /**
  * 「切面板」与「跳到编辑器」是两件事：面板自己写自己那一格，跳视图由点了导出按钮/快捷键那一路
@@ -2656,6 +2657,34 @@ export function applyTimelineImport(commands: Command[], format: string) {
   const project = state.project;
   if (!project || !commands.length) return;
   editAtRevision(commands, project.id, project.revision, `导入工程（${format}）`);
+}
+
+/** 1.293：读这条时间线「说了什么」——人和 Agent 读同一份，谁都不必去数帧。 */
+export async function readTranscript() {
+  if (!engine || !state.project) return null;
+  return engine.transcript(state.project.id, state.sequenceId);
+}
+
+/**
+ * 1.293：把选中的那几句剪掉。引擎先只交回计划，命令再交回 `editAtRevision`
+ * 那唯一一条写入口——所以「剪一句」与人在时间线上手动剪是同一只手：
+ * 一个 revision、撤销一步整体退回，这里没有第二条写入路径。
+ */
+export async function cutTranscript(spans: { from_ticks: number; to_ticks: number }[]):
+Promise<{ removed: number; skipped: number } | null> {
+  if (!engine || !state.project || !spans.length) return null;
+  const project = state.project;
+  set({ busy: "在读文稿…" });
+  try {
+    const plan = await engine.transcriptCut(project.id, {
+      spans, apply: false, sequence_id: state.sequenceId,
+    });
+    if (!plan.commands.length) return null;
+    editAtRevision(plan.commands as Command[], project.id, project.revision, "按文稿剪掉选中句");
+    return { removed: plan.removed_ticks, skipped: plan.skipped.length };
+  } finally {
+    set({ busy: "" });
+  }
 }
 
 export function copySelection() {
