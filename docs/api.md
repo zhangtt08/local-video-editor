@@ -16,6 +16,7 @@ HTTP 使用 `Authorization: Bearer <AGENTCUT_TOKEN>`。JSON 请求严格校验�
 | POST /v1/projects/{id}/edits | timeline_edit | 批量命令 |
 | POST /v1/projects/{id}/restore | project_restore | 历史恢复为新版本 |
 | POST /v1/projects/{id}/clips/{c}/silence | clip_silence | 只读扫描静音并取回剪切命令（`apply`/`dry_run` 在该工具里固定为 false） |
+| POST /v1/projects/{id}/sync | clips_sync | 多机位对齐（1.288）：2–8 段按共享声音的归一化互相关算偏移（10 毫秒包络、重叠内去均值、折到帧），交回普通 `clip.move` 计划；弱峰/同轨/变速/越界/同拍按名字拒绝，`apply` 才写入，工具侧固定只读 |
 | GET /v1/projects/{id}/edl?track_id={t} | project_edl | 一条画面轨的 CMX3600 剪辑表（1.285）：整帧不丢帧，直切、100% 速度、视频片段；转场/变速/非画面/分数帧率按名字拒绝并点名，读一遍不改 revision |
 | POST /v1/projects/{id}/tracks/{t}/rough-cut | track_rough_cut | 整轨粗剪（1.284）：逐片段右到左取同一份粗剪计划（1.286 起同样接受 `place=head|lively|center` 与 `transition_ms`），合并成一个批次；不能扫的片段带原因跳过，一条都剪不动时 `ROUGH_NONE`；`apply` 才写入，工具侧固定只读 |
 | POST /v1/projects/{id}/clips/{c}/rough-cut | clip_rough_cut | 按镜头粗剪（1.283；1.286 起 `place=head|lively`、1.287 起还可 `center`；1.287 起 `transition_ms` 给接缝叠化）：同一套颜色差找硬切，每个镜头只留前 `keep_ms`（默认 1500，100–30000），计划是从右往左的普通 `clip.split` + 带 `ripple` 的 `clip.trim`；`apply` 才写入，工具侧固定只读 |

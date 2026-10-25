@@ -1026,6 +1026,39 @@ export async function copyTrackEdl(trackId: string) {
   }
 }
 
+/** 多机位对齐：选中的几段（2–8，各占一条轨）按共享声音的相关峰对齐到第一段；
+ *  计划是普通 clip.move，一次提交一个版本。弱峰与越界由引擎按名字拒绝。 */
+export async function alignMulticam() {
+  const project = state.project;
+  if (!engine || !project || state.selectedClips.length < 2) return;
+  set({ busy: "对齐多机位…" });
+  try {
+    const planned = await engine.syncPlan(project.id, {
+      request_id: newId("sync-"),
+      expected_revision: project.revision,
+      sequence_id: state.sequenceId,
+      clip_ids: state.selectedClips.slice(0, 8),
+      max_offset_ms: state.caps?.limits.sync_default_offset_ms ?? 5000,
+    });
+    const commands = planned.sync.commands;
+    if (!commands.length) {
+      toast("info", "这几路已经同拍", "相关峰说它们的偏移是零；这一次没有写入任何东西。");
+      return;
+    }
+    submit(commands as Command[], `对齐 ${commands.length} 路机位`);
+    const scores = planned.sync.clips
+      .map((item) => item.score)
+      .filter((score): score is number => typeof score === "number");
+    const low = scores.length ? Math.min(...scores) : planned.sync.weakest_score;
+    toast("info", `对齐了 ${commands.length} 路`, `最低相关峰 ${low.toFixed(2)}；只移动这几段，撤销一步整批退回。`);
+  } catch (error) {
+    const { title, detail } = describe(error);
+    toast("error", title, detail);
+  } finally {
+    set({ busy: "" });
+  }
+}
+
 function countCuts(commands: Record<string, unknown>[]) {
   return commands.filter((command) => command.op === "clip.ripple_remove").length;
 }

@@ -227,7 +227,80 @@ async function main() {
     }
     facts.before = await projectState();
 
-    if (ACTION === "track" || ACTION === "edl") {
+    if (ACTION === "sync") {
+      // 两段各在一条轨上：点第一段，按住 Ctrl 点第二段，再按「成组剪辑」里的「对齐多机位」。
+      const spots = await evaluate(`(function () {
+        const nodes = Array.from(document.querySelectorAll('.clip:not(.ghost)')).slice(0, 2);
+        return nodes.map(function (node) {
+          node.scrollIntoView({ block: 'nearest' });
+          const r = node.getBoundingClientRect();
+          return { x: Math.round(r.left + Math.min(r.width - 12, 40)), y: Math.round(r.top + 12) };
+        });
+      })()`);
+      if (!spots || spots.length < 2) throw new Error("时间线上不足两段");
+      const press = async (spot, modifiers) => {
+        await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: spot.x, y: spot.y,
+          button: "left", buttons: 1, clickCount: 1, modifiers: modifiers || 0 });
+        await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: spot.x, y: spot.y,
+          button: "left", buttons: 0, clickCount: 1, modifiers: modifiers || 0 });
+      };
+      await press(spots[0], 0);
+      await sleep(350);
+      await press(spots[1], 2);
+      await sleep(500);
+      facts.selection = await evaluate("document.querySelectorAll('.clip.selected').length");
+      const scrolled = await evaluate(`(function () {
+        const hit = Array.from(document.querySelectorAll('.panel-scroll button'))
+          .find(function (n) { return (n.textContent || '').trim() === '对齐多机位'; });
+        if (!hit) return false;
+        hit.scrollIntoView({ block: 'center' });
+        return true;
+      })()`);
+      if (!scrolled) throw new Error("检查器里没有「对齐多机位」");
+      await sleep(500);
+      const button = await evaluate(`(function () {
+        const hit = Array.from(document.querySelectorAll('.panel-scroll button'))
+          .find(function (n) { return (n.textContent || '').trim() === '对齐多机位'; });
+        if (!hit) return null;
+        const r = hit.getBoundingClientRect();
+        const x = Math.round(r.left + r.width / 2);
+        const y = Math.round(r.top + r.height / 2);
+        const under = document.elementFromPoint(x, y);
+        return { text: hit.textContent.trim(), disabled: hit.disabled === true,
+          box: { left: Math.round(r.left), right: Math.round(r.right), width: Math.round(r.width), height: Math.round(r.height) },
+          x: x, y: y, underTag: under ? under.tagName + '.' + (under.className || '') : null,
+          hitSelf: Boolean(under && (under === hit || hit.contains(under))) };
+      })()`);
+      facts.button = button;
+      if (!button) throw new Error("检查器里没有「对齐多机位」");
+      if (SHOT) {
+        await cdp.send("Page.captureScreenshot", { format: "png" }, 30000).then((shot) => {
+          if (shot && shot.data) fs.writeFileSync(SHOT, Buffer.from(shot.data, "base64"));
+        }).catch(() => {});
+      }
+      if (button.disabled) throw new Error("对齐多机位是灰的");
+      if (!button.hitSelf) throw new Error("对齐多机位点不到自己");
+      await press(button, 0);
+      await sleep(1500);
+      facts.toastEarly = await evaluate(`(function () {
+        const host = document.querySelector('.toast-host');
+        return host ? host.textContent.trim().slice(0, 240) : null;
+      })()`);
+      const before = facts.before.revision;
+      for (let attempt = 0; attempt < 90; attempt += 1) {
+        await sleep(500);
+        const now = await projectState();
+        if (now.revision > before) { facts.after = now; break; }
+      }
+      if (!facts.after) facts.after = await projectState();
+      facts.toast = await evaluate(`(function () {
+        const host = document.querySelector('.toast-host');
+        return host ? host.textContent.trim().slice(0, 200) : null;
+      })()`);
+      facts.clips = Object.values(facts.after.clips || {}).map(function (clip) {
+        return { id: clip.id, position_ticks: clip.position_ticks, duration_ticks: clip.duration_ticks, source_in_ticks: clip.source_in_ticks };
+      }).sort(function (a, b) { return a.position_ticks - b.position_ticks; });
+    } else if (ACTION === "track" || ACTION === "edl") {
       // 轨道头「其它操作」→ 菜单里的「按镜头粗剪这一轨」：两下真鼠标，再回引擎读数。
       const more = await evaluate(`(function () {
         const node = document.querySelector('[aria-label="这条轨的其它操作"]');

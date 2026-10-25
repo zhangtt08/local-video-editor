@@ -694,7 +694,7 @@ export type Capabilities = {
   max_commands_per_batch: number;
   commands: string[];
   features: Record<string, boolean>;
-  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; track_volume_max?: number; track_volume_default?: number; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; denoise_db?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number; track_max_gap_frames?: number; track_gap_default?: number; track_min_frames?: number; track_max_frames?: number; mask_rotation_limit?: number; extra_masks?: number; extra_mask_keys?: number; mask_shape_keys?: number; mask_shape_schedule_segments?: number; blur_schedule_segments?: number; sharpen_schedule_segments?: number; layer_key_limit?: number; layer_schedule_segments?: number; attribute_paste_targets?: number; chroma_similarity_default?: number; chroma_blend_default?: number; chroma_color_default?: string; chroma_spill_default?: number; scene_threshold_default?: number; scene_min_ms_default?: number; scene_max_cuts?: number; rough_keep_ms_default?: number; rough_keep_ms_min?: number; rough_keep_ms_max?: number; rough_seam_ms_default?: number };
+  limits: { max_tracks: number; max_assets: number; max_clips: number; sample_rates: number[]; track_volume_max?: number; track_volume_default?: number; blur_fraction?: number; blur_radius_limit_px?: number; sharpen_amount?: number; sharpen_radius_fraction?: number; sharpen_radius_default?: number; denoise_db?: number; stabilize_max_crop?: number; stabilize_smoothing_frames?: number; track_max_gap_frames?: number; track_gap_default?: number; track_min_frames?: number; track_max_frames?: number; mask_rotation_limit?: number; extra_masks?: number; extra_mask_keys?: number; mask_shape_keys?: number; mask_shape_schedule_segments?: number; blur_schedule_segments?: number; sharpen_schedule_segments?: number; layer_key_limit?: number; layer_schedule_segments?: number; attribute_paste_targets?: number; chroma_similarity_default?: number; chroma_blend_default?: number; chroma_color_default?: string; chroma_spill_default?: number; scene_threshold_default?: number; scene_min_ms_default?: number; scene_max_cuts?: number; rough_keep_ms_default?: number; rough_keep_ms_min?: number; rough_keep_ms_max?: number; rough_seam_ms_default?: number; sync_min_score?: number; sync_max_offset_ms?: number; sync_default_offset_ms?: number; sync_max_clips?: number };
   render_presets: Preset[];
   /** 1.137：时间码的写法与「哪两个率才有丢帧码」由引擎说，界面不许自己写一份正则。 */
   timecode_shape?: string;
@@ -860,6 +860,12 @@ export function errorHints(): Record<string, string> {
       SCENE_THRESHOLD: "镜头门槛落在可用的范围之外了：允许 0.02 到 0.90，默认 0.18。越小越敏感（轻微的灯光变化也会切断），越大越迟钝。",
       SCENE_FAILED: "镜头检测没跑成：这一段素材可能已经损坏或读不出画面。先在素材库里确认这个文件能正常播放，再试一次。",
       INVALID_ROUGH_TARGET: "这一段不能粗剪：只有导入的视频素材有镜头可分，图片、文字、声音与合成片段都不行；带变速曲线的片段要先清掉曲线，音画链接的片段要先解除链接。",
+      INVALID_SYNC_TARGET: "这几段不能按声音对齐：需要每段都能听到声音（图片、文字、无声片段与合成不行），各占一条轨，且不带变速曲线与音画链接。",
+      SYNC_WEAK: "这几段共享的声音太弱：至少有一路听不到同一件事，相关峰不够高。换一段两边都听得见的同期声再试；这一次没有移动任何片段。",
+      SYNC_TARGET: "参考段太短：至少要有两秒声音才够对齐。换一段长一点的同期声作参考。",
+      SYNC_OUT_OF_RANGE: "对齐会把其中一路移到零之前。先把参考段在时间线上往右挪一点，再对齐一次；这一次没有移动任何片段。",
+      SYNC_ALIGNED: "这几路本来就同拍：相关峰说它们的偏移是零，没有可移动的。",
+      SYNC_FAILED: "按声音对齐没跑成：有一路可能读不出声音。先在素材库里确认它能正常播放，再试一次。",
       EDL_RATE: "剪辑表的时码按整帧写：这条时间线是分数帧率，CMX3600 要先定丢帧/不丢帧那一套算法，这一版不猜。把工程换成 24/25/30/50/60，或者直接交付成片。",
       EDL_UNSUPPORTED: "这条轨上有剪辑表说不出的东西（转场、变速或不是画面的片段）。先去掉或合并它们，或者直接交付成片；这一趟没有写任何文件。",
       EDL_EMPTY: "这条轨上还没有片段，剪辑表是空的。先放几段画面进来。",
@@ -1342,6 +1348,25 @@ export class Engine {
         commands: Record<string, unknown>[];
       };
     }>("POST", `/v1/projects/${projectId}/clips/${clipId}/scenes`, body, 300000);
+  }
+
+  /** 多机位对齐：按共享声音的相关峰算偏移，计划是一串普通 clip.move（只读）。 */
+  syncPlan(projectId: string, body: Record<string, unknown>) {
+    return this.request<{
+      committed: boolean;
+      sync: {
+        reference_id: string;
+        clips: {
+          clip_id: string;
+          offset_ticks?: number;
+          offset_frames?: number;
+          score?: number;
+          skipped?: string;
+        }[];
+        weakest_score: number;
+        commands: Record<string, unknown>[];
+      };
+    }>("POST", `/v1/projects/${projectId}/sync`, body, 900000);
   }
 
   /** 剪辑表：一条画面轨的 CMX3600 文本（只读）；直切、100% 速度、整帧率。 */

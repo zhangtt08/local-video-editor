@@ -83,6 +83,7 @@ import {
   updateSequence,
   reframeClip, stabilizeClip, trackMasks, trackExtraMask,
   cutSilence,
+  alignMulticam,
   splitScenes,
   roughCut,
   beatMarks,
@@ -123,6 +124,7 @@ export function Inspector() {
         <div className="batch-actions"><button className="btn" onClick={copySelection}>复制</button><button className="btn" onClick={duplicateSelection}>追加副本</button><button className="btn" onClick={() => removeSelection()}>删除</button></div>
         <button className="btn" onClick={() => removeSelection(true)}>涟漪删除整组</button>
         <p className="hint">涟漪删除只关掉这一段独占的时间；别人用的重叠区间保留。</p>
+        {app.caps?.features?.multicam_sync ? <div className="batch-actions"><button className="btn" disabled={app.selectedClips.length > 8 || Boolean(app.busy)} title={app.selectedClips.length > 8 ? "一次最多对齐 8 路机位" : "按这几段共享的声音算出相对偏移，把其它机位对齐到第一段：需要每段各占一条轨、至少两秒可听的声音；只动这几段，一次提交一个版本"} onClick={() => void alignMulticam()}>{app.selectedClips.length > 8 ? "最多 8 路" : "对齐多机位"}</button></div> : null}
       </section> : null}
 
       {multiple ? <GroupTrackFields /> : null}

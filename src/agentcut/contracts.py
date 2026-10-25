@@ -71,7 +71,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.287.0"
+APP_VERSION = "1.288.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -603,6 +603,16 @@ ROUGH_KEEP_MS_MAX = 30000
 ROUGH_SEAM_MS_DEFAULT = 300
 
 ROUGH_SEAM_MS_MAX = 2000
+
+# 1.288：多机位对齐的两个数：相关峰至少要多高才认，以及一次最多对齐几路。
+
+SYNC_MIN_SCORE = 0.5
+
+SYNC_MAX_OFFSET_MS = 30000
+
+SYNC_DEFAULT_OFFSET_MS = 5000
+
+SYNC_MAX_CLIPS = 8
 
 # The unsharp staircase gets its own, smaller ceiling because a step here is a pair of stages, not
 
@@ -5889,6 +5899,38 @@ class SceneRequest(Contract):
 
 
 
+class SyncRequest(Contract):
+
+    """Line several clips up by the sound they share, and hand back the moves that do it.
+
+    A planner of ordinary `clip.move` commands, not a multicam switcher: the editor still decides
+
+    which angle is on screen. The reference is one of `clip_ids` (the first by default); every other
+
+    clip is correlated against it on a coarse envelope, and a weak peak or a clip that would land
+
+    before zero is refused by name rather than moved to a guess.
+
+    """
+
+    request_id: Identifier
+
+    expected_revision: Revision
+
+    sequence_id: Identifier | None = None
+
+    clip_ids: Annotated[list[Identifier], Field(min_length=2, max_length=8)]
+
+    reference_id: Identifier | None = None
+
+    max_offset_ms: Annotated[int, Field(ge=100, le=30000)] = 5000
+
+    apply: bool = False
+
+    dry_run: bool = False
+
+
+
 class RoughCutRequest(Contract):
 
     """Find the shots in one clip and keep only the first `keep_ms` of each, packed together.
@@ -7562,6 +7604,10 @@ def capabilities(
 
             "rough_cut_seam": media_ready,
 
+            # 1.288：多机位按声音对齐——一次相关计算，计划是一串普通 clip.move。
+
+            "multicam_sync": media_ready,
+
             # 1.285：剪辑表是纯文本，不需要媒体引擎；老引擎不认这条读路由，界面就不摆那一项。
 
             "edl_export": True,
@@ -7825,6 +7871,14 @@ def capabilities(
             "rough_keep_ms_max": ROUGH_KEEP_MS_MAX,
 
             "rough_seam_ms_default": ROUGH_SEAM_MS_DEFAULT,
+
+            "sync_min_score": SYNC_MIN_SCORE,
+
+            "sync_max_offset_ms": SYNC_MAX_OFFSET_MS,
+
+            "sync_default_offset_ms": SYNC_DEFAULT_OFFSET_MS,
+
+            "sync_max_clips": SYNC_MAX_CLIPS,
 
             "track_volume_default": TRACK_VOLUME_DEFAULT,
 

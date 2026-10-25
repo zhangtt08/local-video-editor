@@ -55,6 +55,7 @@ from .contracts import (
     SequenceRef,
     SilenceRequest,
     SpeechCaptionsRequest,
+    SyncRequest,
     Ticks,
 )
 
@@ -411,6 +412,19 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
             body,
             timeout=600,
         )
+
+    @server.tool(annotations=read)
+    async def clips_sync(project_id: Identifier, request: SyncRequest) -> dict[str, Any]:
+        """Line several clips up by the sound they share and get the ordinary move commands.
+
+        Read-only here: `apply` and `dry_run` are forced off, so nothing is written. The answer
+        carries each angle's offset (ticks and frames) and the correlation score; submit the
+        returned `commands` with `timeline_edit` to keep one atomic revision. Clips must sit on a
+        track each, carry at least two seconds of sound, and share a clear peak — a weak one is
+        refused rather than guessed at.
+        """
+        body = request.model_dump(mode="json") | {"apply": False, "dry_run": False}
+        return await call("POST", f"/v1/projects/{project_id}/sync", body, timeout=900)
 
     @server.tool(annotations=read)
     async def project_edl(

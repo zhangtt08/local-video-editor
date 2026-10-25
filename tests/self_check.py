@@ -414,6 +414,7 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
                 "clip_rough_cut",
                 "track_rough_cut",
                 "project_edl",
+                "clips_sync",
                 "audio_beats",
                 "mask_stack_track",
                 "preview_frame",
@@ -468,6 +469,9 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
             assert tools["project_edl"].annotations.readOnlyHint is True
             assert "sequence_id" in json.dumps(tools["project_edl"].inputSchema)
             assert "track_id" in json.dumps(tools["project_edl"].inputSchema)
+            # 1.288：多机位对齐是一份 move 计划，只读；一次最多 8 路。
+            assert tools["clips_sync"].annotations.readOnlyHint is True
+            assert "clip_ids" in json.dumps(tools["clips_sync"].inputSchema)
             assert "sequence_id" in json.dumps(tools["clip_scenes"].inputSchema)
             assert "threshold" in json.dumps(tools["clip_scenes"].inputSchema)
             # 1.268: beats are an answer, not a write. The marks become the existing marker.set

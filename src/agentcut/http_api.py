@@ -31,6 +31,7 @@ from . import fourpoint as fourpoint_module
 from . import markers as marker_plan
 from . import reframe as reframe_plan
 from . import stabilize as stabilize_module
+from . import sync as sync_module
 from .animation import (
     extra_box_at,
     graph_curve,
@@ -49,6 +50,7 @@ from .contracts import (
     COLOR_SPACES,
     MASK_EXTRA_KEY_LIMIT,
     MASK_ROTATION_LIMIT,
+    SYNC_MIN_SCORE,
     TIMEBASE,
     TRACK_FRAMES_MIN,
     AttributePlanRequest,
@@ -96,6 +98,7 @@ from .contracts import (
     ShapeMask,
     SilenceRequest,
     SpeechCaptionsRequest,
+    SyncRequest,
     Ticks,
     audio_scan_problem,
     capabilities,
@@ -1670,6 +1673,96 @@ def create_app(
         )
         mutation = projects.mutate(project_id, batch).model_dump()
         return {**mutation, "rough": body}
+
+    @app.post("/v1/projects/{project_id}/sync", dependencies=auth)
+    def clips_sync(project_id: Identifier, request: SyncRequest, projects: Store):
+        """Line several clips up by the sound they share and hand back ordinary move commands.
+
+        The reference is one of the named clips (the first by default). Every other clip is
+        correlated on a coarse envelope; a clip that cannot be heard, two angles on one track, a
+        weak peak and a move that would land before zero are each refused by name. `apply` submits
+        the moves as one batch; the reducer still owns what moving a clip does to links and groups.
+        """
+        engine = require_media()
+        root = projects.get(project_id)
+        project = sequence_view(root, request.sequence_id)
+        clips = []
+        for clip_id in request.clip_ids:
+            clip = project.clips.get(clip_id)
+            if clip is None:
+                raise EditorError("NOT_FOUND", "clip is not in this project", 404, clip_id=clip_id)
+            problem = audio_scan_problem(project, clip)
+            if problem:
+                raise EditorError("INVALID_SYNC_TARGET", problem, 422, clip_id=clip_id)
+            if clip.speed_percent != 100:
+                raise EditorError(
+                    "INVALID_SYNC_TARGET",
+                    "a sped-up angle does not share one clock with the others; set its speed back "
+                    "to 100 % before lining it up",
+                    422,
+                    clip_id=clip_id,
+                    speed_percent=clip.speed_percent,
+                )
+            clips.append(clip)
+        if len({clip.track_id for clip in clips}) != len(clips):
+            raise EditorError(
+                "INVALID_SYNC_TARGET",
+                "two of these clips sit on one track; multicam angles need a track each so moving "
+                "one cannot land on another",
+                422,
+                clips=[{"clip_id": clip.id, "track_id": clip.track_id} for clip in clips],
+            )
+        reference = next(
+            (clip for clip in clips if clip.id == (request.reference_id or request.clip_ids[0])),
+            None,
+        )
+        if reference is None:
+            raise EditorError(
+                "INVALID_SYNC_TARGET",
+                "the reference has to be one of the named clips",
+                422,
+                reference_id=request.reference_id,
+            )
+        result = sync_module.analyse(
+            engine.ffmpeg, project, clips, reference, max_offset_ms=request.max_offset_ms
+        )
+        if result["weakest_score"] < SYNC_MIN_SCORE:
+            raise EditorError(
+                "SYNC_WEAK",
+                "the sound these clips share is too weak to line up: at least one angle has no "
+                "clear common moment. Try a range where the same event is audible in both.",
+                422,
+                **result,
+            )
+        commands, refused = sync_module.move_plan(clips, reference, result["clips"])
+        body = {**result, "commands": commands}
+        if refused:
+            raise EditorError(
+                "SYNC_OUT_OF_RANGE",
+                "lining these angles up would move one before zero; slide the reference later on "
+                "the ruler first",
+                422,
+                **body,
+                refused=refused,
+            )
+        if request.apply and not commands:
+            raise EditorError(
+                "SYNC_ALIGNED",
+                "these angles already share one clock; nothing to move",
+                422,
+                **body,
+            )
+        if not request.apply:
+            return {"committed": False, "project": root.model_dump(), "sync": body}
+        batch = EditBatch(
+            request_id=request.request_id,
+            expected_revision=request.expected_revision,
+            sequence_id=request.sequence_id,
+            commands=commands,  # type: ignore[arg-type]
+            dry_run=request.dry_run,
+        )
+        mutation = projects.mutate(project_id, batch).model_dump()
+        return {**mutation, "sync": body}
 
     @app.get("/v1/projects/{project_id}/edl", dependencies=auth)
     def project_edl(
