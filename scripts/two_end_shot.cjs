@@ -444,10 +444,20 @@ async function main() {
     }
     killByProfile(profile);
     let cleaned = false;
-    for (let attempt = 0; attempt < 12 && !cleaned; attempt += 1) {
+    for (let attempt = 0; attempt < 24 && !cleaned; attempt += 1) {
       try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 3 }); } catch {}
       cleaned = !fs.existsSync(profile);
-      if (!cleaned) await sleep(250);
+      if (!cleaned) await sleep(500);
+    }
+    if (!cleaned) {
+      // 目录还在不等于泄漏：杀毒/索引器会短暂锁住一个刚退出的 profile。真正要防的是**进程**还活着，
+      // 而活着的进程会锁住目录——所以先改名；改得动就说明没人占用，改名再删只是收尾。
+      const aside = profile + "-stale-" + Date.now().toString(36);
+      try {
+        fs.renameSync(profile, aside);
+        cleaned = true;
+        try { fs.rmSync(aside, { recursive: true, force: true, maxRetries: 3 }); } catch {}
+      } catch {}
     }
     if (!cleaned) {
       console.error("LEAKED profile still held: " + profile);
