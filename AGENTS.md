@@ -6444,3 +6444,35 @@ M3 契约吹口牛（runnable 那条红）、M4 重放不认账（③红）。
 
 契约面现在的数：**74 只工具、87 条路由、3 条配方**；`agent/` 那台桥交回 75 只（多它自己的
 `status`）。这三句由 `agent_contract_check` 从引擎现场读出来，不是手抄的。
+
+### 发布账（1.311）
+
+引擎侧改的是 agent 那一段路，界面一行没动，所以这一版的重心全在「门对不对」上：
+
+- `src/agentcut/recipe_run.py`（新）：按 `agent_contract` 的步骤表逐条调同一批路由，进程内
+  ASGI 门 + 同一条 bearer 令牌；每步一行日志，PNG 那两步明写 `ran: false` 与该叫的名字。
+- `contracts.RecipeRun`：一刀的参数（`name`/`files`/两刀的量程/预设/文件名/`render`/`wait_seconds`），
+  量程与单独叫那两刀时是同一份模型，不是这一刀另开一档。
+- `http_api` 多一条 `POST /v1/agent/recipes/{recipe_id}/run`，`/v1/contracts` 也交回这份 schema；
+  MCP 多一只 `recipe_run(recipe_id, request)`；桥从契约里派生同一只（75 只，含它自己的 `status`）。
+- 配方文本改了顺序（`media_import` 在 `project_create` 之前、`clip_rough_cut`→`track_rough_cut`、
+  删掉重复那次 `timeline_edit`），并给每条加 `runnable` / `why_not`；MCP 的 prompt 正文同一段话。
+- 能力位 `features.recipe_run` 随媒体引擎走；`APP_VERSION` 1.311.0。
+
+两笔自己欠的账是全套单跑抓出来的，不是自查发现的：
+
+1. 新加的三个错误码只在 Python 里说英文——`error_vocabulary_check` 判红，
+   `desktop/src/engine.ts` 的 hints 表补三句中文，回到 **234 码 / 238 句 / 0 落英文**。
+2. 一刀跑完只在源码上量过，随包那台 `agentcut.exe` 有没有这扇门没人验——
+   新档 `tests/packaged_reciperun_check.py` 补上，并且**先证明它能红**：
+   把路由挪到 `/v1/agent/recipesX/…` 重建引擎，它红在三道（一次调用与两条拒绝都只拿到
+   FastAPI 的裸 `Not Found`）；源码以 sha256 核对还原、再重建一次才转绿。
+
+装机腿在交付包上重量的三段等待：**外壳画出来 518 ms（DOM ready 371 ms）、第一次真用到看见内容
+1232 ms、重载到看见列表 206 ms**——与 1.310 收口那一次（515 / 1128 / 206 ms）同一档，
+这一版没动渲染层，只是把三句中文提示加进 `engine.ts` 的 hints 表。
+随包那一刀实测：源 4.00 s → **交付 0.60 s**，与 `render_plan` 交回的计划一字不差，
+revision 3，等到终态 531 ms，关掉按 PID 收子树不留尸。
+
+契约面的现场读数（由 `agent_contract_check` 从引擎里读，不是手抄）：**74 只工具、87 条路由、
+3 条配方**；桥那台交回 75 只；派发对齐 74/74；两只门面 12 组真调用答案一致。
