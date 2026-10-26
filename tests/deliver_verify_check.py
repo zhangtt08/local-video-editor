@@ -7,7 +7,9 @@
 
 四道，每一道都能红：
 ① 真交付之后验：verdict 为真，逐条交回实测数——长度对这个作业自己的计划、画幅与帧率对预设、
-   响度用 FFmpeg 的 EBU R128 表量文件本身；
+   响度用 FFmpeg 的 EBU R128 表量文件本身；配方最后那一格也必须真跑（偷偷跳过就红）；
+①b 把交付换成另一条片子（3 秒 320x180 冒充 2 秒 1280x720）：verdict 转为假，假在长度与画幅，
+   交回的实测数只能来自文件本身——计划里的数与文件里的数在这一道里是两个数；
 ② 目标响度点歪一个数（-30 对 -16）：verdict 转为假，`failed` 里就是 `loudness` 那一条，
    并且交回差了多少——不合格是一句答案，不是一次异常；
 ③ 文件被人删了：还是 200，verdict 假在 `file` 那一条，后面的量法明说无从下手（不掀桌）；
@@ -18,6 +20,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -107,29 +110,77 @@ def verify_leg(hub: TestClient, made: dict) -> None:
     check("逐条都量了",
           {"status", "file", "duration", "resolution", "frame_rate", "loudness"} <= set(rows),
           sorted(rows))
+    loud = rows.get("loudness") or {}
+    dur = rows.get("duration") or {}
+    res = rows.get("resolution") or {}
+    rate = rows.get("frame_rate") or {}
     check("响度量的就是这个文件本身",
-          rows["loudness"]["measured"] is not None
-          and abs(float(rows["loudness"]["measured"]) + 16.0) <= 1.5, rows.get("loudness"))
+          loud.get("measured") is not None and abs(float(loud["measured"]) + 16.0) <= 1.5,
+          loud)
     check("长度对这个作业自己的计划",
-          rows["duration"]["expected"] == (made.get("plan") or {}).get("plan", {})
-          .get("duration_seconds"), (rows.get("duration"), made.get("plan")))
+          dur.get("expected") == (made.get("plan") or {}).get("plan", {})
+          .get("duration_seconds"), (dur, made.get("plan")))
     check("画幅与帧率对的是预设要的那一张",
-          rows["resolution"]["measured"] == "1280x720"
-          and rows["frame_rate"]["measured"] == "30/1", rows)
-    print(f"   验交付：verdict={body.get('verdict')}，实测响度 "
-          f"{rows['loudness']['measured']} LUFS，长度 {rows['duration']['measured']} s"
-          f"（计划 {rows['duration']['expected']} s）")
+          res.get("measured") == "1280x720" and rate.get("measured") == "30/1", (res, rate))
+    print(f"   验交付：verdict={body.get('verdict')}，实测响度 {loud.get('measured')} LUFS，"
+          f"长度 {dur.get('measured')} s（计划 {dur.get('expected')} s）")
 
     skewed = hub.get(f"/v1/jobs/{job_id}/verify", params={"target_lufs": -30.0}).json()
+    off = [str(row.get("name")) for row in skewed.get("checks") or [] if not row.get("ok")]
     check("目标点歪就转为假，并点名是哪一条",
-          skewed.get("verdict") is False and "loudness" in [
-              row["name"] for row in skewed["checks"] if not row["ok"]], skewed)
-    gap = next(row for row in skewed["checks"] if row["name"] == "loudness")
+          skewed.get("verdict") is False and "loudness" in off, (skewed.get("verdict"), off))
+    gap = next((row for row in skewed.get("checks") or []
+                if row.get("name") == "loudness"), {})
     check("假的那条说得出差多少",
-          abs(abs(float(gap["measured"]) - float(gap["expected"])) - 14.0) <= 1.5, gap)
+          bool(gap) and gap.get("measured") is not None
+          and abs(abs(float(gap["measured"]) - float(gap["expected"])) - 14.0) <= 1.5, gap)
     check("把答案说歪不是抛异常（同一扇门的第二条路）",
-          hub.get(f"/v1/jobs/{job_id}/verify", params={"target_lufs": -16.0}).status_code == 200,
+          hub.get(f"/v1/jobs/{job_id}/verify",
+                  params={"target_lufs": -16.0}).status_code == 200,
           "second read")
+
+
+def recipe_row_leg(made: dict) -> None:
+    """配方里最后那一格：一刀之内引擎自己验了，且验的就是这一条作业。"""
+    rows = {row["step"]: row for row in made.get("steps") or []}
+    row = rows.get("deliver_verify") or {}
+    check("配方最后一步真跑了（偷偷跳过就红在这里）",
+          row.get("ran") is True and row.get("all_ok") is True, row)
+    verdicts = row.get("verdicts") or []
+    check("验的就是这一条交付作业，答案逐条交回",
+          len(verdicts) == 1 and verdicts[0]["job_id"] == (made.get("job") or {}).get("id"),
+          row)
+
+
+def mismatch_leg(hub: TestClient, folder: Path, made: dict) -> None:
+    """把交付换成另一条片子：不合格的数字必须来自文件本身，不是来自计划。"""
+    job = made.get("job") or {}
+    path = Path(job.get("output_path") or "")
+    if not job.get("id") or not path.is_file():
+        check("这一道要有一条真交付才换得动", False, str(path))
+        return
+    backup = path.with_suffix(".keep")
+    path.rename(backup)
+    try:
+        shutil.copyfile(folder / "talk.mp4", path)
+        body = hub.get(f"/v1/jobs/{job['id']}/verify").json()
+        rows = {row["name"]: row for row in body.get("checks") or []}
+        failed = {row["name"] for row in body.get("checks") or [] if not row["ok"]}
+        check("换了片子就转为假", body.get("verdict") is False, body.get("verdict"))
+        check("假的是长度与画幅这两条", {"duration", "resolution"} <= failed, sorted(failed))
+        dur = rows.get("duration") or {}
+        res = rows.get("resolution") or {}
+        check("交回的实测数就是从那一片子里读出来的",
+              dur.get("measured") is not None and abs(float(dur["measured"]) - 3.0) <= 0.1
+              and res.get("measured") == "320x180", (dur, res))
+        check("期望那一张仍是作业自己计划里的",
+              dur.get("expected") == (made.get("plan") or {}).get("plan", {})
+              .get("duration_seconds") and res.get("expected") == "1280x720", (dur, res))
+        print(f"   换一条片子冒充交付：verdict={body.get('verdict')}，假在 {sorted(failed)}，"
+              f"实测长度 {dur.get('measured')} s")
+    finally:
+        # 冒充的那一片还占着那个路径，Windows 的 rename 不肯覆盖——Path.replace 才会。
+        backup.replace(path)
 
 
 def missing_file_leg(hub: TestClient, made: dict) -> None:
@@ -146,8 +197,9 @@ def missing_file_leg(hub: TestClient, made: dict) -> None:
         check("文件没了也不掀桌", answer.status_code == 200, answer.text[:300])
         body = answer.json()
         rows = {row["name"]: row for row in body.get("checks") or []}
+        file_row = rows.get("file") or {}
         check("假在 file 那一条",
-              body.get("verdict") is False and rows["file"]["ok"] is False, rows.get("file"))
+              body.get("verdict") is False and file_row.get("ok") is False, file_row)
         check("后面的量法明说无从下手", "container" in rows or "duration" not in rows,
               sorted(rows))
     finally:
@@ -186,13 +238,13 @@ def flag_leg(hub: TestClient, folder: Path) -> None:
     check("不排交付的这一刀也跑得完", answer.status_code == 200, answer.text[:400])
     if answer.status_code != 200:
         return
-    rows = {row["step"]: row for row in answer.json()["steps"]}
-    check("混音那一步没被 render=false 顺手带走",
-          rows["master_loudness"]["ran"] is True, rows["master_loudness"])
+    rows = {row["step"]: row for row in (answer.json().get("steps") or [])}
+    loud = rows.get("master_loudness") or {}
+    verify_row = rows.get("deliver_verify") or {}
+    check("混音那一步没被 render=false 顺手带走", loud.get("ran") is True, loud)
     check("没作业可验就明说",
-          rows["deliver_verify"]["ran"] is False
-          and "render=false" in rows["deliver_verify"]["why"],
-          rows["deliver_verify"])
+          verify_row.get("ran") is False
+          and "render=false" in str(verify_row.get("why")), verify_row)
 
 
 def main() -> None:
@@ -203,7 +255,9 @@ def main() -> None:
     with client(folder) as hub:
         made = one_delivery(hub, folder)
         if made:
+            recipe_row_leg(made)
             verify_leg(hub, made)
+            mismatch_leg(hub, folder, made)
             missing_file_leg(hub, made)
         flag_leg(hub, folder)
     if FAILURES:
