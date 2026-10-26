@@ -147,6 +147,30 @@ async function main() {
     })()`));
     const atOpen = JSON.parse(openState);
     facts.openState = atOpen;
+    // 外壳什么时候**真画出来**：不看 DOM 里有没有那个节点，而是拿中点做命中测试——
+    // 节点在场但没画出来（或被折叠）是两回事。FCP 这类 paint 条目在这个页面量不到，
+    // 所以量的是「performance.now() 到哪一秒中点开始落在外壳里」。
+    let paintedMs = null;
+    for (let wait = 0; wait < 160 && paintedMs === null; wait += 1) {
+      paintedMs = await evaluate(cdp, `(function () {
+        var frame = document.querySelector(".app-frame");
+        if (!frame) return null;
+        var b = frame.getBoundingClientRect();
+        var hit = document.elementFromPoint(Math.round(b.left + b.width / 2), Math.round(b.top + b.height / 2));
+        return (hit && frame.contains(hit)) ? Math.round(performance.now()) : null;
+      })()`);
+      if (paintedMs === null) await sleep(25);
+    }
+    facts.shellPaintedMs = paintedMs;
+    const paint = JSON.parse(String(await evaluate(cdp, `(function () {
+      var nav = performance.getEntriesByType("navigation")[0] || {};
+      return JSON.stringify({
+        firstContentfulPaintMs: Math.round((performance.getEntriesByName("first-contentful-paint")[0] || {}).startTime || 0),
+        domReadyMs: Math.round(nav.domContentLoadedEventEnd || 0),
+        lookedAtMs: Math.round(performance.now()),
+      });
+    })()`)));
+    facts.paint = paint;
     if (!atOpen.shell || atOpen.bootScreen) {
       throw new Error("打开窗口那一下该直接出外壳、不带全屏门：" + openState);
     }
@@ -155,7 +179,16 @@ async function main() {
     }
     // 第一次真使用：一次真指针落在首页标题那一行（那里没有可点的控件），引擎这才在后台起来。
     if (!atOpen.headX || !atOpen.headY) throw new Error("首页标题没画出来：外壳不是预期那一屏");
+    const pressedAt = Date.now();
     await clickAt(cdp, atOpen.headX, atOpen.headY);
+    let firstUseMs = null;
+    for (let wait = 0; wait < 120 && firstUseMs === null; wait += 1) {
+      await sleep(100);
+      const landed = await evaluate(cdp, "Boolean(document.querySelector('.pt-item')"
+        + " || document.querySelector('.start-empty'))");
+      if (String(landed) === "true") firstUseMs = Date.now() - pressedAt;
+    }
+    facts.firstUseToListMs = firstUseMs;
 
     let body = "";
     // 1.291：版本号不再画在界面上（「引擎在线 v1.290.0」那种小字正是被删掉的东西），
@@ -211,7 +244,15 @@ async function main() {
     }, "POST");
 
     // 刷新首页（不要点新建），工程卡片出现之后按命中点真的点开它。
+    const reloadedAt = Date.now();
     await evaluate(cdp, "location.reload(); true");
+    let reattachMs = null;
+    for (let wait = 0; wait < 30 && reattachMs === null; wait += 1) {
+      await sleep(200);
+      const rows = Number(await evaluate(cdp, "document.querySelectorAll('.pt-item').length || 0"));
+      if (rows > 0) reattachMs = Date.now() - reloadedAt;
+    }
+    facts.reloadToListMs = reattachMs;
     let opened = false;
     for (let attempt = 0; attempt < 40 && !opened; attempt += 1) {
       await sleep(800);

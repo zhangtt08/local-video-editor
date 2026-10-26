@@ -84,6 +84,22 @@ def main() -> None:
         assert opened["shell"] is True and opened["bootScreen"] is False, opened
         assert opened["skeleton"] >= 1, f"没读到工程时该留待填的骨架：{opened}"
 
+        # ⓪′ 流畅度的三段数：外壳画出来、第一次真使用到看见内容、重载后接回那一台。
+        # 地板先按这版实测放宽——它们先把「别退回成开机拉引擎、别让人对着门等」钉住，
+        # 数值本身随实测收紧，收紧的那一次要连着说清是哪一刀改出来的。
+        paint = facts["paint"]
+        painted = facts.get("shellPaintedMs")
+        assert painted is not None and 0 < painted <= 4000, (painted, paint)
+        assert 0 < paint["domReadyMs"] <= 4000, paint
+        first_ms = facts["firstUseToListMs"]
+        assert first_ms is not None and first_ms <= 12_000, f"第一次用到看见内容：{first_ms} ms"
+        reload_ms = facts["reloadToListMs"]
+        assert reload_ms is not None and reload_ms <= 6_000, f"重载后接回：{reload_ms} ms"
+        print(
+            f"   流畅度：外壳画出来 {painted} ms（DOM ready {paint['domReadyMs']} ms）、"
+            f"第一次真用到看见内容 {first_ms} ms、重载到看见列表 {reload_ms} ms"
+        )
+
         # ① 窗口与引擎说的是同一版。
         assert facts["versionOnScreen"] == APP_VERSION, facts["versionOnScreen"]
         assert facts["engineVersion"] == APP_VERSION, facts["engineVersion"]
