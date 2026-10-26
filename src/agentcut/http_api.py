@@ -4,12 +4,14 @@ Only loopback is served. Everything that writes project state goes through Proje
 the desktop client and an external Agent share exactly one command semantic.
 """
 
+import asyncio
 import hashlib
 import hmac
 import math
 import secrets
 import sqlite3
 import tempfile
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
@@ -111,7 +113,7 @@ from .contracts import (
     render_presets,
 )
 from .grade import parse_cube
-from .jobs import JobRuntime, plan_for
+from .jobs import TERMINAL, JobRuntime, plan_for
 from .loudness import master_plan, normalize_gain, probe_mix, volume_problem
 from .loudness import measure as measure_loudness
 from .masks import mask_image
@@ -3362,6 +3364,31 @@ def create_app(
         data = job.model_dump()
         data["progress"] = job.progress
         return {"job": data, "plan": plan}
+
+    @app.get("/v1/jobs/{job_id}/wait", dependencies=auth)
+    async def wait_job(
+        job_id: Identifier,
+        projects: Store,
+        timeout: Annotated[float, Query(ge=0, le=120)] = 30.0,
+        poll: Annotated[float, Query(ge=0.05, le=2.0)] = 0.25,
+    ):
+        """等一台作业到终态，或等到这一次自己超时——交回的还是同一份作业文档。
+
+        排队中的作业不该要人一秒打一次：`render_start` 之后拿回 job id，然后一次调用等到
+        `succeeded`/`failed`/`cancelled`。超时不是错误——`timed_out` 说清楚「还在跑」，
+        调用方可以换个更长的 timeout 再来，或者改去看 `job_status`。
+        """
+        deadline = time.monotonic() + timeout
+        waited = 0.0
+        while True:
+            answer = get_job(job_id, projects)
+            status = answer["job"]["status"]
+            if status in TERMINAL or time.monotonic() >= deadline:
+                answer["waited_ms"] = int(waited * 1000)
+                answer["timed_out"] = status not in TERMINAL
+                return answer
+            await asyncio.sleep(poll)
+            waited = max(0.0, min(timeout, timeout - (deadline - time.monotonic())))
 
     @app.get("/v1/projects/{project_id}/jobs", dependencies=auth)
     def list_jobs(

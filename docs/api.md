@@ -3420,3 +3420,15 @@ POST http://127.0.0.1:8780/api/agent/tool          # {"tool": "agentcut.project_
 prompt 与 `agentcut://manifest`，资源交回的工具表与路由表与 HTTP 契约逐字同一份。
 **6 条突变各自红在自家断言上**，
 跑完按字节还原并核对 sha256。
+
+## 1.310 一次调用等到交付：`GET /v1/jobs/{job_id}/wait`
+
+`render_start` 交回 job id 之后，以前只能自己一秒一次打 `job_status`。这一条把「等到跑完」放回服务端：
+`timeout`（0..120 秒，默认 30）与 `poll`（0.05..2 秒，默认 0.25）都在查询里，越界 422。
+到终态或到自己超时都交回**同一份作业文档**——`job` 与在飞时那份 `plan`——外加两个字段：
+`waited_ms` 等了多久、`timed_out` 是不是还在跑。超时不是错误，也不是失败：调用方可以换更长的
+`timeout` 再来一次，等本身不动作业（`tests/jobwait_check.py` 量过：`timeout=0.05` 说 timed_out，
+随后一次长等仍到 `succeeded`）。
+
+契约、MCP 与桥同一份：`agent_contract` 登记 `job_wait`，MCP 多一只 `job_wait(job_id, timeout, poll)`，
+配方那一步从「轮询到 succeeded」改成「一次调用等到终态」。能力位 `features.job_wait`。

@@ -1167,6 +1167,15 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         return await call("GET", f"/v1/jobs/{job_id}")
 
     @server.tool(annotations=read)
+    async def job_wait(
+        job_id: Identifier, timeout: float = 30.0, poll: float = 0.25
+    ) -> dict[str, Any]:
+        """Wait for a render job to reach a terminal state; `timed_out` means still running."""
+        return await call(
+            "GET", f"/v1/jobs/{job_id}/wait?timeout={timeout}&poll={poll}"
+        )
+
+    @server.tool(annotations=read)
     async def job_list(project_id: Identifier, limit: int = 20) -> dict[str, Any]:
         """Recent render jobs for a project."""
         return await call("GET", f"/v1/projects/{project_id}/jobs?limit={limit}")

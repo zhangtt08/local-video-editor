@@ -6342,3 +6342,36 @@ MCP 以前只有 tools + 两只资源。现在加 `agentcut://manifest`（同一
 占用的账（同日实测）：随包引擎报 ready 813 ms、空转工作集 72.4 MB 不漂；
 装机外壳空转 4 个进程、合计 331.2 MB，且这时机器上一台引擎都没有。
 磁盘这一刀砍掉 2.18 GB 的可再生物，运行时这一刀砍掉「不开也占着的那台引擎」。
+
+
+## 1.310：一次调用等到交付——`job_wait`，把「等到它跑完」放回服务端
+
+`render_start` 之后要拿到成品，以前只有一条路：自己一秒一次地打 `job_status`。这不是设想——
+本仓库自己的门禁就是证据：`tests/alphamaster_check.py` 里那个 `wait()` 最多轮 **1200 次**才认输。
+连量具都在手写这个循环，外面接手的 agent 每一次交付都得再写一遍，还要自己决定多久问一次、
+问几次算失败。
+
+抄的是两台大家都用的服务的做法：**Kubernetes 的 `watch=true`**（服务端盯着变化，客户端不空转）与
+**GitHub CLI 的 `gh run watch`**（把「等到跑完」做成一条命令的语义）。落到这里是一读路由：
+
+- `GET /v1/jobs/{job_id}/wait?timeout=30&poll=0.25`（能力位 `features.job_wait`）：
+  到终态就交回**同一份作业文档**（`job` + 在飞时那份 `plan`），另加两个字段说清楚这一次是怎么回来的——
+  `waited_ms` 等了多久、`timed_out` 是不是还在跑。**超时不是错误**：说 `timed_out=true` 让调用方自己
+  决定换更长的 timeout 再来一次，还是改去 `job_status` 看一眼。`timeout` 夹在 0..120 秒、
+  `poll` 夹在 0.05..2 秒，越界 422——不让人拿一个数把服务端挂住。等本身不改作业状态：
+  等过一次超时的作业，再等一次仍会到 `succeeded`。
+- 契约那一头同步登记（`TOOL_ENDPOINTS["job_wait"]`），MCP 多一只 `job_wait(job_id, timeout, poll)`，
+  桥按同一份契约代理；三条剪辑配方里那一步从「轮询到 succeeded」改写成
+  「一次调用等到终态（超时会说 timed_out）」——agent 读到的指引与真实能调的东西是同一份。
+
+门禁 `tests/jobwait_check.py`（新）六道：① 契约登记与派发（`job_id` 进路径、`timeout/poll` 留在查询，
+放错就红）；② 一次真渲染：H.264 交付一次 `wait` 到 `succeeded`、`output_checked` 为真、
+ffprobe 量到 2 秒成片；③ `timeout=0.05` 那一次说 `timed_out=true` 且状态仍在 `queued/running`，
+随后一次长等到终态；④ 不存在的 job 按 `NOT_FOUND` 拒、`timeout=99999` 按 422 拒；
+⑤ MCP 那侧 `list_tools()` 里确有 `job_wait`（与 HTTP 同一份契约，不是各写一份）；⑥ 配方点名的就是它。
+`tests/self_check.py` 那份手抄的 MCP 工具名单也跟着多这一只——它本来就是用来挡「悄悄加/删工具」的。
+
+**3 条突变各自红在自家断言上**（超时了却说 `timed_out=false`、把 `timeout` 的 120 秒上限拆掉、
+契约里根本没登记这一只），跑完按字节还原并核对 sha256。第三条一开始是「红成 traceback」的——
+`resolve()` 对没登记的工具抛 `KeyError` 把整档掀了，看不到断言名；改成记一条失败再往下走，
+红要红得能说清是哪一条。

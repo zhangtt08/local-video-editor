@@ -41,7 +41,10 @@ RECIPES: tuple[dict[str, Any], ...] = (
             {"tool": "preview_frame", "why": "抽查几个刻度：预览与导出读的是同一份编译"},
             {"tool": "render_plan", "why": "只编译不渲染：看清 ffmpeg 的 argv 与图"},
             {"tool": "render_start", "why": "对固定 revision 排队交付"},
-            {"tool": "job_status", "why": "轮询到 succeeded，拿回输出路径与校验过的长度"},
+            {
+                "tool": "job_wait",
+                "why": "一次调用等到终态，拿回输出路径与校验过的长度",
+            },
         ],
     },
     {
@@ -109,6 +112,7 @@ TOOL_ENDPOINTS: dict[str, tuple[str, str]] = {
     "job_cancel": ("POST", "/v1/jobs/{job_id}/cancel"),
     "job_list": ("GET", "/v1/projects/{project_id}/jobs"),
     "job_status": ("GET", "/v1/jobs/{job_id}"),
+    "job_wait": ("GET", "/v1/jobs/{job_id}/wait"),
     "lut_parse": ("POST", "/v1/lut/parse"),
     "marker_split": ("POST", "/v1/projects/{project_id}/markers/split"),
     "mask_stack_track": (

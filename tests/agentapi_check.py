@@ -221,7 +221,7 @@ def main() -> None:
         # ③ 名单与清单：manifest 里那一份就是路由用的那一份
         listed = request(base, token, "/api/agent/tools")[1].get("data", [])
         names = [item["name"] for item in listed]
-        check("契约那 72 只 + status 一只都交了", len(listed) == CONTRACT_TOOLS, listed[:3])
+        check("契约那一份 + status 一只都交了", len(listed) == CONTRACT_TOOLS, listed[:3])
         check("六只经典操作仍在名单里", all(name in names for name in EXPECTED_TOOLS),
               sorted(set(EXPECTED_TOOLS) - set(names)))
         check("名单没有越过契约", set(names) <= CONTRACT_NAMES, sorted(set(names) - CONTRACT_NAMES))

@@ -71,7 +71,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.309.0"
+APP_VERSION = "1.310.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -7741,6 +7741,7 @@ def capabilities(
             # 1.307：一份机器可读的 agent 契约——路由、MCP 工具与三条剪辑配方，两条门面同源。
 
             "agent_manifest": True,
+            "job_wait": True,
 
             # 1.292：一个入口读进 OTIO / FCPXML / FCP7(Premiere) XML / EDL / 剪映明文草稿，
 
