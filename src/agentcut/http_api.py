@@ -23,10 +23,10 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from . import agent_contract, duck, interchange, overview, scenes, silence, stability, transcript
 from . import asr as asr_module
 from . import autograde as autograde_module
 from . import beats as beats_module
-from . import duck, interchange, overview, scenes, silence, stability, transcript
 from . import fourpoint as fourpoint_module
 from . import markers as marker_plan
 from . import reframe as reframe_plan
@@ -346,6 +346,28 @@ def create_app(
                 RenderRequest,
             )
         }
+
+    @app.get("/v1/agent/manifest", dependencies=auth)
+    async def agent_manifest(request: Request):
+        """The whole agent contract in one read: routes, MCP tools, capabilities, recipes.
+
+        One call answers "what can I call here, with which arguments, in what order" for either
+        surface. The tool table is the live MCP registry and the endpoint table is this app's own
+        route table, so neither list can drift from what actually answers.
+        """
+        # 只有这一条路要 MCP 那张名字表：纯 HTTP 的引擎不必为它加载适配器，所以到这儿才 import。
+        from .mcp_server import create_mcp
+
+        base = str(request.base_url).rstrip("/")
+        server = create_mcp(base, token)
+        return await agent_contract.manifest(
+            app,
+            server,
+            base_url=base,
+            live_capabilities=capabilities(
+                bool(media and media.enabled), speech_ready(), text_fonts_available()
+            ),
+        )
 
     @app.get("/v1/render-presets", dependencies=auth)
     def presets():

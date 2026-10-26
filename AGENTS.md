@@ -6111,3 +6111,61 @@ EDL 一条。**五种进、三种出**，对「agent 模仿完把工程交回原
 6. `AGENTCUT_SHAPE_THEME=light .venv/Scripts/python.exe tests/ui_shape_check.py`（浅色 58 屏）。
    这一轮改的是导出面板，不在那 58 屏里，浅色那一趟**没有重跑**——如实记在这里；
    导出面板的两档截图（1456×808 / 1040×660、菜单展开）是这一档自己的像素证据。
+
+## 1.307：把三条 agent 门收成一条（契约、MCP 原语、那台桥）
+
+这一档不改剪辑规则，改的是「agent 怎么使唤这个软件」。读码时看到的形状：同一个引擎有三条路——
+HTTP `/v1`、MCP 适配器、`agent/` 那台「Agent API 标准」桥。前两条是薄的（MCP 每只工具都是 HTTP
+的转发），第三条却是**手写的六只工具、还绕过 HTTP 直接开 SQLite**：产品后来加的媒体、渲染、字幕、
+遮罩、交换格式一共六十多只，它一只都没有。同一句 `timeline_edit` 走两条路会得到两种深度——
+「没统一」的具体形状在这里，不是风格问题。
+
+### 事实只写一次，其余都从它派生
+
+新增 `src/agentcut/agent_contract.py`：
+
+* `route_table(app)` 读 FastAPI 自己的路由表，连每条路由的 path / query / body 参数名一起读
+  （来自 `route.dependant`）；`tool_table(server)` 读 FastMCP 当场报的工具表（名字、描述、
+  inputSchema、只读位）。两张都是**跑起来才有的事实**，不抄第二份。
+* `TOOL_ENDPOINTS` 登记「这只工具走哪条路由」，`resolve()` 按路由自己的签名把参数分成
+  path / query / body。GET 上那一整个请求模型（`timeline_transcript` 的 `merge_gap_ms` 那一类）
+  摊平成查询参数——不摊平就会把 `request` 当成一个查询键发出去。这一条不是推测：
+  门禁的 `dispatch_alignment` 第一趟就是这么抓到它的。
+* `RECIPES` 三条剪辑配方只有一份，HTTP 契约、MCP prompts 与文档读的都是它。
+* 新读路由 `GET /v1/agent/manifest`（能力位 `features.agent_manifest`）：一次调用交回版本、
+  鉴权说明、错误形状、能力表、85 条路由、72 只工具与三条配方。
+
+### MCP 补齐 prompts 与 manifest 资源
+
+MCP 以前只有 tools + 两只资源。现在加 `agentcut://manifest`（同一份契约）与三只 prompt
+（`recipe_cut_from_media` / `recipe_speech_to_captions` / `recipe_imitate_imported_edit`）：
+只会说 MCP 的 agent 也能问到「一条片子该按什么次序剪完」。
+
+### 桥改成契约派生、走 HTTP 执行
+
+`agent/tools.py` 重写：TOOLS 由契约生成（73 只 = 72 只引擎工具 + 桥自己的 `status`），每只 handler
+都经 HTTP 打引擎——同一个令牌、同一套 revision 与幂等、同一个媒体根目录守卫。它按
+`AGENTCUT_API_URL` + 令牌文件找人，没人应答才自己拉起一台**自己那一份**引擎（只杀自己拉起的进程，
+绝不动桌面端那台）。`agent/mcp-server.mjs` 一个字没改就跟着变宽：它本来就是从桥的 manifest
+派生 MCP 工具名单的通用壳。
+
+### 门禁 `tests/agent_contract_check.py`（七道腿）
+
+① 契约自洽：72 只工具全部登记路由、路由都在真路由表里、配方不引用幽灵工具；
+② 两条门面读到的契约逐字相同（`/v1/agent/manifest` == 离线构造）；
+③ 桥的工具集合、schema、读写性与契约逐字相同；
+④ 派发对齐：每只工具经 `resolve()` 派出去的请求落在登记的那条路由上——参数没人接、
+   查询参数跑进 body 都会红；
+⑤ 双门面对照：12 组真调用（能力表、工程列表、ids、建完读回、五种拒绝）两只门面答案与
+   拒绝 code 一致；
+⑥ 一条真剪辑经桥跑完：建工程→导真素材→加轨加段→2 秒处切开→dry_run 不写库→排队交付，
+   ffprobe 验出 4.00 秒、audio+video 两条流。另起 `agent/server.py` 那第三道门：读 manifest、
+   经 `POST /api/agent/tool` 建一次工程、按 code 拒一次读不存在的工程；
+⑦ 真 stdio 会话里读到三只 prompt 与 `agentcut://manifest`：资源交回的工具表与路由表与 HTTP
+   契约逐字同一份（少一只 prompt、资源与契约分叉，都会红）。
+
+**6 条突变各自红在自家断言上**（少登记一条路由、路径写错、GET 不摊平、配方引用不存在的工具、
+桥漏交一只、桥把可写说成只读），跑完按字节还原并核对 sha256。
+
+一句要说准的话：这一档证到的是**三条门说的是同一句话**，不是「外部 agent 一定会这样用」——
+桥那台服务与 `mcp-server.mjs` 仍是本机回环 + 令牌，出了这台机器什么都不承诺。

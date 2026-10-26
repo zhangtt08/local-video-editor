@@ -15,6 +15,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
+from . import agent_contract
 from .contracts import (
     AttributePlanRequest,
     AutoGradeRequest,
@@ -74,6 +75,16 @@ INSTRUCTIONS = (
     "render_plan 预检 → render_start → job_status 轮询。"
     "clip 时间必须落在序列帧/采样边界上；素材必须是 media_import 返回的可信记录。"
 )
+
+
+def _make_recipe_prompt(recipe: dict[str, Any]):
+    """闭包要把这一条配方绑住：循环里直接引用循环变量，三条会都念成最后一条。"""
+    body = agent_contract.render_recipe(recipe)
+
+    async def handler() -> list[dict[str, Any]]:
+        return [{"role": "user", "content": body}]
+
+    return handler
 
 
 def create_mcp(base_url: str, token: str) -> FastMCP:
@@ -1194,5 +1205,20 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
 
         job_id = TypeAdapter(Identifier).validate_python(job_id)
         return json.dumps(await call("GET", f"/v1/jobs/{job_id}"), ensure_ascii=False)
+
+    @server.resource("agentcut://manifest")
+    async def agent_manifest_resource() -> str:
+        """What an agent may call here, in one read: routes, tools, capabilities, recipes."""
+        return json.dumps(await call("GET", "/v1/agent/manifest"), ensure_ascii=False)
+
+    # 三条剪辑配方走 MCP 的 prompts 原语：另一个 agent 不必先读文档，也能问到
+    # 「先问能力、再导素材、一批命令落库、最后排队交付」这一串次序。步骤只有一份主人——
+    # 名字与文案都来自 agent_contract，与 /v1/agent/manifest 交回的是同一张表。
+    for _recipe in agent_contract.recipes():
+        server.prompt(
+            name="recipe_" + _recipe["id"].replace("-", "_"),
+            title=_recipe["title"],
+            description=_recipe["when"],
+        )(_make_recipe_prompt(_recipe))
 
     return server

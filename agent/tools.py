@@ -1,9 +1,27 @@
+"""AgentCut tools for the local Agent API hub — generated, not hand-written.
+
+This file used to declare six operations and open `data/agentcut.sqlite3` with
+`ProjectStore` itself: a second, shallower implementation of the same rules, free to drift
+from the product and blind to everything the product added later (media, render, captions,
+masks, interchange…). Now the tool list comes from the engine's own contract
+(`agentcut.agent_contract`, the same object `/v1/agent/manifest` serves), and every call is
+dispatched to the engine's own HTTP API — one token, one revision check, one idempotency
+rule, one media-root guard, for all 72 tools and for whichever agent is on the other end.
+"""
+
 from __future__ import annotations
 
+import atexit
+import base64
+import json
 import os
-import shutil
+import socket
+import subprocess
 import sys
-import uuid
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -15,269 +33,225 @@ if str(SRC) not in sys.path:
 
 from errors import AgentError  # noqa: E402  与 server.py 共用同一个类对象
 
-from agentcut.contracts import (  # noqa: E402  必须先有 sys.path 才导得到
-    APP_VERSION,
-    SCHEMA_VERSION,
-    TIMEBASE,
-    CreateProject,
-    EditBatch,
-    EditorError,
-    FrameRate,
-    SequenceSettings,
-    capabilities,
-)
-from agentcut.projects import ProjectStore  # noqa: E402
+from agentcut import agent_contract  # noqa: E402
+from agentcut.contracts import APP_VERSION  # noqa: E402
 
 PROJECT = {
     "id": "agentcut",
     "name": "AgentCut",
     "version": APP_VERSION,
     "summary": (
-        "本地视频剪辑与时间线引擎：多轨剪辑、转场特效、关键帧动画、"
-        "文字字幕、调色混音与批量渲染交付。"
+        "本地视频剪辑与时间线引擎：多轨剪辑、转场特效、关键帧动画、文字字幕、"
+        "调色混音、批量渲染交付，以及五种工程格式（OTIO / FCPXML / xmeml / EDL / 剪映）进出。"
     ),
     "port": 8780,
 }
-PROJECT_ID = "agentcut"
 
-# 默认落在工程自己的 data 目录（与桌面端、HTTP 服务同一个库）；AGENTCUT_DATA_DIR 让
-# 验收脚本与并行的第二个实例指到自己的那一份，不会去动用户真实的工程数据库。
+# 引擎自己的数据目录（桌面端与 CLI 用的就是这一份）；AGENTCUT_DATA_DIR 让验收脚本
+# 指到自己的那一份，不去动用户真实的工程库。
 DATA_DIR = Path(os.environ.get("AGENTCUT_DATA_DIR") or PROJECT_ROOT / "data")
-DB_PATH = DATA_DIR / "agentcut.sqlite3"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+TOKEN_FILE = Path(os.environ.get("AGENTCUT_TOKEN_FILE") or DATA_DIR / "agentcut.token")
+DEFAULT_URL = "http://127.0.0.1:8765"
+_TIMEOUT = float(os.environ.get("AGENTCUT_BRIDGE_TIMEOUT") or 600)
 
-FFMPEG = os.environ.get("AGENTCUT_FFMPEG") or shutil.which("ffmpeg") or "ffmpeg"
-FFPROBE = os.environ.get("AGENTCUT_FFPROBE") or shutil.which("ffprobe") or "ffprobe"
-
-store = ProjectStore(DB_PATH)
+_STARTED: subprocess.Popen | None = None
 
 
-def _find_binaries():
-    return {
-        "ffmpeg": shutil.which(FFMPEG) or FFMPEG,
-        "ffprobe": shutil.which(FFPROBE) or FFPROBE,
-        "database": str(DB_PATH),
-        "data_dir": str(DATA_DIR),
+def _contract() -> dict[str, Any]:
+    """契约的离线读法：路由表来自 app 自己，工具表来自 MCP 自己，都不碰数据库。"""
+    import asyncio
+
+    from agentcut.http_api import create_app
+    from agentcut.mcp_server import create_mcp
+
+    probe = "agentcut-bridge-contract-" + "0" * 32
+    app = create_app(DATA_DIR / "unused-by-bridge.sqlite3", probe)
+    server = create_mcp("http://127.0.0.1:0", probe)
+    return asyncio.run(agent_contract.manifest(app, server, base_url=""))
+
+
+def _free_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+def _http(url: str, token: str, method: str, path: str, query=None, body=None) -> Any:
+    full = url + path
+    if query:
+        pairs: list[tuple[str, str]] = []
+        for key, value in query.items():
+            if value is None:
+                continue
+            items = value if isinstance(value, (list, tuple)) else [value]
+            pairs += [(key, str(item)) for item in items]
+        full += "?" + urllib.parse.urlencode(pairs)
+    payload = None if body is None else json.dumps(body, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(full, data=payload, method=method)
+    request.add_header("authorization", f"Bearer {token}")
+    if payload is not None:
+        request.add_header("content-type", "application/json")
+    try:
+        with urllib.request.urlopen(request, timeout=_TIMEOUT) as response:
+            raw = response.read()
+            ctype = response.headers.get("content-type", "")
+    except urllib.error.HTTPError as failure:
+        raw = failure.read()
+        try:
+            envelope = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            detail = repr(raw[:180])
+            raise AgentError("engine_unreachable", f"引擎回了读不懂的话：{detail}") from failure
+        error = envelope.get("error") or {}
+        raise AgentError(
+            str(error.get("code") or f"http_{failure.code}").lower(),
+            str(error.get("message") or f"引擎以 {failure.code} 拒绝"),
+        ) from failure
+    except (urllib.error.URLError, OSError) as failure:
+        raise AgentError("engine_unreachable", f"引擎没有回答（{url}）：{failure}") from failure
+    if "json" not in ctype:
+        return {"content_type": ctype, "base64": base64.b64encode(raw).decode("ascii")}
+    return json.loads(raw.decode("utf-8"))
+
+
+def _alive(url: str, token: str) -> bool:
+    try:
+        _http(url, token, "GET", "/v1/capabilities")
+        return True
+    except AgentError:
+        return False
+
+
+def _start_engine() -> tuple[str, str]:
+    """没人应答时才自己拉一台：只杀自己拉起的那一个进程，绝不动别人的引擎。"""
+    global _STARTED
+    port = _free_port()
+    command = [
+        sys.executable, "-m", "agentcut", "api", "--port", str(port), "--json",
+        "--data-dir", str(DATA_DIR), "--media-root", str(DATA_DIR),
+    ]
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(SRC)
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    process = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, encoding="utf-8", errors="replace", env=env, cwd=str(PROJECT_ROOT),
+    )
+    _STARTED = process
+    atexit.register(_stop_engine)
+    deadline = time.time() + 120
+    while time.time() < deadline:
+        line = process.stdout.readline() if process.stdout else ""
+        if not line and process.poll() is not None:
+            raise AgentError("engine_unreachable", f"引擎起不来（退出码 {process.returncode}）")
+        if '"event": "ready"' in line:
+            ready = json.loads(line.strip())
+            token = ""
+            if ready.get("token_file") and Path(ready["token_file"]).exists():
+                token = Path(ready["token_file"]).read_text(encoding="utf-8").strip()
+            return str(ready["base_url"]).rstrip("/"), token
+    raise AgentError("engine_unreachable", "引擎 120 秒内没有报 ready")
+
+
+def _stop_engine() -> None:
+    global _STARTED
+    process = _STARTED
+    _STARTED = None
+    if process is None or process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+
+
+def _engine() -> tuple[str, str]:
+    """按引擎自己那套约定找人：AGENTCUT_API_URL + 令牌文件，都没有就自己拉一台。"""
+    configured = os.environ.get("AGENTCUT_API_URL", "").rstrip("/")
+    token = os.environ.get("AGENTCUT_TOKEN", "")
+    if not token and TOKEN_FILE.exists():
+        token = TOKEN_FILE.read_text(encoding="utf-8").strip()
+    if configured:
+        if token and _alive(configured, token):
+            return configured, token
+        raise AgentError(
+            "engine_unreachable",
+            f"AGENTCUT_API_URL 指到 {configured}，但那台引擎没应答或令牌不对；"
+            "把它起来或改掉这个环境变量再试。",
+        )
+    if token and _alive(DEFAULT_URL, token):
+        return DEFAULT_URL, token
+    return _start_engine()
+
+
+def _make_handler(tool: str, params: dict) -> Any:
+    def handler(args: dict[str, Any]) -> dict[str, Any]:
+        # 派发规则只有一份主人：resolve() 按路由自己的签名分 path / query / body，
+        # 所以 `dry_run` 这类查询参数不会被塞进 JSON 里悄悄变成一次真写。
+        method, path, query, body = agent_contract.resolve(tool, args or {}, params)
+        url, token = _engine()
+        answer = _http(url, token, method, path, query=query, body=body)
+        return answer if isinstance(answer, dict) else {"result": answer}
+
+    return handler
+
+
+def _build() -> tuple[list[dict[str, Any]], dict]:
+    contract = _contract()
+    params = {
+        (row["method"], row["path"]): {
+            "path": row.get("path_params") or [],
+            "query": row.get("query_params") or [],
+            "body": row.get("body_params") or [],
+        }
+        for row in contract["endpoints"]
     }
-
-
-def _engine_error(failure: Exception) -> AgentError:
-    """引擎的拒绝原样交回：它已经带了 code 与那句话，Agent 要的就是这一句。"""
-    if isinstance(failure, EditorError):
-        return AgentError(failure.code.lower(), failure.message)
-    return AgentError("edit_failed", str(failure))
-
-
-def _project_id(args: dict[str, Any]) -> str:
-    project_id = str(args.get("id", "")).strip()
-    if not project_id:
-        raise AgentError("bad_input", "缺少必填参数: id")
-    return project_id
-
-
-def _request_id(args: dict[str, Any]) -> str:
-    """幂等回执的键：调用方不给就生成一个（uuid4 的字符集落在 Identifier 里）。"""
-    return str(args.get("request_id") or uuid.uuid4())
+    tools = [{
+        "name": "agentcut.status",
+        "description": "桥与引擎的当前状态：连的是哪一台、它报什么版本、这台机器上有几个工程。",
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "risk": "read",
+        "endpoint": {"method": "GET", "path": "/v1/info"},
+        "handler": handle_status,
+    }]
+    for row in contract["tools"]:
+        if not row.get("endpoint"):
+            # 少登记一条路由，宁可在这里就炸掉：静默少一只工具正是旧那份手写表的病。
+            raise RuntimeError(f"工具 {row['name']} 在契约里没有路由，桥无法代理它")
+        tools.append({
+            "name": "agentcut." + row["name"],
+            "description": row["description"] or row["name"],
+            "input_schema": row["input_schema"],
+            "risk": "read" if row["read_only"] else "write",
+            "endpoint": row["endpoint"],
+            "handler": _make_handler(row["name"], params),
+        })
+    return tools, params
 
 
 def handle_status(args: dict[str, Any]) -> dict[str, Any]:
+    """桥自己的状态：连的是哪台引擎、它报什么版本、这台机器上有几个工程。"""
+    url, token = _engine()
+    info = _http(url, token, "GET", "/v1/info")
+    projects = _http(url, token, "GET", "/v1/projects", query={"limit": 1})
     return {
         "version": APP_VERSION,
-        "schema_version": SCHEMA_VERSION,
-        "binaries": _find_binaries(),
-        "total_projects": len(store.list_projects()),
+        "engine": {
+            "base_url": url,
+            "app_version": info.get("app_version"),
+            "media_ready": info.get("media_ready"),
+            "render_ready": info.get("render_ready"),
+        },
+        "bridge": {"tools": len(TOOLS), "started_by_bridge": _STARTED is not None},
+        "total_projects": len(projects.get("projects") or []),
     }
 
 
-def handle_capabilities(args: dict[str, Any]) -> dict[str, Any]:
-    """引擎自己那张能力表，一个字不抄：转场名、淡的形状、上限都在这里，
-    与 /v1/capabilities 同一份，所以 Agent 按着它写的命令一定认。"""
-    table = capabilities()
-    table["timebase"] = TIMEBASE
-    return table
+TOOLS, _PARAMS = _build()
 
 
-def handle_project_create(args: dict[str, Any]) -> dict[str, Any]:
-    name = str(args.get("name", "未命名剪辑工程")).strip()
-    settings_args: dict[str, Any] = {}
-    if args.get("fps") is not None:
-        settings_args["frame_rate"] = FrameRate(numerator=int(args["fps"]))
-    for side in ("width", "height"):
-        if args.get(side) is not None:
-            settings_args[side] = int(args[side])
-    request = CreateProject(
-        request_id=_request_id(args),
-        name=name,
-        settings=SequenceSettings(**settings_args),
-    )
-    project = store.create(request).project
-    return {
-        "id": project.id,
-        "name": project.name,
-        "revision": project.revision,
-        "frame_rate": project.settings.frame_rate.model_dump(),
-        "width": project.settings.width,
-        "height": project.settings.height,
-        "timebase": project.settings.timebase,
-    }
-
-
-def handle_project_list(args: dict[str, Any]) -> dict[str, Any]:
-    """行是引擎那一份：id、name、revision、clips、assets、content_ticks（格数）。"""
-    rows = store.list_projects(
-        limit=max(1, min(int(args.get("limit") or 100), 500)),
-        offset=max(0, int(args.get("offset") or 0)),
-    )
-    return {"total": len(rows), "projects": rows}
-
-
-def handle_project_get(args: dict[str, Any]) -> dict[str, Any]:
-    project_id = _project_id(args)
-    try:
-        project = store.get(project_id)
-    except EditorError as failure:
-        raise _engine_error(failure) from failure
-    return project.model_dump(mode="json")
-
-
-def handle_timeline_edit(args: dict[str, Any]) -> dict[str, Any]:
-    project_id = _project_id(args)
-    commands = args.get("commands")
-    if not isinstance(commands, list) or not commands:
-        raise AgentError("bad_input", "commands 必须是非空列表")
-    if args.get("expected_revision") is None:
-        raise AgentError("bad_input", "缺少必填参数: expected_revision")
-    batch = EditBatch(
-        request_id=_request_id(args),
-        expected_revision=int(args["expected_revision"]),
-        commands=commands,
-        dry_run=bool(args.get("dry_run", False)),
-    )
-    try:
-        result = store.mutate(project_id, batch)
-    except EditorError as failure:
-        raise _engine_error(failure) from failure
-    return result.model_dump(mode="json")
-
-
-EMPTY_INPUT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {},
-    "additionalProperties": False,
+CONTRACT = {
+    "tools": len(TOOLS),
+    "recipes": [row["id"] for row in agent_contract.recipes()],
 }
-
-TOOLS = [
-    {
-        "name": "agentcut.status",
-        "description": (
-            "获取 AgentCut 剪辑引擎版本、FFmpeg/FFprobe 环境与本地数据库状态。"
-        ),
-        "input_schema": EMPTY_INPUT_SCHEMA,
-        "risk": "read",
-        "handler": handle_status,
-    },
-    {
-        "name": "agentcut.capabilities",
-        "description": (
-            "查询剪辑引擎特性清单（转场类型、淡入淡出曲线形状、时间基准与上限参数）；"
-            "这一份与 HTTP 的 /v1/capabilities 同源。"
-        ),
-        "input_schema": EMPTY_INPUT_SCHEMA,
-        "risk": "read",
-        "handler": handle_capabilities,
-    },
-    {
-        "name": "agentcut.project_create",
-        "description": "创建一个新的视频剪辑工程，指定分辨率、帧率与工程名称。",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "工程名称"},
-                "fps": {
-                    "type": "integer",
-                    "description": "帧率分子，如 30 或 60",
-                },
-                "width": {
-                    "type": "integer",
-                    "description": "画面宽度（像素），如 1920",
-                },
-                "height": {
-                    "type": "integer",
-                    "description": "画面高度（像素），如 1080",
-                },
-                "request_id": {
-                    "type": "string",
-                    "description": "幂等请求 ID（可选）",
-                },
-            },
-            "required": ["name"],
-            "additionalProperties": False,
-        },
-        "risk": "write",
-        "handler": handle_project_create,
-    },
-    {
-        "name": "agentcut.project_list",
-        "description": "列出本机数据库里已保存的剪辑工程（每行给 revision 与片段数）。",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "limit": {
-                    "type": "integer",
-                    "description": "最多列几条，1..500，默认 100",
-                },
-                "offset": {
-                    "type": "integer",
-                    "description": "跳过前几条，默认 0",
-                },
-            },
-            "additionalProperties": False,
-        },
-        "risk": "read",
-        "handler": handle_project_list,
-    },
-    {
-        "name": "agentcut.project_get",
-        "description": "根据工程 ID 读取完整的工程时间线数据（轨道、片段、关键帧与属性）。",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "id": {"type": "string", "description": "工程 ID"},
-            },
-            "required": ["id"],
-            "additionalProperties": False,
-        },
-        "risk": "read",
-        "handler": handle_project_get,
-    },
-    {
-        "name": "agentcut.timeline_edit",
-        "description": (
-            "执行时间线批量编辑命令（分割、修剪、移动、滤镜属性变更），"
-            "支持 dry_run 试跑验证。"
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "id": {"type": "string", "description": "工程 ID"},
-                "commands": {"type": "array", "description": "编辑命令列表"},
-                "expected_revision": {
-                    "type": "integer",
-                    "description": "期望的工程版本号，防止并发写冲突",
-                },
-                "dry_run": {
-                    "type": "boolean",
-                    "description": "若为 true 则只校验命令不写库",
-                },
-                "request_id": {
-                    "type": "string",
-                    "description": "幂等请求 ID（可选）",
-                },
-            },
-            "required": ["id", "commands", "expected_revision"],
-            "additionalProperties": False,
-        },
-        "risk": "write",
-        "handler": handle_timeline_edit,
-    },
-]

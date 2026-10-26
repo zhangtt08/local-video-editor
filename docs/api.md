@@ -9,6 +9,7 @@ HTTP 使用 `Authorization: Bearer <AGENTCUT_TOKEN>`。JSON 请求严格校验�
 |---|---|---|
 | GET /v1/capabilities | editor_capabilities | 实际可用能力 |
 | GET /v1/contracts | editor_contracts | 权威 JSON Schema |
+| GET /v1/agent/manifest | 资源 agentcut://manifest | 一份机器可读的 agent 契约（1.307）：全部路由 + 全部 MCP 工具（含 inputSchema 与只读位）+ 能力表 + 错误形状 + 三条剪辑配方；桥与文档都从这一份派生，不再各抄一份 |
 | POST /v1/projects | project_create | 幂等创建 |
 | GET /v1/projects?limit=100&offset=0 | project_list | 分页项目摘要 |
 | GET /v1/projects/{id}?revision=N | project_get | 当前或历史项目 |
@@ -3374,3 +3375,47 @@ MCP：`timeline_transcript`、`transcript_cut_plan`（两者强制只读，`appl
 一句要说准的话：**省的是往返与附件数，不是像素。** 实测六格总览图 96,142 字节，而逐帧读是 6 次、
 每次约 14,202 字节（合计约 85 KB）——总字节几乎相同，因为格子的总面积就是那六帧的面积。少的是
 五次往返与五张要各自进上下文的附件。
+
+## 1.307 一份机器可读的 agent 契约：三条门收成一条
+
+同一个引擎以前有三条 agent 路：HTTP `/v1`、MCP 适配器、`agent/` 那台「Agent API 标准」桥。
+前两条是薄的（MCP 每只工具都是 HTTP 的转发），第三条却是**手写的六只工具、还绕过 HTTP 直接开
+SQLite**：产品后来加的媒体、渲染、字幕、遮罩、交换格式一共六十多只，它一只都没有——同一句
+`timeline_edit` 走两条路会得到两种深度。这一档把三条收成一条：事实只写一次，其余都从它派生。
+
+* **契约**：`src/agentcut/agent_contract.py`。路由表读 FastAPI 自己的 `app.routes`（连每条路由
+  的 path / query / body 参数名一起读，来自 `route.dependant`）；工具表读 FastMCP 当场报的
+  `list_tools()`（名字、描述、inputSchema、只读位）。两张都是**跑起来才有的事实**。
+* **派发**：`TOOL_ENDPOINTS` 登记「这只工具走哪条路由」，`resolve()` 按路由自己的签名把参数分成
+  path / query / body。GET 上那一整个请求模型（`timeline_transcript` 的 `merge_gap_ms` 那一类）
+  摊平成查询参数——不摊平就会把 `request` 当成一个查询键发出去。这一条不是推测：门禁里
+  `dispatch_alignment` 就是这么抓它的。
+* **配方**：`RECIPES` 三条（从素材到粗剪交付 / 口播转字幕并按句剪 / 把别人剪好的一刀搬过来再交付），
+  只有一份，HTTP 契约、MCP prompts 与文档读的都是它。
+* **读路由**：`GET /v1/agent/manifest`（能力位 `features.agent_manifest`）一次交回版本、鉴权说明、
+  错误形状、能力表、85 条路由、72 只工具与三条配方。
+* **MCP 原语补齐**：资源 `agentcut://manifest`（同一份契约）+ 三只 prompt
+  （`recipe_cut_from_media` / `recipe_speech_to_captions` / `recipe_imitate_imported_edit`）。
+  只会说 MCP 的 agent 也能问到「一条片子按什么次序剪完」。
+* **桥改成派生**：`agent/tools.py` 的 TOOLS 由契约生成（73 只 = 72 只引擎工具 + 桥自己的
+  `status`），每只 handler 都经 HTTP 打引擎——同一个令牌、同一套 revision 与幂等、同一个媒体根目录
+  守卫。它按 `AGENTCUT_API_URL` + 令牌文件找人，没人应答才自己拉起一台**自己那一份**引擎（只杀
+  自己拉起的进程，绝不动桌面端那台）。`agent/mcp-server.mjs` 一个字没改就跟着变宽：它本来就是从
+  桥的 manifest 派生 MCP 工具名单的通用壳。
+
+调用形状（桥这一侧，非 GET 一律要 `x-agentcut-token`）：
+
+```text
+GET  http://127.0.0.1:8780/api/agent/manifest      # 工具名单 + 令牌头与令牌文件
+POST http://127.0.0.1:8780/api/agent/tool          # {"tool": "agentcut.project_create",
+                                                   #  "input": {"request": {...}}}
+```
+
+验收在 `tests/agent_contract_check.py`：契约自洽（72 只都登记路由、路由都在真表里、配方不引用
+幽灵工具）、`/v1/agent/manifest` 与离线构造逐字相同、桥的名单/schema/读写性与契约相同、每只工具
+经 `resolve()` 落在登记的那条路由上、12 组真调用两只门面答案与拒绝 code 一致、一条真剪辑经桥跑完
+（建工程→导素材→加轨加段→2 秒处切开→dry_run 不写库→排队交付，ffprobe 验出 4.00 秒两条流），
+外加第三道门 `agent/server.py` 起桥读名单并建一次工程；再用一条真 stdio MCP 会话读到三只
+prompt 与 `agentcut://manifest`，资源交回的工具表与路由表与 HTTP 契约逐字同一份。
+**6 条突变各自红在自家断言上**，
+跑完按字节还原并核对 sha256。
