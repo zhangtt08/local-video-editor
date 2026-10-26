@@ -6587,3 +6587,36 @@ revision 3，等到终态 531 ms，关掉按 PID 收子树不留尸。
 * 契约面现场读数不变：74 只工具、87 条路由、3 条配方；桥那台 75 只；派发对齐 74/74。
 
 `APP_VERSION` 1.312.0。三条配方现在都只有一条门：**读它，或者跑它**，同一批步骤、同一个 reducer。
+
+### 发布账（1.312）
+
+改的全在 agent 那一段路上，界面一行没动（`engine.ts` 的 hints 表少一句、多一句：
+`RECIPE_NOT_RUNNABLE` 退休、`RECIPE_PARAM_MISSING` 顶上），所以这一版的账记在门上：
+
+- `speech-to-captions`（15 步）与 `imitate-imported-edit`（16 步）现在都能一次调用跑完；
+  `RUNNABLE_RECIPES` 三条齐全，`recipes()` 不再带 `why_not`，改带一句 `params`。
+- 参数口径：`files` / `preset_id` / `filename` 改成模型定形状与量程、`recipe_run` 按配方点名缺
+  哪一样（422 `RECIPE_PARAM_MISSING`，在建工程**之前**拒，`details.missing` 与 `required` 一并交回）。
+- 搬别人剪辑那两条真门槛是量出来的、不是设计出来的：交换格式的读那一边按名字认素材
+  （不先登记就吃 `FCPXML_MEDIA_UNMATCHED`，M2 那一刀把这句话钉住了），并且要求轨道先存在
+  （五种格式各一句 `*_TRACK_COUNT`，`wanted` 两种形状都折成同一份口径）。
+- 门禁 `tests/recipe_run_check.py` 从六道扩到「三条配方各一趟真交付」；
+  装机腿 `tests/packaged_reciperun_check.py` 在随包那台 `agentcut.exe` 上跑两趟。
+
+实测（交付出去的那份二进制，`packaged_reciperun_check` 当场打印）：
+
+- 一刀剪完：源 4.00 s → **交付 0.60 s**，与 `render_plan` 的计划一字不差，等到终态 500 ms；
+- 搬一刀：把它自己导出的 FCPXML 读回来 → 落库 1 条命令、一条交付到终态，等了 515 ms；
+- 引擎冷启 723 ms；`released_package_check` 认下 asar 1.312.0 / 84 文件 / 随包 73 句可读中文 /
+  随包语音模型 1 份，并核过随包引擎就是建出来的那一份。
+
+源码腿同一批数（`recipe_run_check` 打印）：`cut-from-media` 2 段 4 秒素材 → 交付 1.00 s；
+真中文口播 7.77 s → cue 2 条、SRT 88 字、交付 7.07 s；FCPXML 搬回 → 两份交付
+115,866 B / 166,062 B。
+
+五刀变异各红在自己那条断言上（不再按 `cut_gap_ms` 选停顿、搬之前不登记素材、补轨道只给一轮、
+偷偷丢掉最后一步、把两条配方说成跑不了），跑完逐字节核对还原。契约面现场读数不变：
+74 只工具、87 条路由、3 条配方，桥那台 75 只，派发对齐 74/74。
+
+空机单跑 **177/177 checks passed**（`SUITE_EXIT=0`），跑的就是交付出去的那一份树；`tests/desktop_ts_check.py` 那 96 只界面自检也在里面。门禁总数与 1.311 相同（这一版是把两道现有门禁加宽，没有新增档）。
+
