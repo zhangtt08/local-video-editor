@@ -22,7 +22,10 @@ export function Editor() {
       const saved = JSON.parse(localStorage.getItem("agentcut.layout") ?? "null");
       if (Array.isArray(saved) && saved.length === 3 && saved.every((n: unknown) => typeof n === "number" && Number.isFinite(n))) return saved as number[];
     } catch { /* 用默认工作台布局 */ }
-    return [300, 340, firstRunTimeline(typeof window === "undefined" ? 0 : window.innerHeight)];
+    return [300, 340, firstRunTimeline(
+      typeof window === "undefined" ? 0 : window.innerHeight,
+      app.project?.tracks.length ?? 0,
+    )];
   });
   const drag = useRef<{ axis: number; x: number; y: number; origin: number[] } | null>(null);
   useEffect(() => { try { localStorage.setItem("agentcut.layout", JSON.stringify(layout)); } catch { /* 布局仍然可用 */ } }, [layout]);

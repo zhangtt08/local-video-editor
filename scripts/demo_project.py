@@ -56,7 +56,7 @@ def make_media(folder: Path) -> dict[str, Path]:
     run("train.mp4", ["-f", "lavfi", "-i", "smptebars=s=640x360:r=30:d=6",
                       "-c:v", "libx264", "-pix_fmt", "yuv420p"])
     run("still.png", ["-f", "lavfi", "-i", "color=c=0x2a2438:s=640x360:d=1", "-frames:v", "1"])
-    run("theme.wav", ["-f", "lavfi", "-i", "sine=frequency=392:duration=8", "-ar", "48000"])
+    run("theme.wav", ["-f", "lavfi", "-i", "sine=frequency=392:duration=14", "-ar", "48000"])
     return made
 
 
@@ -143,12 +143,23 @@ def main() -> None:
         {"op": "clip.add", "clip": {"id": "k3", "asset_id": "still", "track_id": "v1",
                                     "position_ticks": 6 * SECOND,
                                     "duration_ticks": 2 * SECOND}},
+        # 密起来才看得出排版：一条满轨 + 一条画中画 + 一条配乐 + 四条字幕。
+        {"op": "clip.add", "clip": {"id": "k6", "asset_id": "train", "track_id": "v1",
+                                    "position_ticks": 8 * SECOND, "duration_ticks": 3 * SECOND}},
+        {"op": "clip.add", "clip": {"id": "k7", "asset_id": "harbour", "track_id": "v1",
+                                    "position_ticks": 11 * SECOND, "duration_ticks": 3 * SECOND}},
+        {"op": "clip.add", "clip": {"id": "k8", "asset_id": "still", "track_id": "v2",
+                                    "position_ticks": 5 * SECOND, "duration_ticks": 3 * SECOND,
+                                    "effects": {"scale": 0.28, "x": -0.3, "y": 0.3}}},
+        {"op": "clip.add", "clip": {"id": "t4", "asset_id": "title", "track_id": "c1",
+                                    "position_ticks": 9 * SECOND, "duration_ticks": 2 * SECOND,
+                                    "text": {"body": "开往春天的列车"}}},
         {"op": "clip.add", "clip": {"id": "k4", "asset_id": "harbour", "track_id": "v2",
                                     "position_ticks": SECOND + FRAME * 15,
                                     "duration_ticks": 2 * SECOND,
                                     "effects": {"scale": 0.32, "x": 0.26, "y": 0.22}}},
         {"op": "clip.add", "clip": {"id": "k5", "asset_id": "theme", "track_id": "a1",
-                                    "position_ticks": 0, "duration_ticks": 8 * SECOND,
+                                    "position_ticks": 0, "duration_ticks": 14 * SECOND,
                                     "effects": {"gain": 0.7}}},
         {"op": "clip.add", "clip": {"id": "t1", "asset_id": "title", "track_id": "c1",
                                     "position_ticks": SECOND, "duration_ticks": 2 * SECOND,

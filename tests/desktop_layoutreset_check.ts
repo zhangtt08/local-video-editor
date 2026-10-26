@@ -53,6 +53,13 @@ assert.equal(firstRunTimeline(1080), 350, "大窗口仍封顶在 DEFAULT_TIMELIN
 assert.equal(firstRunTimeline(660), 240, "矮窗口不许低于 240（再低连标尺都放不下）");
 assert.equal(firstRunTimeline(Number.NaN), DEFAULT_TIMELINE, "量不到窗口高度时才回默认");
 assert.equal(firstRunTimeline(0), DEFAULT_TIMELINE, "0 不是窗口高度，是「没量到」");
+// 1.303：只看窗口高会漏掉「这个工程有几条轨」。四条轨要 116 + 4×68 ≈ 390px，按 0.34 给只有 275px，
+// 主画面轨就被挤到折线以下——所以两者取大，且仍封顶在 DEFAULT_TIMELINE。
+assert.equal(firstRunTimeline(808, 0), firstRunTimeline(808), "不给轨数时与只看窗口高等价");
+assert.equal(firstRunTimeline(808, 4), DEFAULT_TIMELINE, "四条轨时按轨道合计算（封顶 DEFAULT_TIMELINE）");
+assert.ok(firstRunTimeline(808, 4) > firstRunTimeline(808, 0), "四条轨的首开高度没有比空工程高");
+assert.equal(firstRunTimeline(1080, 4), DEFAULT_TIMELINE, "大窗口仍封顶");
+assert.equal(firstRunTimeline(808, 1), firstRunTimeline(808, 0), "一条轨时窗口高更宽裕，不该被轨数拉高");
 assert.ok(!/\[\s*280\s*,\s*320\s*,\s*300\s*\]/.test(editor), "视图里还留着一份写死的 [300, 340, 300]——一条公式两个主人");
 assert.ok(!/--timeline-height[^\n]*300px/.test(editor), "视图里不许再写第二条默认高度");
 
