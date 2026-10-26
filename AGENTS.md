@@ -6169,3 +6169,54 @@ MCP 以前只有 tools + 两只资源。现在加 `agentcut://manifest`（同一
 
 一句要说准的话：这一档证到的是**三条门说的是同一句话**，不是「外部 agent 一定会这样用」——
 桥那台服务与 `mcp-server.mjs` 仍是本机回环 + 令牌，出了这台机器什么都不承诺。
+
+
+## 1.308：窗口打开不该等于启动引擎——外壳即时出，引擎等「真用了」那一下
+
+被点名的两件事：每天打开都看见的一块全屏门（「AgentCut 正在启动本地引擎」+ 一条进度条），
+以及用户一次都没点过、机器上却已经挂着一台 python。
+
+改的是三处，只在这三处：
+
+- `desktop/src/store.ts`：`openShell()` 只负责画外壳（`phase: "idle"`）。指针落下或键盘落下（捕获阶段，
+  赶在按钮自己的 onClick 之前）才算「真用了」，那一下才 `ensureEngine()`；深链点名了工程或视图，
+  第一下就是它。起不来退回 idle 并当场说一句 toast，监听重新挂上——「再点一下就会重试」是真成立的。
+  `phase: "failed"` 那一块全屏门连同 `BootScreen` / `FailedScreen` 一起没了。
+- `desktop/src/engine.ts`：`Engine` 允许「地址还没落地」这种状态存在（`park()` / `target()`），
+  `request` / `bundle` / `importBundle` / `frame` 这四个出口先等那一条稳定的 waiter 再发请求。
+  这一条决定了改动的体量：六十多个调用点原本各自 `engine!`，要么留一块全屏门替它们所有人等，
+  要么让排队只发生在唯一的那四处出口上。
+- `desktop/electron/main.ts`：`app.whenReady()` 不再 `startBackend()`。`engine:start` 成了唯一的入口，
+  它把 `engineWanted` 立起来，崩溃监督 `superviseRestart` 也只认这一个开关——没人用过就没有一台
+  引擎该被自动拉起。
+
+门禁 `tests/desktop_lazyboot_check.ts`（新）跑在渲染端**真的 store 与真的 Engine 客户端**上，
+只把桌面外壳（`window.desktop`）与 `fetch` 换成假的，量的是「谁在什么时候起了进程、请求在什么之后才发出去」：
+① 打开：0 次启动、0 条请求、phase idle；② 窗口打开时排上的那条读取不许先回答一个空列表——
+假话比空白更糟；③ 一次 pointerdown 起一台，起不来则 phase 回 idle、当场说一句，不许换成全屏门；
+④ 下一次点击重试成功后，请求按 `/v1/capabilities`→`/v1/projects?limit=100` 两条落地，工程读回来、
+构建标记贴上；⑤ 就绪之后再点不重起。另有一腿读源码：App.tsx 里 `BootScreen` / `.boot-screen` 都不在了，
+`styles.css` 里那套启动门的样式也删干净了，`whenReady` 那一段里没有 `startBackend(`。
+
+装机那一腿（`scripts/packaged_ui_probe.cjs` + `tests/packaged_ui_check.py`）改测同一件事的真版本：
+先看窗口——外壳在、`.boot-screen` 不在、`--user-data-dir` 里**还没有 agentcut.token**
+（令牌由引擎自己写；它不在场才是「进程真没起」的证据，只看画面里没有进度条不够），
+然后按一次真指针落在首页标题那一行（那里没有可点的控件），引擎才在后台起来，构建标记与工程列表随后落地；
+跑完还当场数一次任务列表，机器上一台 AgentCut 都不许留下。1.308.0 的包在 1480×900 真窗口里量过：
+工作台照旧是圆角卡片 + 10px 呼吸位 + 五枚工具胶囊 + 三颗轨道头按钮，正文 14px，截图落盘。
+
+界面重载（刷新、深链跳转）之后不算「没用过」：`bridge.engineStatus()` 只回一句「那台还在不在」，
+在就直接接回去——不再起第二台，也不许再要人点一下才看见自己的工程。这条也有独立一腿。
+
+**6 条突变各自红在自家断言上**（开机就 `startBackend()`、界面上留回那块全屏门、`target()` 不等地址就发、
+`armFirstUse` 不挂监听、`ensureEngine` 的去重闸门拆掉、`openShell` 不接回那一台），
+跑完按字节还原并核对 sha256。
+
+自己踩到的两处，都留在这里：
+- 排队原来写成 `park(() => attach ?? WAITING)`，是把「当下的快照」等上去：窗口打开时排的那一条等的是一
+  条永远不会被填的空 promise，重试成功后列表仍旧是空的。waiter 必须是同一条**稳定**的 promise，
+  失败之后才整条换成新的——旧的那一条上排着的调用听到的是这一次的失败，不该被下一次的成败牵着走。
+- `void ensureEngine()` 丢掉的是 `.then()` 派生出来的那一条：底座 promise 有人接，不等于派生的那条也有人接，
+  起不来时它照样把渲染进程抖成一条未处理 rejection。
+
+`desktop_ts_check` 96 只界面自检全绿（含新加的这一只）。

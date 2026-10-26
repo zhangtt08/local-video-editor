@@ -39,7 +39,10 @@ def main() -> None:
                       (PROBE, "量具脚本不见了")):
         if not Path(path).exists():
             fail(f"{why}：{path}")
-    with tempfile.TemporaryDirectory(prefix="agentcut-packaged-ui-") as raw:
+    # 窗口收干净之后，Chromium 仍可能压着 profile 里那份词典文件不放，rmtree 会在最后一秒报
+    # WinError 32。含糊不得：忽略清理错误的同时，下面当场量一次「机器上还剩几个 AgentCut 进程」——
+    # 残留的进程才是真问题，删不掉的临时目录只是它的影子。
+    with tempfile.TemporaryDirectory(prefix="agentcut-packaged-ui-", ignore_cleanup_errors=True) as raw:
         folder = Path(raw)
         out = folder / "ui.json"
         shot = folder / "ui.png"
@@ -72,6 +75,13 @@ def main() -> None:
             f"工具胶囊 {editor['tools']} 枚、轨道头 {editor['trackButtons']} 颗按钮"
         )
 
+        # ⓪ 1.308 打开窗口那一下：画出来的是外壳，不是那块全屏门；工程列表还没读到，
+        # 那一格是待填的骨架而不是「还没有工程」这句假话。引擎是这腿的第一记真点击叫起来的
+        # （令牌在场与否由量具当场查过，不在就红）。
+        opened = facts["openState"]
+        assert opened["shell"] is True and opened["bootScreen"] is False, opened
+        assert opened["skeleton"] >= 1, f"没读到工程时该留待填的骨架：{opened}"
+
         # ① 窗口与引擎说的是同一版。
         assert facts["versionOnScreen"] == APP_VERSION, facts["versionOnScreen"]
         assert facts["engineVersion"] == APP_VERSION, facts["engineVersion"]
@@ -99,6 +109,13 @@ def main() -> None:
         # ⑥ 证据照片写得出来，且不是一张空白。
         size = shot.stat().st_size if shot.is_file() else 0
         assert shot.is_file() and size > 20_000, size
+
+    # 临时目录删不掉是影子，进程还挂着才是问题：这一腿跑完机器上一台 AgentCut 都不该留下。
+    left = subprocess.run(
+        ["tasklist", "/FI", "IMAGENAME eq AgentCut.exe"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    ).stdout
+    assert "AgentCut.exe" not in left, "装机腿跑完机器上还挂着窗口：" + left[:220]
 
     print(
         f"PASS: 发布包真窗口（{APP_VERSION}）里工作台是圆角卡片 + 10px 呼吸位 + 五枚工具胶囊，"

@@ -4,6 +4,7 @@ import type { BackendInfo, Bridge, CopyProgress } from "./shared";
 
 const api: Bridge = {
   startEngine: () => ipcRenderer.invoke("engine:start"),
+  engineStatus: () => ipcRenderer.invoke("engine:status"),
   control: (action) => ipcRenderer.invoke("window:control", action),
   windowState: () => ipcRenderer.invoke("window:state"),
   resize: (edge, dx, dy) => ipcRenderer.invoke("window:resize", edge, dx, dy),

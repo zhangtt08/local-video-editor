@@ -25,6 +25,8 @@ export type CopyProgress = { file: string; done: number; total: number };
 
 export type Bridge = {
   startEngine(): Promise<{ ok: boolean; info?: BackendInfo; error?: string }>;
+  /** 引擎此刻在不在了：用户真用过之后哪怕界面重载，也不该再让他点一次才对得上自己开的那台。 */
+  engineStatus(): Promise<{ running: boolean; info?: BackendInfo }>;
   control(action: string): Promise<{ maximized: boolean; fullscreen: boolean } | null>;
   windowState(): Promise<{ maximized: boolean; fullscreen: boolean }>;
   resize(edge: string, dx: number, dy: number): Promise<unknown>;

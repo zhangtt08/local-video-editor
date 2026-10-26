@@ -212,8 +212,10 @@ function doStartBackend(): Promise<BackendInfo> {
 
 /** 引擎意外退出后自动拉起：连续失败 5 次才放弃并把原因交给界面。 */
 let restarts = 0;
+// 用户还没真用过就没有一台引擎该被拉起：崩溃监督也不能替他做这件事。
+let engineWanted = false;
 function superviseRestart() {
-  if (quitting || restarts >= 5) {
+  if (quitting || !engineWanted || restarts >= 5) {
     send("engine:error", "剪辑引擎连续启动失败。请查看引擎日志，或重新安装 AgentCut。");
     return;
   }
@@ -363,12 +365,14 @@ const n2 = (value: number) => String(value).padStart(2, "0");
 
 function registerIpc() {
   ipcMain.handle("engine:start", async () => {
+    engineWanted = true; // 这是「用户真的用了」那一下：在此之前一台引擎都不该起
     try {
       return { ok: true, info: await startBackend() };
     } catch (error) {
       return { ok: false, error: String(error instanceof Error ? error.message : error) };
     }
   });
+  ipcMain.handle("engine:status", () => ({ running: Boolean(backendInfo), info: backendInfo ?? undefined }));
   ipcMain.handle("window:control", (_event, action: string) => {
     const win = window;
     if (!win) return null;
@@ -536,7 +540,6 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   registerIpc();
   createWindow();
-  startBackend().catch((error) => send("engine:error", String(error)));
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

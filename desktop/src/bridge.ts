@@ -7,7 +7,10 @@ import type { BackendInfo, Bridge } from "../electron/shared";
 
 const real = (globalThis as { desktop?: Bridge }).desktop;
 
-export const isNative = Boolean(real);
+/** 桌面外壳在场与否要当场读，不能在 import 那一刻记死：自检里外壳是后装上的那一个。 */
+export function isNative(): boolean {
+  return Boolean((globalThis as { desktop?: Bridge }).desktop);
+}
 
 export function urlParam(name: string): string {
   try {
@@ -49,6 +52,7 @@ export const stubInfo: BackendInfo = {
 };
 
 const stubBridge: Bridge = {
+  engineStatus: async () => ({ running: false }),
   startEngine: async () => {
     const info = { ...stubInfo };
     try {

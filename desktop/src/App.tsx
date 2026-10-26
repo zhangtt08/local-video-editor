@@ -16,7 +16,6 @@ import { SettingsDialog } from "./views/SettingsDialog";
 import { Icon } from "./ui";
 import { matchCommand } from "./keymap";
 import {
-  boot,
   dismissToast,
   keymap,
   playhead,
@@ -49,9 +48,7 @@ export function App() {
     return () => window.removeEventListener("focus", onFocus);
   }, []);
 
-  if (app.phase === "boot") return <BootScreen />;
-  if (app.phase === "failed") return <FailedScreen message={app.bootError} />;
-
+  // 没有全屏门：外壳第一帧就画出来，引擎在后台等用户真的用了才起（store.openShell）。
   const needsProject = app.view === "editor" || app.view === "history";
   const view = needsProject && !app.project ? "home" : app.view;
 
@@ -74,10 +71,10 @@ export function App() {
       {app.showHelp ? <HelpOverlay /> : null}
       {app.templatesOpen ? <TemplateGallery /> : null}
       {app.settingsOpen ? <SettingsDialog /> : null}
-      {app.busy ? (
+      {app.busy || app.phase === "boot" ? (
         <div className="busy-pill" role="status">
           <span className="spinner" />
-          {app.busy}
+          {app.busy || "正在准备"}
         </div>
       ) : null}
     </div>
@@ -189,45 +186,6 @@ function useGlobalKeys() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [app.view, app.project, app.selectedClip, app.selectedClips, app.showHelp, app.monitorMode, app.sourceCursorTicks, app.sourcePlaying]);
-}
-
-function BootScreen() {
-  return (
-    <div className="boot-screen">
-      <div className="boot-card">
-        <svg width="44" height="44" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <rect width="20" height="20" rx="5" fill="#1c1c21" />
-          <path d="M7.2 6.2v7.6l6-3.8-6-3.8z" fill="#fff" />
-          <line x1="13.8" y1="4.2" x2="13.8" y2="15.8" stroke="#2b59d8" strokeWidth="1.7" strokeLinecap="round" />
-        </svg>
-        <div className="boot-title">AgentCut 正在启动本地引擎</div>
-        <div className="boot-sub mono">127.0.0.1 · FastAPI · SQLite · FFmpeg</div>
-        <div className="boot-bar">
-          <span />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function FailedScreen({ message }: { message: string }) {
-  return (
-    <div className="boot-screen">
-      <div className="boot-card">
-        <div className="fail-icon">
-          <Icon name="warning" size={20} />
-        </div>
-        <div className="boot-title">剪辑引擎未能启动</div>
-        <div className="boot-sub">{message || "请检查数据目录是否可写，或是否被另一个 AgentCut 占用。"}</div>
-        <div className="batch-actions" style={{ marginTop: 16 }}>
-          <button className="btn primary" onClick={() => void boot()}>
-            <Icon name="refresh" />
-            重试
-          </button>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 const EDGES = ["top", "right", "bottom", "left", "top-right", "bottom-right", "bottom-left", "top-left"];

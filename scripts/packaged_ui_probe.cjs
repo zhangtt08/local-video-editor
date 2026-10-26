@@ -128,6 +128,35 @@ async function main() {
     cdp = await connect(target.webSocketDebuggerUrl);
     await cdp.send("Runtime.enable");
     await cdp.send("Page.enable");
+    // 1.308 的第一笔账：窗口打开那一刻，界面直接是外壳，没有那块「正在启动本地引擎」的全屏门，
+    // 也没有一台引擎被替用户拉起来。令牌由引擎自己写进 user-data-dir——它不在场，才是
+    // 「进程真没起」的证据；只看窗口里没有进度条是不够的。
+    const openState = String(await evaluate(cdp, `(function () {
+      var frame = document.querySelector(".app-frame");
+      var box = frame ? frame.getBoundingClientRect() : null;
+      var title = document.querySelector(".start-title");
+      var head = title ? title.getBoundingClientRect() : null;
+      return JSON.stringify({
+        shell: Boolean(frame),
+        shellWidth: box ? Math.round(box.width) : 0,
+        bootScreen: Boolean(document.querySelector(".boot-screen")),
+        skeleton: document.querySelectorAll(".pt-bar").length,
+        headX: head ? Math.round(head.left + head.width / 2) : 0,
+        headY: head ? Math.round(head.top + head.height / 2) : 0,
+      });
+    })()`));
+    const atOpen = JSON.parse(openState);
+    facts.openState = atOpen;
+    if (!atOpen.shell || atOpen.bootScreen) {
+      throw new Error("打开窗口那一下该直接出外壳、不带全屏门：" + openState);
+    }
+    if (fs.existsSync(path.join(PROFILE, "agentcut.token"))) {
+      throw new Error("用户还没真使用，引擎令牌就写出来了：说明开机就拉起了进程");
+    }
+    // 第一次真使用：一次真指针落在首页标题那一行（那里没有可点的控件），引擎这才在后台起来。
+    if (!atOpen.headX || !atOpen.headY) throw new Error("首页标题没画出来：外壳不是预期那一屏");
+    await clickAt(cdp, atOpen.headX, atOpen.headY);
+
     let body = "";
     // 1.291：版本号不再画在界面上（「引擎在线 v1.290.0」那种小字正是被删掉的东西），
     // 但装机包跑的到底是不是这一版，必须还能核对。构建标记写在 `<html data-app-version>`

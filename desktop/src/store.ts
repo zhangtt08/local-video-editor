@@ -41,7 +41,7 @@ import type {
   RenderRange,
   RenderBatchItem,
 } from "./engine";
-import { FIT_MODES, verifiedFromProbe, type AttributePlan, type ColorSpace, type MaskTrackReceipt, type OutputRate, type TransitionKind, type VerifiedMedia } from "./engine";
+import { FIT_MODES, verifiedFromProbe, type AttributePlan, type ColorSpace, type EngineAddress, type MaskTrackReceipt, type OutputRate, type TransitionKind, type VerifiedMedia } from "./engine";
 import { align, frameTicks, sampleTicks, ticks, TIMEBASE } from "./time";
 import { clipboardAssetsToReprobe, copyClips, pasteCommands, relatedClips, reviveClipboardAssets, selectionQuantum, timelineTracks, type ClipClipboard } from "./selection";
 import { linkSplitTrim } from "./splitTrim";
@@ -98,7 +98,8 @@ export type ProjectSummary = {
 };
 
 export type AppState = {
-  phase: "boot" | "ready" | "failed";
+  /** idle=外壳已画出来、引擎还没被用过；boot=后台正在拉起；ready=能读到工程。 */
+  phase: "idle" | "boot" | "ready" | "failed";
   bootError: string;
   info: BackendInfo | null;
   caps: Capabilities | null;
@@ -167,7 +168,7 @@ export type AppState = {
 
 const listeners = new Set<() => void>();
 let state: AppState = {
-  phase: "boot",
+  phase: "idle",
   bootError: "",
   info: null,
   caps: null,
@@ -401,7 +402,7 @@ export function timelineEnd(project: Project | null): number {
 // 重复注册会让一次恢复触发 N 次重载。
 let listenersBound = false;
 function bindBridgeListeners() {
-  if (listenersBound || !isNative) return;
+  if (listenersBound || !isNative()) return;
   listenersBound = true;
   bridge.onEngineReady((next) => {
     void bootAfterReady(next);
@@ -414,28 +415,138 @@ function bindBridgeListeners() {
   });
 }
 
-export async function boot() {
-  set({ phase: "boot", bootError: "" });
+export async function boot(): Promise<void> {
   bindBridgeListeners();
+  // 原生那侧不在这儿起进程：见 openShell()——引擎要等用户真用了才在后台拉起。
+  if (isNative()) return ensureEngine();
+  set({ phase: "boot", bootError: "" });
   const result = await bridge.startEngine();
   if (!result.ok || !result.info) {
     set({ phase: "failed", bootError: result.error ?? "剪辑引擎未能启动" });
     return;
   }
-  const info = result.info;
+  await attachEngine(result.info);
+}
+
+/* ------------------------------------------------- 引擎进程：用户真用了才起 */
+
+/**
+ * 等地址的那一条 promise 是稳定的：先排队的读 Later 仍在同一条上等，地址落地时当场放行。
+ * 原来写成「取当下的 attach」，于是窗口打开时排上的那一次永远等不到——它等的是一条
+ * 再也不会被填上的空 promise，重试成功后列表还是空的。
+ */
+type Waiter = {
+  promise: Promise<EngineAddress>;
+  settle: (address: EngineAddress) => void;
+  broken: (reason: unknown) => void;
+};
+
+function makeWaiter(): Waiter {
+  let settle: (address: EngineAddress) => void = () => {};
+  let broken: (reason: unknown) => void = () => {};
+  const promise = new Promise<EngineAddress>((resolve, reject) => {
+    settle = resolve;
+    broken = reject;
+  });
+  // 没人接的拒绝不该把渲染进程抖一下：那一句拒绝已经由 toast 说过了。
+  promise.catch(() => undefined);
+  return { promise, settle, broken };
+}
+
+let waiter = makeWaiter();
+let starting = false;
+let firstUseArmed = false;
+
+/** 地址还没落地的客户端：任何调用都先排在 waiter 上，而不是拿空地址把请求发出去。 */
+function parkedClient(): Engine {
+  const client = new Engine("", "");
+  client.park(() => waiter.promise);
+  return client;
+}
+
+/**
+ * 打开窗口只负责把外壳画出来：不再有一块「正在启动本地引擎」的全屏门挡在人与界面之间，
+ * 也不再有一台引擎进程在用户什么都没做的时候就被拉起来。
+ */
+export async function openShell(): Promise<void> {
+  bindBridgeListeners();
+  if (!isNative()) return boot(); // 浏览器自检那侧没有进程可拉：地址由 ?engine= 给
+  engine = parkedClient();
+  set({ phase: "idle", bootError: "" });
+  // 界面重载（刷新、深链跳转）之后，用户真用过的那台引擎还在后台跑着：接回去，不另起一台，
+  // 也不该再要人点一下才看见自己的工程。
+  const live = await bridge.engineStatus();
+  if (live.running && live.info) {
+    try {
+      await attachEngine(live.info);
+      return;
+    } catch {
+      /* 那一台已经不在了：退回「等第一次真使用」，不起第二台 */
+    }
+  }
+  // 深链点名了工程或视图，那就是「真要用」的第一下，不用等人再点一次。
+  if (urlParam("project") || urlParam("view") || urlParam("clip")) return ensureEngine();
+  armFirstUse();
+  return Promise.resolve();
+}
+
+function armFirstUse() {
+  if (firstUseArmed || typeof window === "undefined") return;
+  firstUseArmed = true;
+  const kick = () => {
+    window.removeEventListener("pointerdown", kick, { capture: true });
+    window.removeEventListener("keydown", kick, { capture: true });
+    void ensureEngine();
+  };
+  // 捕获阶段：这一句要赶在按钮自己的 onClick 之前，那一下点的操作才好排在引擎上等。
+  window.addEventListener("pointerdown", kick, { capture: true });
+  window.addEventListener("keydown", kick, { capture: true });
+}
+
+/** 幂等：第一次真使用时起引擎；同一时刻点多少下，都只起一台。 */
+export function ensureEngine(): Promise<void> {
+  if (state.phase === "ready") return Promise.resolve();
+  if (!starting) {
+    starting = true;
+    set({ phase: "boot", bootError: "" });
+    void startInBackground();
+  }
+  const waiting = waiter.promise.then(() => undefined);
+  // 丢掉这一条 promise 的那记点击不该变成未处理的 rejection：拒绝已经由 toast 说过了。
+  waiting.catch(() => undefined);
+  return waiting;
+}
+
+async function startInBackground() {
+  const queue = waiter;
+  try {
+    const result = await bridge.startEngine();
+    if (!result.ok || !result.info) throw new Error(result.error ?? "剪辑引擎未能启动");
+    await attachEngine(result.info, queue);
+  } catch (error) {
+    starting = false;
+    const { title, detail } = describe(error);
+    waiter = makeWaiter(); // 下一次点击排到新的一条上
+    engine = parkedClient();
+    set({ phase: "idle", bootError: `${title}：${detail}` });
+    toast("error", title, `${detail} 再点一下界面就会重试。`);
+    firstUseArmed = false;
+    armFirstUse(); // 那一句「再点一下」要真成立：监听重新挂上，下一次点击就是重试
+    queue.broken(error); // 排在这一次上的调用听到的是这一次的失败
+  }
+}
+
+/** 地址与令牌落地，放行排在后面的调用，然后把该读的第一屏读回来。 */
+async function attachEngine(info: BackendInfo, queue: Waiter = waiter) {
   const token = info.token || (await bridge.token());
   engine = new Engine(info.base_url, token);
-  set({ info });
-  try {
-    const caps = await engine.capabilities();
-    set({ phase: "ready", caps });
-    markBuild(caps);
-    await refreshProjects();
-    await restoreDeepLink();
-  } catch (error) {
-    const { title, detail } = describe(error);
-    set({ phase: "failed", bootError: `${title}：${detail}` });
-  }
+  set({ info: { ...info, token } });
+  const caps = await engine.capabilities();
+  set({ caps, phase: "ready", remoteAhead: null });
+  queue.settle({ base: info.base_url, token });
+  markBuild(caps);
+  await refreshProjects();
+  await restoreDeepLink();
 }
 
 async function restoreDeepLink() {  // 深链 ?project= / ?view= 优先；否则回到上次打开的工程，软件重启不该让人重新找一遍。
@@ -478,8 +589,10 @@ function markBuild(caps: Capabilities | null): void {
 
 /** 引擎被外壳重新拉起后，接口地址会变；重建客户端并刷新界面。 */
 async function bootAfterReady(info: BackendInfo) {
-  engine = new Engine(info.base_url, info.token || (await bridge.token()));
-  set({ info: { ...info, token: info.token || (await bridge.token()) } });
+  const recoveredToken = info.token || (await bridge.token());
+  engine = new Engine(info.base_url, recoveredToken);
+  waiter.settle({ base: info.base_url, token: recoveredToken }); // 崩溃前排在队上的调用此刻放行
+  set({ info: { ...info, token: recoveredToken } });
   try {
     const caps = await engine.capabilities();
     set({ caps, phase: "ready", remoteAhead: null });
@@ -3413,7 +3526,7 @@ export async function copy(text: string, label: string) {
 
 export const appInfo = {
   get native() {
-    return isNative;
+    return isNative();
   },
   token() {
     return state.info?.token ?? "";

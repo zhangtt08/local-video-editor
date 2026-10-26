@@ -11,27 +11,29 @@ export function Home() {
   const [creating, setCreating] = useState(false);
   const bundleInput = useRef<HTMLInputElement | null>(null);
   const features = app.caps?.features ?? {};
+  // 引擎还没被用过时能力是未知的，不能说「未找到 FFmpeg」；这一屏只等第一次真使用。
+  const probeReady = app.phase === "ready" ? Boolean(features.media_probe) : true;
   const ffmpeg = Boolean(app.info?.ffmpeg);
 
   useEffect(() => {
-    if (!app.library.length) void loadLibrary();
-  }, [app.library.length]);
+    if (app.phase === "ready" && !app.library.length) void loadLibrary();
+  }, [app.phase, app.library.length]);
 
   return (
     <div className="start">
       <div className="start-head">
         <h1 className="start-title">工程</h1>
-        <span className="tag mono">{app.projects.length}</span>
+        {app.phase === "ready" ? <span className="tag mono">{app.projects.length}</span> : null}
         <span className="spacer" />
         <button className="btn primary" onClick={() => setCreating(true)}>
           <Icon name="plus" />
           新建工程
         </button>
-        <button className="btn" onClick={() => void importFiles()} disabled={!features.media_probe} title={features.media_probe ? "选择视频 / 音频 / 图片，复制进本地素材库并探测" : "未找到 FFmpeg，暂时不能导入"}>
+        <button className="btn" onClick={() => void importFiles()} disabled={!probeReady} title={probeReady ? "选择视频 / 音频 / 图片，复制进本地素材库并探测" : "未找到 FFmpeg，暂时不能导入"}>
           <Icon name="folder" />
           导入素材
         </button>
-        <button className="btn" onClick={() => bundleInput.current?.click()} disabled={!features.media_probe} title="把工程连同全部素材打成 .agentcut.zip，交给同事或备份">
+        <button className="btn" onClick={() => bundleInput.current?.click()} disabled={!probeReady} title="把工程连同全部素材打成 .agentcut.zip，交给同事或备份">
           <Icon name="export" />
           导入工程包
         </button>
@@ -55,7 +57,13 @@ export function Home() {
 
       <div className="start-body">
         <section className="proj-table" aria-label="工程列表">
-          {!app.projects.length ? (
+          {app.phase !== "ready" ? (
+            <div className="pt-loading" aria-hidden="true">
+              <span className="pt-bar wide" />
+              <span className="pt-bar" />
+              <span className="pt-bar" />
+            </div>
+          ) : !app.projects.length ? (
             <div className="start-empty">
               <BrandMark size={44} />
               <div className="se-line">还没有工程。一个工程就是一条时间线。</div>
@@ -66,7 +74,7 @@ export function Home() {
               <p className="hint">默认 1080p 30fps，会自动备好一条画面轨和一条声音轨。</p>
               <div className="se-alt">
                 或者先
-                <button className="linklike" onClick={() => void importFiles()} disabled={!features.media_probe}>导入素材</button>
+                <button className="linklike" onClick={() => void importFiles()} disabled={!probeReady}>导入素材</button>
                 ，
                 <button className="linklike" onClick={() => setView("agent")}>看看怎么让 Agent 来剪</button>
               </div>

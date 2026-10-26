@@ -94,7 +94,7 @@ assert.ok(tokenValue("--tb-h") >= 44, `标题栏只有 ${tokenValue("--tb-h")}px
 assert.ok(tokenValue("--sb-h") >= 28, `状态栏只有 ${tokenValue("--sb-h")}px`);
 
 // 3) 圆润：卡片与弹层用最大的那一档，不是每处各写各的
-for (const selector of ["\\.card", "\\.status-card", "\\.proj-card", "\\.boot-card", "\\.howto"]) {
+for (const selector of ["\\.card", "\\.status-card", "\\.proj-card", "\\.howto"]) {
   const hit = css.match(new RegExp(`${selector}\\s*\\{[^}]*border-radius: *(var\\(--r-[a-z]+|50%|0)[^}]*\\}`));
   assert.ok(hit, `${selector.replace("\\", "")} 的圆角没走刻度`);
   assert.ok(
@@ -111,7 +111,7 @@ const thumb = /\n\.seg button \{([^}]*)\}/.exec(css);
 assert.ok(thumb && /border-radius: var\(--r-pill\)/.test(thumb[1]), "分段控件选中那颗不是胶囊（还是方块）");
 const lit = /\n\.seg button\.active \{([^}]*)\}/.exec(css);
 assert.ok(lit && /var\(--edge-hi\)/.test(lit[1]), "选中那颗没有抬起来（少了那道边光，就只是换了块底色）");
-for (const layer of ["toast", "dialog", "help", "boot-card"]) {
+for (const layer of ["toast", "dialog", "help"]) {
   const hit = new RegExp("\\n\\." + layer + " \\{([^}]*)\\}").exec(css);
   assert.ok(hit, `读不到 ${layer} 那一条规则`);
   assert.ok(

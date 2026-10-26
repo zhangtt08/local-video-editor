@@ -1127,11 +1127,34 @@ export function newId(prefix: string): string {
   return `${prefix}${random}`;
 }
 
+export type EngineAddress = { base: string; token: string };
+
 export class Engine {
+  /** 引擎地址还没落地时挂着的那个入口；见 park()。 */
+  private waiter: (() => Promise<EngineAddress>) | null = null;
+
   constructor(
     private base: string,
     private token: string
   ) {}
+
+  /**
+   * 桌面端先把外壳画出来，引擎进程要等用户真的用了才在后台拉起。
+   * 那段等待里任何一次调用都排在这个入口上，等地址落地再发——
+   * 比把引擎对象留成 null（六十多个调用点各自崩一次）或让人对着全屏门干等都好。
+   */
+  park(waiter: () => Promise<EngineAddress>): void {
+    this.waiter = waiter;
+  }
+
+  private async target(): Promise<EngineAddress> {
+    if (!this.base && this.waiter) {
+      const { base, token } = await this.waiter();
+      this.base = base;
+      this.token = token;
+    }
+    return { base: this.base, token: this.token };
+  }
 
   get baseUrl(): string {
     return this.base;
@@ -1143,10 +1166,11 @@ export class Engine {
 
   private async request<T>(method: string, path: string, body?: unknown, timeoutMs = 20000): Promise<T> {
     // 引擎假死时让请求失败而不是永远挂起：界面 busy 状态因此总能解除。
-    const response = await fetch(`${this.base}${path}`, {
+    const { base, token } = await this.target();
+    const response = await fetch(`${base}${path}`, {
       method,
       headers: {
-        Authorization: `Bearer ${this.token}`,
+        Authorization: `Bearer ${token}`,
         ...(body === undefined ? {} : { "Content-Type": "application/json" }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -1249,8 +1273,9 @@ export class Engine {
 
   /** Project manifest plus every referenced file, fetched as one download. */
   async bundle(projectId: string) {
-    const response = await fetch(`${this.base}/v1/projects/${projectId}/bundle`, {
-      headers: { Authorization: `Bearer ${this.token}` },
+    const { base, token } = await this.target();
+    const response = await fetch(`${base}/v1/projects/${projectId}/bundle`, {
+      headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(600000),
     });
     if (!response.ok) {
@@ -1268,9 +1293,10 @@ export class Engine {
   }
 
   async importBundle(file: File, requestId: string) {
-    const response = await fetch(`${this.base}/v1/bundle?request_id=${encodeURIComponent(requestId)}`, {
+    const { base, token } = await this.target();
+    const response = await fetch(`${base}/v1/bundle?request_id=${encodeURIComponent(requestId)}`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/zip" },
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/zip" },
       body: file,
       signal: AbortSignal.timeout(600000),
     });
@@ -1288,8 +1314,9 @@ export class Engine {
   }
 
   async frame(projectId: string, revision: number, atTicks: number, signal: AbortSignal, sequenceId: string | null = null) {
-    const response = await fetch(`${this.base}/v1/projects/${projectId}/frame?revision=${revision}&at_ticks=${Math.floor(atTicks)}${sequenceId ? `&sequence_id=${sequenceId}` : ""}`, {
-      headers: { Authorization: `Bearer ${this.token}` }, signal,
+    const { base, token } = await this.target();
+    const response = await fetch(`${base}/v1/projects/${projectId}/frame?revision=${revision}&at_ticks=${Math.floor(atTicks)}${sequenceId ? `&sequence_id=${sequenceId}` : ""}`, {
+      headers: { Authorization: `Bearer ${token}` }, signal,
     });
     if (!response.ok) throw new EngineError("FRAME_UNAVAILABLE", "暂时无法计算合成画面，请暂停后重试。", {}, response.status);
     return { blob: await response.blob(), atTicks: Number(response.headers.get("X-Frame-Ticks")) };
