@@ -5890,3 +5890,14 @@ theme）、建一个「日系校园 · 30s 广告」：两条画面轨（其中�
 现在把这颗按钮挪到基础组的末尾（转场那一节之后）：页签下面先是「这段是什么、多长、从源哪里开始」，
 要「对这段做一个动作」（预合成 / 进入合成）时才往下翻。判断一条没动：仍是同一个函数、同一个弹层、
 同一份可用性条件（`busy || !readyProject`）。
+
+### 发布账（1.301）
+
+- `APP_VERSION` 与 `desktop/package.json` **1.301.0**，工程 schema 仍是 **33**（1.298–1.301 全是界面层）。
+- 冻结引擎自报 1.301.0：冷启动 **906 ms**、裸启动 **823 ms**（预算 15000 ms），`tools` / `--help` / `mcp` 三档各自活。
+- 根 `AgentCut.exe` 与 `desktop/release/AgentCut-便携版.exe` `cmp` 逐字节相同（**185,385,927 B**，sha256 前缀 `ee06c46e16d5a9d2`）。
+- 这一轮的发布链自己绊过一次，记下来：`uv sync` 重建 `.venv` 时**没有**装 PyInstaller（它只是本机构建工具，不在项目依赖里），
+  `build_engine.py` 于是以「既没有 uv、也没有可导入的 PyInstaller」退出；而链子上后面几步照跑，打出来的包里
+  是一支**旧引擎**——`build_check` / `fourk_check` / `packaged_ui_check` / `packed_engine_surface_check` /
+  `released_package_check` 五档当场各自红（前两档说的是「冻结引擎不在了」）。补 `uv pip install pyinstaller`
+  重冻、重打包、重抄之后，五档一起转绿。**教训**：发布链每一步的退出码要一起看，前面失败后面不会自己停。
