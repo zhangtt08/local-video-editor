@@ -6227,3 +6227,41 @@ MCP 以前只有 tools + 两只资源。现在加 `agentcut://manifest`（同一
 （`request` 包 `CreateProject` / `EditBatch`、`project_id` 走路径、`request_id` 每件事各一个，因为它是幂等键），
 尺子改成从 `agent_contract.manifest` 现取的那一份，并加了「引擎自己报的 data_dir 就是桥给的那份临时目录」
 一条。守卫三条、拒绝命名、dry_run 不写库、旧版本号被拒、用户库逐字节没动——这些一句没松。
+
+
+## 1.309：关掉软件不该留下一台引擎——顺手把占用量了一遍真数
+
+1.308 让「打开软件」不再等于「起一台引擎」；这一版管的是另一半：**关掉软件要等于关掉那台引擎**，
+并且把「这台软件到底吃多少」从感觉换成一次实测。
+
+### 先量，再动手（脚本在会话工作区，不落进仓库）
+
+- 随包引擎 `desktop/resources/bin/agentcut/agentcut.exe api --json --data-dir <临时目录>`：
+  **报 ready 用 813 ms**；起来之后连续 6 次采样（每秒一次）工作集**都是 72.4 MB**，一分钟不漂。
+  这一台是给 agent 无人值守用的那台，它的空转成本就是这个数。
+- 装机外壳空转（开窗口、什么都不点）：**4 个进程、工作集合计 331.2 MB**，
+  并且机器上 `agentcut.exe` **一台都没有**——1.308 那句「不用就不起」在这张账上是 72 MB 的实测差额。
+- 渲染层单包 818 KB（gzip 285 KB）——首屏要解析的就是这一份；没有把它拆成多份，
+  因为拆了要拿「首屏可交互时间」来证明收益，而这台机器上量不出可信的差值。这一条记成没做的账。
+
+### 动的那一刀
+
+`child.kill()` 在 Windows 上只是 `TerminateProcess` 那**一个 PID**。随包引擎是 PyInstaller 起的：
+引导进程下面还挂着真正的引擎进程，父进程一死，孩子被重新认父，变成一台没人认领的引擎。
+实测就是这个样子——我那只量占用的脚本 `terminate()` 之后，机器上留了一台 72 MB 的 `agentcut.exe`。
+
+- `desktop/electron/main.ts`：`stopBackend()` 在 Windows 上先 `taskkill /F /T /PID`（按**进程树**收），
+  再走原来的信号路径；顺带在 spawn 的命令行里补上 `--exit-with-parent <Electron PID>`，
+  外壳崩了或被强杀，引擎自己也会在两秒内走（这一手 1.307 只为桥写过）。
+- `agent/tools.py::_stop_engine`：同一句按树收，别只 terminate 引导进程。
+
+### 新添的那一腿（能红，而且当场红过）
+
+`scripts/packaged_ui_probe.cjs` 在所有形状量完之后，让**窗口自己**走关掉那一路
+（`window.desktop.control("close")`，与用户点 X 同一条），等 5 秒，再当场数一遍机器上的
+`agentcut.exe`，交回 `facts.engineAfterQuit`；`tests/packaged_ui_check.py` 断它等于 0。
+这条腿第一次跑就红了——抓到的是我自己那只脚本留下的孤儿，正说明它数的是真事而不是自报的数。
+清干净机器后重跑：PASS（`engineAfterQuit=0`）。
+
+一句要说准的话：72 MB 这台引擎**不是免费的**——用户真用了才会起，用完关掉就走；
+这条腿保证「关掉就走」不只是文档里的一句话。

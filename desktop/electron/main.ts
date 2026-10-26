@@ -5,7 +5,7 @@
  * 和外部 Agent 完全同一条路径。后端崩了会重启，界面永不直接读写数据库。
  */
 
-import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:child_process";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } from "electron";
 import {
   appendFileSync,
@@ -128,6 +128,9 @@ function doStartBackend(): Promise<BackendInfo> {
     dataDir,
     "--token-file",
     tokenFile(),
+    // 引擎自己盯父进程：外壳崩了或被强杀，不该留下一台没人认领的引擎。
+    "--exit-with-parent",
+    String(process.pid),
     "--output-dir",
     settings.outputFolder,
   ];
@@ -231,11 +234,30 @@ function superviseRestart() {
   }, wait);
 }
 
+/**
+ * 按进程树杀。Windows 上 `child.kill()` 只终止引导进程那一个 PID，真正的引擎是它的孩子：
+ * 父进程一死，孩子被重新认父，机器上就留下一台约 72 MB 的引擎（实测于随包 exe）。
+ * 所以这一手要在杀父进程之前做。
+ */
+function killEngineTree(pid: number): void {
+  if (process.platform !== "win32") return;
+  try {
+    spawnSync("taskkill", ["/F", "/T", "/PID", String(pid)], { windowsHide: true });
+  } catch {
+    /* 杀不掉也不能卡住退出 */
+  }
+}
+
 async function stopBackend() {
   const child = backend;
   backend = null;
   backendInfo = null;
   if (!child) return;
+  const pid = child.pid;
+  if (process.platform === "win32" && pid) {
+    killEngineTree(pid); // 引导进程与真引擎一起收，不留孤儿
+    return;
+  }
   await new Promise<void>((resolve) => {
     const timer = setTimeout(() => {
       child.kill("SIGKILL");

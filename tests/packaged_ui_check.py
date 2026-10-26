@@ -105,6 +105,8 @@ def main() -> None:
         assert any("锁定" in name for name in names), names
         assert any("其它操作" in name for name in names), names
 
+        # ⑤′ 关掉软件不该留下一台引擎：窗口自己走完关闭那一路之后，机器上一台都不许在。
+        assert facts.get("engineAfterQuit") == 0, ("关掉窗口后机器上还留着 " + str(facts.get("engineAfterQuit")) + " 台引擎进程")
         # ⑤ 字号地板：正文仍是 14px（不是小字）。
         assert editor["bodyFont"] >= 13.5, editor["bodyFont"]
 

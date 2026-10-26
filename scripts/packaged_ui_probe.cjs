@@ -9,7 +9,7 @@
  * 真窗口里画成了圆角卡片；`ui_shape_check` 量的是开发树那份渲染层。判据全是
  * getComputedStyle 与 DOM 计数，照片落盘给人眼复核。
  */
-const { spawn } = require("node:child_process");
+const { execFileSync, spawn } = require("node:child_process");
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
@@ -273,6 +273,18 @@ async function main() {
       await fs.promises.writeFile(SHOT, Buffer.from(shot.data, "base64"));
     }
     facts.shot = SHOT;
+    // 1.309：点「关闭」之后不该留一台引擎。先让窗口自己走关掉那一路（与用户点 X 同一条），
+    // 再当场数一遍机器上的 agentcut.exe——只杀引导进程会留下一台约 72 MB 的孤儿。
+    await evaluate(cdp, "window.desktop.control(\"close\"); true");
+    await sleep(5000);
+    let engineLeft = -1;
+    try {
+      const listed = execFileSync("tasklist", ["/FI", "IMAGENAME eq agentcut.exe"], { encoding: "utf8" });
+      engineLeft = (listed.match(/agentcut\.exe/gi) || []).length;
+    } catch {
+      /* 数不了就留 -1，门禁那一头会把它当失败 */
+    }
+    facts.engineAfterQuit = engineLeft;
     await fs.promises.writeFile(OUT, JSON.stringify(facts, null, 2), "utf-8");
     console.log("packaged ui probe wrote " + OUT);
   } finally {

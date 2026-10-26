@@ -168,6 +168,12 @@ def _stop_engine() -> None:
     _STARTED = None
     if process is None or process.poll() is not None:
         return
+    if os.name == "nt":
+        # 只 terminate 引导进程会留下一台孤儿子进程（实测约 72 MB）：按树收干净。
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+            capture_output=True,
+        )
     process.terminate()
     try:
         process.wait(timeout=10)
