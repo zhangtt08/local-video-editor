@@ -197,6 +197,18 @@ const WAIT = `(function(){
     : (media.complete && natural[0] > 0));
   var m = media ? media.getBoundingClientRect() : r;
   var aspect = function (w, h) { return h > 0 ? w / h : 0; };
+  // 版面还在动的时候，--mask-lw/--mask-lh 可能还是上一版量到的盒子：那一帧的洞按旧宽度
+  // 落位，与画面不在同一个坐标系里（1.305 量到过 329 宽的画面配 287 的变量——x=0.75
+  // 本来在洞里，照出来是暗的）。「量过的盒子 = 现在的盒子」也算进「这一格值得拍」。
+  // 只有跟着盒子走的那几支（动画/形变/转角）才读 --mask-lw/--mask-lh；静止那支用 100% 100%，
+  // 那两个变量留成初值也不影响画面——所以「量过没有」只对前几支成立。
+  var placed = el.classList.contains('animated-mask') || el.classList.contains('morph-mask')
+    || el.classList.contains('rotated-mask');
+  var maskLw = parseFloat(cs.getPropertyValue('--mask-lw'));
+  var maskLh = parseFloat(cs.getPropertyValue('--mask-lh'));
+  var measured = !placed ? true
+    : (maskLw > 0.5 && maskLh > 0.5
+      && Math.abs(maskLw - r.width) <= 1 && Math.abs(maskLh - r.height) <= 1);
   var fill = natural[0] > 0 && r.width > 0 &&
     Math.abs(m.width - r.width) <= 1.5 && Math.abs(m.height - r.height) <= 1.5 &&
     Math.abs(aspect(natural[0], natural[1]) - aspect(r.width, r.height)) <= 0.01;
@@ -249,7 +261,10 @@ const WAIT = `(function(){
     tables: tables, matrices: matrices, table_sizes: sizes,
     mask_composite: cs.maskComposite || cs.webkitMaskComposite || '',
     media: media ? media.tagName.toLowerCase() : 'none',
-    natural: natural, loaded: loaded, fill: fill,
+    natural: natural, loaded: loaded, fill: fill, measured: measured, placed: placed,
+    mask_lw: maskLw, mask_lh: maskLh,
+    mask_size: cs.maskSize || cs.webkitMaskSize || '',
+    mask_position: cs.maskPosition || cs.webkitMaskPosition || '',
     guide: Boolean(document.querySelector('.mask-guide'))};
 })()`;
 
@@ -314,13 +329,20 @@ async function main() {
     };
     let seen = null;
     let last = null;
+    let before = null;
     for (let attempt = 0; attempt < 150 && !seen; attempt += 1) {
       last = await evaluate(WAIT);
-      if (last && last.state === "seen" && last.loaded && last.fill && !last.guide &&
-          last.rect.width * last.rect.height > 4096 && last.mask_layers >= LAYERS) seen = last;
-      else await sleep(200);
+      // 两趟读数一样才算停稳：遮罩图到了、盒子量过了、播放头没在走。头一趟只当底稿。
+      const settled = Boolean(last && last.state === "seen" && before && before.state === "seen"
+        && before.playhead === last.playhead && before.mask_x === last.mask_x
+        && before.measured === last.measured && before.mask_layers === last.mask_layers
+        && Math.abs(before.rect.width - last.rect.width) < 0.01
+        && Math.abs(before.rect.height - last.rect.height) < 0.01);
+      if (last && last.state === "seen" && last.loaded && last.fill && last.measured && !last.guide &&
+          last.rect.width * last.rect.height > 4096 && last.mask_layers >= LAYERS && settled) seen = last;
+      else { before = last; await sleep(200); }
     }
-    if (!seen) throw new Error("那一格没有画到位：" + JSON.stringify(last).slice(0, 400));
+    if (!seen) throw new Error("那一格没有画到位：" + JSON.stringify(last).slice(0, 600));
     if (seen.mask_layers !== LAYERS) {
       throw new Error("遮罩层数是 " + seen.mask_layers + "，引擎交的是 " + LAYERS + " 张图");
     }
@@ -423,6 +445,8 @@ async function main() {
         mask_composite: seen.mask_composite, media: seen.media,
         natural: seen.natural, webgl: seen.webgl, play: seen.play,
         playhead: seen.playhead, mask_x: seen.mask_x,
+        mask_lw: seen.mask_lw, mask_lh: seen.mask_lh, measured: seen.measured,
+        mask_size: seen.mask_size, mask_position: seen.mask_position,
         logs: WEBGL ? cdp.logs.slice(-20) : undefined,
         png_bytes: fs.statSync(OUT).size,
       }));

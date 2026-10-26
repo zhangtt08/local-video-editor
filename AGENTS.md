@@ -5987,3 +5987,41 @@ EDL 一条。**五种进、三种出**，对「agent 模仿完把工程交回原
 这一档**不声称「剪映一定能打开」**：这台机器上没有剪映，能证的是「本工程写得出、本工程读得回」，
 以及「搬不过去的逐条点名」。MCP 一只只读工具 `project_jianying`，能力位 `features.jianying_export`，
 界面「交换格式」多一颗「保存剪映草稿」。
+
+### 发布账（1.304）
+
+- `APP_VERSION` 与 `desktop/package.json` **1.304.0**，工程 schema 仍是 **33**（这一档只加读法、路由与一个写手）。
+- 这一轮的发布链**第二次**栽在同一件事上，所以这次把它从根上改了：`uv sync` 重建 `.venv` 时会把
+  **手工装进去的 PyInstaller 剪掉**，`build_engine.py` 于是以「既没有 uv、也没有可导入的 PyInstaller」退出；
+  链子上后面几步照跑，打出来的包是一支**旧引擎**，六档门禁一起红——`build_check` / `fourk_check` /
+  `mediabinary_check` / `extramotion_check` / `packaged_ui_check` / `packed_engine_surface_check` /
+  `released_package_check` 里，**前三档看着与发布链无关**，其实都要 `desktop/resources/bin/agentcut`。
+  现在 `pyinstaller` 进 `[dependency-groups].dev`（`pyproject.toml` 里写了为什么）：
+  `uv sync` 之后 `import PyInstaller` 直接是 **6.22.3**，不再靠「记得手工装一次」。
+- 冻结引擎自报 **1.304.0**，冷启动 **905 ms**（预算 15000 ms），`tools` / `--help` / `mcp` 三档各自活。
+- 根 `AgentCut.exe` 与 `desktop/release/AgentCut-便携版.exe` `cmp` 逐字节相同（**185,391,243 B**，sha256 前缀 `73680eceb00ecc54`）。
+- 重冻重打包之后，先前那六档各自转绿（`fourk` / `mediabinary` / `packaged_ui` / `packed_engine_surface` / `released_package` 直接绿；
+  `extramotion` 在链子上那次是**加载争用**——它单跑 38.3 秒绿，与 1.302 那条「构建一起跑会挤出一批假红」是同一件事）。
+
+## 1.305：两端照片腿的两种「还没准备好」（只动量具，不动引擎）
+
+`maskfollow_check` 在 1.304 的全套里红过一档，隔几次又绿：`自己有框点（先跟后动） / preview / t0`
+量到 `(False, True, True, False)`，期望 `(True, True, True, False)`。把同一串工程原样重放，
+抓到一张真凭据：那一趟 `.masked-picture` 是 **329×184**，而 `--mask-lw/--mask-lh` 还是上一版
+版面量到的 **287.19×160.66**——洞按旧宽度落位，与画面不在同一个坐标系里；
+`主遮罩在长大（跟） / preview / t0` 的 x=0.75 本来在洞里，照出来是暗的（成片是亮的）。
+两只盒子差 23.5 px 高，正好是预览脚下那条「剩余」行出现前后的差别：版面先大后小，
+照片腿在第二版版面还没量完时按下了快门。
+
+两处「还没准备好」现在都写进 `scripts/two_end_shot.cjs` 的 `WAIT`：
+
+* **量过没有**：只对跟着盒子走的那几支（`.animated-mask` / `.morph-mask` / `.rotated-mask`）
+  要求 `--mask-lw/--mask-lh` 与当前矩形一致（±1 px）。静止那一支用 `100% 100%` 落位，
+  那两个变量停在初值 `1` 也不影响画面——它不算没准备好（第一版判据没分开这两支，
+  静止那只在第一趟重放里就被判了 30 秒超时，这是量具自己的缺陷）。
+* **停稳没有**：连续两趟读数的播放头 / `--mask-x` / 层数 / 矩形都一致才拍；头一趟只当底稿。
+
+改完 `maskfollow_check` 连跑两趟绿（此前同一份代码三红一绿）。七档照片腿
+（`chromapreview` / `extramotion` / `lutpreview` / `maskfeather` / `maskfollow` / `twobandlevel` /
+`twoband`）共用这一支，判据只加在「值得拍」上，像素期望一格未动。这一档不改引擎与界面字节，
+`APP_VERSION` 仍是 1.304.0，包不必重打。
