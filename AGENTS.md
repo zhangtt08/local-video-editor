@@ -6476,3 +6476,65 @@ revision 3，等到终态 531 ms，关掉按 PID 收子树不留尸。
 
 契约面的现场读数（由 `agent_contract_check` 从引擎里读，不是手抄）：**74 只工具、87 条路由、
 3 条配方**；桥那台交回 75 只；派发对齐 74/74；两只门面 12 组真调用答案一致。
+
+### 这一轮的对照：别人的入口形状，自家的那批路由
+
+不是抄代码，是抄「对外该长什么样」这一件事。`auto-editor`、`AutoCut` 这一族开源自动剪辑工具，
+对外的形状都是一条命令进去、一条成片出来：参数是素材与几个量程，中间的分段判断由工具自己做，
+用的人不必先读懂它的内部步骤。我们这一版之前给的形状是反的——`GET /v1/agent/manifest` 把 13 步
+写得清清楚楚，但要把一条片子剪出来，调用方得自己发那 13 次请求并自己串 revision；换句话说
+**配方是给人读的文档，不是能被执行的东西**。`recipe_run` 就是把它变成能被执行的那一个形状。
+
+实现里没有第二套判断：每一步仍打在同一批路由上（进程内 ASGI、同一条 bearer 令牌），
+剪不剪由 reducer 说了算；听的那只耳朵是 `silence.py` 里 FFmpeg 自己的 `silencedetect`
+（`aresample=async=1:first_pts=0,silencedetect=noise=…dB:d=…`），看镜头切点的那只不是——
+`scenes.py` 开头就写着为什么不用 FFmpeg 的 `scene` 分数：它是只看亮度的 SAD，
+两片同亮度、不同颜色的纯色之间打不出分，所以本仓自己按色度差扫。这一轮的对照只在入口形状上。
+
+另一件对照来自 1.310 那一次记下的 `gh run watch` 与 Kubernetes 的 `watch=true`：等交付要占服务端
+那一侧的门，不该让调用方自己写轮询循环。这一轮的 `wait_seconds` 就是把那一只门复用进这一刀里，
+量程 0..120 与 `job_wait` 的 `timeout` 同一个数，不另开一档。
+
+### 交付清单与体积（1.311 收口）
+
+目录从 **2590.5 MB 收到 407.2 MB**（删完逐文件求和，含 `.git`；本文档提交之后会长一点点）。
+留下的是能双击的、能读的、以及重建要的：
+
+- 根 `AgentCut.exe` **185,425,576 B**，sha256 前缀 `8822ca09861dbd62`——复制那一步当场与
+  `desktop/release/AgentCut-便携版.exe` 逐字节核过；`released_package_check` 也在精简之前把
+  这一份读过一遍（asar 1.311.0 / 84 文件 / 随包 73 句可读中文 / 随包语音模型 1 份）。
+- `src/ agent/ scripts/ tests/ docs/ design/ examples/` 与 `desktop/{src,electron,resources,build,
+  package.json,*.json,*.ts}`——**177 档门禁**（比 1.310 多两道：`tests/recipe_run_check.py`
+  与 `tests/packaged_reciperun_check.py`）、96 只界面自检与重建脚本都在这里。
+- `desktop/resources/bin/`（随包 FFmpeg/ffprobe 与 media-stamp）与 `desktop/resources/asr/`
+  （离线字幕模型）——预览、导出、交付与字幕要的二进制，**不在**可删列表里。
+- `desktop/build/`（图标源是 tracked 的）——可删的只有它底下的 `shell-checks/`，这次它本来就不在。
+- `data/` 本机工程与素材；`AGENTS.md`、`README.md`、`pyproject.toml`、`uv.lock`。
+
+删掉的都可再生（体积照删那一次的逐条输出）：
+
+- `desktop/node_modules/`（827.6 MB）→ `cd desktop && npm ci`
+- `desktop/release/`（926.9 MB，win-unpacked + 安装版 + 便携版 + blockmap）→ `cd desktop && npm run dist`，
+  再把 `desktop/release/AgentCut-便携版.exe` 复制成根 `AgentCut.exe`（两份必须逐字节相同）
+- `.venv/`（138.5 MB）→ `uv sync`
+- `build/`（127.8 MB）与 `desktop/resources/bin/agentcut/`（160.0 MB）→
+  `.venv/Scripts/python.exe scripts/build_engine.py --verify --no-uv`
+- `desktop/dist/`、`desktop/dist-electron/`（合计约 1.0 MB）与 `desktop/build/shell-checks/` →
+  `cd desktop && npm run build`
+- `__pycache__` ×3（1.6 MB）与 `.ruff_cache`（<0.1 MB）→ 跑起来自己会再生
+
+顺序与边界也说清：空机单跑 **177/177 checks passed（`SUITE_EXIT=0`）** 是在精简之前那一份
+完整环境里跑的，测的就是交付出去的那份源码与那个包；删掉的全是可再生产物，`git status`
+当场报「被删的 tracked 文件 0」。装机腿在收口那一次量到的三段等待：外壳画出来 518 ms
+（DOM ready 371 ms）、第一次真用到看见内容 1232 ms、重载到看见列表 206 ms；
+随包那一刀：源 4.00 s → 交付 0.60 s、等到终态 531 ms、关掉不留进程。
+
+一手操作的坑（每次都踩到，写死在这里）：
+
+- **别用准备删掉的那个解释器去删它自己**：`rmtree` 走到 `.venv\Scripts\python.exe` 会报 WinError 5，
+  换个解释器再跑一遍才收干净（这一版是 `C:\Program Files\Python312\python.exe`）。
+- **`read_text()` 会把 CRLF 归一成 LF**：这一版往 `AGENTS.md`、`docs/api.md` 追加章节时就这么坏了
+  一次——整份文件变成 LF，只有新加的几十行是 CRLF，被 `docs_shape_check` 当场抓住
+  （「6387 line endings are bare LF in a CRLF file」）。改回的办法是字节级的
+  `replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")`，证据是 `git diff --numstat` 只剩纯新增。
+  追加与改行这类活儿一律走字节。
