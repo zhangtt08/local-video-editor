@@ -6300,21 +6300,40 @@ MCP 以前只有 tools + 两只资源。现在加 `agentcut://manifest`（同一
 `contextmenu_check` 在满载时读焦点读早了、`packaged_ui_check` 的临时目录被 Chromium 压着删不掉；
 两处都改成等真条件 + 当场点名残留进程，而不是加 sleep。
 
-### 交付清单与体积（1.309 收口）
+### 发布账（1.310）
 
-目录从 **2.59 GB 收到 403.6 MB**（删除后逐文件求和，含 `.git`；这一份文档提交之后会长一点点）。
-有一手记在这里免得下次再踩：**别用准备删掉的那个解释器去删它自己**——第一遍 `rmtree` 走到
-`.venv\Scripts\python.exe` 就报 WinError 5（它正跑着），换个解释器再跑一遍才收干净。
+一只工具的事，但它是 agent 用这套软件时**每一次交付都要付的那笔税**：`render_start` 之后只能自己
+一秒一次打 `job_status`。本仓库的门禁就是活证据——`tests/alphamaster_check.py` 里那个 `wait()`
+最多轮 1200 次才认输。
 
+- `GET /v1/jobs/{job_id}/wait?timeout=30&poll=0.25`（能力位 `features.job_wait`）：到终态或到自己超时，
+  交回同一份作业文档（`job` 与在飞时那份 `plan`）外加 `waited_ms`/`timed_out`。超时不是错误，
+  等也不动作业；`timeout` 夹 0..120 秒、`poll` 夹 0.05..2 秒，越界 422。
+- 契约、MCP、桥、配方四处同源：`TOOL_ENDPOINTS` 登记、`create_mcp` 多一只 `job_wait`、
+  桥按同一份表代理、三条剪辑配方那一步从「轮询到 succeeded」改成「一次调用等到终态」。
+- 新门禁 `tests/jobwait_check.py` 六道 + 3 条突变各自红在自家断言上（第三条一开始红成 traceback：
+  没登记的工具让 `resolve()` 抛 `KeyError` 把整档掀了，改成记一条失败再往下走——红要红得能说清是哪条）。
+- `tests/self_check.py` 手抄的那份 MCP 工具名单跟着加这一只：它的存在就是为了挡「悄悄加/删工具」。
+- 顺带把 1.309 那条装机腿的量具修对：它按命令行正则数进程，把量具自己也数成了「外壳」
+  （node 的命令行里带着 `--exe …\AgentCut.exe`）。改按进程自己的 ImageName 分类后，1.310.0 的包实测
+  `engineAfterQuit=0`、`shellAfterQuit=0`、一次都没等（`censusWaitMs=-1`）——关掉软件那台引擎真的不留。
+
+
+### 交付清单与体积（1.310 收口）
+
+目录从 **2.59 GB 收到 405.1 MB**（删除后逐文件求和，含 `.git`；这份文档提交之后会长一点点）。
 留下的是能双击的、能读的、以及跑门禁要的：
 
-- `AgentCut.exe`（**185,410,514 B**，sha256 前缀 `400e9a1eb30cfbb0`）——双击即开；Electron 壳、
-  随包 FFmpeg 与冻结引擎都在里面（便携版）。与 `desktop/release/AgentCut-便携版.exe` 逐字节相同（当场核过）。
+- `AgentCut.exe`（**185,411,412 B**，sha256 前缀 `cb7e35be645bc837`）——双击即开；Electron 壳、
+  随包 FFmpeg 与冻结引擎都在里面（便携版），与 `desktop/release/AgentCut-便携版.exe` 逐字节相同（当场核过）。
 - `src/ agent/ scripts/ tests/ docs/ design/ examples/` 与 `desktop/{src,electron,package.json,*.json,*.ts}`
-  ——174 档门禁（含 `tests/desktop_lazyboot_check.ts` 所在的 96 只界面自检）与重建脚本都在这里。
-- `desktop/resources/bin/`（299.1 MB：随包 FFmpeg/ffprobe 与 media-stamp）与 `desktop/resources/asr/`
-  （65.1 MB 离线字幕模型）——预览、导出与字幕要的二进制，**不在**可删列表里。
-- `data/`（1.2 MB）本机工程与素材；`AGENTS.md`、`README.md`、`pyproject.toml`、`uv.lock`。
+  ——**175 档门禁**（含 `tests/jobwait_check.py`、`tests/desktop_lazyboot_check.ts` 所在的 96 只界面自检）
+  与重建脚本都在这里。
+- `desktop/resources/bin/`（随包 FFmpeg/ffprobe 与 media-stamp）与 `desktop/resources/asr/`（离线字幕模型）
+  ——预览、导出与字幕要的二进制，**不在**可删列表里。
+- `desktop/build/`（图标源 `icon.ico`/`icon.svg`/`icons/*.png` 是 tracked 的）——可删的只有它底下的
+  `shell-checks/`，不是这个目录本身。
+- `data/` 本机工程与素材；`AGENTS.md`、`README.md`、`pyproject.toml`、`uv.lock`。
 
 删掉的都可再生（实测体积与重建命令）：
 
@@ -6322,14 +6341,18 @@ MCP 以前只有 tools + 两只资源。现在加 `agentcut://manifest`（同一
 - `desktop/release/`（926.9 MB，win-unpacked + 安装版 + 便携版 + blockmap）→ `cd desktop && npm run dist`，
   再把 `desktop/release/AgentCut-便携版.exe` 复制成根 `AgentCut.exe`（两份必须逐字节相同）
 - `.venv/`（138.5 MB）→ `uv sync`
-- `build/`（127.9 MB）与 `desktop/resources/bin/agentcut/`（160.0 MB）→
+- `build/`（127.7 MB）与 `desktop/resources/bin/agentcut/`（160.0 MB）→
   `.venv/Scripts/python.exe scripts/build_engine.py --verify --no-uv`
 - `desktop/dist/`、`desktop/dist-electron/`（约 1.0 MB）与 `desktop/build/shell-checks/` →
-  `cd desktop && npm run build`。
-  **`desktop/build/` 里有一批是要读不能删的**：`icon.ico`、`icon.svg`、`icons/*.png` 是 tracked 的图标源文件，
-  打包与界面都从那里取。这次精简脚本按整目录删了它，`git status` 当场报出 15 个 ` D`，
-  `git checkout --` 才取回来——可再生列表里该写的是 `desktop/build/shell-checks/`，不是 `desktop/build/`。
-- `.ruff_cache/`、`__pycache__/`
+  `cd desktop && npm run build`
+- `.ruff_cache/`、`__pycache__/`（约 1.5 MB）
+
+一手操作上的坑，两次都踩到过，写死在这里：
+
+- **别用准备删掉的那个解释器去删它自己**：`rmtree` 走到 `.venv\Scripts\python.exe` 会报 WinError 5，
+  换个解释器再跑一遍才收干净。
+- 精简脚本删过的目录如果里有 tracked 文件（`desktop/build` 的图标源就是这样），`git status` 会当场报
+  ` D`；`git checkout -- <路径>` 取回来，然后把列表改准——判据是「这目录是不是产物」，不是「名字像不像」。
 
 重建后按这个顺序验：
 
@@ -6339,39 +6362,5 @@ MCP 以前只有 tools + 两只资源。现在加 `agentcut://manifest`（同一
 4. `cd desktop && npm run dist`，复制便携版成根 `AgentCut.exe`
 5. `.venv/Scripts/python.exe tests/suite_check.py`（空机单跑，只认这一次）
 
-占用的账（同日实测）：随包引擎报 ready 813 ms、空转工作集 72.4 MB 不漂；
-装机外壳空转 4 个进程、合计 331.2 MB，且这时机器上一台引擎都没有。
-磁盘这一刀砍掉 2.18 GB 的可再生物，运行时这一刀砍掉「不开也占着的那台引擎」。
-
-
-## 1.310：一次调用等到交付——`job_wait`，把「等到它跑完」放回服务端
-
-`render_start` 之后要拿到成品，以前只有一条路：自己一秒一次地打 `job_status`。这不是设想——
-本仓库自己的门禁就是证据：`tests/alphamaster_check.py` 里那个 `wait()` 最多轮 **1200 次**才认输。
-连量具都在手写这个循环，外面接手的 agent 每一次交付都得再写一遍，还要自己决定多久问一次、
-问几次算失败。
-
-抄的是两台大家都用的服务的做法：**Kubernetes 的 `watch=true`**（服务端盯着变化，客户端不空转）与
-**GitHub CLI 的 `gh run watch`**（把「等到跑完」做成一条命令的语义）。落到这里是一读路由：
-
-- `GET /v1/jobs/{job_id}/wait?timeout=30&poll=0.25`（能力位 `features.job_wait`）：
-  到终态就交回**同一份作业文档**（`job` + 在飞时那份 `plan`），另加两个字段说清楚这一次是怎么回来的——
-  `waited_ms` 等了多久、`timed_out` 是不是还在跑。**超时不是错误**：说 `timed_out=true` 让调用方自己
-  决定换更长的 timeout 再来一次，还是改去 `job_status` 看一眼。`timeout` 夹在 0..120 秒、
-  `poll` 夹在 0.05..2 秒，越界 422——不让人拿一个数把服务端挂住。等本身不改作业状态：
-  等过一次超时的作业，再等一次仍会到 `succeeded`。
-- 契约那一头同步登记（`TOOL_ENDPOINTS["job_wait"]`），MCP 多一只 `job_wait(job_id, timeout, poll)`，
-  桥按同一份契约代理；三条剪辑配方里那一步从「轮询到 succeeded」改写成
-  「一次调用等到终态（超时会说 timed_out）」——agent 读到的指引与真实能调的东西是同一份。
-
-门禁 `tests/jobwait_check.py`（新）六道：① 契约登记与派发（`job_id` 进路径、`timeout/poll` 留在查询，
-放错就红）；② 一次真渲染：H.264 交付一次 `wait` 到 `succeeded`、`output_checked` 为真、
-ffprobe 量到 2 秒成片；③ `timeout=0.05` 那一次说 `timed_out=true` 且状态仍在 `queued/running`，
-随后一次长等到终态；④ 不存在的 job 按 `NOT_FOUND` 拒、`timeout=99999` 按 422 拒；
-⑤ MCP 那侧 `list_tools()` 里确有 `job_wait`（与 HTTP 同一份契约，不是各写一份）；⑥ 配方点名的就是它。
-`tests/self_check.py` 那份手抄的 MCP 工具名单也跟着多这一只——它本来就是用来挡「悄悄加/删工具」的。
-
-**3 条突变各自红在自家断言上**（超时了却说 `timed_out=false`、把 `timeout` 的 120 秒上限拆掉、
-契约里根本没登记这一只），跑完按字节还原并核对 sha256。第三条一开始是「红成 traceback」的——
-`resolve()` 对没登记的工具抛 `KeyError` 把整档掀了，看不到断言名；改成记一条失败再往下走，
-红要红得能说清是哪一条。
+运行时占用的账（同日实测，见 1.308/1.309/1.310 三节）：开窗口不动它 = 外壳 4 进程约 331 MB、
+**引擎 0 台**；引擎起来后空转 72.4 MB、报 ready 813 ms；关掉软件时引擎当场归 0。
