@@ -42,7 +42,9 @@ def main() -> None:
     # 窗口收干净之后，Chromium 仍可能压着 profile 里那份词典文件不放，rmtree 会在最后一秒报
     # WinError 32。含糊不得：忽略清理错误的同时，下面当场量一次「机器上还剩几个 AgentCut 进程」——
     # 残留的进程才是真问题，删不掉的临时目录只是它的影子。
-    with tempfile.TemporaryDirectory(prefix="agentcut-packaged-ui-", ignore_cleanup_errors=True) as raw:
+    with tempfile.TemporaryDirectory(
+        prefix="agentcut-packaged-ui-", ignore_cleanup_errors=True
+    ) as raw:
         folder = Path(raw)
         out = folder / "ui.json"
         shot = folder / "ui.png"
