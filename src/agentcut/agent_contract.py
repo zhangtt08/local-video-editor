@@ -30,7 +30,7 @@ RECIPES: tuple[dict[str, Any], ...] = (
         "params": (
             "name、files（1..64 个）、preset_id、filename；render=false 时后两样可以不给。"
             "量程：threshold_db 与 min_silence_ms（去停顿）、keep_ms 与 scene_threshold、"
-            "min_scene_ms（镜头粗剪）。"
+            "min_scene_ms（镜头粗剪）、loudness_target_lufs（整条混音落的响度，不给就不动）。"
         ),
         "steps": [
             {"tool": "editor_capabilities", "why": "先问这台引擎认哪些命令与预设，别照记忆写"},
@@ -46,6 +46,10 @@ RECIPES: tuple[dict[str, Any], ...] = (
             {
                 "tool": "track_rough_cut",
                 "why": "每个镜头只留头几秒，整条轨道一次做完，仍是普通命令",
+            },
+            {
+                "tool": "master_loudness",
+                "why": "剪完之后才量混音：探测走的是导出那一张图，落一次 project.update",
             },
             {"tool": "timeline_overview", "why": "一张接触表看完整条时间线，确认剪的是什么"},
             {"tool": "preview_frame", "why": "抽查几个刻度：预览与导出读的是同一份编译"},
@@ -63,7 +67,8 @@ RECIPES: tuple[dict[str, Any], ...] = (
         "when": "一条讲话素材，要字幕、要按句剪、要能改字。",
         "params": (
             "name、files（一段口播）、preset_id、filename；剪哪几行交给数据：filler_patterns"
-            "（文本命中就剪）与 cut_gap_ms（停顿长过就剪），可选 language 与 caption_max_chars。"
+            "（文本命中就剪）与 cut_gap_ms（停顿长过就剪），可选 language 与 caption_max_chars；"
+            "loudness_target_lufs 决定要不要顺手把混音落到位。"
             "这一条要本机备着语音模型，没备着那一步会明说不做。"
         ),
         "steps": [
@@ -81,6 +86,10 @@ RECIPES: tuple[dict[str, Any], ...] = (
             {
                 "tool": "transcript_cut_plan",
                 "why": "删哪几行由调用方给数据（命中词或停顿长度），剪仍是普通命令",
+            },
+            {
+                "tool": "master_loudness",
+                "why": "剪完再量：口播条最容易被停顿改动响度，落一次 project.update",
             },
             {"tool": "captions_export", "why": "要交给别人时导出 SRT"},
             {"tool": "timeline_overview", "why": "一张接触表看完整条时间线，确认剪的是什么"},

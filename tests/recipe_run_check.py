@@ -49,7 +49,7 @@ MODELS = ROOT / "desktop/resources/asr"
 PRESET = "h264-720p-web"
 FAILURES: list[str] = []
 
-STEP_COUNTS = {"cut-from-media": 13, "speech-to-captions": 15, "imitate-imported-edit": 16}
+STEP_COUNTS = {"cut-from-media": 14, "speech-to-captions": 16, "imitate-imported-edit": 16}
 
 
 def check(label: str, ok: bool, evidence: object = "") -> None:
@@ -65,6 +65,24 @@ def probe_duration(path: Path) -> float:
         timeout=180,
     )
     return float(json.loads(out.stdout)["format"]["duration"])
+
+
+def integrated_lufs(path: Path) -> float:
+    """FFmpeg's own EBU R128 meter on the delivered file — the yardstick the engine probes with."""
+    done = subprocess.run(
+        [str(FFMPEG), "-v", "info", "-i", str(path), "-filter_complex", "ebur128", "-f",
+         "null", "-"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=300,
+    )
+    tail = done.stderr.split("Summary:")[-1]
+    marker = "I:"
+    line = next((row for row in tail.splitlines() if marker in row), "")
+    number = line.split(marker)[-1].split("LUFS")[0].strip()
+    return float(number)
 
 
 def offline_surface() -> None:
@@ -162,6 +180,7 @@ def cut_from_media(client: TestClient, folder: Path) -> dict:
         "threshold_db": -40.0,
         "min_silence_ms": 500,
         "keep_ms": 500,
+        "loudness_target_lufs": -16.0,
         "preset_id": PRESET,
         "filename": "cut.mp4",
         "render": True,
@@ -186,6 +205,11 @@ def cut_from_media(client: TestClient, folder: Path) -> dict:
     check("静音那一刀剪掉了东西", rows["track_silence"]["removed_ticks"] > 0,
           rows["track_silence"])
     check("镜头粗剪动了命令", rows["track_rough_cut"]["commands"] > 0, rows["track_rough_cut"])
+    check("响度那一刀按给的目标落了混音",
+          rows["master_loudness"]["ran"] is True
+          and rows["master_loudness"]["target_lufs"] == -16.0
+          and abs(float(rows["master_loudness"]["predicted_lufs"]) + 16.0) <= 0.6,
+          rows["master_loudness"])
     plan = made.get("plan") or {}
     check("render_plan 交回了编译好的计划与 argv",
           (plan.get("plan") or {}).get("duration_seconds") is not None
@@ -200,8 +224,10 @@ def cut_from_media(client: TestClient, folder: Path) -> dict:
         check("交付比源短", 0.3 <= seconds < 4.0, seconds)
         check("计划说的长度就是交付出来的长度", abs(planned - seconds) <= 0.25,
               (planned, seconds))
+        heard = integrated_lufs(out)
+        check("交付出去的这条片子听起来就在目标响度上", abs(heard + 16.0) <= 1.5, heard)
         print(f"   一刀跑完：2 段素材 → revision {made['revision']}，交付 {seconds:.2f} s"
-              f"（计划 {planned:.2f} s），等了 {made['waited_ms']} ms")
+              f"（计划 {planned:.2f} s）、实测 {heard:.1f} LUFS，等了 {made['waited_ms']} ms")
     else:
         check("交付文件在盘上", False, str(out))
     return made
@@ -245,6 +271,10 @@ def speech_to_captions(client: TestClient, folder: Path) -> None:
     check("SRT 交回了字数", rows["captions_export"]["srt_chars"] > 0, rows["captions_export"])
     check("回执默认不带 SRT 全文（长文本要就 include_text）",
           "srt" not in rows["captions_export"], sorted(rows["captions_export"]))
+    check("没给目标响度就不动混音（那一行说清为什么没做）",
+          rows["master_loudness"]["ran"] is False
+          and "loudness_target_lufs" in rows["master_loudness"]["why"],
+          rows["master_loudness"])
     job = made.get("job") or {}
     check("口播这一刀也等到终态", job.get("status") == "succeeded", job)
     out = Path(job.get("output_path") or "")
@@ -323,6 +353,7 @@ def refusals_and_replay(client: TestClient, folder: Path, made: dict) -> None:
         "threshold_db": -40.0,
         "min_silence_ms": 500,
         "keep_ms": 500,
+        "loudness_target_lufs": -16.0,
         "preset_id": PRESET,
         "filename": "cut.mp4",
         "render": True,

@@ -626,6 +626,42 @@ async def _render_batch(door: Door, request: RecipeRun, ctx: dict[str, Any]) -> 
     )
 
 
+async def _master_loudness(door: Door, request: RecipeRun, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Land the whole mix on the caller's loudness target, measured the way the export plays it.
+
+    The meter reads a throwaway render of the same audio graph the export uses, so the number is
+    the mix a viewer hears (overlaps, fades and ducking included) and the write is one
+    `project.update` — one revision, undo returns the previous gain. No target means hands off:
+    this door does not get to decide how loud someone's film is.
+    """
+    target = request.loudness_target_lufs
+    if target is None:
+        return skipped("没给 loudness_target_lufs：这一刀不替人决定响度，master_gain 原样留着")
+    path = f"/v1/projects/{ctx['project_id']}/master/loudness"
+    payload = {
+        "request_id": f"{request.request_id}-loudness",
+        "expected_revision": ctx["revision"],
+        "target_lufs": target,
+        "apply": True,
+    }
+    status, body = await ask(door, "POST", path, payload, tolerate=("INVALID_LOUDNESS_TARGET",))
+    master = body.get("master") or {}
+    if status >= 400:
+        return ran("POST", path, changed=False, predicted_lufs=master.get("predicted_lufs"),
+                   note=str((body.get("error") or {}).get("message")))
+    ctx["revision"] = int(body["project"]["revision"])
+    return ran(
+        "POST",
+        path,
+        target_lufs=master.get("target_lufs"),
+        measured_lufs=master.get("integrated_lufs"),
+        predicted_lufs=master.get("predicted_lufs"),
+        reaches_target=bool(master.get("reaches_target")),
+        gain=master.get("proposed_master_gain"),
+        revision=ctx["revision"],
+    )
+
+
 async def _overview(_door: Door, _request: RecipeRun, _ctx: dict[str, Any]) -> dict[str, Any]:
     return skipped("接触表是一张 PNG，这一刀不替你看图；要眼睛就单独叫 timeline_overview")
 
@@ -710,6 +746,7 @@ RUNNERS: dict[str, Handler] = {
     "timeline_edit": _timeline_edit,
     "track_silence": _track_silence,
     "track_rough_cut": _track_rough_cut,
+    "master_loudness": _master_loudness,
     "captions_auto": _captions_auto,
     "timeline_transcript": _transcript_view,
     "transcript_cut_plan": _transcript_cut,
@@ -734,6 +771,7 @@ WRITE_STEPS = frozenset(
         "timeline_edit",
         "track_silence",
         "track_rough_cut",
+        "master_loudness",
         "captions_auto",
         "transcript_cut_plan",
         "interchange_import_plan",

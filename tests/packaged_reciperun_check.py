@@ -132,6 +132,7 @@ def one_cut_leg(base: str, folder: Path) -> None:
         "threshold_db": -40.0,
         "min_silence_ms": 500,
         "keep_ms": 600,
+        "loudness_target_lufs": -16.0,
         "preset_id": "h264-720p-web",
         "filename": "packaged-cut.mp4",
         "render": True,
@@ -142,7 +143,11 @@ def one_cut_leg(base: str, folder: Path) -> None:
     if status != 200:
         return ""
     steps = made.get("steps") or []
-    check("步骤就是 13 行", len(steps) == 13, [row.get("step") for row in steps])
+    check("步骤就是 14 行", len(steps) == 14, [row.get("step") for row in steps])
+    loudness = next((row for row in steps if row.get("step") == "master_loudness"), {})
+    check("响度那一刀在随包引擎上也落了混音",
+          loudness.get("ran") is True and abs(float(loudness.get("predicted_lufs") or 99) + 16.0)
+          <= 0.6, loudness)
     job = made.get("job") or {}
     check("随包那一刀交付成功", job.get("status") == "succeeded", job)
     out = Path(job.get("output_path") or "")
