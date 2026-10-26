@@ -124,8 +124,10 @@ def main() -> None:
         capture_output=True, text=True, encoding="utf-8", errors="replace",
     ).stdout
     assert "AgentCut.exe" not in left, "装机腿跑完机器上还挂着窗口：" + left[:220]
-    assert facts.get("engineAfterQuit") == 0, f"关掉窗口后机器上还留着 {facts.get('engineAfterQuit')} 台引擎"
-    assert facts.get("shellAfterQuit") == 0, f"关掉窗口后外壳主进程还在：{facts.get('shellAfterQuit')}"
+    engines_left = facts.get("engineAfterQuit")
+    shells_left = facts.get("shellAfterQuit")
+    assert engines_left == 0, f"关掉窗口后机器上还留着 {engines_left} 台引擎"
+    assert shells_left == 0, f"关掉窗口后外壳主进程还在：{shells_left}"
 
     print(
         f"PASS: 发布包真窗口（{APP_VERSION}）里工作台是圆角卡片 + 10px 呼吸位 + 五枚工具胶囊，"
