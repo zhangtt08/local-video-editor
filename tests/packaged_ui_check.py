@@ -115,12 +115,10 @@ def main() -> None:
         size = shot.stat().st_size if shot.is_file() else 0
         assert shot.is_file() and size > 20_000, size
 
-    # 临时目录删不掉是影子，进程还挂着才是问题：这一腿跑完机器上一台 AgentCut 都不该留下。
-    left = subprocess.run(
-        ["tasklist", "/FI", "IMAGENAME eq AgentCut.exe"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-    ).stdout
-    assert "AgentCut.exe" not in left, "装机腿跑完机器上还挂着窗口：" + left[:220]
+    # 临时目录删不掉是影子，进程还挂着才是问题。归因要分清：Windows 的进程名匹配不分大小写，
+    # `tasklist /FI IMAGENAME eq agentcut.exe` 会把外壳 AgentCut.exe 一起数进来。所以这里认的是
+    # 量具按命令行分好类的两个数——引擎那一台一定带 ` api --port`，外壳那一台一定不带。
+    assert facts.get("shellAfterQuit") == 0, f"跑完还挂着 {facts.get('shellAfterQuit')} 个外壳主进程"
 
     print(
         f"PASS: 发布包真窗口（{APP_VERSION}）里工作台是圆角卡片 + 10px 呼吸位 + 五枚工具胶囊，"

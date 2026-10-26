@@ -277,14 +277,23 @@ async function main() {
     // 再当场数一遍机器上的 agentcut.exe——只杀引导进程会留下一台约 72 MB 的孤儿。
     await evaluate(cdp, "window.desktop.control(\"close\"); true");
     await sleep(5000);
+    // 数的是引擎，不是外壳：Windows 的进程名匹配不分大小写，`agentcut.exe` 这个过滤会把
+    // AgentCut.exe（外壳）一起算进来。引擎那一台的命令行一定带 `api --port`，外壳永远不带。
     let engineLeft = -1;
+    let shellLeft = -1;
     try {
-      const listed = execFileSync("tasklist", ["/FI", "IMAGENAME eq agentcut.exe"], { encoding: "utf8" });
-      engineLeft = (listed.match(/agentcut\.exe/gi) || []).length;
+      const listed = execFileSync("powershell", ["-NoProfile", "-Command",
+        "Get-CimInstance -Query \"select Name,CommandLine from Win32_Process\" | 
+ForEach-Object { \"{0}`t{1}\" -f $_.Name, $_.CommandLine }"], { encoding: "utf8" });
+      engineLeft = listed.split("\n").filter(function (line) { return /agentcut\.exe/i.test(line)
+ && / api --port/.test(line); }).length;
+      shellLeft = listed.split("\n").filter(function (line) { return /AgentCut\.exe/i.test(line)
+ && !/ --type=/.test(line); }).length;
     } catch {
       /* 数不了就留 -1，门禁那一头会把它当失败 */
     }
     facts.engineAfterQuit = engineLeft;
+    facts.shellAfterQuit = shellLeft;
     await fs.promises.writeFile(OUT, JSON.stringify(facts, null, 2), "utf-8");
     console.log("packaged ui probe wrote " + OUT);
   } finally {
