@@ -503,6 +503,32 @@ def real_edit_through_bridge(bridge: Any, data_dir: Path) -> None:
     )
 
 
+def process_alive(pid: int) -> bool:
+    """问操作系统：这个 PID 还在不在（Windows 上不能用 os.kill(pid, 0) 那套）。"""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return False
+        try:
+            code = wintypes.DWORD()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return False
+            return code.value == 259  # STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
 def hub_door(contract: dict[str, Any]) -> int:
     """第三道门：`agent/server.py` 那台本机 Agent API 桥（别的 agent 就是从这里调进来的）。
 
@@ -583,6 +609,23 @@ def hub_door(contract: dict[str, Any]) -> int:
             read = call("/api/agent/tool", {"tool": "agentcut.project_get",
                                            "input": {"project_id": pid}}, token)
             assert read.get("ok") is True and read["data"]["id"] == pid, str(read)[:300]
+            status = call("/api/agent/tool", {"tool": "agentcut.status", "input": {}}, token)
+            assert status["data"]["bridge"]["started_by_bridge"] is True, str(status)[:300]
+            engine_pid = int(status["data"]["bridge"]["engine_pid"])
+            assert engine_pid > 0, str(status)[:300]
+            # 一台桥只该配一台引擎：抓「每次调用都再拉起一台」（真漏过，一次跑完留 8 台）。
+            for _ in range(3):
+                call("/api/agent/tool", {"tool": "agentcut.project_list", "input": {}}, token)
+            again = call("/api/agent/tool", {"tool": "agentcut.status", "input": {}}, token)
+            second = int(again["data"]["bridge"]["engine_pid"])
+            assert second == engine_pid, f"桥每次调用都新拉起一台引擎：{engine_pid} → {second}"
+            # 强杀桥（`TerminateProcess` 不给 atexit 任何机会）之后，引擎不该留在机器上：
+            # 本轮实测一次门禁就在这台机器上留下 24 台没人管的引擎。
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/F"], capture_output=True)
+            deadline = time.time() + 20
+            while time.time() < deadline and process_alive(engine_pid):
+                time.sleep(0.5)
+            assert not process_alive(engine_pid), f"桥被强杀后引擎 {engine_pid} 还活着"
             return len(manifest["tools"])
         finally:
             process.terminate()

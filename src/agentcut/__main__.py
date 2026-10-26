@@ -11,6 +11,8 @@ import secrets
 import shutil
 import socket
 import sys
+import threading
+import time
 from pathlib import Path
 
 
@@ -114,6 +116,39 @@ def build_services(args, data_dir: Path, token: str, db_file: Path):
     return media, jobs, info
 
 
+def parent_watchdog(pid: int, interval: float = 2.0) -> None:
+    """父进程不在了，引擎自己走。
+
+    Windows 上 `TerminateProcess` 不给子进程任何收尾机会，靠父进程的 atexit 或
+    `taskkill /T` 都不牢靠：桥被强杀之后引擎会一直挂在机器上（实测一次门禁留下 24 台）。
+    所以「跟谁一起死」这件事由引擎自己盯——每两秒问一次那个 PID 还在不在。
+    """
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32
+        still_active = 259
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            os._exit(0)
+        code = wintypes.DWORD()
+        while True:
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                break
+            if code.value != still_active:
+                break
+            time.sleep(interval)
+    else:
+        while True:
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                break
+            time.sleep(interval)
+    os._exit(0)
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="agentcut", description="AgentCut 本地剪辑引擎（HTTP + MCP + 媒体引擎）"
@@ -131,6 +166,12 @@ def main():
     parser.add_argument("--ffprobe", default="")
     parser.add_argument("--expose-token", action="store_true")
     parser.add_argument("--json", action="store_true", help="print a machine-readable ready line")
+    parser.add_argument(
+        "--exit-with-parent",
+        type=int,
+        default=0,
+        help="父进程 PID：它不在了引擎自己退出（无人值守的 agent 用完不该留一台引擎）",
+    )
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir).resolve()
@@ -141,6 +182,10 @@ def main():
         args.token_file = str(data_dir / "agentcut.token")
     args.token_file = Path(args.token_file)
     token = load_token(args.token_file, required=args.mode == "mcp")
+    if args.exit_with_parent > 0:
+        threading.Thread(
+            target=parent_watchdog, args=(args.exit_with_parent,), daemon=True
+        ).start()
 
     if args.mode == "mcp":
         from .mcp_server import create_mcp

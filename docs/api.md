@@ -3394,6 +3394,8 @@ SQLite**：产品后来加的媒体、渲染、字幕、遮罩、交换格式一
   只有一份，HTTP 契约、MCP prompts 与文档读的都是它。
 * **读路由**：`GET /v1/agent/manifest`（能力位 `features.agent_manifest`）一次交回版本、鉴权说明、
   错误形状、能力表、85 条路由、72 只工具与三条配方。
+  框架自己的 `/openapi.json` 与 `/docs` 也开着（本机回环），但它只看得见 HTTP 一侧：MCP 工具、
+  只读位与三条配方只有这份契约说得出——要「一次问清」就读契约，不要读 OpenAPI。
 * **MCP 原语补齐**：资源 `agentcut://manifest`（同一份契约）+ 三只 prompt
   （`recipe_cut_from_media` / `recipe_speech_to_captions` / `recipe_imitate_imported_edit`）。
   只会说 MCP 的 agent 也能问到「一条片子按什么次序剪完」。
@@ -3404,7 +3406,6 @@ SQLite**：产品后来加的媒体、渲染、字幕、遮罩、交换格式一
   桥的 manifest 派生 MCP 工具名单的通用壳。
 
 调用形状（桥这一侧，非 GET 一律要 `x-agentcut-token`）：
-
 ```text
 GET  http://127.0.0.1:8780/api/agent/manifest      # 工具名单 + 令牌头与令牌文件
 POST http://127.0.0.1:8780/api/agent/tool          # {"tool": "agentcut.project_create",

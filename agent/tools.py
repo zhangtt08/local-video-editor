@@ -55,6 +55,8 @@ DEFAULT_URL = "http://127.0.0.1:8765"
 _TIMEOUT = float(os.environ.get("AGENTCUT_BRIDGE_TIMEOUT") or 600)
 
 _STARTED: subprocess.Popen | None = None
+_STARTED_URL = ""
+_STARTED_TOKEN = ""
 
 
 def _contract() -> dict[str, Any]:
@@ -129,6 +131,9 @@ def _start_engine() -> tuple[str, str]:
     command = [
         sys.executable, "-m", "agentcut", "api", "--port", str(port), "--json",
         "--data-dir", str(DATA_DIR), "--media-root", str(DATA_DIR),
+        # 桥被强杀（TerminateProcess 不给 atexit 机会）时，引擎自己盯着父进程离开；
+        # 只杀自己拉起的那一个 PID，绝不动桌面端那台。
+        "--exit-with-parent", str(os.getpid()),
     ]
     env = dict(os.environ)
     env["PYTHONPATH"] = str(SRC)
@@ -137,6 +142,7 @@ def _start_engine() -> tuple[str, str]:
         command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, encoding="utf-8", errors="replace", env=env, cwd=str(PROJECT_ROOT),
     )
+    global _STARTED_URL, _STARTED_TOKEN
     _STARTED = process
     atexit.register(_stop_engine)
     deadline = time.time() + 120
@@ -147,9 +153,12 @@ def _start_engine() -> tuple[str, str]:
         if '"event": "ready"' in line:
             ready = json.loads(line.strip())
             token = ""
-            if ready.get("token_file") and Path(ready["token_file"]).exists():
-                token = Path(ready["token_file"]).read_text(encoding="utf-8").strip()
-            return str(ready["base_url"]).rstrip("/"), token
+            written = Path(ready.get("token_file") or TOKEN_FILE)
+            if written.exists():
+                token = written.read_text(encoding="utf-8").strip()
+            _STARTED_URL = str(ready["base_url"]).rstrip("/")
+            _STARTED_TOKEN = token
+            return _STARTED_URL, _STARTED_TOKEN
     raise AgentError("engine_unreachable", "引擎 120 秒内没有报 ready")
 
 
@@ -168,6 +177,10 @@ def _stop_engine() -> None:
 
 def _engine() -> tuple[str, str]:
     """按引擎自己那套约定找人：AGENTCUT_API_URL + 令牌文件，都没有就自己拉一台。"""
+    # 自己拉起来的那一台优先复用：不先问它，每一次调用都会再开一台引擎
+    # （这一步真的漏过：一次门禁跑完，机器上留着 8 台没人管的引擎）。
+    if _STARTED is not None and _STARTED.poll() is None and _alive(_STARTED_URL, _STARTED_TOKEN):
+        return _STARTED_URL, _STARTED_TOKEN
     configured = os.environ.get("AGENTCUT_API_URL", "").rstrip("/")
     token = os.environ.get("AGENTCUT_TOKEN", "")
     if not token and TOKEN_FILE.exists():
@@ -243,7 +256,11 @@ def handle_status(args: dict[str, Any]) -> dict[str, Any]:
             "media_ready": info.get("media_ready"),
             "render_ready": info.get("render_ready"),
         },
-        "bridge": {"tools": len(TOOLS), "started_by_bridge": _STARTED is not None},
+        "bridge": {
+            "tools": len(TOOLS),
+            "started_by_bridge": _STARTED is not None,
+            "engine_pid": _STARTED.pid if _STARTED else None,
+        },
         "total_projects": len(projects.get("projects") or []),
     }
 
