@@ -386,6 +386,109 @@ def build_fcpxml(project) -> dict:
     }
 
 
+def build_jianying(project) -> dict:
+    """剪映 / CapCut 明文 ``draft_content.json``：微秒区间 + materials + 每轨的 segments。
+
+    写的是**读得回来的那一份**：``tracks[].type`` 只出 video / audio，``segments[]`` 带
+    ``material_id`` 与 ``target_timerange`` / ``source_timerange``（微秒），素材进
+    ``materials.videos|audios|texts``。搬不过去的东西逐条进 ``omitted``（转场、变速、关键帧、
+    调色与效果、遮罩、组合与链接）——读者据此判断交回来的是一整刀还是直切近似。
+
+    这一支的判据是「写出 → 用本工程自己的读法读回 → 落库签名相同」，**不是**「剪映一定能打开」：
+    这台机器上没有剪映，装一个来验它不在这台机器能做的事里。
+    """
+    def micros(ticks: int) -> int:
+        """ticks -> microseconds. 70,560,000 ticks make a second, so this is a ratio, not /1000."""
+        return int(round(ticks * 1_000_000 / TIMEBASE))
+    materials: dict[str, list] = {"videos": [], "audios": [], "texts": []}
+    by_asset: dict[tuple[str, str], str] = {}
+    tracks: list[dict] = []
+    omitted: list[dict] = []
+    end = 0
+
+    def omit(clip, reason: str) -> None:
+        omitted.append({"clip_id": clip.id, "reason": reason})
+
+    for track in project.tracks:
+        if track.kind not in ("video", "audio"):
+            continue
+        segments: list[dict] = []
+        for clip in sorted(
+            (item for item in project.clips.values() if item.track_id == track.id),
+            key=lambda item: (item.position_ticks, item.id),
+        ):
+            if clip.transition_in:
+                omit(clip, "a draft transition is its own segment shape this writer does not emit")
+            if (clip.speed_percent or 100) != 100 or clip.speed_curve:
+                # 变速改的是这一段读源的方式，不是外观：照写只会交回一段「位置对、内容错」的片段。
+                omit(clip, "a draft speed folds into the source window, not a curve; this clip is "
+                           "left out rather than written wrong")
+                continue
+            if clip.keyframes or clip.mask_shape_keys:
+                omit(clip, "draft keyframes are not carried")
+            if (clip.color.model_dump(exclude_defaults=True)
+                    or clip.effects.model_dump(exclude_defaults=True)
+                    or clip.mask is not None or clip.extra_masks or clip.chroma
+                    or clip.stabilization or clip.fade):
+                omit(clip, "colour, effects, masks and fades are not carried into a draft")
+            if clip.group_id or clip.link_id:
+                omit(clip, "draft groups and links are not carried")
+            if clip.text is not None:
+                mid = f"text-{clip.id}"
+                materials["texts"].append({
+                    "id": mid, "type": "text", "content": clip.text.body or "", "path": "",
+                })
+            else:
+                asset = project.assets.get(clip.asset_id)
+                if asset is None:
+                    omit(clip, "this clip's asset is gone from the project")
+                    continue
+                group = "audios" if (track.kind == "audio" or asset.kind == "audio") else "videos"
+                key = (group, asset.id)
+                mid = by_asset.get(key)
+                if mid is None:
+                    mid = f"{group[:-1]}-{asset.id}"
+                    by_asset[key] = mid
+                    materials[group].append({
+                        "id": mid,
+                        "type": group[:-1],
+                        "path": _file_url(asset),
+                        "duration": micros(asset.duration_ticks or clip.duration_ticks),
+                    })
+            segments.append({
+                "id": f"seg-{clip.id}",
+                "material_id": mid,
+                "target_timerange": {"start": micros(clip.position_ticks),
+                                     "duration": micros(clip.duration_ticks)},
+                "source_timerange": {"start": micros(clip.source_in_ticks),
+                                     "duration": micros(clip.duration_ticks)},
+            })
+            end = max(end, clip.position_ticks + clip.duration_ticks)
+        # 空轨也写进去：轨道数与顺序是工程结构的一部分，读者按顺序对到自己的轨道上。
+        tracks.append({"id": f"track-{track.id}", "type": track.kind, "segments": segments})
+
+    document = {
+        "canvas_config": {"width": project.settings.width,
+                          "height": project.settings.height,
+                          "ratio": "original"},
+        "fps": round(_fps(project), 3),
+        "duration": micros(end),
+        "tracks": tracks,
+        "materials": materials,
+        "version": 360000,
+    }
+    return {
+        "draft": document,
+        "json": json.dumps(document, ensure_ascii=False, indent=1),
+        "duration_ticks": end,
+        "tracks": len(tracks),
+        "clips": sum(len(track["segments"]) for track in tracks),
+        "text_clips": len(materials["texts"]),
+        "omitted": omitted,
+        "complete": not omitted,
+    }
+
+
 def _snap(ticks: float, project) -> int:
     frame = project.settings.frame_ticks
     return int(round(ticks / frame)) * frame
@@ -667,6 +770,7 @@ class _ImportLedger:
         self.text_clips = 0
         self.gaps = 0
         self._seen_tracks: set[str] = set()
+        self._text_asset: str | None = None
 
     # —— 记账 ————————————————————————————————————————————————
     def omit(self, kind: str, reason: str, **what) -> None:
@@ -712,7 +816,22 @@ class _ImportLedger:
             return False
         base: dict = {}
         if text is not None:
-            base = {"text": {"body": text}}
+            # A caption needs an asset of its own: `Clip` requires `asset_id`, and a text clip
+            # with no asset behind it would be refused by the model, not by a rule. Reuse the
+            # project's text asset when it has one, otherwise plan one `asset.register` first.
+            if self._text_asset is None:
+                existing = next((item for item in self.project.assets.values()
+                                 if item.kind == "text"), None)
+                if existing is not None:
+                    self._text_asset = existing.id
+                else:
+                    self._text_asset = f"{self.source}-text"
+                    self.commands.append({"op": "asset.register", "asset": {
+                        "id": self._text_asset, "kind": "text",
+                        "label": f"{self.source} captions",
+                        "reference": f"generated:text:{self.source}",
+                    }})
+            base = {"text": {"body": text}, "asset_id": self._text_asset}
         else:
             key = (asset_name or name or "").lower()
             if not key:

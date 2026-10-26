@@ -5,6 +5,7 @@ import { Icon, Modal } from "../ui";
 import {
   applyTimelineImport,
   exportTimelineFcpxml,
+  exportTimelineJianying,
   exportTimelineOtio,
   planTimelineImport,
   toast,
@@ -36,6 +37,7 @@ export function ExchangeSection() {
   const features = app.caps?.features ?? {};
   const canOtio = Boolean(features.otio_export);
   const canFcpxml = Boolean(features.fcpxml_export);
+  const canJianying = Boolean(features.jianying_export);
   const canImport = Boolean(features.interchange_import);
 
   const read = async (picked: File) => {
@@ -98,6 +100,16 @@ export function ExchangeSection() {
         >
           <Icon name="export" size={14} />
           <span><b>保存 FCPXML</b></span>
+        </button>
+        <button
+          type="button"
+          className="exchange-btn"
+          disabled={!canJianying || Boolean(app.busy)}
+          onClick={() => void exportTimelineJianying()}
+          title={canJianying ? "保存剪映 / CapCut 认的 draft_content.json：微秒区间、素材表、每条轨的片段；搬不过去的逐条点名" : "这台引擎不下发剪映草稿"}
+        >
+          <Icon name="export" size={14} />
+          <span><b>保存剪映草稿</b><em>draft_content.json</em></span>
         </button>
         <button
           type="button"

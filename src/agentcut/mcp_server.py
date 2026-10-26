@@ -432,6 +432,21 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         return await call("POST", f"/v1/projects/{project_id}/sync", body, timeout=900)
 
     @server.tool(annotations=read)
+    async def project_jianying(
+        project_id: Identifier,
+        sequence_id: SequenceRef | None = None,
+    ) -> dict[str, Any]:
+        """剪映 / CapCut plaintext draft_content.json for this sequence.
+
+        Read-only. The draft is the shape this engine's own reader understands; `omitted`
+        names every clip it cannot say (transitions, speed, keyframes, colour, masks) and
+        `complete` is false whenever that list is non-empty. Writing it into a project folder
+        next to draft_meta_info.json is the caller's job.
+        """
+        query = f"?sequence_id={quote(sequence_id, safe='')}" if sequence_id else ""
+        return await call("GET", f"/v1/projects/{project_id}/jianying{query}")
+
+    @server.tool(annotations=read)
     async def project_edl(
         project_id: Identifier,
         track_id: Identifier,

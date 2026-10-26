@@ -1454,6 +1454,23 @@ export class Engine {
     }>("GET", `/v1/projects/${projectId}/fcpxml${query}`);
   }
 
+  /** 1.304：剪映 / CapCut 明文草稿。只读；omitted 说明哪几段搬不进这份草稿。 */
+  projectJianying(projectId: string, sequenceId?: string | null) {
+    const query = sequenceId ? `?sequence_id=${encodeURIComponent(sequenceId)}` : "";
+    return this.request<{
+      project_id: string;
+      revision: number;
+      draft: Record<string, unknown>;
+      json: string;
+      complete: boolean;
+      duration_ticks: number;
+      tracks: number;
+      clips: number;
+      text_clips: number;
+      omitted: { clip_id: string; reason: string }[];
+    }>("GET", `/v1/projects/${projectId}/jianying${query}`);
+  }
+
   /** 1.293：读这条时间线的「说了什么」；只读，不解码。 */
   transcript(projectId: string, sequenceId: string | null) {
     const query = sequenceId ? `?sequence_id=${encodeURIComponent(sequenceId)}` : "";

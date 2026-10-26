@@ -1821,6 +1821,23 @@ def create_app(
         listed = interchange.build_fcpxml(project)
         return {**listed, "project_id": project_id, "revision": root.revision}
 
+    @app.get("/v1/projects/{project_id}/jianying", dependencies=auth)
+    def project_jianying(
+        project_id: Identifier,
+        projects: Store,
+        sequence_id: SequenceRef | None = None,
+    ):
+        """剪映 / CapCut 明文 ``draft_content.json`` for this sequence (read-only).
+
+        The draft this writes is the shape this engine's own reader understands (microsecond
+        ranges, ``material_id`` -> ``materials``); everything a draft cannot carry is listed in
+        ``omitted`` with its clip id, and ``complete`` says whether the draft is the whole cut.
+        """
+        root = projects.get(project_id)
+        project = sequence_view(root, sequence_id)
+        listed = interchange.build_jianying(project)
+        return {**listed, "project_id": project_id, "revision": root.revision}
+
     @app.post("/v1/projects/{project_id}/otio/import", dependencies=auth)
     def project_otio_import(
         project_id: Identifier,

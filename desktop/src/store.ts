@@ -2646,6 +2646,31 @@ export async function exportTimelineFcpxml(): Promise<void> {
   }
 }
 
+/** 1.304：剪映 / CapCut 明文草稿。只读；文件按剪映认的名字存，放进草稿文件夹即可。 */
+export async function exportTimelineJianying(): Promise<void> {
+  if (!engine || !state.project) return;
+  try {
+    const result = await engine.projectJianying(state.project.id, state.sequenceId);
+    const blob = new Blob([result.json], { type: "application/json" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "draft_content.json";
+    link.click();
+    URL.revokeObjectURL(link.href);
+    toast(
+      result.complete ? "ok" : "warn",
+      result.complete ? "已保存剪映草稿" : "已保存剪映草稿（有搬不过去的片段）",
+      result.complete
+        ? `${result.tracks} 条轨、${result.clips} 段（其中文字 ${result.text_clips} 段）。把 draft_content.json 放进剪映草稿文件夹，与 draft_meta_info.json 并列。`
+        : `${result.omitted.length} 段搬不进草稿（转场、变速、关键帧、调色与遮罩都不在草稿的直切里）：` +
+          result.omitted.map((item) => item.clip_id).join("、"),
+    );
+  } catch (error) {
+    const { title, detail } = describe(error);
+    toast("error", title, detail);
+  }
+}
+
 /** 1.292：一份别的软件导出的工程，先让引擎认格式并交回计划，不直接写。
  *  规划出来的命令就是普通命令：一个批次一个 revision，撤销一次整体退回。 */
 export async function planTimelineImport(document: string | Record<string, unknown>) {
