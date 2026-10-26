@@ -25,7 +25,17 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from . import agent_contract, duck, interchange, overview, scenes, silence, stability, transcript
+from . import (
+    agent_contract,
+    duck,
+    interchange,
+    overview,
+    recipe_run,
+    scenes,
+    silence,
+    stability,
+    transcript,
+)
 from . import asr as asr_module
 from . import autograde as autograde_module
 from . import beats as beats_module
@@ -90,6 +100,7 @@ from .contracts import (
     Property,
     ProxyPrune,
     ProxyRequest,
+    RecipeRun,
     ReframeRequest,
     RenderBatch,
     RenderFit,
@@ -345,6 +356,7 @@ def create_app(
                 MutationResult,
                 ImportRequest,
                 LutParse,
+                RecipeRun,
                 RenderRequest,
             )
         }
@@ -370,6 +382,37 @@ def create_app(
                 bool(media and media.enabled), speech_ready(), text_fonts_available()
             ),
         )
+
+    @app.post("/v1/agent/recipes/{recipe_id}/run", dependencies=auth)
+    async def run_agent_recipe(recipe_id: Identifier, request: RecipeRun):
+        """Run one whole delivery recipe inside the engine, through this same HTTP surface.
+
+        The doors the recipe names are the doors this app answers: the steps go out over an
+        in-process client with the same bearer token, so a one-call run cannot mean anything
+        different from the same calls made by hand. It cannot skip the reducer, the revision
+        check, the media-root authorization or the idempotency receipt on the way either.
+        """
+        # 只有这一条路要往回敲自己的门：纯 HTTP 的引擎平时不碰 httpx。
+        import httpx
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+            base_url="http://127.0.0.1",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=180.0,
+        ) as session:
+
+            async def door(
+                method: str, path: str, payload: dict | None = None
+            ) -> tuple[int, dict]:
+                reply = await session.request(method, path, json=payload)
+                try:
+                    body = reply.json()
+                except ValueError:
+                    body = {"error": {"code": "AGENT_RUN_FAILED", "message": reply.text[:200]}}
+                return reply.status_code, body if isinstance(body, dict) else {"value": body}
+
+            return await recipe_run.run(door, recipe_id, request)
 
     @app.get("/v1/render-presets", dependencies=auth)
     def presets():

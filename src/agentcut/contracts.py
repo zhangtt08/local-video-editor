@@ -71,7 +71,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.310.0"
+APP_VERSION = "1.311.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -6281,6 +6281,73 @@ class LutParse(Contract):
 
 
 
+class RecipeRun(Contract):
+
+    """Run one delivery recipe inside the engine: the same steps, the same doors, one call.
+
+    这里的「配方」是 `GET /v1/agent/manifest` 里那三条**工作流**（怎么从素材走到那一条片子），
+
+    不是工程状态里的交付方案（`recipe.set`）——两个词撞上过一次，所以在这里说清。
+
+    当前只有 `cut-from-media` 能一把跑完：一条画面轨，每个文件一段，静音与镜头切点各一刀。
+    """
+
+
+
+    request_id: Identifier
+
+
+
+    name: Annotated[str, Field(min_length=1, max_length=256)]
+
+
+
+    files: Annotated[
+        list[Annotated[str, Field(min_length=1, max_length=2048)]],
+        Field(min_length=1, max_length=64),
+    ]
+
+
+
+    threshold_db: Annotated[float, Field(ge=-80.0, le=-6.0)] = -35.0
+
+    min_silence_ms: Annotated[int, Field(ge=80, le=5000)] = 250
+
+
+
+    keep_ms: Annotated[int, Field(ge=ROUGH_KEEP_MS_MIN, le=ROUGH_KEEP_MS_MAX)] = (
+
+        ROUGH_KEEP_MS_DEFAULT
+
+    )
+
+    scene_threshold: Annotated[
+        float, Field(ge=SCENE_THRESHOLD_MIN, le=SCENE_THRESHOLD_MAX)
+    ] = SCENE_THRESHOLD_DEFAULT
+
+    min_scene_ms: Annotated[int, Field(ge=100, le=5000)] = SCENE_MIN_MS_DEFAULT
+
+
+
+    preset_id: Identifier
+
+    filename: Annotated[str, Field(min_length=1, max_length=128)]
+
+
+
+    # render=false 停在粗剪：工程与两刀落库都是真的，只有交付那一步留给调用方。
+
+    render: bool = True
+
+
+
+    # 0 是「排完就走」。等到终态要在这条门上等，量程与 job_wait 的 timeout 同一档。
+
+    wait_seconds: Annotated[float, Field(ge=0, le=120)] = 0.0
+
+
+
+
 class RenderRequest(Contract):
 
     request_id: Identifier
@@ -7742,6 +7809,10 @@ def capabilities(
 
             "agent_manifest": True,
             "job_wait": True,
+
+            # 1.311：一刀把 `cut-from-media` 那 13 步在引擎里走完——走的还是同一批路由。
+
+            "recipe_run": media_ready,
 
             # 1.292：一个入口读进 OTIO / FCPXML / FCP7(Premiere) XML / EDL / 剪映明文草稿，
 

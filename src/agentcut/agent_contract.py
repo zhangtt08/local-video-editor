@@ -30,13 +30,18 @@ RECIPES: tuple[dict[str, Any], ...] = (
         "steps": [
             {"tool": "editor_capabilities", "why": "先问这台引擎认哪些命令与预设，别照记忆写"},
             {"tool": "media_config", "why": "素材必须落在授权根目录里，先看清是哪几个目录"},
+            {"tool": "media_import", "why": "探测出真实时长、帧率与声轨，交回可信的素材记录"},
             {"tool": "project_create", "why": "一个 request_id 一次创建，重复提交拿回同一个工程"},
             {"tool": "ids_request", "why": "轨道/素材/片段的 id 由服务端发，避免两边撞号"},
-            {"tool": "media_import", "why": "探测出真实时长、帧率与声轨，交回可信的素材记录"},
             {"tool": "timeline_edit", "why": "轨道、素材与片段一批写完，一个 revision"},
-            {"tool": "track_silence", "why": "把每条里的停顿找出来，交回的是普通剪切命令"},
-            {"tool": "clip_rough_cut", "why": "每个镜头只留头几秒，同样是普通命令，可先看再改"},
-            {"tool": "timeline_edit", "why": "按计划落库，dry_run 先试"},
+            {
+                "tool": "track_silence",
+                "why": "把每条里的停顿找出来，apply=true 让服务端同一批落库",
+            },
+            {
+                "tool": "track_rough_cut",
+                "why": "每个镜头只留头几秒，整条轨道一次做完，仍是普通命令",
+            },
             {"tool": "timeline_overview", "why": "一张接触表看完整条时间线，确认剪的是什么"},
             {"tool": "preview_frame", "why": "抽查几个刻度：预览与导出读的是同一份编译"},
             {"tool": "render_plan", "why": "只编译不渲染：看清 ffmpeg 的 argv 与图"},
@@ -78,6 +83,15 @@ RECIPES: tuple[dict[str, Any], ...] = (
         ],
     },
 )
+
+
+# 1.311：`recipe_run` 能把哪条配方一把跑完。不在这里的配方在契约里带着原因说清楚——
+# 一把跑不完是缺输入或缺判断，不是这一版偷懒。
+RUNNABLE_RECIPES = frozenset({"cut-from-media"})
+RECIPE_LIMITS = {
+    "speech-to-captions": "字幕要不要落库、改哪一行是人的判断，这一刀只交回 cue",
+    "imitate-imported-edit": "要先点名读哪一份工程文件，搬哪些轨道由你决定",
+}
 
 
 # 每一只 MCP 工具背后就是这一条路由——两条门面因此是同一批口，不是两套规则。
@@ -145,6 +159,7 @@ TOOL_ENDPOINTS: dict[str, tuple[str, str]] = {
     "project_restore": ("POST", "/v1/projects/{project_id}/restore"),
     "project_update": ("POST", "/v1/projects/{project_id}"),
     "project_xmeml": ("GET", "/v1/projects/{project_id}/xmeml"),
+    "recipe_run": ("POST", "/v1/agent/recipes/{recipe_id}/run"),
     "render_batch": ("POST", "/v1/projects/{project_id}/renders/batch"),
     "render_plan": ("GET", "/v1/projects/{project_id}/render-plan"),
     "render_presets_read": ("GET", "/v1/render-presets"),
@@ -290,6 +305,9 @@ def recipes() -> list[dict[str, Any]]:
             "id": recipe["id"],
             "title": recipe["title"],
             "when": recipe["when"],
+            # 一把跑完的门只对得上开的那条；开不通的两条带着原因说，不装作什么都能自动。
+            "runnable": recipe["id"] in RUNNABLE_RECIPES,
+            "why_not": RECIPE_LIMITS.get(recipe["id"]),
             "steps": [dict(step) for step in recipe["steps"]],
         }
         for recipe in RECIPES
@@ -301,6 +319,15 @@ def render_recipe(recipe: dict[str, Any]) -> str:
     lines = [f"配方：{recipe['title']}", recipe["when"], ""]
     for index, step in enumerate(recipe["steps"], 1):
         lines.append(f"{index}. {step['tool']} —— {step['why']}")
+    lines.append("")
+    if recipe["id"] in RUNNABLE_RECIPES:
+        lines += [
+            f"这一条也能一把跑完：recipe_run（POST /v1/agent/recipes/{recipe['id']}/run）。",
+            "它走的就是上面这些路由：同一条 bearer 令牌、同一个 reducer，",
+            "一个 request_id 贯穿整刀，重放拿回同一个工程、同一批 revision、同一个交付作业。",
+        ]
+    else:
+        lines.append(f"这一条不能一把跑完：{RECIPE_LIMITS.get(recipe['id'], '这一步要你点名')}。")
     lines += [
         "",
         "工具名与参数以 GET /v1/agent/manifest（MCP 资源 agentcut://manifest）为准；",

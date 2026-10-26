@@ -47,6 +47,7 @@ from .contracts import (
     ProjectUpdate,
     Property,
     ProxyPrune,
+    RecipeRun,
     ReframeRequest,
     RenderBatch,
     RenderFit,
@@ -1199,6 +1200,20 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
     async def output_roots_read() -> dict[str, Any]:
         """Folders the render engine is allowed to publish into."""
         return await call("GET", "/v1/outputs/roots")
+
+    @server.tool(annotations=safe_write)
+    async def recipe_run(recipe_id: Identifier, request: RecipeRun) -> dict[str, Any]:
+        """Run one whole delivery recipe inside the engine: the same routes, one call.
+
+        这里的配方是 manifest 里那三条剪辑工作流（怎么从素材走到交付），不是工程状态里的
+        交付方案 `recipe.set`。只有 `cut-from-media` 开了这一刀；其余两条在契约里带着
+        `why_not` 说清缺什么，不会假装什么都能自动。
+        """
+        return await call(
+            "POST",
+            f"/v1/agent/recipes/{recipe_id}/run",
+            request.model_dump(mode="json"),
+        )
 
     @server.resource("project://{project_id}")
     async def project_resource(project_id: str) -> str:

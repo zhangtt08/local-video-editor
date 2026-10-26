@@ -3432,3 +3432,43 @@ prompt 与 `agentcut://manifest`，资源交回的工具表与路由表与 HTTP 
 
 契约、MCP 与桥同一份：`agent_contract` 登记 `job_wait`，MCP 多一只 `job_wait(job_id, timeout, poll)`，
 配方那一步从「轮询到 succeeded」改成「一次调用等到终态」。能力位 `features.job_wait`。
+
+
+
+## 1.311 一刀跑完一条配方：`POST /v1/agent/recipes/{recipe_id}/run`
+
+配方此前只能被**读**：`GET /v1/agent/manifest` 与 MCP 的 `recipe_*` prompt 交回 13 步，
+调用方自己把 13 次请求串起来，每步都得带上一步交回的 `expected_revision`。这一版让引擎
+自己走完这张表——对外还是一个 JSON 请求体，对内是同一批路由。
+
+```
+POST /v1/agent/recipes/cut-from-media/run
+{
+  "request_id": "cut-2026-10-26-a",
+  "name": "粗剪一条",
+  "files": ["D:/media/a.mp4", "D:/media/b.mp4"],
+  "threshold_db": -40.0, "min_silence_ms": 500,
+  "keep_ms": 500,
+  "preset_id": "h264-720p-web", "filename": "cut.mp4",
+  "render": true, "wait_seconds": 90.0
+}
+```
+
+`scene_threshold` / `min_scene_ms` 不给就用引擎自己的默认（0.18 / 400 毫秒），`threshold_db`
+那一档的量程与 `keep_ms` 也和单独叫那两刀时是同一份模型，不是这一刀另开的量程。
+
+* 走的是同一批门：引擎用 `httpx.ASGITransport` 打自己，带着同一条 bearer 令牌。reducer、
+  revision 校验、素材根授权、幂等凭据一步都绕不过，所以一刀跑完与逐步调用不会有两种结果。
+* 交回 `steps`，13 行，一行一个步骤名——就是契约里的工具名，带 `called`（哪扇门）。
+  `timeline_overview` 与 `preview_frame` 交回的是 PNG，这一刀不替人看图，所以它们的行是
+  `ran: false` 并在 `why` 里说清该单独叫哪一只。
+* 整刀幂等：同一个 `request_id` 再叫，`project_create` 交回它当时的凭据，后面写步一律标
+  「已经跑过」，然后读回工程现在的 revision 与那一单交付。不会出现第二次落库或第二单渲染。
+* `render=false` 停在粗剪：工程与两刀落库都是真的，只有排队交付那一步留给调用方；
+  `wait_seconds` 与 `job_wait` 同量程（0..120），0 就是「排完就走」。
+* 只有 `cut-from-media` 开了这一刀。另两条在 `recipes()` 里带 `runnable: false` 与 `why_not`，
+  叫它们拿 422 `RECIPE_NOT_RUNNABLE`（带原因与 `runnable`），配方名不存在拿 404（带全部三条）。
+* 越界的素材路径停在 `media_import` 那一步——它在建工程之前，所以不会留下半个空工程；
+  错误信封里 `details.called` 说的就是停下的那扇门。
+* MCP 同一只：`recipe_run(recipe_id, request)`；桥（`/api/agent/tool`）从契约里派生同一只。
+  能力位 `features.recipe_run`，跟媒体引擎在场与否走同一判断。
