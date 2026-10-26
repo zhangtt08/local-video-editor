@@ -119,7 +119,11 @@ function ContextMenu({ request, onClose }: { request: MenuRequest; onClose: () =
   // 焦点要等位置量完、盒子真的 visible 之后再给：藏着的按钮 `.focus()` 是空转，
   // 而右键本来就把焦点留在了那个片段上（`role="button"`），不搬的话键盘根本进不来。
   useEffect(() => {
-    if (place) focusStep(box.current, 0);
+    if (!place) return;
+    // Chromium 的默认焦点动作发生在 JS 之后：右键那一下最后会把焦点放回片段，
+    // 同一帧里给的焦点会被它盖掉（满载的机器上量到过）。等一帧再搬，键盘才真进得来。
+    const id = requestAnimationFrame(() => focusStep(box.current, 0));
+    return () => cancelAnimationFrame(id);
   }, [place]);
 
   const choose = (entry: Extract<MenuEntry, { kind: "item" }>) => {

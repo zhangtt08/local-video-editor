@@ -188,8 +188,21 @@ const MENU_READ = `(function () {
     items: items,
     focused: active ? (active.getAttribute('role') || active.tagName.toLowerCase()) : '',
     focusedLabel: active && active.querySelector('.ctx-label') ? active.querySelector('.ctx-label').textContent.trim() : '',
+    focusedClass: active ? String(active.className || '').slice(0, 70) : '',
+    focusedText: active ? String(active.textContent || '').trim().slice(0, 40) : '',
   };
 })()`;
+
+// 菜单刚挂上去时，自动聚焦要等一次 React 提交；满载的机器上那一下会慢半拍，
+// 所以读之前先等焦点真的落到菜单项上（最多两秒），而不是读一次就判红。
+async function readMenuSettled(read) {
+  let result = await read();
+  for (let wait = 0; wait < 20 && !(result && result.focused === "menuitem"); wait += 1) {
+    await sleep(100);
+    result = await read();
+  }
+  return result;
+}
 
 async function main() {
   const [width, height] = SIZE.split("x").map(Number);
@@ -259,7 +272,7 @@ async function main() {
     facts.rightClickAt = centre;
     await click(centre.x, centre.y, "right");
     await sleep(350);
-    facts.menu = await evaluate(MENU_READ);
+    facts.menu = await readMenuSettled(() => evaluate(MENU_READ));
     facts.selectedAfterRightClick = await evaluate("document.querySelectorAll('.clip[data-id][aria-pressed=\"true\"]').length");
     facts.clipPressedAfterRightClick = await evaluate(`(document.querySelector('.clip[data-id="${clip.id}"]') || {}).getAttribute && document.querySelector('.clip[data-id="${clip.id}"]').getAttribute('aria-pressed')`);
 
@@ -325,7 +338,7 @@ async function main() {
     if (laneSpot) {
       await click(laneSpot.x, laneSpot.y, "right");
       await sleep(300);
-      facts.laneMenu = await evaluate(MENU_READ);
+      facts.laneMenu = await readMenuSettled(() => evaluate(MENU_READ));
       await key("Escape", "Escape");
       await sleep(150);
     }
@@ -342,7 +355,7 @@ async function main() {
     if (trackButton) {
       await click(trackButton.x, trackButton.y, "left");
       await sleep(300);
-      facts.trackMenu = await evaluate(MENU_READ);
+      facts.trackMenu = await readMenuSettled(() => evaluate(MENU_READ));
       await key("Escape", "Escape");
       await sleep(150);
       facts.trackMenuAfterEscape = await evaluate(MENU_READ);
@@ -359,7 +372,7 @@ async function main() {
       return true;
     })()`);
     await sleep(300);
-    facts.cornerMenu = await evaluate(MENU_READ);
+    facts.cornerMenu = await readMenuSettled(() => evaluate(MENU_READ));
     facts.cornerTarget = await evaluate("({ w: window.innerWidth, h: window.innerHeight })");
     await key("Escape", "Escape");
     // 机器忙时 React 的卸载会慢一拍：等它真的落定（最多两秒），而不是死等 150 毫秒再认输。

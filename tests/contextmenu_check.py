@@ -221,7 +221,8 @@ def main() -> None:
             assert all(item["height"] >= 34 for item in page["items"]), heights
 
             # ③ 焦点进得去、方向键在能按的项之间走、回来还在原处。
-            assert page["focused"] == "menuitem", page["focused"]
+            assert page["focused"] == "menuitem", (page["focused"], page["focusedClass"],
+                          page["focusedText"])
             down = facts.get("afterArrowDown")
             assert down and down != page["focusedLabel"], down
             up = facts.get("afterArrowUp")
