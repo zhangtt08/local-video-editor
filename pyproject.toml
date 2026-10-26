@@ -24,7 +24,11 @@ build-backend = "hatchling.build"
 packages = ["src/agentcut"]
 
 [dependency-groups]
-dev = ["ruff>=0.11,<1"]
+# `scripts/build_engine.py` freezes the engine with PyInstaller. It used to be installed into the
+# venv by hand, and every `uv sync` silently pruned it — two release chains ran to the end with a
+# stale engine before the package gates caught it. A build tool the repo's own script needs is a
+# dev dependency, not a local habit.
+dev = ["ruff>=0.11,<1", "pyinstaller>=6.22,<7"]
 
 [tool.ruff]
 target-version = "py312"
