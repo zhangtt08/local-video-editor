@@ -6069,6 +6069,10 @@ EDL 一条。**五种进、三种出**，对「agent 模仿完把工程交回原
   sha256 前缀 `f155db0096d45858`；安装版 185,556,705 B）。
 - 包检查六档绿：`released_package`（app.asar 1.306.0）、`packed_engine_surface`（包内引擎真 HTTP 1.306.0）、
   `packaged_ui`、`build`、`fourk`、`mediabinary`。
+- 双击入口不只对哈希：把根 `AgentCut.exe` 复制到别处真启动过一次——Electron 窗「AgentCut 工作台」
+  出来、进程树活着、关掉后 0 个残留。第一遍它「5 秒后自己退出」，是这台机器的 shell 注入了
+  `ELECTRON_RUN_AS_NODE=1`，Electron 被当成 node 跑了；去掉那一条再启动就正常。
+  量「双击」之前先看环境，别先怀疑包。
 - 第一次全套是 **172/173**：`output_rate_check` 钉着「HTTP 那一层不许出现 29.97 / 23.976」，
   而这一档新路由的 docstring 里写了「不四舍五入成 29.97」——那一判不认注释。改掉那半句、重冻重打，
   再跑全套 **173/173**。这不是判据的问题：那一层确实一个字都不该替用户决定帧率。
