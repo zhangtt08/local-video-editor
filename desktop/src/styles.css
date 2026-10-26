@@ -2049,7 +2049,7 @@ html[data-theme="light"] .btn.active {
 }
 .exchange-head { display: flex; flex-direction: column; gap: 2px; }
 .exchange-head b { font-size: var(--fs-body); font-weight: 620; }
-.exchange-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 10px; }
+.exchange-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-top: 10px; }
 .exchange-btn {
   display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
   padding: 9px; border-radius: var(--r-sm);

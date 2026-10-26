@@ -892,6 +892,7 @@ export function errorHints(): Record<string, string> {
       XMEML_EMPTY: "这份 XML 里没有可导入的片段。请确认导出时选的是整条序列，而不是只导音频或只导出被选中的片段。",
       XMEML_TRACK_COUNT: "这份 XML 的视频轨或音频轨比工程里的轨道多。先给工程加够轨道，再导入；这一趟没有写任何东西。",
       XMEML_RATE: "这份 XML 没有写 <timebase>（帧率）。没有它，帧号折不成时间；请在源软件里确认工程设置后重新导出。",
+      XMEML_EXPORT_RATE: "xmeml 的时码按整帧写：这条时间线是分数帧率。把工程换成 24/25/30/50/60 再导出，或者直接交付成片。",
       EDL_TRACK_COUNT: "这份剪辑表的通道数比工程里的轨道多。先给工程加够轨道，再导入；这一趟没有写任何东西。",
       EDL_DROP_FRAME: "这份剪辑表用的是丢帧时码，这里不做丢帧算术。请在源软件里按 NON-DROP FRAME 重新导出一次。",
       JIANYING_ENCRYPTED: "这份剪映草稿是加密的（剪映 6 及以后会加密 draft_content.json），这里不解密。请在剪映里导出 EDL、FCPXML 或 OTIO 再导进来。",
@@ -1469,6 +1470,21 @@ export class Engine {
       text_clips: number;
       omitted: { clip_id: string; reason: string }[];
     }>("GET", `/v1/projects/${projectId}/jianying${query}`);
+  }
+
+  projectXmeml(projectId: string, sequenceId?: string | null) {
+    const query = sequenceId ? `?sequence_id=${encodeURIComponent(sequenceId)}` : "";
+    return this.request<{
+      project_id: string;
+      revision: number;
+      xml: string;
+      complete: boolean;
+      duration_ticks: number;
+      frame_rate: string;
+      tracks: { video: number; audio: number };
+      clips: number;
+      omitted: { clip_id: string; reason: string }[];
+    }>("GET", `/v1/projects/${projectId}/xmeml${query}`);
   }
 
   /** 1.293：读这条时间线的「说了什么」；只读，不解码。 */

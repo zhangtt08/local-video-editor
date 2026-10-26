@@ -447,6 +447,22 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         return await call("GET", f"/v1/projects/{project_id}/jianying{query}")
 
     @server.tool(annotations=read)
+    async def project_xmeml(
+        project_id: Identifier,
+        sequence_id: SequenceRef | None = None,
+    ) -> dict[str, Any]:
+        """FCP7 / Premiere «Export XML» (xmeml) for this sequence.
+
+        Read-only. Frame integers at the sequence's whole frame rate; `omitted` names every
+        clip this format cannot say (text layers, speed changes, transitions) and `complete`
+        is false whenever that list is non-empty. A fractional frame rate is refused with
+        XMEML_EXPORT_RATE instead of being rounded.
+        """
+        query = f"?sequence_id={quote(sequence_id, safe='')}" if sequence_id else ""
+        return await call("GET", f"/v1/projects/{project_id}/xmeml{query}")
+
+
+    @server.tool(annotations=read)
     async def project_edl(
         project_id: Identifier,
         track_id: Identifier,

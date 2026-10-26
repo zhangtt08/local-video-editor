@@ -2671,6 +2671,32 @@ export async function exportTimelineJianying(): Promise<void> {
   }
 }
 
+/** 1.306：Premiere / FCP7 认的 xmeml。整帧时码；文字层与变速段逐条点名，不照写。 */
+export async function exportTimelineXmeml(): Promise<void> {
+  if (!engine || !state.project) return;
+  try {
+    const result = await engine.projectXmeml(state.project.id, state.sequenceId);
+    const blob = new Blob([result.xml], { type: "application/xml" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `${state.project.name || "timeline"}.xml`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    toast(
+      result.complete ? "ok" : "warn",
+      result.complete ? "已保存 Premiere XML" : "已保存 Premiere XML（有略去的片段）",
+      result.complete
+        ? `${result.tracks.video} 条画面轨、${result.tracks.audio} 条声音轨，${result.clips} 段直切；` +
+          `${(result.duration_ticks / TIMEBASE).toFixed(2)} 秒。`
+        : `${result.omitted.length} 段 xmeml 说不进（文字层要生成器、变速要时基映射）：` +
+          result.omitted.map((item) => item.clip_id).join("、"),
+    );
+  } catch (error) {
+    const { title, detail } = describe(error);
+    toast("error", title, detail);
+  }
+}
+
 /** 1.292：一份别的软件导出的工程，先让引擎认格式并交回计划，不直接写。
  *  规划出来的命令就是普通命令：一个批次一个 revision，撤销一次整体退回。 */
 export async function planTimelineImport(document: string | Record<string, unknown>) {

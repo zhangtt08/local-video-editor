@@ -423,6 +423,7 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
                 "frame_stability",
                 "timeline_overview",
                 "project_jianying",
+                "project_xmeml",
                 "clips_sync",
                 "audio_beats",
                 "mask_stack_track",

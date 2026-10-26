@@ -25,7 +25,7 @@ import uuid
 import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 from urllib.parse import unquote, urlparse
-from xml.sax.saxutils import quoteattr
+from xml.sax.saxutils import escape, quoteattr
 
 from .contracts import TIMEBASE, Asset, Clip, EditorError
 
@@ -381,6 +381,155 @@ def build_fcpxml(project) -> dict:
         "duration_ticks": end,
         "frame_rate": fps_label,
         "assets": [{"asset_id": asset_id, "ref": ref} for asset_id, ref in assets.items()],
+        "omitted": omitted,
+        "complete": not omitted,
+    }
+
+
+def _xmeml_frames(ticks: int, fps: int) -> tuple[int, bool]:
+    """Frame number for xmeml, and whether the tick really sat on a frame boundary."""
+    scaled = int(ticks) * fps
+    whole, remainder = divmod(scaled, TIMEBASE)
+    if remainder * 2 >= TIMEBASE:
+        whole += 1
+    return max(0, whole), remainder == 0
+
+
+def build_xmeml(project) -> dict:
+    """FCP7 / Premiere «Export XML» (xmeml) for the whole timeline.
+
+    Write the shape this module's own ``fcp7xml_import_plan`` reads back: one
+    ``<track>`` per track, ``clipitem`` with absolute ``start``/``end`` and source
+    ``in``/``out`` (frame integers), ``<file>`` carrying ``pathurl``. ``<rate>`` goes on
+    the sequence and on each file, never inside a clipitem: there it means «this clip is
+    time-remapped», which is a different statement. A speed change is left out and
+    named, because a straight copy comes back with the right position and the wrong
+    content.
+    """
+    rate = project.settings.frame_rate
+    if rate.denominator != 1:
+        raise EditorError(
+            "XMEML_EXPORT_RATE",
+            "xmeml is written in whole frames; this timeline is "
+            f"{rate.numerator}/{rate.denominator} fps. Switch the project to 24/25/30/50/60 "
+            "or deliver a file instead.",
+            422,
+            numerator=rate.numerator,
+            denominator=rate.denominator,
+        )
+    fps = int(rate.numerator)
+    width, height = project.settings.width, project.settings.height
+    files: dict[str, str] = {}
+    omitted: list[dict] = []
+    written: set[str] = set()
+    off_grid: set[str] = set()
+    end = 0
+
+    def frames(ticks: int, owner: str | None = None) -> int:
+        value, exact = _xmeml_frames(ticks, fps)
+        if owner is not None and not exact:
+            off_grid.add(owner)
+        return value
+
+    def rate_xml() -> str:
+        return f"<rate><timebase>{fps}</timebase><ntsc>FALSE</ntsc></rate>"
+
+    def file_xml(asset: Asset) -> str:
+        ref = files.get(asset.id)
+        if ref is None:
+            ref = f"file-{len(files) + 1}"
+            files[asset.id] = ref
+        duration = int(asset.duration_ticks or 0) or TIMEBASE
+        if asset.kind == "audio":
+            body = ("<audio><samplecharacteristics><depth>16</depth>"
+                    "<samplerate>48000</samplerate></samplecharacteristics></audio>")
+        else:
+            body = (f"<video><samplecharacteristics><width>{width}</width>"
+                    f"<height>{height}</height></samplecharacteristics></video>")
+        # 每一次用都写全：只留 file-id 引用是合法 xmeml，但单独打开一段的读者就丢了路径。
+        return (
+            f'<file id="{ref}">'
+            f"<name>{escape(asset.label)}</name>"
+            f"<pathurl>{escape(_file_url(asset))}</pathurl>"
+            f"{rate_xml()}<duration>{frames(duration)}</duration>"
+            f"<media>{body}</media></file>"
+        )
+
+    def clip_xml(clip, asset: Asset, kind: str) -> str:
+        start = frames(clip.position_ticks, clip.id)
+        stop = frames(clip.position_ticks + clip.duration_ticks, clip.id)
+        source_in = frames(clip.source_in_ticks, clip.id)
+        source_out = frames(clip.source_in_ticks + clip.duration_ticks, clip.id)
+        extras = "<stillframe>TRUE</stillframe>" if asset.kind == "image" else ""
+        if kind == "audio":
+            extras += ("<sourcetrack><mediatype>audio</mediatype>"
+                       "<trackindex>1</trackindex></sourcetrack>")
+        return (
+            f'<clipitem id="clipitem-{clip.id}"><name>{escape(asset.label)}</name>'
+            f"<start>{start}</start><end>{stop}</end>"
+            f"<in>{source_in}</in><out>{source_out}</out>"
+            f"{extras}{file_xml(asset)}</clipitem>"
+        )
+
+    def track_xml(track) -> str:
+        nonlocal end
+        kind = "audio" if track.kind == "audio" else "video"
+        clips = sorted(
+            (item for item in project.clips.values() if item.track_id == track.id),
+            key=lambda item: (item.position_ticks, item.id),
+        )
+        body: list[str] = []
+        cursor = 0
+        for clip in clips:
+            asset = project.assets.get(clip.asset_id)
+            stop = clip.position_ticks + clip.duration_ticks
+            if clip.text is not None or asset is None:
+                omitted.append({"clip_id": clip.id, "reason": "文字层要生成器，xmeml 这一档不写"})
+                cursor = max(cursor, stop)
+                end = max(end, cursor)
+                continue
+            if clip.speed_percent != 100 or clip.speed_curve:
+                omitted.append({
+                    "clip_id": clip.id,
+                    "reason": "变速要 <rate> 时基映射；照写会交回位置对、内容错的一段",
+                })
+                cursor = max(cursor, stop)
+                end = max(end, cursor)
+                continue
+            if clip.transition_in is not None:
+                omitted.append({"clip_id": clip.id,
+                                "reason": "转场要 transitionitem，这一档只写直切"})
+            start = frames(clip.position_ticks, clip.id)
+            if clip.position_ticks > cursor:
+                body.append(f"<gapitem><start>{frames(cursor)}</start>"
+                            f"<end>{start}</end></gapitem>")
+            body.append(clip_xml(clip, asset, kind))
+            written.add(clip.id)
+            cursor = stop
+            end = max(end, cursor)
+        return f'<track id={quoteattr(track.id)}>' + "".join(body) + "</track>"
+
+    video_tracks = [track for track in project.tracks if track.kind == "video"]
+    audio_tracks = [track for track in project.tracks if track.kind == "audio"]
+    media = "<video>" + "".join(track_xml(track) for track in video_tracks) + "</video>"
+    if audio_tracks:
+        media += "<audio>" + "".join(track_xml(track) for track in audio_tracks) + "</audio>"
+    for clip_id in sorted(off_grid & written):
+        omitted.append({"clip_id": clip_id, "reason": "时刻不在整帧上，按最近一帧写入"})
+    text = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE xmeml>\n'
+        '<xmeml version="4">\n<sequence id="sequence-1">\n'
+        f"<name>{escape(project.name)}</name>\n"
+        f"<duration>{frames(end)}</duration>\n{rate_xml()}\n<media>{media}</media>\n"
+        "</sequence>\n</xmeml>\n"
+    )
+    return {
+        "xml": text,
+        "duration_ticks": end,
+        "frame_rate": str(fps),
+        "tracks": {"video": len(video_tracks), "audio": len(audio_tracks)},
+        "clips": len(written),
+        "assets": [{"asset_id": asset_id, "file_id": ref} for asset_id, ref in files.items()],
         "omitted": omitted,
         "complete": not omitted,
     }

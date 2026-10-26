@@ -6025,3 +6025,37 @@ EDL 一条。**五种进、三种出**，对「agent 模仿完把工程交回原
 （`chromapreview` / `extramotion` / `lutpreview` / `maskfeather` / `maskfollow` / `twobandlevel` /
 `twoband`）共用这一支，判据只加在「值得拍」上，像素期望一格未动。这一档不改引擎与界面字节，
 `APP_VERSION` 仍是 1.304.0，包不必重打。
+
+## 1.306：工程格式的第五个出口——FCP7 / Premiere 的 xmeml
+
+1.304 把剪映草稿补上之后，进口五种、出口四种；Premiere 与 FCP7 那一支（xmeml）仍只有进口。
+这一档补上：`build_xmeml(project)`，`GET /v1/projects/{id}/xmeml`，MCP 只读工具 `project_xmeml`，
+能力位 `features.xmeml_export`。
+
+写的是**这支引擎自己读得回的那一份形状**（`fcp7xml_import_plan` 读什么就写什么）：
+
+* 根是 `<xmeml version="4">`，一条 `<track>` 对一条轨（全被点名省掉的空轨也写——轨道数是结构），
+  `clipitem` 带绝对 `start`/`end` 与源窗口 `in`/`out`，`<file>` 带 `pathurl`；
+* **clipitem 里不写 `<rate>`**：进口那一侧，clipitem 里的 `<rate>` 是「这一段被变速了」，
+  这里写的是直切。`<rate>` 只出现在序列与每个 `<file>` 上；
+* 帧号是整数（`_xmeml_frames`）。时刻不在整帧上时按最近帧写入并**点名**，不假装它正好落在帧上；
+* 文字层（要生成器）与变速段（要时基映射）**整段不写**并点名——照写会交回「位置对、内容错」
+  的一段；转场只写直切、同样点名。`complete` 只在 `omitted` 为空时为真；
+* 分数帧率**拒绝**（`XMEML_EXPORT_RATE`，422）：不把一个 30000/1001 的工程四舍五入成 30。
+
+### 门禁 `tests/xmemlexport_check.py`（四层）
+
+① 形状：`<xmeml>` 根、序列 `name`（带 `&`，验转义）/`duration`（180 帧 = 6 秒）/`timebase 30`、
+两个 `clipitem`、每段都不带 clipitem-`<rate>`、画面段不带 `sourcetrack` 而声音段带、
+全被省掉的字幕轨仍是一条空 `<track>`；
+② 点名：`omitted` 恰好是加速段与文字段，`complete=false`；
+③ 回读：同一份 XML 喂给同一台引擎的进口、落到第二个工程上，落库签名与源工程逐项相同
+（被省掉的那两段两边都不在）；干净工程 `complete=true`；
+④ 拒绝：30000/1001 的工程拿到 422 `XMEML_EXPORT_RATE`——能写的写得出、写不出的拒得掉，两条都钉。
+
+### 界面：出口收成一颗「保存工程文件」
+
+四种出口（OTIO / FCPXML / 剪映草稿 / 这一档的 Premiere XML）本来就是同一件事——另存一份工程，
+却占着三列网格里的四颗按钮。现在一颗「保存工程文件」打开同一份动作菜单，四种格式各占一行、
+各带悬停说明，导入留在旁边；网格从三列收成两列。量到：1456×808 下面板 300 px 宽、
+1040×660 下 240 px 宽，两颗按钮都不截字；菜单 236×199，四项齐、能力位都亮。

@@ -1838,6 +1838,24 @@ def create_app(
         listed = interchange.build_jianying(project)
         return {**listed, "project_id": project_id, "revision": root.revision}
 
+    @app.get("/v1/projects/{project_id}/xmeml", dependencies=auth)
+    def project_xmeml(
+        project_id: Identifier,
+        projects: Store,
+        sequence_id: SequenceRef | None = None,
+    ):
+        """FCP7 / Premiere «Export XML» (xmeml) for this sequence (read-only).
+
+        Frame integers, one ``<track>`` per track, ``<file>`` carrying a ``pathurl``. A text
+        layer or a speed change is left out and named in ``omitted``; ``complete`` says
+        whether the XML is the whole cut. A fractional frame rate is refused rather than
+        rounded to a whole one that this timeline is not.
+        """
+        root = projects.get(project_id)
+        project = sequence_view(root, sequence_id)
+        listed = interchange.build_xmeml(project)
+        return {**listed, "project_id": project_id, "revision": root.revision}
+
     @app.post("/v1/projects/{project_id}/otio/import", dependencies=auth)
     def project_otio_import(
         project_id: Identifier,
