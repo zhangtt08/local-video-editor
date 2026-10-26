@@ -6293,7 +6293,7 @@ MCP 以前只有 tools + 两只资源。现在加 `agentcut://manifest`（同一
 
 ### 交付清单与体积（1.309 收口）
 
-目录从 **2.59 GB 收到 402.8 MB**（删除后逐文件求和，含 `.git`；这一份文档提交之后会长一点点）。
+目录从 **2.59 GB 收到 403.6 MB**（删除后逐文件求和，含 `.git`；这一份文档提交之后会长一点点）。
 有一手记在这里免得下次再踩：**别用准备删掉的那个解释器去删它自己**——第一遍 `rmtree` 走到
 `.venv\Scripts\python.exe` 就报 WinError 5（它正跑着），换个解释器再跑一遍才收干净。
 
@@ -6315,7 +6315,11 @@ MCP 以前只有 tools + 两只资源。现在加 `agentcut://manifest`（同一
 - `.venv/`（138.5 MB）→ `uv sync`
 - `build/`（127.9 MB）与 `desktop/resources/bin/agentcut/`（160.0 MB）→
   `.venv/Scripts/python.exe scripts/build_engine.py --verify --no-uv`
-- `desktop/dist/`、`desktop/dist-electron/`、`desktop/build/`（合计约 1.4 MB）→ `cd desktop && npm run build`
+- `desktop/dist/`、`desktop/dist-electron/`（约 1.0 MB）与 `desktop/build/shell-checks/` →
+  `cd desktop && npm run build`。
+  **`desktop/build/` 里有一批是要读不能删的**：`icon.ico`、`icon.svg`、`icons/*.png` 是 tracked 的图标源文件，
+  打包与界面都从那里取。这次精简脚本按整目录删了它，`git status` 当场报出 15 个 ` D`，
+  `git checkout --` 才取回来——可再生列表里该写的是 `desktop/build/shell-checks/`，不是 `desktop/build/`。
 - `.ruff_cache/`、`__pycache__/`
 
 重建后按这个顺序验：
