@@ -6620,3 +6620,32 @@ revision 3，等到终态 531 ms，关掉按 PID 收子树不留尸。
 
 空机单跑 **177/177 checks passed**（`SUITE_EXIT=0`），跑的就是交付出去的那一份树；`tests/desktop_ts_check.py` 那 96 只界面自检也在里面。门禁总数与 1.311 相同（这一版是把两道现有门禁加宽，没有新增档）。
 
+### 交付清单与体积（1.312 收口）
+
+目录从 **2592.3 MB 收到 408.9 MB**（删完逐文件求和，含 `.git`；本文档提交之后会长一点点）。
+这一版没有新增门禁档（是把 `recipe_run_check` 与 `packaged_reciperun_check` 两道各自加宽），
+所以留下的东西与 1.311 同一张清单，只是数变了：
+
+- 根 `AgentCut.exe` **185,438,737 B**，sha256 前缀 `dbcc43af00cf625e`——与
+  `desktop/release/AgentCut-便携版.exe` 逐字节核过（复制当场），`released_package_check` 在精简之前
+  又读了一遍：asar 1.312.0 / 84 文件 / 随包引擎就是建出来的那一份 / 随包 73 句可读中文 /
+  随包语音模型 1 份。
+- `src/ agent/ scripts/ tests/ docs/ design/ examples/` 与 `desktop/{src,electron,resources,build,
+  package.json,*.json,*.ts}`——**177 档门禁**、96 只界面自检与重建脚本都在这里。
+- `desktop/resources/bin/`（随包 FFmpeg/ffprobe 与 media-stamp）与 `desktop/resources/asr/`
+  （离线字幕模型）不在可删列表里；`desktop/build/` 的图标源是 tracked 的，可删的只有它下面的
+  `shell-checks/`。
+- `data/` 本机工程与素材；`AGENTS.md`、`README.md`、`pyproject.toml`、`uv.lock`。
+
+删掉的都可再生（体积照删那一次的逐条输出）：`desktop/node_modules` 827.6 MB → `npm ci`；
+`desktop/release` 927.0 MB → `npm run dist` 后把便携版复制成根 `AgentCut.exe`；`.venv` 138.5 MB →
+`uv sync`；`build` 127.8 MB 与 `desktop/resources/bin/agentcut` 160.0 MB →
+`scripts/build_engine.py --verify --no-uv`；`desktop/dist` + `dist-electron` 约 1.0 MB 与
+`__pycache__` 1.6 MB → `npm run build` / 跑起来自生。
+
+空机单跑 **177/177（`SUITE_EXIT=0`）** 是在精简之前那一份完整环境里跑的，测的就是交付出去的源码
+与那个包；删完 `git status` 报「被删的 tracked 文件 0」。装机腿在收口那一次量到：随包一刀
+4.00 s → 0.60 s（500 ms 等到终态）、随包搬一刀 515 ms 到终态；引擎冷启 723 ms。
+「外壳画出来 / 第一次真用到看见内容 / 重载到看见列表」那三段的地板由 `packaged_ui_check` 在
+这一跑的 177/177 里守住；最近一次逐段数值记在 1.311 那一节（518 ms / 1232 ms / 206 ms），
+这一版渲染层只改了 `engine.ts` 里两句中文提示，不重抄一遍数——要新数就再跑那一档，别手抄。
