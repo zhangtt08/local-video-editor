@@ -31,7 +31,7 @@ from agentcut.contracts import capabilities as engine_capabilities  # noqa: E402
 
 EXPECTED_TOOLS = [
     "agentcut.status",
-    "agentcut.capabilities",
+    "agentcut.editor_capabilities",
     "agentcut.project_create",
     "agentcut.project_list",
     "agentcut.project_get",
@@ -48,6 +48,28 @@ STALE_KINDS = (
 )
 
 FAILURES: list[str] = []
+
+
+def contract_tool_names() -> set[str]:
+    """尺子来自引擎自己那一份契约（与 `/v1/agent/manifest` 是同一个对象），不是桥自报的家数。
+
+    桥交回的工具表只有拿这把独立的尺子量才算数：两边都抄同一份常量，漏一只也照样绿。
+    """
+    import asyncio
+
+    from agentcut import agent_contract
+    from agentcut.http_api import create_app
+    from agentcut.mcp_server import create_mcp
+
+    probe = "agentcut-agentapi-yardstick-" + "0" * 32
+    app = create_app(ROOT / "data" / "unused-by-this-check.sqlite3", probe)
+    server = create_mcp("http://127.0.0.1:0", probe)
+    built = asyncio.run(agent_contract.manifest(app, server, base_url=""))
+    return {"agentcut.status"} | {f"agentcut.{row['name']}" for row in built["tools"]}
+
+
+CONTRACT_NAMES = contract_tool_names()
+CONTRACT_TOOLS = len(CONTRACT_NAMES)
 
 
 def check(label: str, condition: bool, evidence: object = "") -> bool:
@@ -109,13 +131,20 @@ def tool(base, token, name, args):
     return body["data"] if body.get("ok") else body
 
 
-def edit_input(project_id, revision, command, dry_run=False):
-    return {
-        "id": project_id,
+def edit_input(project_id, revision, command, dry_run=False, tag=""):
+    """按契约那一份形状发命令：`request` 就是 EditBatch，project_id 走路径。
+
+    request_id 是幂等键，所以每一件事各用一个 tag——拿同一个键去试「旧版本号」，
+    先撞上的会是 idempotency_conflict，那不是这一腿要验的名字。
+    """
+    request = {
+        "request_id": f"agentapi-{tag or 'plain'}",
         "expected_revision": revision,
         "commands": [command],
-        "dry_run": dry_run,
     }
+    if dry_run:
+        request["dry_run"] = True
+    return {"project_id": project_id, "request": request}
 
 
 def boot(work: Path, port: int, token: str):
@@ -173,7 +202,7 @@ def main() -> None:
         _, health, head = request(base, "", "/api/health")
         info = health.get("data", {})
         check("健康报的是 AgentCut", info.get("project") == "AgentCut", health)
-        check("六只工具都注册了", info.get("tools") == 6, info)
+        check("健康报的工具数 = 名单里那一份", info.get("tools") == CONTRACT_TOOLS, info)
         guard = info.get("guard", {})
         check("守卫说令牌来自 env", guard.get("token_file") == "env", guard)
         check("不发通配 CORS", "access-control-allow-origin" not in {k.lower() for k in head}, head)
@@ -191,14 +220,18 @@ def main() -> None:
 
         # ③ 名单与清单：manifest 里那一份就是路由用的那一份
         listed = request(base, token, "/api/agent/tools")[1].get("data", [])
-        check("工具名单就是这六个", [item["name"] for item in listed] == EXPECTED_TOOLS, listed)
+        names = [item["name"] for item in listed]
+        check("契约那 72 只 + status 一只都交了", len(listed) == CONTRACT_TOOLS, listed[:3])
+        check("六只经典操作仍在名单里", all(name in names for name in EXPECTED_TOOLS),
+              sorted(set(EXPECTED_TOOLS) - set(names)))
+        check("名单没有越过契约", set(names) <= CONTRACT_NAMES, sorted(set(names) - CONTRACT_NAMES))
         shaped = [
             item
             for item in listed
             if item.get("input_schema", {}).get("type") == "object"
             and item.get("risk") in ("read", "write")
         ]
-        check("每只都带了 schema 与 risk", len(shaped) == 6, listed)
+        check("每一只都带了 schema 与 risk", len(shaped) == len(listed), len(listed) - len(shaped))
         manifest = request(base, token, "/api/agent/manifest")[1].get("data", {})
         api = manifest.get("api", {})
         check("清单点名的令牌头就是用的那一个", api.get("token_header") == "x-agentcut-token", api)
@@ -210,10 +243,16 @@ def main() -> None:
         check("status 报的 schema = 同一个常量", st.get("schema_version") == SCHEMA_VERSION, st)
         binaries = st.get("binaries", {})
         check("库在临时目录，不碰用户的", str(data_dir) in binaries.get("database", ""), binaries)
+        reported = st.get("engine", {}).get("data_dir", "")
+        check(
+            "引擎自己报的也是那一份目录",
+            reported and Path(reported).resolve() == data_dir.resolve(),
+            st.get("engine"),
+        )
         check("空库里一个工程都没有", st.get("total_projects") == 0, st)
 
         # ⑤ capabilities：转场名必须是引擎那张表，抄错的那份名单一个字不许留下
-        caps = tool(base, token, "agentcut.capabilities", {})
+        caps = tool(base, token, "agentcut.editor_capabilities", {})
         table = engine_capabilities()
         served = [item["id"] for item in caps.get("transition_kinds", [])]
         ids = [item["id"] for item in table["transition_kinds"]]
@@ -226,14 +265,22 @@ def main() -> None:
         # ⑥ 建一个工程，读回来，再按引擎的命令改它一格
         made = tool(
             base, token, "agentcut.project_create",
-            {"name": "接口验真", "fps": 25, "width": 640, "height": 360},
+            {"request": {
+                "request_id": "agentapi-create",
+                "name": "接口验真",
+                "settings": {"frame_rate": {"numerator": 25, "denominator": 1},
+                             "width": 640, "height": 360},
+            }},
         )
-        project_id = str(made.get("id", ""))
-        check("新建的工程头就是 0", made.get("revision") == 0, made)
-        check("帧率按分子交回", made.get("frame_rate", {}).get("numerator") == 25, made)
-        check("宽高落了库", (made.get("width"), made.get("height")) == (640, 360), made)
+        doc = made.get("project", made)
+        project_id = str(doc.get("id", ""))
+        settings = doc.get("settings", {})
+        check("新建的工程头就是 0", doc.get("revision") == 0, made)
+        check("帧率按分子交回", settings.get("frame_rate", {}).get("numerator") == 25, made)
+        check("宽高落了库",
+              (settings.get("width"), settings.get("height")) == (640, 360), made)
 
-        read = tool(base, token, "agentcut.project_get", {"id": project_id})
+        read = tool(base, token, "agentcut.project_get", {"project_id": project_id})
         check(
             "读回来的是同一份时间线",
             read.get("id") == project_id and {"tracks", "clips"} <= set(read),
@@ -248,7 +295,8 @@ def main() -> None:
         )
 
         first = {"op": "track.add", "track": {"id": "v1", "kind": "video", "name": "画面"}}
-        written = tool(base, token, "agentcut.timeline_edit", edit_input(project_id, 0, first))
+        written = tool(base, token, "agentcut.timeline_edit",
+                       edit_input(project_id, 0, first, tag="write"))
         check(
             "批命令写真涨了一个版本",
             written.get("committed") is True and written.get("project", {}).get("revision") == 1,
@@ -258,19 +306,21 @@ def main() -> None:
         # dry-run 不许写：用一条**当下合法**的新命令试跑（同一条重放到已有轨道上
         # 会被 duplicate_id 抢先把红变成另一种红），试跑之后头仍停在 1
         second = {"op": "track.add", "track": {"id": "v2", "kind": "video", "name": "画面二"}}
-        dry = tool(base, token, "agentcut.timeline_edit", edit_input(project_id, 1, second, True))
+        dry = tool(base, token, "agentcut.timeline_edit",
+                   edit_input(project_id, 1, second, True, tag="dry"))
         check("dry_run 不写库", dry.get("committed") is False, dry)
-        after = tool(base, token, "agentcut.project_get", {"id": project_id})
+        after = tool(base, token, "agentcut.project_get", {"project_id": project_id})
         check("试跑之后头还是 1", after.get("revision") == 1, after)
 
         # 乐观版本：拿写完那一版之前的那个头再写一次，必须被点名拒绝，而且写不进去
-        conflict = tool(base, token, "agentcut.timeline_edit", edit_input(project_id, 0, second))
+        conflict = tool(base, token, "agentcut.timeline_edit",
+                        edit_input(project_id, 0, second, tag="stale"))
         check("旧版本号被拒且点名冲突", err_code(conflict) == "revision_conflict", conflict)
-        head = tool(base, token, "agentcut.project_get", {"id": project_id})
+        head = tool(base, token, "agentcut.project_get", {"project_id": project_id})
         check("被拒那一手也没写进去", head.get("revision") == 1, head.get("revision"))
 
         # ⑦ 三类拒绝各有名字：不存在的工程、缺参数、没注册的工具
-        missing = tool(base, token, "agentcut.project_get", {"id": "nonexistent"})
+        missing = tool(base, token, "agentcut.project_get", {"project_id": "nonexistent"})
         check("查不到的工程回 not_found", err_code(missing) == "not_found", missing)
         bad = tool(base, token, "agentcut.project_get", {})
         check(
@@ -282,7 +332,7 @@ def main() -> None:
         check(
             "没注册的工具列出可用的那几个",
             unknown.get("error", {}).get("code") == "unknown_tool"
-            and len(unknown.get("error", {}).get("available", [])) == 6,
+            and len(unknown.get("error", {}).get("available", [])) == CONTRACT_TOOLS,
             unknown,
         )
         ghost = request(base, token, "/api/nope")[1]
@@ -312,8 +362,8 @@ def main() -> None:
             print(f"  - {line}")
         raise SystemExit(1)
     print(
-        f"PASS: 标准 Agent API 六只工具真起真走 —— 版本 {APP_VERSION}、守卫三条都拒、"
-        "转场名单与引擎同源、写涨版本、dry-run 与旧版本号都拒、用户的库没被碰"
+        f"PASS: 标准 Agent API 经桥真起真走（契约 {CONTRACT_TOOLS} 只工具）—— 版本 {APP_VERSION}，"
+        "守卫三条都拒，转场名单与引擎同源，写涨版本、dry-run 与旧版本号都拒，用户的库没被碰"
     )
 
 

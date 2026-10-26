@@ -6220,3 +6220,10 @@ MCP 以前只有 tools + 两只资源。现在加 `agentcut://manifest`（同一
   起不来时它照样把渲染进程抖成一条未处理 rejection。
 
 `desktop_ts_check` 96 只界面自检全绿（含新加的这一只）。
+
+**顺带补上 1.307 欠的一腿**：`tests/agentapi_check.py` 还按那份手写的六只工具点名（`agentcut.capabilities`
+这个名字契约里根本没有，建工程与批命令也还按旧的平铺形状发），桥改成契约派生之后它一路是红的——
+1.307 当时没有单跑这一档，把「契约那 72 只 + status」当成了已经全绿的证据。现在它按契约的调用形状发命令
+（`request` 包 `CreateProject` / `EditBatch`、`project_id` 走路径、`request_id` 每件事各一个，因为它是幂等键），
+尺子改成从 `agent_contract.manifest` 现取的那一份，并加了「引擎自己报的 data_dir 就是桥给的那份临时目录」
+一条。守卫三条、拒绝命名、dry_run 不写库、旧版本号被拒、用户库逐字节没动——这些一句没松。

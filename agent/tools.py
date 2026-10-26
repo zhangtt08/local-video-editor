@@ -34,7 +34,7 @@ if str(SRC) not in sys.path:
 from errors import AgentError  # noqa: E402  与 server.py 共用同一个类对象
 
 from agentcut import agent_contract  # noqa: E402
-from agentcut.contracts import APP_VERSION  # noqa: E402
+from agentcut.contracts import APP_VERSION, SCHEMA_VERSION  # noqa: E402
 
 PROJECT = {
     "id": "agentcut",
@@ -250,16 +250,23 @@ def handle_status(args: dict[str, Any]) -> dict[str, Any]:
     projects = _http(url, token, "GET", "/v1/projects", query={"limit": 1})
     return {
         "version": APP_VERSION,
+        "schema_version": SCHEMA_VERSION,
         "engine": {
             "base_url": url,
             "app_version": info.get("app_version"),
             "media_ready": info.get("media_ready"),
             "render_ready": info.get("render_ready"),
+            # 引擎自己报的库在哪：无人值守的 agent 要能当场核对「写的不是用户那份工程库」。
+            "data_dir": info.get("data_dir") or str(DATA_DIR),
         },
         "bridge": {
             "tools": len(TOOLS),
             "started_by_bridge": _STARTED is not None,
             "engine_pid": _STARTED.pid if _STARTED else None,
+        },
+        "binaries": {
+            "database": str(DATA_DIR / "agentcut.sqlite3"),
+            "ffmpeg": info.get("ffmpeg") or "",
         },
         "total_projects": len(projects.get("projects") or []),
     }
