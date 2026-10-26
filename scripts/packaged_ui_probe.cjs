@@ -278,22 +278,44 @@ async function main() {
     await evaluate(cdp, "window.desktop.control(\"close\"); true");
     await sleep(5000);
     // 数的是引擎，不是外壳：Windows 的进程名匹配不分大小写，`agentcut.exe` 这个过滤会把
-    // AgentCut.exe（外壳）一起算进来。引擎那一台的命令行一定带 `api --port`，外壳永远不带。
+    // AgentCut.exe（外壳）一起算进来；更糟的是**按命令行找会把量具自己数进去**（node 的命令行里
+    // 就带着 --exe …\AgentCut.exe）。所以这里认的是进程自己的 ImageName，命令行只用来分「哪一台引擎」。
+    // 引擎那一台要**当场**就是 0（关掉软件不该留它，不给宽限）；便携版的外壳有自己的收尾，
+    // 所以只给它一条有上限的路：数到 20 秒还在，就是真没退干净。
+    const censusOnce = function () {
+      const census = "Get-CimInstance -Query \"select Name,CommandLine from Win32_Process\""
+        + " | ForEach-Object { \"{0}={1}\" -f $_.Name, $_.CommandLine }";
+      const listed = execFileSync("powershell", ["-NoProfile", "-Command", census], { encoding: "utf8" });
+      let engine = 0;
+      let shell = 0;
+      for (const line of listed.split(/\r?\n/)) {
+        const name = line.slice(0, line.indexOf("="));
+        const command = line.slice(line.indexOf("=") + 1);
+        if (name === "agentcut.exe" && / api --port/.test(command)) engine += 1;
+        else if (name === "AgentCut.exe" && !/ --type=/.test(command)) shell += 1;
+      }
+      return { engine, shell };
+    };
     let engineLeft = -1;
     let shellLeft = -1;
+    let censusWaitMs = -1;
     try {
-      const listed = execFileSync("powershell", ["-NoProfile", "-Command",
-        "Get-CimInstance -Query \"select Name,CommandLine from Win32_Process\" | 
-ForEach-Object { \"{0}`t{1}\" -f $_.Name, $_.CommandLine }"], { encoding: "utf8" });
-      engineLeft = listed.split("\n").filter(function (line) { return /agentcut\.exe/i.test(line)
- && / api --port/.test(line); }).length;
-      shellLeft = listed.split("\n").filter(function (line) { return /AgentCut\.exe/i.test(line)
- && !/ --type=/.test(line); }).length;
+      const first = censusOnce();
+      engineLeft = first.engine; // 引擎那一台：不留宽限，第一次数到几就是几
+      shellLeft = first.shell;
+      for (let wait = 0; wait < 20 && shellLeft > 0; wait += 1) {
+        await sleep(1000);
+        const again = censusOnce();
+        shellLeft = again.shell;
+        engineLeft = Math.max(engineLeft, again.engine);
+        censusWaitMs = (wait + 1) * 1000;
+      }
     } catch {
       /* 数不了就留 -1，门禁那一头会把它当失败 */
     }
     facts.engineAfterQuit = engineLeft;
     facts.shellAfterQuit = shellLeft;
+    facts.censusWaitMs = censusWaitMs;
     await fs.promises.writeFile(OUT, JSON.stringify(facts, null, 2), "utf-8");
     console.log("packaged ui probe wrote " + OUT);
   } finally {

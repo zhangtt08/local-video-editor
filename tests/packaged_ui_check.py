@@ -126,8 +126,10 @@ def main() -> None:
     assert "AgentCut.exe" not in left, "装机腿跑完机器上还挂着窗口：" + left[:220]
     engines_left = facts.get("engineAfterQuit")
     shells_left = facts.get("shellAfterQuit")
-    assert engines_left == 0, f"关掉窗口后机器上还留着 {engines_left} 台引擎"
-    assert shells_left == 0, f"关掉窗口后外壳主进程还在：{shells_left}"
+    assert engines_left == 0, f"关掉窗口后机器上还留着 {engines_left} 台引擎（第一次数到，不给宽限）"
+    assert shells_left == 0, (
+        f"关掉窗口 {facts.get('censusWaitMs')}ms 后外壳主进程还在：{shells_left}"
+    )
 
     print(
         f"PASS: 发布包真窗口（{APP_VERSION}）里工作台是圆角卡片 + 10px 呼吸位 + 五枚工具胶囊，"
