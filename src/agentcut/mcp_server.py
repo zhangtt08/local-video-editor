@@ -1215,6 +1215,25 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
             request.model_dump(mode="json"),
         )
 
+    @server.tool(annotations=read)
+    async def deliver_verify(
+        job_id: Identifier,
+        target_lufs: float | None = None,
+        ceiling_dbtp: float | None = None,
+        duration_tolerance: float = 0.25,
+    ) -> dict[str, Any]:
+        """Verify the delivered file against the plan that job queued: length, size, rate, loudness.
+
+        引擎自己拿 ffprobe 与 EBU R128 表读那个文件，交回逐条实测数与一个 verdict。
+        不合格不是异常，是一句「差多少」；不点名目标响度就只报不判。
+        """
+        query = f"?duration_tolerance={float(duration_tolerance)}"
+        if target_lufs is not None:
+            query += f"&target_lufs={float(target_lufs)}"
+        if ceiling_dbtp is not None:
+            query += f"&ceiling_dbtp={float(ceiling_dbtp)}"
+        return await call("GET", f"/v1/jobs/{job_id}/verify{query}")
+
     @server.resource("project://{project_id}")
     async def project_resource(project_id: str) -> str:
         # Resource templates also validate ids; they may not inject URL paths.

@@ -71,7 +71,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.313.0"
+APP_VERSION = "1.314.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -6390,6 +6390,12 @@ class RecipeRun(Contract):
     include_text: bool = False
 
 
+    # 交付之后要不要当场验：验的那一扇门自己读文件（长度、尺寸、帧率、响度），
+    # 交回 verdict 与逐条实测数。false 就只排队、不验。
+
+    verify: bool = True
+
+
 
     # render=false 停在粗剪：工程与两刀落库都是真的，只有交付那一步留给调用方。
 
@@ -7869,6 +7875,10 @@ def capabilities(
             # 1.311/1.312：一刀把配方在引擎里走完——走的还是同一批路由，三条都开了。
 
             "recipe_run": media_ready,
+
+            # 1.314：交付验收那一只门——引擎自己用 ffprobe 与 EBU R128 读那个文件。
+
+            "deliver_verify": media_ready,
 
             # 1.292：一个入口读进 OTIO / FCPXML / FCP7(Premiere) XML / EDL / 剪映明文草稿，
 

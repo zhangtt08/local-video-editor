@@ -59,6 +59,7 @@ RECIPES: tuple[dict[str, Any], ...] = (
                 "tool": "job_wait",
                 "why": "一次调用等到终态，拿回输出路径与校验过的长度",
             },
+            {"tool": "deliver_verify", "why": "交付文件由引擎自己读，不靠调用方再拿 ffprobe 量"},
         ],
     },
     {
@@ -97,6 +98,7 @@ RECIPES: tuple[dict[str, Any], ...] = (
             {"tool": "render_plan", "why": "只编译不渲染：看清 ffmpeg 的 argv 与图"},
             {"tool": "render_start", "why": "对固定 revision 排队交付"},
             {"tool": "job_wait", "why": "一次调用等到终态，拿回输出路径与校验过的长度"},
+            {"tool": "deliver_verify", "why": "交付文件由引擎自己读，不靠调用方再拿 ffprobe 量"},
         ],
     },
     {
@@ -135,6 +137,7 @@ RECIPES: tuple[dict[str, Any], ...] = (
             {"tool": "project_jianying", "why": "交回剪映草稿"},
             {"tool": "render_batch", "why": "一次排多个预设/画幅，一单交付"},
             {"tool": "job_wait", "why": "一次调用等到终态，拿回输出路径与校验过的长度"},
+            {"tool": "deliver_verify", "why": "批量那几条交付，每一条都由引擎读回文件说"},
         ],
     },
 )
@@ -167,6 +170,7 @@ TOOL_ENDPOINTS: dict[str, tuple[str, str]] = {
     "clip_silence": ("POST", "/v1/projects/{project_id}/clips/{clip_id}/silence"),
     "clip_stabilize": ("POST", "/v1/projects/{project_id}/clips/{clip_id}/stabilize"),
     "clips_sync": ("POST", "/v1/projects/{project_id}/sync"),
+    "deliver_verify": ("GET", "/v1/jobs/{job_id}/verify"),
     "editor_capabilities": ("GET", "/v1/capabilities"),
     "editor_contracts": ("GET", "/v1/contracts"),
     "editor_info": ("GET", "/v1/info"),

@@ -27,6 +27,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import (
     agent_contract,
+    deliverable,
     duck,
     interchange,
     overview,
@@ -3444,6 +3445,47 @@ def create_app(
         projects.get(project_id)
         runtime = require_jobs()
         return {"jobs": runtime.list_for_project(project_id, limit)}
+
+    @app.get("/v1/jobs/{job_id}/verify", dependencies=auth)
+    def verify_delivery_route(
+        job_id: Identifier,
+        projects: Store,
+        target_lufs: Annotated[float | None, Query(ge=-30.0, le=-6.0)] = None,
+        ceiling_dbtp: Annotated[float | None, Query(ge=-9.0, le=0.0)] = None,
+        duration_tolerance: Annotated[float, Query(ge=0.0, le=5.0)] = 0.25,
+    ):
+        """Verify a delivered file against the plan that job queued, using the engine's instruments.
+
+        `output_checked` only says a probe agreed the file is readable. This reads the file: its
+        length against the compiled plan's, its picture size and rate against the preset's, and its
+        EBU R128 loudness and true peak when the caller names a target. A failing check is a
+        verdict with numbers, not an exception — the answer can be "no, 5.6 LU off".
+        """
+        runtime = require_jobs()
+        engine = require_media()
+        job = runtime.get(job_id)
+        project = projects.get(job.project_id, job.revision)
+        plan = plan_for(
+            project,
+            job.preset_id,
+            sequence_id=job.sequence_id,
+            fit=job.fit,
+            range_mode=job.range,
+            transparent=job.transparent,
+            timecode=job.timecode,
+            output_frame_rate=job.output_frame_rate,
+            colour_tag=job.colour_tag,
+        ).as_dict()
+        return deliverable.verify_delivery(
+            engine.ffmpeg,
+            engine.ffprobe,
+            job,
+            project,
+            plan,
+            target_lufs=target_lufs,
+            ceiling_dbtp=ceiling_dbtp,
+            duration_tolerance=duration_tolerance,
+        )
 
     @app.post("/v1/jobs/{job_id}/cancel", dependencies=auth)
     def cancel_job(job_id: Identifier):

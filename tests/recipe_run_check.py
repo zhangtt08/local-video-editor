@@ -49,7 +49,7 @@ MODELS = ROOT / "desktop/resources/asr"
 PRESET = "h264-720p-web"
 FAILURES: list[str] = []
 
-STEP_COUNTS = {"cut-from-media": 14, "speech-to-captions": 16, "imitate-imported-edit": 16}
+STEP_COUNTS = {"cut-from-media": 15, "speech-to-captions": 17, "imitate-imported-edit": 17}
 
 
 def check(label: str, ok: bool, evidence: object = "") -> None:
@@ -192,7 +192,7 @@ def cut_from_media(client: TestClient, folder: Path) -> dict:
         return {}
     made = first.json()
     rows = shape_of(client, made)
-    check("步骤顺序就是配方那 13 步",
+    check("步骤顺序就是配方那 15 步",
           [row["step"] for row in made["steps"]] == recipe_run.declared_steps("cut-from-media"),
           [row["step"] for row in made["steps"]])
     check("PNG 那两步明写没跑，且给了名字",
@@ -214,6 +214,12 @@ def cut_from_media(client: TestClient, folder: Path) -> dict:
     check("render_plan 交回了编译好的计划与 argv",
           (plan.get("plan") or {}).get("duration_seconds") is not None
           and rows["render_plan"].get("argv", 0) > 2, (sorted(plan), rows["render_plan"]))
+    check("最后那一格是引擎自己读那个文件验的交付",
+          rows["deliver_verify"]["ran"] is True and rows["deliver_verify"]["all_ok"] is True
+          and len(rows["deliver_verify"]["verdicts"]) == 1, rows["deliver_verify"])
+    check("验的时候响度也量在那个文件上（不是混音预测值）",
+          abs(float(rows["deliver_verify"]["verdicts"][0]["loudness"]) + 16.0) <= 1.5,
+          rows["deliver_verify"])
     check("两刀之后 revision 至少 3", int(made["revision"]) >= 3, made["revision"])
     job = made.get("job") or {}
     check("等到终态是 succeeded", job.get("status") == "succeeded", job)
@@ -254,7 +260,7 @@ def speech_to_captions(client: TestClient, folder: Path) -> None:
         return
     made = answer.json()
     rows = shape_of(client, made)
-    check("口播这一刀的步骤就是配方那 15 步",
+    check("口播这一刀的步骤就是配方那 17 步",
           [row["step"] for row in made["steps"]]
           == recipe_run.declared_steps("speech-to-captions"),
           [row["step"] for row in made["steps"]])
@@ -276,6 +282,11 @@ def speech_to_captions(client: TestClient, folder: Path) -> None:
           and "loudness_target_lufs" in rows["master_loudness"]["why"],
           rows["master_loudness"])
     job = made.get("job") or {}
+    check("口播这一刀交付也由引擎验过（没给目标响度就只报不判）",
+          rows["deliver_verify"]["ran"] is True
+          and rows["deliver_verify"]["all_ok"] is True
+          and rows["deliver_verify"]["verdicts"][0]["verdict"] is True,
+          rows["deliver_verify"])
     check("口播这一刀也等到终态", job.get("status") == "succeeded", job)
     out = Path(job.get("output_path") or "")
     if out.is_file():
@@ -310,7 +321,7 @@ def imitate_imported(client: TestClient, folder: Path, document: str, sources: l
     made = answer.json()
     rows = shape_of(client, made)
     edits = [row for row in made["steps"] if row["step"] == "timeline_edit"]
-    check("搬一刀的步骤就是配方那 16 步",
+    check("搬一刀的步骤就是配方那 17 步",
           [row["step"] for row in made["steps"]]
           == recipe_run.declared_steps("imitate-imported-edit"),
           [row["step"] for row in made["steps"]])
@@ -330,6 +341,14 @@ def imitate_imported(client: TestClient, folder: Path, document: str, sources: l
         check(f"{tool} 交回了东西（按字节数）",
               rows[tool]["ran"] is True and rows[tool]["bytes"] > 64, rows[tool])
     check("一次排了两条交付", rows["render_batch"]["jobs"] == 2, rows["render_batch"])
+    batch = rows["deliver_verify"]["verdicts"]
+    check("搬一刀那两条批量交付，每条都被引擎读回文件验过",
+          rows["deliver_verify"]["ran"] is True and len(batch) == 2
+          and all(row["verdict"] is True for row in batch)
+          and rows["deliver_verify"]["all_ok"] is True, rows["deliver_verify"])
+    check("验的就是排出去的那两条作业，不是重复一条",
+          sorted(row["job_id"] for row in batch)
+          == sorted(job["id"] for job in (made.get("jobs") or [])), batch)
     jobs = made.get("jobs") or []
     check("两条交付都等到终态", len(jobs) == 2 and all(job.get("status") == "succeeded"
                                                   for job in jobs),

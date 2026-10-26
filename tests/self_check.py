@@ -452,6 +452,7 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
                 "project_clips",
                 "job_wait",
                 "recipe_run",
+                "deliver_verify",
             }
             assert set(tools) == expected, set(tools) ^ expected
             assert "request" in tools["timeline_edit"].inputSchema["properties"]

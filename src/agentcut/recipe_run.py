@@ -737,6 +737,41 @@ async def _job_wait(door: Door, request: RecipeRun, ctx: dict[str, Any]) -> dict
     )
 
 
+async def _deliver_verify(door: Door, request: RecipeRun, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Ask the engine to read the delivered file, so the caller does not have to own a ffprobe.
+
+    The verdict comes with the numbers behind it: this job's own compiled plan versus what the
+    container says, and EBU R128 read against the loudness the caller asked for. A failing check is
+    an answer, not an exception — `verdict: false` with how far off.
+    """
+    jobs = ctx.get("jobs") or ([ctx["job"]] if ctx.get("job") else [])
+    if not request.verify:
+        return skipped("verify=false：这一刀不验交付，文件与作业照旧交回")
+    if not jobs:
+        return skipped("没有交付作业可验（render=false）")
+    query = "?duration_tolerance=0.25"
+    if request.loudness_target_lufs is not None:
+        query += f"&target_lufs={request.loudness_target_lufs}"
+    verdicts = []
+    for job in jobs:
+        path = f"/v1/jobs/{job['id']}/verify{query}"
+        _status, body = await ask(door, "GET", path)
+        verdicts.append(
+            {
+                "job_id": body.get("job_id"),
+                "verdict": bool(body.get("verdict")),
+                "failed": [row["name"] for row in body.get("checks") or [] if not row["ok"]],
+                "loudness": (body.get("loudness") or {}).get("integrated_lufs"),
+            }
+        )
+    return ran(
+        "GET",
+        "/v1/jobs/{id}/verify",
+        verdicts=verdicts,
+        all_ok=all(row["verdict"] for row in verdicts),
+    )
+
+
 RUNNERS: dict[str, Handler] = {
     "editor_capabilities": _capabilities,
     "media_config": _media_config,
@@ -762,6 +797,7 @@ RUNNERS: dict[str, Handler] = {
     "render_plan": _render_plan,
     "render_start": _render_start,
     "job_wait": _job_wait,
+    "deliver_verify": _deliver_verify,
 }
 
 # 同一个 request_id 再叫一次：建工程那一步会交回它当时的凭据，后面这些写步就不能再写一遍。

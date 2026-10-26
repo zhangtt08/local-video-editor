@@ -8,9 +8,9 @@
 四道：
 ① 现场读随包引擎的 `/v1/agent/manifest`：`recipe_run` 的端点就是那条路由，三条配方都带
    `runnable: true` 与一句参数说明；
-② 真一刀：4 秒源（前 2 秒有声、后 2 秒静）→ 一次 run（render + wait）→ 13 行步骤、
+② 真一刀：4 秒源（前 2 秒有声、后 2 秒静）→ 一次 run（render + wait）→ 15 行步骤、
    作业 succeeded、交付文件在盘上、ffprobe 量到的长度对得上计划；
-③ 真搬一刀：把 ② 那条工程自己导出的 FCPXML 再读进来 → 16 行步骤、一次排一条交付并等到终态——
+③ 真搬一刀：把 ② 那条工程自己导出的 FCPXML 再读进来 → 17 行步骤、一次排一条交付并等到终态——
    证明「补轨道那一圈」在随包二进制上也是同一句话；
 ④ 两条拒绝随包同源：不存在的配方 404，缺参数的在建工程之前 422 `RECIPE_PARAM_MISSING` 点名缺哪样；
 ⑤ 关掉不留尸：按 PID 收整棵子树，之后那一个 PID 不再活着。
@@ -143,11 +143,15 @@ def one_cut_leg(base: str, folder: Path) -> None:
     if status != 200:
         return ""
     steps = made.get("steps") or []
-    check("步骤就是 14 行", len(steps) == 14, [row.get("step") for row in steps])
+    check("步骤就是 15 行", len(steps) == 15, [row.get("step") for row in steps])
     loudness = next((row for row in steps if row.get("step") == "master_loudness"), {})
     check("响度那一刀在随包引擎上也落了混音",
           loudness.get("ran") is True and abs(float(loudness.get("predicted_lufs") or 99) + 16.0)
           <= 0.6, loudness)
+    verify_row = next((row for row in steps if row.get("step") == "deliver_verify"), {})
+    check("随包那一份也自己读文件验了交付",
+          verify_row.get("ran") is True and verify_row.get("all_ok") is True
+          and len(verify_row.get("verdicts") or []) == 1, verify_row)
     job = made.get("job") or {}
     check("随包那一刀交付成功", job.get("status") == "succeeded", job)
     out = Path(job.get("output_path") or "")
@@ -190,7 +194,12 @@ def borrow_leg(base: str, folder: Path, project_id: str) -> None:
     check("搬来的一刀也排到了终态",
           len(jobs) == 1 and jobs[0].get("status") == "succeeded", jobs)
     steps = [row.get("step") for row in made.get("steps") or []]
-    check("搬一刀的步骤是 16 行", len(steps) == 16, steps)
+    check("搬一刀的步骤是 17 行", len(steps) == 17, steps)
+    verify_row = next((row for row in made["steps"]
+                       if row.get("step") == "deliver_verify"), {})
+    check("随包搬一刀也由引擎验了那一条交付",
+          verify_row.get("ran") is True and verify_row.get("all_ok") is True
+          and len(verify_row.get("verdicts") or []) == 1, verify_row)
     last = [row for row in made["steps"] if row.get("step") == "timeline_edit"][-1]
     print(f"   随包搬一刀：落库 {last.get('commands')} 条命令，"
           f"交付 {jobs[0].get('filename')}，等了 {made.get('waited_ms')} ms")
