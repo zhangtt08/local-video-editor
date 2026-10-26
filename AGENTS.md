@@ -6703,3 +6703,16 @@ revision 4、等了 516 ms；搬那一趟 514 ms 到终态；关掉按 PID 收�
 引擎冷启 731 ms（裸）/ 811 ms（走 `main.ts` 那条读法）。
 
 空机单跑 **177/177 checks passed**（`SUITE_EXIT=0`），跑的就是交付出去的那一份树。
+
+### 交付清单与体积（1.313 收口）
+
+目录从 **2594.0 MB 收到 410.6 MB**；清单与 1.312 收口那一节一字不改（留下的还是能双击的、
+能读的、重建要的），变的只有交付物本身：
+
+- 根 `AgentCut.exe` **185,438,330 B**，sha256 前缀 `93392d6f0aa14946`，与
+  `desktop/release/AgentCut-便携版.exe` 逐字节核过；asar 1.313.0 / 84 文件 / 随包 73 句可读中文。
+- 门禁总数仍是 **177 档**（这一版是给 `recipe_run_check` 与 `packaged_reciperun_check`
+  各加一格响度的实测，没新增档）；空机单跑 **177/177（`SUITE_EXIT=0`）** 在精简之前那一份
+  完整环境里跑的，删完 `git status` 报「被删的 tracked 文件 0」。
+- 删掉的可再生产物与重建链同 1.312 那一节（`npm ci` → `npm run build` →
+  `scripts/build_engine.py --verify --no-uv` → `npm run dist` + 复制便携版 → 空机单跑）。
