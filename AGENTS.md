@@ -6265,3 +6265,64 @@ MCP 以前只有 tools + 两只资源。现在加 `agentcut://manifest`（同一
 
 一句要说准的话：72 MB 这台引擎**不是免费的**——用户真用了才会起，用完关掉就走；
 这条腿保证「关掉就走」不只是文档里的一句话。
+
+
+### 发布账（1.308 与 1.309）
+
+两版连在一起发，因为说的是同一件事的两半：**引擎什么时候起、什么时候走**。
+
+- 1.308：外壳第一帧就画出来，全屏的「正在启动本地引擎」门与 `BootScreen`/`FailedScreen` 一起删掉；
+  引擎进程等第一次真使用（指针/键盘落下，捕获阶段）才在后台起，起不来退回 idle + 一句 toast，
+  下一次点击就是重试。`Engine` 多了 `park()/target()`，四个 fetch 出口排在同一条稳定的 waiter 上——
+  改动因此只落在那四处，而不是六十多个 `engine!` 调用点。`whenReady` 不再 `startBackend()`，
+  `engine:status` 让界面重载后接回用户已经用过的那一台。
+- 1.309：关掉软件要等于关掉那台引擎。`child.kill()` 在 Windows 上只杀引导进程那一个 PID，
+  随包引擎（PyInstaller）下面挂着的真引擎变成孤儿，实测留下一台约 72 MB 的 `agentcut.exe`。
+  桌面与桥都改成 `taskkill /F /T`（按进程树，且必须赶在杀父之前），spawn 时补 `--exit-with-parent`；
+  装机腿加一条会红的 `engineAfterQuit`——第一次跑就抓到孤儿，正说明它数的是真事。
+- 1.309 顺带修了一条用户碰得到的竞态：右键菜单的焦点会被 Chromium「点谁聚焦谁」的默认动作盖掉，
+  于是方向键进不去菜单。`ContextMenu` 改成等一帧再搬焦点；量具也改成等焦点落定，
+  红的时候把 `activeElement` 的 class 与文字一起带回来。
+- 补的旧账：1.307 把桥改成契约派生之后，`tests/agentapi_check.py` 一路是红的（当时没单跑这一档）。
+  现在它按契约的调用形状发命令，尺子从 `agent_contract.manifest` 现取。
+
+**这套版本号的验收只认一次空机单跑**：`tests/suite_check.py` **174/174 全绿**
+（2026-10-26 17:10 那次，跑的时候没有别的构建在动）。期间踩到过两次假红——
+`contextmenu_check` 在满载时读焦点读早了、`packaged_ui_check` 的临时目录被 Chromium 压着删不掉；
+两处都改成等真条件 + 当场点名残留进程，而不是加 sleep。
+
+### 交付清单与体积（1.309 收口）
+
+目录从 **2.59 GB 收到约 404 MB**（逐文件求和，含 `.git`；这份文档提交之后会长一点点，
+每多一次提交多几 KB 到几 MB）。留下的是能双击的、能读的、以及跑门禁要的：
+
+- `AgentCut.exe`（**185,410,514 B**，sha256 前缀 `400e9a1eb30cfbb0`）——双击即开；Electron 壳、
+  随包 FFmpeg 与冻结引擎都在里面（便携版）。与 `desktop/release/AgentCut-便携版.exe` 逐字节相同（当场核过）。
+- `src/ agent/ scripts/ tests/ docs/ design/ examples/` 与 `desktop/{src,electron,package.json,*.json,*.ts}`
+  ——174 档门禁（含 `tests/desktop_lazyboot_check.ts` 所在的 96 只界面自检）与重建脚本都在这里。
+- `desktop/resources/bin/`（299.1 MB：随包 FFmpeg/ffprobe 与 media-stamp）与 `desktop/resources/asr/`
+  （65.1 MB 离线字幕模型）——预览、导出与字幕要的二进制，**不在**可删列表里。
+- `data/`（1.2 MB）本机工程与素材；`AGENTS.md`、`README.md`、`pyproject.toml`、`uv.lock`。
+
+删掉的都可再生（实测体积与重建命令）：
+
+- `desktop/node_modules/`（827.6 MB）→ `cd desktop && npm ci`
+- `desktop/release/`（926.9 MB，win-unpacked + 安装版 + 便携版 + blockmap）→ `cd desktop && npm run dist`，
+  再把 `desktop/release/AgentCut-便携版.exe` 复制成根 `AgentCut.exe`（两份必须逐字节相同）
+- `.venv/`（138.5 MB）→ `uv sync`
+- `build/`（127.9 MB）与 `desktop/resources/bin/agentcut/`（160.0 MB）→
+  `.venv/Scripts/python.exe scripts/build_engine.py --verify --no-uv`
+- `desktop/dist/`、`desktop/dist-electron/`、`desktop/build/`（合计约 1.4 MB）→ `cd desktop && npm run build`
+- `.ruff_cache/`、`__pycache__/`
+
+重建后按这个顺序验：
+
+1. `uv sync` 与 `cd desktop && npm ci`
+2. `cd desktop && npm run build`
+3. `.venv/Scripts/python.exe scripts/build_engine.py --verify --no-uv`
+4. `cd desktop && npm run dist`，复制便携版成根 `AgentCut.exe`
+5. `.venv/Scripts/python.exe tests/suite_check.py`（空机单跑，只认这一次）
+
+占用的账（同日实测）：随包引擎报 ready 813 ms、空转工作集 72.4 MB 不漂；
+装机外壳空转 4 个进程、合计 331.2 MB，且这时机器上一台引擎都没有。
+磁盘这一刀砍掉 2.18 GB 的可再生物，运行时这一刀砍掉「不开也占着的那台引擎」。
