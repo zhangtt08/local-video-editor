@@ -6676,3 +6676,30 @@ revision（下一扇门直接 `REVISION_CONFLICT`，红在「一次调用跑完�
 
 这一步多写一个 revision（那一趟从 1.312 的 revision 3 变成本版的 4），交付仍是同一次调用里
 等到终态——实测那一刀 `waited_ms` 500 ms、交付 1.00 s、响度 -16.1 LUFS。`APP_VERSION` 1.313.0。
+
+### 发布账（1.313）
+
+只动了配方与那一刀的执行表，界面一行没改（`engine.ts` 不动，能力位不动）：
+
+* `cut-from-media` 13 → 14 步、`speech-to-captions` 15 → 16 步，多出来的是 `master_loudness`；
+  参数多一个 `loudness_target_lufs`（-30..-6），不给就是不动混音，那一行交回 `ran: false`
+  与点名缺的那一样。
+* `params` 那句话同步改了口径——门禁钉的是「必填项要点名」，这一步是可选的，所以那句以
+  「决定要不要顺手把混音落到位」的写法进 `params`，不冒充必填。
+* 引擎侧没有新规则：量的还是 `loudness.probe_mix`（导出同一张音频图 + FFmpeg 的 EBU R128 表），
+  写的还是那一次 `project.update`。
+
+响度这一档故意不用引擎自己交回的数自证：门禁跑 FFmpeg 的 `ebur128` 量**交付出去的文件**，
+实测 **-16.1 LUFS** 对目标 -16.0（允差 1.5）。同一档在变异台里量到 **-21.7**——
+那正是把这一步偷偷改成永远跳过之后的样子，红在两条断言上（响度那一行 + 交付实测）。
+另两刀：落完响度不推进 revision → 下一扇门 `REVISION_CONFLICT`，红在「一次调用跑完」与重放
+那几道；执行表里不登记这一步 → 三条「每一步都有执行步」与运行时 `RECIPE_STEP_UNIMPLEMENTED`
+一起红。三刀跑完都按 sha256 核过还原。
+
+装机腿（随包那台 `agentcut.exe`）跟着加了一格：manifest 三条都 `runnable` 且带 `params`、
+一刀 14 步、响度那一行 `predicted_lufs` 对得上目标，交付仍是 4.00 s 源 → 0.60 s，
+revision 4、等了 516 ms；搬那一趟 514 ms 到终态；关掉按 PID 收子树不留进程。
+`released_package_check` 认下 asar 1.313.0 / 84 文件 / 随包引擎就是建出来的那一份 / 73 句可读中文。
+引擎冷启 731 ms（裸）/ 811 ms（走 `main.ts` 那条读法）。
+
+空机单跑 **177/177 checks passed**（`SUITE_EXIT=0`），跑的就是交付出去的那一份树。
