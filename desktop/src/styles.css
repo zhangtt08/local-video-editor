@@ -627,7 +627,7 @@ select { color-scheme: dark; }
 .tl-row { display: flex; align-items: stretch; }
 .tl-row.ruler-row { height: 26px; position: sticky; top: 0; z-index: 30; background: var(--panel); }
 .tl-head {
-  width: 112px; flex: none; position: sticky; left: 0; z-index: 20;
+  width: 112px; flex: none; position: sticky; left: 0; z-index: 31;
   background: var(--panel); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
   display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 0 8px;
 }
@@ -642,7 +642,10 @@ select { color-scheme: dark; }
 .tl-lane.audio-track { background: var(--sunk); }
 .tl-window-note { color: var(--ink-3); font-size: var(--fs-label); }
 /* 1.230：纵向放不下的那几条轨要有名字——一块可以点的胶囊，不是一句只能看的灰字。 */
-.tl-more-tracks { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 4; width: auto; border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--elev); color: var(--ink-2); padding: 3px 12px; cursor: pointer; box-shadow: var(--shadow-md); }
+/* 「上面/下面还有 N 条轨」是**流里的一条细带**，不是浮在轨道上的胶囊：浮起来会盖住片段与它的角标，
+   1.298 的量具当场抓到「点不到」与「字压字」。它只在真有轨被折在外头时出现，占 22px。 */
+.tl-more-tracks { align-self: flex-start; width: auto; height: 22px; margin: 0 0 0 12px; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--elev); color: var(--ink-2); font-size: var(--fs-label); cursor: pointer; }
+.tl-more-tracks:hover { background: var(--elev); color: var(--ink); }
 .tl-more-tracks:hover { background: var(--float); }
 .lane-hint { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: var(--fs-label); color: #808897; pointer-events: none; }
 .row-count { display: none; }
@@ -1670,7 +1673,7 @@ html[data-theme="light"] .lib-card { background: #fff; color: var(--ink); }
   flex: 1; min-width: 0; font-size: var(--fs-label); font-weight: 500; color: #fff;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.lib-len { flex: none; font-size: var(--fs-micro); color: rgba(255, 255, 255, .72); }
+.lib-len { flex: none; font-size: var(--fs-label); color: rgba(255, 255, 255, .72); }
 .lib-kind { top: 4px; bottom: auto; background: rgba(6, 5, 14, .72); backdrop-filter: blur(6px); }
 .lib-add {
   position: absolute; right: 7px; bottom: 34px;
@@ -1821,7 +1824,9 @@ html[data-theme="light"] .ai-card { background: #fbf9ff; color: var(--ink); }
 }
 .tl-hint { color: var(--ink-3); }
 .tl-scroll { background: transparent; }
-.tl-row.ruler-row { background: transparent; height: 28px; border-bottom: 1px solid var(--line); }
+/* 标尺是 sticky 的：它必须有实底，否则滚动起来的片段会从刻度底下透出来（1.298 量到过字压字）。 */
+.tl-row.ruler-row { background: var(--panel); height: 28px; border-bottom: 1px solid var(--line); }
+.tl-row { scroll-margin-top: 30px; }
 .tl-head {
   width: 128px; background: var(--sunk);
   border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
@@ -1835,7 +1840,9 @@ html[data-theme="light"] .tl-lane { background: rgba(28, 20, 52, .015); }
 .ruler-label { color: var(--ink-3); font-family: var(--mono); }
 .ruler-tick { background: var(--line-strong); }
 .ruler-tick.big { background: var(--ink-3); }
-.clip { border-radius: var(--r-sm); top: 6px; bottom: 6px; }
+.clip { border-radius: var(--r-sm); top: 6px; bottom: 6px; scroll-margin-top: 30px; }
+/* 时间线矮的时候曲线编辑器会比卡片高：让它自己能滚，而不是把底下一行字静默切掉（1.298 量到过）。 */
+.curve-editor { overflow: auto; }
 .clip.video { background: linear-gradient(180deg, #272052, #1c1838); border-color: #4f3fa0; }
 html[data-theme="light"] .clip.video { background: linear-gradient(180deg, #efe7ff, #e4daff); }
 .clip.audio { background: linear-gradient(180deg, #123338, #10282c); border-color: #2f6f70; }

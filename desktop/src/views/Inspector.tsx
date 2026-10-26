@@ -139,7 +139,12 @@ export function Inspector({ group = "basic" }: { group?: InspGroup }) {
           <span className="panel-label">片段</span>
           {clip ? <span className="tag mono">{humanDuration(clip.duration_ticks)}</span> : null}
         </div>
-        {!clip ? <div className="empty-note tiny">点时间线上的片段，这里可以改它的起止</div> : <><p className="ellipsis" title={clip.text?.body ?? project?.assets[clip.asset_id]?.label}>{clip.text?.body ?? project?.assets[clip.asset_id]?.label}</p><details open><summary className="panel-label">时间与剪辑</summary><fieldset className="effects-fields" disabled={Boolean(app.busy || !readyProject || project?.tracks.find((t) => t.id === clip.track_id)?.locked)}><ClipFields clip={clip} /></fieldset></details></>}
+        {!clip ? <div className="empty-note tiny">点时间线上的片段，这里可以改它的起止</div> : <>
+          {/* 名字在 `ClipFields` 自己的标题行里已经有一次（`.ch-name`）；这里再印一遍 `<p>` 就是同一个名字
+              连说两次。那层 `<details open>` 也撤了：属性页已经是「一次只渲染一档」，再套一层折叠是第三层。 */}
+          <div className="panel-label">时间与剪辑</div>
+          <fieldset className="effects-fields" disabled={Boolean(app.busy || !readyProject || project?.tracks.find((t) => t.id === clip.track_id)?.locked)}><ClipFields clip={clip} /></fieldset>
+        </>}
       </section> : null}
 
       {show("basic") && clip ? <SpeedFields key={`speed-${clip.id}`} clipId={clip.id} /> : null}

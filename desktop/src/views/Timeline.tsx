@@ -269,7 +269,18 @@ export function Timeline() {
   const clamped = room && room.wanted - room.got > 1 && app.splitterTouched ? room : null;
 
   // 1.230：选中哪一段，就把它所在的那一行带进视野。横向一个像素都不许变——横向是「看时间」
-  // 的那一维，为了露出整行而滚到别处，会把播放头那一格甩出屏幕（所以先记下、滚完放回去）。
+  /** 把一行滚进视野，并且**不许**停在顶部那条 sticky 标尺底下——停在那儿，行里的控件就点不到了
+ *  （1.298 量到过：轨道头三颗按钮与片段都被 `div.tl-ruler` 盖住）。不用 `scrollIntoView`：
+ *  它的 `scroll-margin` 在「已经部分可见」时不会挪，而这里要的正是「挪出标尺」这一下。 */
+function revealRow(scroll: HTMLElement, row: HTMLElement) {
+  const band = scroll.querySelector<HTMLElement>(".tl-row.ruler-row")?.offsetHeight ?? 28;
+  const top = row.offsetTop;
+  const bottom = top + row.offsetHeight;
+  if (top < scroll.scrollTop + band) scroll.scrollTop = Math.max(0, top - band);
+  else if (bottom > scroll.scrollTop + scroll.clientHeight) scroll.scrollTop = bottom - scroll.clientHeight;
+}
+
+// 的那一维，为了露出整行而滚到别处，会把播放头那一格甩出屏幕（所以先记下、滚完放回去）。
   useEffect(() => {
     const scroll = scrollRef.current;
     const clip = project && app.selectedClips.length ? project.clips[app.selectedClips[0]] : null;
@@ -278,7 +289,7 @@ export function Timeline() {
     const target = row < 0 ? undefined : scroll.querySelectorAll<HTMLElement>(".tl-row:not(.ruler-row)")[row];
     if (!target) return;
     const left = scroll.scrollLeft;
-    target.scrollIntoView({ block: "nearest", inline: "nearest" });
+    revealRow(scroll, target);
     scroll.scrollLeft = left;
   }, [app.selectedClips, project?.id]);
 
@@ -290,7 +301,7 @@ export function Timeline() {
     if (scroll && count > trackCount.current) {
       const rows = scroll.querySelectorAll<HTMLElement>(".tl-row:not(.ruler-row)");
       const left = scroll.scrollLeft;
-      rows[rows.length - 1]?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      if (rows[rows.length - 1]) revealRow(scroll, rows[rows.length - 1]);
       scroll.scrollLeft = left;
     }
     trackCount.current = count;

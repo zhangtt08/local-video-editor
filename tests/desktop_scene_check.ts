@@ -66,7 +66,14 @@ assert.match(mcp, /"apply": False, "dry_run": False/, "MCP 没有强制只读");
 // ④ 界面：能力位、素材类型、store 那一个函数、空计划不写。
 assert.match(inspector, /app\.caps\?\.features\?\.scene_split && asset\?\.kind === "video" && !asset\.sequence_id/, "按钮没有受能力位与素材类型管");
 // 1.282：片段操作（含这颗按钮）住在「时间与剪辑」里；那一节默认折叠的话，选中片段的人根本看不见它。
-assert.match(inspector, /<details open><summary className="panel-label">时间与剪辑<\/summary>/, "片段操作默认藏在折叠里");
+// 1.298：那一节不再套一层折叠（属性页本来就是「一次只渲染一档」，再套一层是第三层），
+// 所以判据从「必须写成 <details open>」换成「没有任何一处把它折起来」——藏起来仍然是红的。
+assert.match(inspector, /时间与剪辑/, "片段操作那一节的标题不见了");
+assert.doesNotMatch(
+  inspector,
+  /<details(?![^>]*\bopen\b)[^>]*>\s*<summary[^>]*>时间与剪辑/,
+  "片段操作默认藏在折叠里"
+);
 assert.match(inspector, /onClick=\{\(\) => void splitScenes\(clip\.id\)\}/, "按钮没有调 store");
 assert.match(inspector, /disabled=\{Boolean\(clip\.speed_curve\)\}/, "带速度曲线的片段按钮没有灰");
 assert.match(store, /export async function splitScenes\(clipId: string\)/, "store 里没有 splitScenes");

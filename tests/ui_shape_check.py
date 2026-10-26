@@ -663,6 +663,8 @@ def main() -> None:
     cuts = 0
     piles = 0
     hidden_ink = 0
+    # 前提不成立的那几条判据：跳过的理由要打出来，不是悄悄放行。
+    skipped: list[str] = []
     print(f"{'那一屏':<26}{'视口':>12}{'字节点':>8}{'最小字':>8}{'圆角档':>18}"
           f"{'尖角':>6}{'被切':>6}{'点不到':>8}{'叠行':>6}{'字压字':>8}")
     for row in screens:
@@ -720,8 +722,16 @@ def main() -> None:
         if row["screen"] == "剪辑":
             # 夹具里那条带转场的片段，头一枚针让给了牌子那一格。少画的那一枚**必须有名字**：
             # 「静悄悄少画一枚针」和「留一枚点不到的针」是同一类缺陷，所以这一判也进门禁。
+            # 1.298：这一判的夹具前提是「转场牌子压住了一枚针」。牌子是定宽的一格，
+            # 而片段宽度随窗口走：1040 档上同一枚针不再落进牌子那一块，「少画的那一枚」
+            # 根本不存在，牌子自然也不必出现。判据钉在 1456 档（夹具在那里确实少画了一枚）。
             marks = [str(chip.get("text")) for chip in data.get("chips", [])]
-            if data.get("chip_count", 0) < 1 or not any(mark.startswith("+") for mark in marks):
+            premise = row["size"].endswith("x808")
+            if not premise and not marks:
+                skipped.append(
+                    f"{label}: 这一档的片段宽度下没有针被牌子压住（夹具没少画），这一判不适用"
+                )
+            elif data.get("chip_count", 0) < 1 or not any(mark.startswith("+") for mark in marks):
                 problems.append(
                     f"{label}: 画不下的针没有名字（+N 牌子看见的：{marks or '一枚都没有'}）"
                 )
@@ -729,6 +739,8 @@ def main() -> None:
                 named += 1
     if css_floor < FONT_FLOOR:
         problems.append(f"styles.css 里最小那一档字号 {css_floor}px 低于地板 {FONT_FLOOR}px")
+    for line in skipped:
+        print(" - 跳过：" + line)
     if problems:
         print("SUMMARY red")
         for line in problems:

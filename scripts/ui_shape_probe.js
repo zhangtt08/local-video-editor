@@ -111,6 +111,8 @@ function measureAgentCutUi() {
   var unreachable = [];
   var scrollAway = [];
   var scrimBehind = [];
+  // 滚到时间线顶部那条 sticky 标尺底下、因此点不到的控件：滚回去就点得到，记名不算缺陷。
+  var scrolledUnder = [];
   // 「+N」那一格：画不下的针必须有个名字。这里只收真正在屏上的那几枚牌子与它写的数目，
   // 门禁据此判「少画了却没人说」——静悄悄少画一枚针，与点不到的那枚一样是缺陷。
   var chips = [];
@@ -352,7 +354,14 @@ function measureAgentCutUi() {
           }
           owner = owner.parentElement;
         }
-        if (behindModal) {
+        // 时间线顶部那条标尺（以及左下角那一格）是 sticky 的：同一只滚动容器里的行滚到它底下时点不到，
+        // 滚回去就点得到——这是设计如此，与「被一张无关的浮层盖住」不是一件事。只认这一条带，
+        // 别的挡住照样红；被让过的那几枚记在 scrolledUnder 里，量具会数个数量。
+        var band = hit.closest ? hit.closest(".tl-row.ruler-row, .tl-head.corner") : null;
+        var sameScroller = band && el.closest && el.closest(".tl-scroll") === band.closest(".tl-scroll");
+        if (band && sameScroller) {
+          scrolledUnder.push((text || el.getAttribute("aria-label") || tag).slice(0, 24));
+        } else if (behindModal) {
           // 不是缺陷，但要留名：哪天某一屏不该有模态却有了，这一行会说出来。
           scrimBehind.push((text || el.getAttribute("aria-label") || tag).slice(0, 24));
         } else unreachable.push({
@@ -486,6 +495,7 @@ function measureAgentCutUi() {
     href: location.href,
     scrim: scrim,
     behind_scrim_count: scrimBehind.length,
+    scrolled_under: scrolledUnder,
     layout_boxes: boxes,
     viewport: { width: innerWidth, height: innerHeight },
     nodes: all.length,
@@ -510,6 +520,18 @@ function measureAgentCutUi() {
     scroll_away: scrollAway.slice(0, 10),
     scroll_away_count: scrollAway.length,
     chips: chips.slice(0, 8),
+    // 屏幕上真的看得见的针有几枚、转场牌子在不在：1.298 起「画不下的针要有名字」这一判
+    // 只在针本身在卡内时才成立——时间线矮到把那一行裁掉时，牌子在卡外是另一件事。
+    needle_visible: (function () {
+      var card = document.querySelector(".ed-timeline") || document.querySelector(".tl-scroll");
+      if (!card) return 0;
+      var box = card.getBoundingClientRect();
+      return Array.prototype.filter.call(document.querySelectorAll(".clip-keyframe"), function (el) {
+        var r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && r.top >= box.top && r.bottom <= box.bottom;
+      }).length;
+    })(),
+    seam_badge: document.querySelectorAll(".transition-badge").length,
     chip_count: chips.length,
     truncated_selects: truncatedSelects.slice(0, 8),
     truncated_select_count: truncatedSelects.length,

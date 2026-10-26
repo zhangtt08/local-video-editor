@@ -15,11 +15,20 @@ export function StatusBar() {
     (TIMEBASE * (project?.settings.frame_rate.denominator ?? 1)) / (project?.settings.frame_rate.numerator ?? 30)
   );
 
+  // 首页（项目列表）不是编辑器：那里写「播放头 0.00s · 吸附 开 · 62px/s · 起点」说的是另一个界面的状态。
+  const inEditor = app.view === "editor" && Boolean(project);
+
   return (
     <footer className="statusbar">
-      <span className="status-item mono" title="播放头位置">
-        {(play.ticks / TIMEBASE).toFixed(2)}s
-      </span>
+      {inEditor ? (
+        <span className="status-item mono" title="播放头位置">
+          {(play.ticks / TIMEBASE).toFixed(2)}s
+        </span>
+      ) : (
+        <span className="status-item" title="本机工程总数">
+          {app.projects.length} 个工程
+        </span>
+      )}
       {edit.showTicks ? (
         <>
           <span className="sep" />
@@ -29,7 +38,7 @@ export function StatusBar() {
         </>
       ) : null}
       <span className="spacer" />
-      {app.busy ? (
+      {!inEditor ? null : app.busy ? (
         <span className="status-item busy">
           <span className="spinner" />
           {app.busy}
@@ -45,24 +54,28 @@ export function StatusBar() {
             : "从左侧素材库拖一段进来开始"}
         </span>
       ) : null}
-      <span className="sep" />
-      <span className="status-item" title="按 S 切换：开启后拖动会自动贴到整帧">
-        吸附 <b>{edit.snap ? "开" : "关"}</b>
-      </span>
-      <span className="sep" />
-      <span className="status-item mono" title="时间线缩放">
-        {edit.pxPerSec}px/s
-      </span>
-      <span className="sep" />
-      <IconBtn
-        icon="info"
-        label={edit.showTicks ? "隐藏精确数值" : "显示精确数值（tick）：与 Agent 对时时有用"}
-        active={edit.showTicks}
-        onClick={prefs.toggleTicks}
-      />
-      <button type="button" className="status-item link" title="播放头回到起点（Home）" onClick={() => playhead.set(0)}>
-        <Icon name="start" size={11} /> 起点
-      </button>
+      {inEditor ? (
+        <>
+          <span className="sep" />
+          <span className="status-item" title="按 S 切换：开启后拖动会自动贴到整帧">
+            吸附 <b>{edit.snap ? "开" : "关"}</b>
+          </span>
+          <span className="sep" />
+          <span className="status-item mono" title="时间线缩放">
+            {edit.pxPerSec}px/s
+          </span>
+          <span className="sep" />
+          <IconBtn
+            icon="info"
+            label={edit.showTicks ? "隐藏精确数值" : "显示精确数值（tick）：与 Agent 对时时有用"}
+            active={edit.showTicks}
+            onClick={prefs.toggleTicks}
+          />
+          <button type="button" className="status-item link" title="播放头回到起点（Home）" onClick={() => playhead.set(0)}>
+            <Icon name="start" size={11} /> 起点
+          </button>
+        </>
+      ) : null}
     </footer>
   );
 }
