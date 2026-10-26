@@ -54,6 +54,11 @@ export function Assets() {
           (!query || `${item.label} ${item.id}`.toLowerCase().includes(query.toLowerCase()))
       )
     : [];
+  // 这一屏里有没有「还没登记进本工程」的素材：全登记过的时候，「已入工程」四枚角标只是四份噪音。
+  const registered = new Set(
+    Object.values(project?.assets ?? {}).map((asset) => asset.verified?.path)
+  );
+  const mixed = library.some((item) => !registered.has(item.probe.verified.path));
 
   return (
     <aside className="panel">
@@ -138,7 +143,7 @@ export function Assets() {
           ) : (
             <div className="asset-grid">
               {library.map((item) => (
-                <LibraryCard key={item.probe.id} item={item} />
+                <LibraryCard key={item.probe.id} item={item} flag={mixed} />
               ))}
             </div>
           )
@@ -186,7 +191,7 @@ export function Assets() {
   );
 }
 
-function LibraryCard({ item }: { item: import("../store").LibraryItem }) {
+function LibraryCard({ item, flag }: { item: import("../store").LibraryItem; flag: boolean }) {
   const app = useApp();
   const info = item.probe.verified;
   const already = Object.values(app.project?.assets ?? {}).some((asset) => asset.verified?.path === info.path);
@@ -219,7 +224,8 @@ function LibraryCard({ item }: { item: import("../store").LibraryItem }) {
             <Icon name={info.kind === "video" ? "film" : "music"} size={16} />
           </span>
         )}
-        {already ? <span className="lib-flag" title="已登记进当前工程">已入工程</span> : null}
+        {/* 四个格子全都入过工程时，这枚角标四个字重复四遍，只剩噪音；混着「未入工程」时它才是信息。 */}
+        {already && flag ? <span className="lib-flag" title="已登记进当前工程">已入工程</span> : null}
         {/* 名字压在缩略图底部的渐变条上：参考图那个格子就是「图 + 角标」，没有第二行小字。
             名字与时长同一行，两行卡正好装进这张卡——以前名字在下面另起一行，四个素材就只看得见
             一行半。 */}

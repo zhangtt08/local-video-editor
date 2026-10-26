@@ -644,7 +644,7 @@ select { color-scheme: dark; }
 /* 1.230：纵向放不下的那几条轨要有名字——一块可以点的胶囊，不是一句只能看的灰字。 */
 /* 「上面/下面还有 N 条轨」是**流里的一条细带**，不是浮在轨道上的胶囊：浮起来会盖住片段与它的角标，
    1.298 的量具当场抓到「点不到」与「字压字」。它只在真有轨被折在外头时出现，占 22px。 */
-.tl-more-tracks { align-self: flex-start; width: auto; height: 22px; margin: 0 0 0 12px; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--elev); color: var(--ink-2); font-size: var(--fs-label); cursor: pointer; }
+.tl-more-tracks { align-self: flex-end; width: auto; height: 22px; margin: 0 12px 0 0; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--elev); color: var(--ink-2); font-size: var(--fs-label); cursor: pointer; }
 .tl-more-tracks:hover { background: var(--elev); color: var(--ink); }
 .tl-more-tracks:hover { background: var(--float); }
 .lane-hint { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: var(--fs-label); color: #808897; pointer-events: none; }
@@ -726,7 +726,7 @@ select { color-scheme: dark; }
 .playhead::after { content: ""; position: absolute; top: 0; left: -5.5px; border: 5.5px solid transparent; border-top-color: var(--accent); border-bottom: none; }
 /* 时间牌压在标尺**之下**：压在标尺上会盖住「00:00」与第一格刻度；翻到线左边则会钻到轨道头
    那一列底下（那一列后画，压在上面）。 */
-.playhead .ph-time { position: absolute; top: 26px; left: 7px; font-size: var(--fs-micro); color: var(--accent-deep); background: var(--accent-soft); border-radius: var(--r-pill); padding: 1px 6px; white-space: nowrap; }
+.playhead .ph-time { position: absolute; top: 3px; left: 7px; font-size: var(--fs-micro); color: var(--accent-deep); background: var(--accent-soft); border-radius: var(--r-pill); padding: 1px 6px; white-space: nowrap; }
 .tl-track-divider { height: 5px; background: var(--bg); border-bottom: 1px solid var(--line); }
 .tl-empty { display: flex; align-items: center; gap: 8px; padding: 18px 16px; color: var(--ink-3); font-size: var(--fs-body); }
 .tl-warning { display: flex; align-items: center; gap: 7px; padding: 6px 10px; font-size: var(--fs-label); color: var(--danger); background: var(--danger-soft); border-top: 1px solid #754147; }

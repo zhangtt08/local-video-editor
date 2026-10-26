@@ -28,7 +28,11 @@ assert.ok(reveal, "选中片段之后没有人把那一行带进视野");
 assert.match(reveal[0], /project!\.tracks\.findIndex\(\(track\) => track\.id === clip\.track_id\)/,
   "没有按片段自己那条轨去找行");
 assert.match(reveal[0], /\.tl-row:not\(\.ruler-row\)/, "行要按轨道行取，标尺那一行不算");
-assert.match(reveal[0], /scrollIntoView\(\{ block: "nearest", inline: "nearest" \}\)/, "没滚到最近的那一处");
+// 1.300：滚进视野这件事由 `revealRow` 做（它按标尺高度让开顶部那条 sticky 带），
+// 不再直接调 `scrollIntoView`——`scroll-margin` 在「已部分可见」时不挪，行会停在标尺底下。
+assert.match(reveal[0], /revealRow\(scroll, target\)/, "没把那一行带进视野");
+assert.match(timeline, /function revealRow\(scroll: HTMLElement, row: HTMLElement\)/, "带进视野的助手不见了");
+assert.match(timeline, /ruler-row"\)\?\.offsetHeight/, "助手没有按标尺高度让开（那样行会停在标尺底下）");
 assert.match(reveal[0], /const left = scroll\.scrollLeft;/, "滚动前没记下横向位置");
 assert.match(reveal[0], /scroll\.scrollLeft = left;/, "横向被 scrollIntoView 改了——播放头那一格会被甩出屏幕");
 
@@ -36,7 +40,7 @@ assert.match(reveal[0], /scroll\.scrollLeft = left;/, "横向被 scrollIntoView 
 const added = /  const trackCount = useRef\(project\?\.tracks\.length \?\? 0\);[\s\S]*?\n  \}, \[project\?\.tracks\.length\]\);/.exec(timeline);
 assert.ok(added, "加轨之后没有人滚到新那一行");
 assert.match(added![0], /count > trackCount\.current/, "加轨的判断不在（比较轨数的那一刻）");
-assert.match(added![0], /rows\[rows\.length - 1\]\?\.scrollIntoView/, "滚的不是最后一行");
+assert.match(added![0], /revealRow\(scroll, rows\[rows\.length - 1\]\)/, "滚的不是最后一行");
 assert.match(added![0], /scroll\.scrollLeft = left;/, "加轨这一路也会把横向位置带走");
 
 // ③ 还有几条轨：数的是没整行露出来的轨道行，点一下滚到底

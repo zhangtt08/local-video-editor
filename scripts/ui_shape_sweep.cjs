@@ -352,6 +352,15 @@ async function sweepOne(size, hostPort, probeSource) {
       rows.push({ screen, panel: flag("panel", ""), size, data, markers, state });
       if (SHOTS) {
         // 证据要能给人眼复核：判据是量出来的，但「挡住」还是「量具看错」值得留一张图。
+        // 拍之前先等画面里那几张 `loading="lazy"` 的图解码完——新引擎上第一次会晚一拍，
+        // 那一拍拍出来的素材格子是全黑的（1.298 复盘时被当成过缺陷，重拍一次就没了）。
+        await evaluate("(async () => { const imgs = Array.prototype.slice.call(document.querySelectorAll('img'));"
+          + "const seen = imgs.filter((i) => { const r = i.getBoundingClientRect();"
+          + "return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < innerHeight; });"
+          + "await Promise.all(seen.map((i) => i.complete ? null : new Promise((done) => {"
+          + "i.addEventListener('load', done, { once: true });"
+          + "i.addEventListener('error', done, { once: true });"
+          + "setTimeout(done, 3000); }))); return seen.length; })()");
         const shot = await cdp.send("Page.captureScreenshot", { format: "png" }, 30000);
         if (shot && shot.data) {
           const file = path.join(SHOTS, (THEME ? THEME + "-" : "") + (flag("panel", "") || "p") + "-" + String(screen).replace(/[\\/:*?"<>|\u0000-\u001f]/g, "") + "-" + size + ".png");
