@@ -91,7 +91,7 @@ const HEAD = 112;
 const ROW = 68;
 /** 卡片窄过这个宽度就不画时长那一格（名字比数字要紧）。12.5px 的字、`12.34s` 六格约 46px，
  *  再给名字留出三四个字的余量——这是判断，不是量出来的边界。 */
-const CLIP_DURATION_MIN_PIXELS = 96;
+const CLIP_DURATION_MIN_PIXELS = 168;
 
 type DragMode = "move" | "trim-l" | "trim-r" | "roll-l" | "roll-r";
 
@@ -610,7 +610,10 @@ export function Timeline() {
             </div>
           ) : null}
 
-          <div className="playhead" style={{ left: HEAD + (play.ticks / TIMEBASE) * px }}>
+          <div
+            className="playhead"
+            style={{ left: HEAD + (play.ticks / TIMEBASE) * px }}
+          >
             <span className="ph-time mono">{timecode(play.ticks, project.settings.frame_rate)}</span>
           </div>
         </div>

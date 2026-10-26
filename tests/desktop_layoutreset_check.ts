@@ -18,7 +18,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { DEFAULT_TIMELINE, resetLayout } from "../desktop/src/layoutReset";
+import { DEFAULT_TIMELINE, firstRunTimeline, resetLayout } from "../desktop/src/layoutReset";
 
 const read = (...parts: string[]) => {
   const found = parts.map((part) => resolve(process.cwd(), part)).find(existsSync);
@@ -42,8 +42,17 @@ assert.deepEqual(resetLayout(212).slice(0, 2), [300, 340], "两只面板的宽�
 assert.ok(editor.includes("resetLayout("), "「重置布局」没走那唯一的一处算术");
 assert.equal((editor.match(/resetLayout\(/g) ?? []).length, 1,
   "只有那一颗按钮该走「回量到的那一档」——开机那一档要的是默认数本身（它没有可量的盒子）");
-assert.ok(editor.includes("[300, 340, DEFAULT_TIMELINE]"),
-  "开机那一档没读那唯一的主人（另写了一份默认数）");
+assert.ok(editor.includes("firstRunTimeline("),
+  "开机那一档没读那唯一的主人（`firstRunTimeline`，另写了一份默认数）");
+assert.equal((editor.match(/firstRunTimeline\(/g) ?? []).length, 1,
+  "开机默认高度只许一处算术：多一处就是两条规矩");
+// 1.298：写死 350 在 808 高的窗口里吃掉上半屏（素材库只剩一行半卡片）。第一次打开按窗口给：
+// 0.34、上限 DEFAULT_TIMELINE、下限 240；拖过的人仍以自己存的为准。
+assert.equal(firstRunTimeline(808), 275, "808 高的窗口该给时间线 275px");
+assert.equal(firstRunTimeline(1080), 350, "大窗口仍封顶在 DEFAULT_TIMELINE");
+assert.equal(firstRunTimeline(660), 240, "矮窗口不许低于 240（再低连标尺都放不下）");
+assert.equal(firstRunTimeline(Number.NaN), DEFAULT_TIMELINE, "量不到窗口高度时才回默认");
+assert.equal(firstRunTimeline(0), DEFAULT_TIMELINE, "0 不是窗口高度，是「没量到」");
 assert.ok(!/\[\s*280\s*,\s*320\s*,\s*300\s*\]/.test(editor), "视图里还留着一份写死的 [300, 340, 300]——一条公式两个主人");
 assert.ok(!/--timeline-height[^\n]*300px/.test(editor), "视图里不许再写第二条默认高度");
 

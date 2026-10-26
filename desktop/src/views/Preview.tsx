@@ -2,6 +2,7 @@ import { textLayerStyle } from "../textStyle";
 import { mergePlans, monitorClipIds } from "../manifestFetch";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Icon, IconBtn } from "../ui";
+import { openContextMenu, type MenuEntry } from "../ContextMenu";
 import { MaskPicture } from "./MaskPicture";
 import { TIMEBASE, frameTicks, humanDuration, pacing, rateLabel, timecode } from "../time";
 import type { AnimatedEffect, BlendMode, Clip, GradeTables, PreviewManifest, Project, Track } from "../engine";
@@ -139,24 +140,70 @@ export function Preview() {
   // Keep media nodes and keyboard focus during a same-project plan refresh.
   const displayPlan = currentPlan ?? (manifest?.project.id === project.id && (manifest.plan.sequence_id ?? null) === app.sequenceId ? manifest.plan : null);
   const ready = Boolean(currentPlan);
+
+  /** 预览与缓存的那些动作：代理档位、清理代理、清理缓存。与「设置」里那一档同一批 store 函数。 */
+  const monitorMenu = (anchor: HTMLButtonElement) => {
+    const rect = anchor.getBoundingClientRect();
+    const entries: MenuEntry[] = [];
+    if (app.caps?.features.proxy_playback) {
+      entries.push({
+        kind: "item", label: `代理 · 关闭${app.proxyWidth ? "" : " ✓"}`, icon: "film",
+        title: "代理只影响预览画面，导出始终使用原片",
+        run: () => void setProxyWidth(0),
+      });
+      for (const width of PROXY_WIDTHS) {
+        entries.push({
+          kind: "item", label: `代理 · ${width}p${app.proxyWidth === width ? " ✓" : ""}`, icon: "film",
+          run: () => void setProxyWidth(width),
+        });
+      }
+      entries.push({ kind: "sep", id: "cache" });
+    }
+    if (app.proxyUsage.count) {
+      entries.push({
+        kind: "item", icon: "trash",
+        label: `清理代理（${(app.proxyUsage.used_bytes / 1048576).toFixed(1)} MB / ${app.proxyUsage.count} 份）`,
+        title: "代理是可重建的派生副本，不计入工程",
+        run: () => void clearProxyCache(),
+      });
+    }
+    if (app.cacheUsage.count) {
+      entries.push({
+        kind: "item", icon: "trash",
+        label: `清理派生缓存（${(app.cacheUsage.used_bytes / 1048576).toFixed(1)} MB / ${app.cacheUsage.count} 项）`,
+        title: "缩略图、波形与代理都算在内；原片与工程不受影响，下次用到时自动重建",
+        run: () => void clearDerivedCache(),
+      });
+    }
+    openContextMenu({
+      at: { x: rect.left, y: rect.bottom + 4 },
+      title: "预览与缓存", label: "预览与缓存", returnTo: anchor, entries,
+    });
+  };
+
   return <section className="preview-col" aria-label="播放器">
     <div className="panel-head monitor-head"><div className="seg mini">
       <button className={!sourceMode ? "active" : ""} onClick={() => setMonitorMode("timeline")}>时间线预览</button>
       <button className={sourceMode ? "active" : ""} disabled={!sourceUrl} onClick={() => setMonitorMode("source")}>素材预览</button>
     </div><span className="spacer" />
       {proposed ? <span className="tag">{candidate ? "批次预演" : app.dryRunError ? "预演未通过" : "正在预演…"}</span> : null}
-      {app.caps?.features.proxy_playback ? <label className="proxy-ctl" title="代理回放只影响预览画面，导出始终使用原片">
-        <span className="panel-label">代理</span>
-        <select className="input" aria-label="代理分辨率" value={app.proxyWidth} onChange={(event) => void setProxyWidth(Number(event.target.value))}>
-          <option value={0}>关闭</option>
-          {PROXY_WIDTHS.map((width) => <option key={width} value={width}>{`${width}p`}</option>)}
-        </select>
-      </label> : null}
-      {app.proxyUsage.count ? <span className="tag" title="代理是可重建的派生副本，不计入工程">{`代理占用 ${(app.proxyUsage.used_bytes / 1048576).toFixed(1)} MB / ${app.proxyUsage.count} 份`}</span> : null}
-      {app.proxyUsage.count ? <button className="btn tiny subtle" onClick={() => void clearProxyCache()} title="删除全部代理副本以释放磁盘；原片与工程不受影响">清理代理</button> : null}
-      {app.cacheUsage.count ? <span className="tag" title={`派生缓存上限 ${(app.cacheUsage.limit_bytes / 1073741824).toFixed(1)} GB：缩略图、波形与代理都算在内，超出时引擎按最久未用淘汰`}>{`缓存 ${(app.cacheUsage.used_bytes / 1048576).toFixed(1)} MB / ${app.cacheUsage.count} 项`}</span> : null}
-      {app.cacheUsage.count ? <button className="btn tiny subtle" onClick={() => void clearDerivedCache()} title="删除全部派生缓存（缩略图 / 波形 / 代理）以释放磁盘；原片与工程不受影响，下次用到时自动重建">清理缓存</button> : null}
-      {app.proxyWidth ? <span className="tag">{app.proxyStatus.done < app.proxyStatus.total ? `生成代理 ${app.proxyStatus.done}/${app.proxyStatus.total}：${app.proxyStatus.label}` : Object.keys(app.proxyActive).length ? `代理 ${app.proxyWidth}p` : "素材已足够小"}</span> : null}
+      {/* 代理分辨率、代理占用、清理代理、缓存占用、清理缓存以前是六颗控件排在监视器标题那一行上，
+          把「预览模式」挤到一边。它们都是「设置」里已有的那一档，这里只留一只手：
+          一个 ⋯ 打开同一份动作，正在生成代理时那枚小胶囊仍报进度。 */}
+      {app.proxyWidth && app.proxyStatus.done < app.proxyStatus.total ? (
+        <span className="tag" title="代理正在为预览生成缩略副本；导出始终使用原片">
+          {`${app.proxyStatus.done}/${app.proxyStatus.total}`}
+        </span>
+      ) : null}
+      <button
+        type="button"
+        className="icon-btn"
+        aria-label="预览与缓存"
+        title="代理分辨率、派生缓存与清理——设置里也有同一档"
+        onClick={(event) => monitorMenu(event.currentTarget)}
+      >
+        <Icon name="more" />
+      </button>
       <button className={`btn tiny subtle${safe === "off" ? "" : " active"}`} onClick={() => cycleSafeArea()} title={safeTitle}>安全框 · {SAFE_LABELS[safe]}</button>
       <IconBtn icon="fullscreen" label="全屏预览" onClick={() => void monitorRef.current?.requestFullscreen()} />
     </div>

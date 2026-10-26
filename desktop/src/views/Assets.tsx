@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Empty, Icon, IconBtn, Modal } from "../ui";
-import { humanDuration, prettyBytes, rateLabel, seconds } from "../time";
+import { humanDuration, prettyBytes, seconds } from "../time";
 import {
   addLibraryItemToTimeline,
   appendAsset,
@@ -219,18 +219,16 @@ function LibraryCard({ item }: { item: import("../store").LibraryItem }) {
             <Icon name={info.kind === "video" ? "film" : "music"} size={16} />
           </span>
         )}
-        <span className="lib-kind mono">
-          {info.kind === "video" ? "视频" : info.kind === "audio" ? "音频" : "图片"}
-        </span>
         {already ? <span className="lib-flag" title="已登记进当前工程">已入工程</span> : null}
-      </div>
-      <div className="lib-meta">
-        <div className="lib-name">{info.label}</div>
-        <div className="lib-sub mono">
-          {info.kind === "image" ? `${info.width}×${info.height}` : humanDuration(info.duration_ticks)}
-          {info.frame_rate ? ` · ${rateLabel(info.frame_rate)}` : ""}
-          {info.has_audio ? " · 有声" : ""}
-        </div>
+        {/* 名字压在缩略图底部的渐变条上：参考图那个格子就是「图 + 角标」，没有第二行小字。
+            名字与时长同一行，两行卡正好装进这张卡——以前名字在下面另起一行，四个素材就只看得见
+            一行半。 */}
+        <span className="lib-foot">
+          <span className="lib-name">{info.label}</span>
+          <span className="lib-len mono">
+            {info.kind === "image" ? `${info.width}×${info.height}` : humanDuration(info.duration_ticks)}
+          </span>
+        </span>
       </div>
       <button
         type="button"

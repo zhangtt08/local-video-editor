@@ -9,6 +9,18 @@
  */
 export const DEFAULT_TIMELINE = 350;
 
+/** 没人拖过时，第一次打开工作台的时间线有多高。
+ *
+ * 写死 350 在 808 高的窗口里会吃掉上半屏：素材库只剩一行半卡片，看着像坏了而不是像能滚。
+ * 这一档按窗口高度给（0.34，上限仍是 `DEFAULT_TIMELINE`、下限 240），拖过的人仍以自己存的为准——
+ * 它只决定「第一次打开长什么样」，不参与 `resetLayout` 那条以量到的盒子为准的规矩。
+ */
+export function firstRunTimeline(viewport: number): number {
+  if (!Number.isFinite(viewport) || viewport <= 0) return DEFAULT_TIMELINE;
+  return Math.max(240, Math.min(DEFAULT_TIMELINE, Math.round(viewport * 0.34)));
+}
+
+
 /** `measured` 是点下去那一刻 `.timeline` 真量到的高度（像素）；量不到时回默认。 */
 export function resetLayout(measured: number): [number, number, number] {
   const room = Math.round(measured);

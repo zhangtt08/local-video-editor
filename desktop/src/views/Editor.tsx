@@ -6,7 +6,7 @@ import { CurveEditor } from "./CurveEditor";
 import { Preview, PreviewFooter } from "./Preview";
 import { Timeline } from "./Timeline";
 import { RightPanel } from "../shell/RightPanel";
-import { DEFAULT_TIMELINE, resetLayout } from "../layoutReset";
+import { firstRunTimeline, resetLayout } from "../layoutReset";
 import { dismissRemote, openProject, openSequence, setView, setGraphOpen, markSplitterTouched, toggleHelp, useApp } from "../store";
 
 const COACH_KEY = "agentcut.coach.dismissed";
@@ -22,7 +22,7 @@ export function Editor() {
       const saved = JSON.parse(localStorage.getItem("agentcut.layout") ?? "null");
       if (Array.isArray(saved) && saved.length === 3 && saved.every((n: unknown) => typeof n === "number" && Number.isFinite(n))) return saved as number[];
     } catch { /* 用默认工作台布局 */ }
-    return [300, 340, DEFAULT_TIMELINE];
+    return [300, 340, firstRunTimeline(typeof window === "undefined" ? 0 : window.innerHeight)];
   });
   const drag = useRef<{ axis: number; x: number; y: number; origin: number[] } | null>(null);
   useEffect(() => { try { localStorage.setItem("agentcut.layout", JSON.stringify(layout)); } catch { /* 布局仍然可用 */ } }, [layout]);

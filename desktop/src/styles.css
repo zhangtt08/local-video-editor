@@ -642,7 +642,7 @@ select { color-scheme: dark; }
 .tl-lane.audio-track { background: var(--sunk); }
 .tl-window-note { color: var(--ink-3); font-size: var(--fs-label); }
 /* 1.230：纵向放不下的那几条轨要有名字——一块可以点的胶囊，不是一句只能看的灰字。 */
-.tl-more-tracks { align-self: flex-start; width: auto; border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--elev); color: var(--ink-2); padding: 2px 10px; margin: 2px 0 2px 10px; cursor: pointer; }
+.tl-more-tracks { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 4; width: auto; border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--elev); color: var(--ink-2); padding: 3px 12px; cursor: pointer; box-shadow: var(--shadow-md); }
 .tl-more-tracks:hover { background: var(--float); }
 .lane-hint { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: var(--fs-label); color: #808897; pointer-events: none; }
 .row-count { display: none; }
@@ -721,7 +721,9 @@ select { color-scheme: dark; }
 .playhead { position: absolute; top: 0; bottom: 0; width: 0; z-index: 25; pointer-events: none; }
 .playhead::before { content: ""; position: absolute; top: 0; bottom: 0; left: -.5px; width: 1px; background: var(--accent); }
 .playhead::after { content: ""; position: absolute; top: 0; left: -5.5px; border: 5.5px solid transparent; border-top-color: var(--accent); border-bottom: none; }
-.playhead .ph-time { position: absolute; top: 2px; left: 7px; font-size: var(--fs-micro); color: var(--accent-deep); background: var(--accent-soft); border-radius: var(--r-pill); padding: 1px 6px; white-space: nowrap; }
+/* 时间牌压在标尺**之下**：压在标尺上会盖住「00:00」与第一格刻度；翻到线左边则会钻到轨道头
+   那一列底下（那一列后画，压在上面）。 */
+.playhead .ph-time { position: absolute; top: 26px; left: 7px; font-size: var(--fs-micro); color: var(--accent-deep); background: var(--accent-soft); border-radius: var(--r-pill); padding: 1px 6px; white-space: nowrap; }
 .tl-track-divider { height: 5px; background: var(--bg); border-bottom: 1px solid var(--line); }
 .tl-empty { display: flex; align-items: center; gap: 8px; padding: 18px 16px; color: var(--ink-3); font-size: var(--fs-body); }
 .tl-warning { display: flex; align-items: center; gap: 7px; padding: 6px 10px; font-size: var(--fs-label); color: var(--danger); background: var(--danger-soft); border-top: 1px solid #754147; }
@@ -1584,7 +1586,7 @@ html[data-theme="light"] .win-btn:hover { background: rgba(28, 20, 52, .07); }
     minmax(320px, 1fr)
     6px
     minmax(300px, min(var(--right-w, 340px), 30vw));
-  grid-template-rows: minmax(0, 1fr) 6px minmax(180px, min(var(--timeline-height, 300px), calc(100dvh - 420px)));
+  grid-template-rows: minmax(0, 1fr) 6px minmax(180px, min(var(--timeline-height, 276px), calc(100dvh - 420px)));
   grid-template-areas:
     "assets vs1 center vs2 right"
     "hsplit hsplit hsplit hsplit right"
@@ -1595,7 +1597,7 @@ html[data-theme="light"] .win-btn:hover { background: rgba(28, 20, 52, .07); }
 .ed-assets { grid-area: assets; min-width: 0; min-height: 0; }
 .ed-center { grid-area: center; min-width: 0; min-height: 0; }
 .ed-right { grid-area: right; min-width: 0; min-height: 0; }
-.ed-timeline { grid-area: timeline; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; box-shadow: var(--shadow-sm), var(--edge-hi); }
+.ed-timeline { position: relative; grid-area: timeline; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; box-shadow: var(--shadow-sm), var(--edge-hi); }
 .ed-vsplit { min-width: 0; min-height: 0; }
 .ed-vsplit:nth-of-type(1) { grid-area: vs1; }
 .ed-vsplit:nth-of-type(2) { grid-area: vs2; }
@@ -1619,7 +1621,7 @@ html[data-theme="light"] .win-btn:hover { background: rgba(28, 20, 52, .07); }
 .panel-head { height: 52px; padding: 0 14px; border-bottom: 1px solid var(--line); gap: 8px; }
 .panel-body { padding: 2px; }
 
-.tl-workbench { height: 38px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--line); background: var(--sunk); }
+.tl-workbench { height: 34px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--line); background: transparent; }
 .tl-workbench > svg { color: var(--ink-3); }
 .sequence-path { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-label); color: var(--ink-3); }
 .tb-mini { border: 0; background: transparent; color: var(--ink-2); font-size: var(--fs-label); cursor: pointer; padding: 4px 6px; border-radius: var(--r-sm); }
@@ -1655,11 +1657,21 @@ html[data-theme="light"] .asset-filters .btn.active { color: #fff; }
 html[data-theme="light"] .lib-card { background: #fff; color: var(--ink); }
 .lib-card:hover { border-color: rgba(167, 139, 250, .5); box-shadow: 0 12px 28px rgba(3, 2, 12, .4); transform: translateY(-1px); }
 .lib-card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
-.lib-thumb { border-radius: 0; aspect-ratio: 16 / 10; background: #0c0b15; }
-.lib-meta { padding: 7px 9px 8px; }
-.lib-name { font-size: var(--fs-label); font-weight: 500; }
-.lib-sub { color: var(--ink-3); }
-.lib-kind { background: rgba(6, 5, 14, .72); backdrop-filter: blur(6px); }
+.lib-thumb { border-radius: 0; aspect-ratio: 16 / 9; background: #0c0b15; }
+/* 名字与时长压在缩略图底部那道渐变上：一格只有「图 + 角标」，没有第二行小字。
+   以前名字在缩略图下面另起一行，四个素材就只看得见一行半卡。 */
+.lib-foot {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; align-items: center; gap: 6px;
+  padding: 16px 8px 6px;
+  background: linear-gradient(transparent, rgba(6, 5, 14, .86) 62%);
+}
+.lib-name {
+  flex: 1; min-width: 0; font-size: var(--fs-label); font-weight: 500; color: #fff;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.lib-len { flex: none; font-size: var(--fs-micro); color: rgba(255, 255, 255, .72); }
+.lib-kind { top: 4px; bottom: auto; background: rgba(6, 5, 14, .72); backdrop-filter: blur(6px); }
 .lib-add {
   position: absolute; right: 7px; bottom: 34px;
   height: 24px; padding: 0 8px; border-radius: var(--r-pill);
@@ -1667,7 +1679,7 @@ html[data-theme="light"] .lib-card { background: #fff; color: var(--ink); }
   background: rgba(6, 5, 14, .7); color: #fff; border-color: transparent;
 }
 .lib-card:hover .lib-add, .lib-card:focus-within .lib-add { opacity: 1; }
-.asset-foot { border-top: 0; padding: 0 14px 10px; }
+.asset-foot { border-top: 0; padding: 2px 14px 10px; background: var(--panel); position: relative; z-index: 2; }
 .asset-list { padding: 6px 10px; gap: 3px; }
 .asset-row { padding: 8px 9px; border-radius: var(--r-md); }
 
@@ -1809,7 +1821,7 @@ html[data-theme="light"] .ai-card { background: #fbf9ff; color: var(--ink); }
 }
 .tl-hint { color: var(--ink-3); }
 .tl-scroll { background: transparent; }
-.tl-row.ruler-row { background: var(--sunk); height: 30px; }
+.tl-row.ruler-row { background: transparent; height: 28px; border-bottom: 1px solid var(--line); }
 .tl-head {
   width: 128px; background: var(--sunk);
   border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
