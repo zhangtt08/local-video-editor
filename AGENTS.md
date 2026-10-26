@@ -6059,3 +6059,51 @@ EDL 一条。**五种进、三种出**，对「agent 模仿完把工程交回原
 却占着三列网格里的四颗按钮。现在一颗「保存工程文件」打开同一份动作菜单，四种格式各占一行、
 各带悬停说明，导入留在旁边；网格从三列收成两列。量到：1456×808 下面板 300 px 宽、
 1040×660 下 240 px 宽，两颗按钮都不截字；菜单 236×199，四项齐、能力位都亮。
+
+### 发布账（1.306）
+
+- `APP_VERSION` 与 `desktop/package.json` **1.306.0**，工程 schema 仍是 **33**（这一档只加一条只读路由、
+  一只只读工具与一个写手）。
+- 冻结引擎自报 **1.306.0**，冷启动 **808 ms**（预算 15000 ms），`tools` / `--help` / `mcp` 三档各自活。
+- 根 `AgentCut.exe` 与 `desktop/release/AgentCut-便携版.exe` 逐字节相同（**185,395,990 B**，
+  sha256 前缀 `f155db0096d45858`；安装版 185,556,705 B）。
+- 包检查六档绿：`released_package`（app.asar 1.306.0）、`packed_engine_surface`（包内引擎真 HTTP 1.306.0）、
+  `packaged_ui`、`build`、`fourk`、`mediabinary`。
+- 第一次全套是 **172/173**：`output_rate_check` 钉着「HTTP 那一层不许出现 29.97 / 23.976」，
+  而这一档新路由的 docstring 里写了「不四舍五入成 29.97」——那一判不认注释。改掉那半句、重冻重打，
+  再跑全套 **173/173**。这不是判据的问题：那一层确实一个字都不该替用户决定帧率。
+
+### 交付清单与体积（1.306 收口）
+
+目录从 **2.29 GB 收到 437.7 MB**（逐文件求和，含 `.git` 26.5 MB）。留下的是可双击的、可读的、以及跑门禁要的：
+
+- `AgentCut.exe`（**185,395,990 B**，sha256 前缀 `f155db0096d45858`）——双击即开；Electron 壳、
+  随包 FFmpeg 与冻结引擎都在它里面（便携版，无需安装）。
+- `src/ agent/ scripts/ tests/ docs/ design/ examples/` 与 `desktop/{src,electron,package.json,*.json,*.ts}`
+  ——173 档门禁（含 `tests/xmemlexport_check.py`）与重建脚本全在这里。
+- `desktop/resources/bin/{ffmpeg.exe,ffprobe.exe,media-stamp.json}`（140 MB）与 `desktop/resources/asr/`（66 MB）
+  ——预览/导出与离线字幕要的二进制与模型，**不在**可删列表里。
+- `data/`（1.2 MB）——本机工程与素材；`AGENTS.md`、`README.md`、`pyproject.toml`、`uv.lock`。
+
+删掉的都可再生（体积与重建命令）：
+
+- `desktop/node_modules/`（867.8 MB）→ `cd desktop && npm ci`
+- `desktop/release/`（971.9 MB，win-unpacked + 安装版 + 便携版 + blockmap）→ `cd desktop && npm run dist`，
+  再把 `desktop/release/AgentCut-便携版.exe` 复制成根 `AgentCut.exe`（两份必须逐字节相同）
+- `.venv/`（145.2 MB）→ `uv sync`（PyInstaller 现在在 dev 组里，`uv sync` 之后 `import PyInstaller`
+  就是 6.22.3，不用再手工装一次）
+- `build/`（133.6 MB）与 `desktop/resources/bin/agentcut/`（167.8 MB）→
+  `.venv/Scripts/python.exe scripts/build_engine.py --verify --no-uv`
+- `desktop/dist/`、`desktop/dist-electron/`（1.0 MB）→ `cd desktop && npm run build`
+- `.ruff_cache/`、`__pycache__/`（1.6 MB）
+
+重建后按这个顺序验：
+
+1. `uv sync` 与 `cd desktop && npm ci`
+2. `cd desktop && npm run build`
+3. `.venv/Scripts/python.exe scripts/build_engine.py --verify --no-uv`
+4. `cd desktop && npm run dist`，复制便携版到根 `AgentCut.exe`，再 `cmp` 两份
+5. `.venv/Scripts/python.exe tests/suite_check.py` → **173/173**
+6. `AGENTCUT_SHAPE_THEME=light .venv/Scripts/python.exe tests/ui_shape_check.py`（浅色 58 屏）。
+   这一轮改的是导出面板，不在那 58 屏里，浅色那一趟**没有重跑**——如实记在这里；
+   导出面板的两档截图（1456×808 / 1040×660、菜单展开）是这一档自己的像素证据。
