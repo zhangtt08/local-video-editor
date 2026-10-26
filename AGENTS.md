@@ -6538,3 +6538,52 @@ revision 3，等到终态 531 ms，关掉按 PID 收子树不留尸。
   （「6387 line endings are bare LF in a CRLF file」）。改回的办法是字节级的
   `replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")`，证据是 `git diff --numstat` 只剩纯新增。
   追加与改行这类活儿一律走字节。
+
+## 1.312：三条配方都开了这一刀——口播与「搬别人剪好的一刀」也能一次调用跑完
+
+1.311 只把 `cut-from-media` 接上了 `recipe_run`，另外两条在契约里挂着 `runnable: false` 与原因：
+「字幕要不要落库、改哪一行是人的判断」「要先点名读哪一份工程文件」。这一版复查那两句话，
+发现它们**不是能力的边界，是参数没地方放**：判断仍然归调用方，但判断可以作为**数据**进来。
+
+* `speech-to-captions`（15 步）：口播素材导进来、建工程、一批落库，`captions_auto` 用随包的
+  本地 vosk 模型出 cue 并同一批落进字幕轨，`timeline_transcript` 读回「说了什么、在哪」与
+  句间静音，`transcript_cut_plan` 剪掉调用方选中的那些段，`captions_export` 交回 SRT。
+  **调用方给的是数据**：`filler_patterns`（文本命中任何一个就剪）与 `cut_gap_ms`（停顿长过那档就剪）；
+  选段用的仍是引擎那份文稿视图交回的 `phrases` / `silences`，一刀里没有第二处判断「哪句该删」。
+* `imitate-imported-edit`（16 步）：把一份 FCPXML / xmeml / EDL / OTIO / 剪映草稿读进来再交付。
+  实测那一趟撞到的两处真门槛，都写进了配方文本：
+  ① 交换格式的读那一边**按名字认素材**，只肯用这台引擎已经验过的——所以素材要先 `media_import`
+  并先登记成这个工程的 asset，才有名字可对；否则交回来的 `clip.add` 指着别的工程里的 id。
+  ② 读那一边要求**轨道先存在**，五种格式各有一句 `*_TRACK_COUNT`，并且直接数给你（`wanted`）。
+  这一刀把那一句当指令：按它数的条数补 `track.add`，再读一次，直到它答话——最多六轮，
+  一轮补不出进展就把那份拒绝原样抛出。两种 `wanted` 形状（`{video,audio}` 与单个整数）都折成
+  同一份口径，靠 `available` 与已有轨道数对上是画面那一族还是声音那一族。
+
+### 参数模型因此改了口径
+
+`RecipeRun` 里 `files` / `preset_id` / `filename` 从「一律必填」改成**形状与量程在模型里，
+哪一条缺哪一样由 `recipe_run` 按配方点名拒**（`RECIPE_NOT_RUNNABLE` 就此退休，`recipes()` 不再带
+`why_not`，改成每条一句 `params` 说清要什么）。这条界线不是松：`cut-from-media` 少 `preset_id`
+仍然 422，而且是在建工程**之前**拒——回执里 `details.missing` 点名缺什么，`required` 给出整张清单。
+门禁钉着两件事：`params` 那句话必须点名每一个必填项，`RUNNERS` 的键集合必须恰好等于三条配方声明
+的步骤名的并集（多一步少一步都红）。
+
+### 装机腿也加了一趟
+
+`tests/packaged_reciperun_check.py` 现在在随包那台 `agentcut.exe` 上跑两趟真交付：② 那条一刀剪完，
+③ 把它自己导出的 FCPXML 再搬回来（16 行步骤、一次排一条交付等到终态）——「补轨道那一圈」在
+交付出去的二进制上也是同一句话。拒绝那两道改成：不存在的配方 404、缺参数 422 点名。
+
+### 实测（本机，源码腿）
+
+装机腿 `tests/packaged_reciperun_check.py` 在随包那台引擎上跑同样两趟，长度与等待都由
+那一档当场打印，不抄进这份账——抄了就成了下一个版本的旧数。
+
+* `cut-from-media`：2 段 4 秒素材 → revision 3，交付 1.00 s，与 `render_plan` 的计划一字不差。
+* `speech-to-captions`：真中文口播（Windows 语音合成，两句之间空一秒）源 7.77 s →
+  cue 2 条、SRT 88 字、按 `cut_gap_ms=600` 剪掉句间静音，交付 7.07 s。
+* `imitate-imported-edit`：把自己导出的 FCPXML 读回来 → 落库 2 条命令、两份交付
+  115,866 B / 166,062 B，等到终态 3.08 s。
+* 契约面现场读数不变：74 只工具、87 条路由、3 条配方；桥那台 75 只；派发对齐 74/74。
+
+`APP_VERSION` 1.312.0。三条配方现在都只有一条门：**读它，或者跑它**，同一批步骤、同一个 reducer。

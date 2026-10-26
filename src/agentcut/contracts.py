@@ -71,7 +71,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.311.0"
+APP_VERSION = "1.312.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -6289,7 +6289,13 @@ class RecipeRun(Contract):
 
     不是工程状态里的交付方案（`recipe.set`）——两个词撞上过一次，所以在这里说清。
 
-    当前只有 `cut-from-media` 能一把跑完：一条画面轨，每个文件一段，静音与镜头切点各一刀。
+    三条配方都开了这一刀（1.312）：`cut-from-media` 播一条画面轨再剪两刀；
+
+    `speech-to-captions` 把「剪哪几行」交给数据（`filler_patterns` / `cut_gap_ms`）；
+
+    `imitate-imported-edit` 读一份别人的工程文档，格式由引擎自己认。
+
+    缺哪一样参数，`recipe_run` 按配方点名拒，不半路撞在某个路由上。
     """
 
 
@@ -6302,10 +6308,13 @@ class RecipeRun(Contract):
 
 
 
+    # 三条配方要的必填项不一样（搬工程的那一条不读素材文件），所以这里只定形状与量程，
+    # 「这一条缺哪一样」由 `recipe_run` 按配方点名拒。
+
     files: Annotated[
         list[Annotated[str, Field(min_length=1, max_length=2048)]],
         Field(min_length=1, max_length=64),
-    ]
+    ] | None = None
 
 
 
@@ -6329,9 +6338,50 @@ class RecipeRun(Contract):
 
 
 
-    preset_id: Identifier
+    # 这三条配方要的字段不一样：哪一条缺哪一样，由 `recipe_run` 按配方点名拒掉，
 
-    filename: Annotated[str, Field(min_length=1, max_length=128)]
+    # 不在这里写死成「一刀只服务一条配方」。
+
+    preset_id: Identifier | None = None
+
+    filename: Annotated[str, Field(min_length=1, max_length=128)] | None = None
+
+
+
+    language: Literal["zh", "en"] | None = None
+
+    caption_max_chars: Annotated[int, Field(ge=4, le=60)] | None = None
+
+
+
+    # 口播里哪些话要剪掉，由这几样数据说：文本命中任何一个模式，或两处话语之间的静音
+
+    # 长过那一档。选段用的仍是引擎那份文稿视图交回的段，这一刀不重写判断。
+
+    filler_patterns: Annotated[
+        list[Annotated[str, Field(min_length=1, max_length=64)]],
+        Field(max_length=64),
+    ] = []
+
+    cut_gap_ms: Annotated[int, Field(ge=40, le=30000)] | None = None
+
+
+
+    # 搬别人的剪辑：文档内容照旧走那一扇门，认格式的是引擎自己。
+
+    interchange_document: Annotated[str, Field(min_length=1, max_length=8_388_608)] | None = None
+
+    interchange_format: Literal["otio", "fcpxml", "xmeml", "edl", "jianying"] | None = None
+
+    deliver_items: Annotated[list[RenderBatchItem], Field(max_length=4)] | None = None
+
+
+
+    # 回执默认不带那些长文本（SRT 全文、三份工程文件全文），只报字节数；
+
+    # 要全文就把它设成 true——几 MB 塞进一刀的回执不是「一次调用」的意义。
+
+    include_text: bool = False
 
 
 
@@ -7810,7 +7860,7 @@ def capabilities(
             "agent_manifest": True,
             "job_wait": True,
 
-            # 1.311：一刀把 `cut-from-media` 那 13 步在引擎里走完——走的还是同一批路由。
+            # 1.311/1.312：一刀把配方在引擎里走完——走的还是同一批路由，三条都开了。
 
             "recipe_run": media_ready,
 

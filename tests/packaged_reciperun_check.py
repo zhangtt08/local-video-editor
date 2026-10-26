@@ -6,12 +6,14 @@
 是两件事，历史上红过的那几次都是后者。
 
 四道：
-① 现场读随包引擎的 `/v1/agent/manifest`：`recipe_run` 的端点就是那条路由，配方的 runnable
-   与 why_not 带着 1.311 的形状；
+① 现场读随包引擎的 `/v1/agent/manifest`：`recipe_run` 的端点就是那条路由，三条配方都带
+   `runnable: true` 与一句参数说明；
 ② 真一刀：4 秒源（前 2 秒有声、后 2 秒静）→ 一次 run（render + wait）→ 13 行步骤、
    作业 succeeded、交付文件在盘上、ffprobe 量到的长度对得上计划；
-③ 两条拒绝随包同源：不存在的配方 404，开不通的配方 422 带原因；
-④ 关掉不留尸：按 PID 收整棵子树，之后那一个 PID 不再活着。
+③ 真搬一刀：把 ② 那条工程自己导出的 FCPXML 再读进来 → 16 行步骤、一次排一条交付并等到终态——
+   证明「补轨道那一圈」在随包二进制上也是同一句话；
+④ 两条拒绝随包同源：不存在的配方 404，缺参数的在建工程之前 422 `RECIPE_PARAM_MISSING` 点名缺哪样；
+⑤ 关掉不留尸：按 PID 收整棵子树，之后那一个 PID 不再活着。
 """
 from __future__ import annotations
 
@@ -111,10 +113,12 @@ def manifest_leg(base: str) -> None:
     check("随包那一份登记了这扇门",
           entry == {"method": "POST", "path": "/v1/agent/recipes/{recipe_id}/run"}, entry)
     recipes = {row["id"]: row for row in contract.get("recipes") or []}
-    check("随包那一份也带着 runnable 的形状",
-          recipes.get("cut-from-media", {}).get("runnable") is True
-          and any(not row.get("runnable") and row.get("why_not") for row in recipes.values()),
-          {key: (row.get("runnable"), bool(row.get("why_not"))) for key, row in recipes.items()})
+    check("随包那一份三条配方都开了这一刀",
+          len(recipes) == 3 and all(row.get("runnable") is True for row in recipes.values()),
+          {key: row.get("runnable") for key, row in recipes.items()})
+    check("每条都带着参数那句话（回执说清要哪几样）",
+          all(str(row.get("params") or "").strip() for row in recipes.values()),
+          {key: bool(row.get("params")) for key, row in recipes.items()})
     features = ((contract.get("capabilities") or {}).get("features") or {})
     check("能力位随包同源", features.get("recipe_run") is True, sorted(features)[:8])
 
@@ -136,7 +140,7 @@ def one_cut_leg(base: str, folder: Path) -> None:
     status, made = ask("POST", base, "/v1/agent/recipes/cut-from-media/run", payload)
     check("随包引擎一次调用跑完整条配方", status == 200, made)
     if status != 200:
-        return
+        return ""
     steps = made.get("steps") or []
     check("步骤就是 13 行", len(steps) == 13, [row.get("step") for row in steps])
     job = made.get("job") or {}
@@ -151,16 +155,53 @@ def one_cut_leg(base: str, folder: Path) -> None:
               f"revision {made.get('revision')}，等了 {made.get('waited_ms')} ms")
     else:
         check("交付文件在盘上", False, str(out))
+    return str(made.get("project_id") or "")
+
+
+def borrow_leg(base: str, folder: Path, project_id: str) -> None:
+    """随包那一份也搬得动别人剪好的一刀：文档就是这台引擎自己导出的 FCPXML。"""
+    if not project_id:
+        return
+    status, listed = ask("GET", base, f"/v1/projects/{project_id}/fcpxml")
+    document = str((listed or {}).get("xml") or "")
+    check("随包那一份导得出 FCPXML（搬一刀的输入）", status == 200 and len(document) > 200,
+          (status, len(document)))
+    if len(document) < 200:
+        return
+    payload = {
+        "request_id": "pkg-rr-borrow",
+        "name": "随包搬一刀",
+        "interchange_document": document,
+        "files": [str(folder / "packaged.mp4")],
+        "deliver_items": [{"preset_id": "h264-720p-web", "filename": "pkg-borrowed.mp4"}],
+        "render": True,
+        "wait_seconds": 100.0,
+    }
+    status, made = ask("POST", base, "/v1/agent/recipes/imitate-imported-edit/run", payload)
+    check("随包引擎一次调用搬完那条剪辑", status == 200, made)
+    if status != 200:
+        return
+    jobs = made.get("jobs") or []
+    check("搬来的一刀也排到了终态",
+          len(jobs) == 1 and jobs[0].get("status") == "succeeded", jobs)
+    steps = [row.get("step") for row in made.get("steps") or []]
+    check("搬一刀的步骤是 16 行", len(steps) == 16, steps)
+    last = [row for row in made["steps"] if row.get("step") == "timeline_edit"][-1]
+    print(f"   随包搬一刀：落库 {last.get('commands')} 条命令，"
+          f"交付 {jobs[0].get('filename')}，等了 {made.get('waited_ms')} ms")
 
 
 def refusal_leg(base: str, payload: dict) -> None:
     status, body = ask("POST", base, "/v1/agent/recipes/no-such/run", payload)
     check("随包那一份也按 NOT_FOUND 拒未知配方",
           status == 404 and (body.get("error") or {}).get("code") == "NOT_FOUND", (status, body))
-    status, body = ask("POST", base, "/v1/agent/recipes/speech-to-captions/run", payload)
-    check("随包那一份也带原因拒开不通的配方",
-          status == 422 and (body.get("error") or {}).get("code") == "RECIPE_NOT_RUNNABLE"
-          and "字幕" in str((body.get("error") or {}).get("message")), (status, body))
+    gap = dict(payload)
+    gap.pop("preset_id")
+    status, body = ask("POST", base, "/v1/agent/recipes/cut-from-media/run", gap)
+    error = body.get("error") or {}
+    check("随包那一份也在建工程之前缺参数点名拒",
+          status == 422 and error.get("code") == "RECIPE_PARAM_MISSING"
+          and (error.get("details") or {}).get("missing") == ["preset_id"], (status, error))
 
 
 def main() -> None:
@@ -175,7 +216,8 @@ def main() -> None:
         process, base = start_engine(directory)
         try:
             manifest_leg(base)
-            one_cut_leg(base, directory)
+            project_id = one_cut_leg(base, directory)
+            borrow_leg(base, directory, project_id)
             refusal_leg(base, {
                 "request_id": "pkg-rr-refuse", "name": "拒绝的形状",
                 "files": [str(directory / "packaged.mp4")],

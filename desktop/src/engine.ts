@@ -791,7 +791,7 @@ export function errorHints(): Record<string, string> {
       IDEMPOTENCY_CONFLICT: "同一个请求号被用于不同内容，属于程序保护，不影响你的剪辑。",
       REQUEST_ALREADY_COMMITTED: "这次预览请求已经用过了，换一次操作即可。",
       AGENT_RUN_FAILED: "Agent 一键剪辑中途停住了：正文说清停在哪一步，把那一步单独重叫即可。",
-      RECIPE_NOT_RUNNABLE: "这条 Agent 配方不能一键跑完（要人点名或判断），按 manifest 里的步骤逐条调用就行。",
+      RECIPE_PARAM_MISSING: "Agent 一键剪辑缺了参数：正文点名缺哪一样，补进那一次调用即可。",
       RECIPE_STEP_UNIMPLEMENTED: "Agent 配方里有一步这一版引擎还没实现：升级软件，或按步骤逐条调用。",
       CLIP_OVERLAP: "同轨重叠需要转场。先将镜头首尾衔接，再在后一个镜头的属性面板添加转场。",
       INVALID_TRANSITION: "选择首尾衔接的两个镜头，转场需短于每个镜头。",

@@ -27,6 +27,11 @@ RECIPES: tuple[dict[str, Any], ...] = (
         "id": "cut-from-media",
         "title": "从素材到一条粗剪并交付",
         "when": "手上只有几个原始文件，要出一条能直接发出去的片子。",
+        "params": (
+            "name、files（1..64 个）、preset_id、filename；render=false 时后两样可以不给。"
+            "量程：threshold_db 与 min_silence_ms（去停顿）、keep_ms 与 scene_threshold、"
+            "min_scene_ms（镜头粗剪）。"
+        ),
         "steps": [
             {"tool": "editor_capabilities", "why": "先问这台引擎认哪些命令与预设，别照记忆写"},
             {"tool": "media_config", "why": "素材必须落在授权根目录里，先看清是哪几个目录"},
@@ -56,42 +61,79 @@ RECIPES: tuple[dict[str, Any], ...] = (
         "id": "speech-to-captions",
         "title": "口播转字幕并按句子剪",
         "when": "一条讲话素材，要字幕、要按句剪、要能改字。",
+        "params": (
+            "name、files（一段口播）、preset_id、filename；剪哪几行交给数据：filler_patterns"
+            "（文本命中就剪）与 cut_gap_ms（停顿长过就剪），可选 language 与 caption_max_chars。"
+            "这一条要本机备着语音模型，没备着那一步会明说不做。"
+        ),
         "steps": [
             {"tool": "editor_capabilities", "why": "看这台引擎有没有本地语音与字幕能力位"},
-            {"tool": "media_import", "why": "先有可信的音频素材记录"},
-            {"tool": "captions_auto", "why": "本地模型出字幕 cue，只交计划不写库"},
-            {"tool": "timeline_edit", "why": "字幕作为文字片段落进字幕轨"},
+            {"tool": "media_config", "why": "素材必须落在授权根目录里，先看清是哪几个目录"},
+            {"tool": "media_import", "why": "先有可信的音频素材记录（时长与声轨都是探出来的）"},
+            {"tool": "project_create", "why": "一个 request_id 一次创建，重复提交拿回同一个工程"},
+            {"tool": "ids_request", "why": "轨道/素材/片段的 id 由服务端发，避免两边撞号"},
+            {"tool": "timeline_edit", "why": "一条轨一段口播，一批写完，一个 revision"},
+            {
+                "tool": "captions_auto",
+                "why": "本地模型出字幕 cue，apply=true 由服务端同一批落进字幕轨",
+            },
             {"tool": "timeline_transcript", "why": "读回「说了什么、在哪」，含句间静音"},
-            {"tool": "transcript_cut_plan", "why": "删一行字＝剪掉那一段，交回普通命令"},
-            {"tool": "timeline_edit", "why": "应用这一批剪切命令，撤销一步整体退回"},
+            {
+                "tool": "transcript_cut_plan",
+                "why": "删哪几行由调用方给数据（命中词或停顿长度），剪仍是普通命令",
+            },
             {"tool": "captions_export", "why": "要交给别人时导出 SRT"},
+            {"tool": "timeline_overview", "why": "一张接触表看完整条时间线，确认剪的是什么"},
+            {"tool": "preview_frame", "why": "抽查几个刻度：预览与导出读的是同一份编译"},
+            {"tool": "render_plan", "why": "只编译不渲染：看清 ffmpeg 的 argv 与图"},
+            {"tool": "render_start", "why": "对固定 revision 排队交付"},
+            {"tool": "job_wait", "why": "一次调用等到终态，拿回输出路径与校验过的长度"},
         ],
     },
     {
         "id": "imitate-imported-edit",
         "title": "把别人剪好的一刀搬过来再交付",
         "when": "手上是 FCPXML / Premiere XML / EDL / OTIO / 剪映草稿，要接着剪。",
+        "params": (
+            "name、interchange_document（那一份工程文件的正文，格式由引擎自己认）、files"
+            "（那份文档指着的素材，得先在这台机器上验过才按名字认得到）、deliver_items"
+            "（1..4 条交付，各带预设与文件名）；interchange_format 只在你想强制按某一种格式读时给。"
+            "include_text=true 才把三份导出全文塞进回执。"
+        ),
         "steps": [
-            {"tool": "interchange_import_plan", "why": "引擎自己认格式，先交回命令与清单"},
-            {"tool": "timeline_edit", "why": "审过计划再落库，一个 revision"},
+            {"tool": "editor_capabilities", "why": "先问这台引擎认哪些格式与预设"},
+            {"tool": "media_config", "why": "素材必须落在授权根目录里，先看清是哪几个目录"},
+            {"tool": "media_import", "why": "那份文档指着的素材，先在这台机器上探测验过"},
+            {"tool": "project_create", "why": "一个 request_id 一次创建，重复提交拿回同一个工程"},
+            {"tool": "ids_request", "why": "轨道与素材的 id 由服务端发，避免两边撞号"},
+            {
+                "tool": "timeline_edit",
+                "why": "先把素材登记成这个工程的素材，读的那一边才按名字认得到",
+            },
+            {
+                "tool": "interchange_import_plan",
+                "why": "引擎自己认格式，交回命令、搬不动的那几样，以及缺几条轨道",
+            },
+            {
+                "tool": "timeline_edit",
+                "why": "把缺的轨道按它数出来的条数补齐，再一批落库，各一个 revision",
+            },
             {"tool": "project_get", "why": "核对轨道、片段与 revision"},
-            {"tool": "preview_frame", "why": "抽查画面，确认对上了源"},
+            {"tool": "timeline_overview", "why": "一张接触表看完整条时间线，确认对上了源"},
+            {"tool": "preview_frame", "why": "抽查几个刻度：预览与导出读的是同一份编译"},
             {"tool": "project_otio", "why": "交回中性格式"},
             {"tool": "project_xmeml", "why": "交回 Premiere / FCP7 那一支"},
             {"tool": "project_jianying", "why": "交回剪映草稿"},
             {"tool": "render_batch", "why": "一次排多个预设/画幅，一单交付"},
+            {"tool": "job_wait", "why": "一次调用等到终态，拿回输出路径与校验过的长度"},
         ],
     },
 )
 
 
-# 1.311：`recipe_run` 能把哪条配方一把跑完。不在这里的配方在契约里带着原因说清楚——
-# 一把跑不完是缺输入或缺判断，不是这一版偷懒。
-RUNNABLE_RECIPES = frozenset({"cut-from-media"})
-RECIPE_LIMITS = {
-    "speech-to-captions": "字幕要不要落库、改哪一行是人的判断，这一刀只交回 cue",
-    "imitate-imported-edit": "要先点名读哪一份工程文件，搬哪些轨道由你决定",
-}
+# 1.312：三条配方都能一把跑完了——各自缺的那一样东西变成参数交给调用方
+# （口播要剪哪几行给数据，搬别人的剪辑给那一份文档）。跑不完的那一条仍然点名说为什么。
+RUNNABLE_RECIPES = frozenset({"cut-from-media", "speech-to-captions", "imitate-imported-edit"})
 
 
 # 每一只 MCP 工具背后就是这一条路由——两条门面因此是同一批口，不是两套规则。
@@ -305,9 +347,9 @@ def recipes() -> list[dict[str, Any]]:
             "id": recipe["id"],
             "title": recipe["title"],
             "when": recipe["when"],
-            # 一把跑完的门只对得上开的那条；开不通的两条带着原因说，不装作什么都能自动。
+            # 一把跑完的门三条都开；`params` 说清每一条要哪几样，门禁拿它与执行表对。
             "runnable": recipe["id"] in RUNNABLE_RECIPES,
-            "why_not": RECIPE_LIMITS.get(recipe["id"]),
+            "params": recipe["params"],
             "steps": [dict(step) for step in recipe["steps"]],
         }
         for recipe in RECIPES
@@ -319,15 +361,13 @@ def render_recipe(recipe: dict[str, Any]) -> str:
     lines = [f"配方：{recipe['title']}", recipe["when"], ""]
     for index, step in enumerate(recipe["steps"], 1):
         lines.append(f"{index}. {step['tool']} —— {step['why']}")
-    lines.append("")
-    if recipe["id"] in RUNNABLE_RECIPES:
-        lines += [
-            f"这一条也能一把跑完：recipe_run（POST /v1/agent/recipes/{recipe['id']}/run）。",
-            "它走的就是上面这些路由：同一条 bearer 令牌、同一个 reducer，",
-            "一个 request_id 贯穿整刀，重放拿回同一个工程、同一批 revision、同一个交付作业。",
-        ]
-    else:
-        lines.append(f"这一条不能一把跑完：{RECIPE_LIMITS.get(recipe['id'], '这一步要你点名')}。")
+    lines += [
+        "",
+        f"这一条也能一把跑完：recipe_run（POST /v1/agent/recipes/{recipe['id']}/run）。",
+        f"参数：{recipe['params']}",
+        "它走的就是上面这些路由：同一条 bearer 令牌、同一个 reducer，一个 request_id 贯穿整刀，",
+        "重放拿回同一个工程、同一批 revision、同一个交付作业。逐步自己叫也照样能叫。",
+    ]
     lines += [
         "",
         "工具名与参数以 GET /v1/agent/manifest（MCP 资源 agentcut://manifest）为准；",

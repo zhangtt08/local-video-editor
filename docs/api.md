@@ -3472,3 +3472,41 @@ POST /v1/agent/recipes/cut-from-media/run
   错误信封里 `details.called` 说的就是停下的那扇门。
 * MCP 同一只：`recipe_run(recipe_id, request)`；桥（`/api/agent/tool`）从契约里派生同一只。
   能力位 `features.recipe_run`，跟媒体引擎在场与否走同一判断。
+## 1.312 三条配方都开了这一刀：`recipe_run` 的另外两扇门
+
+1.311 只开 `cut-from-media`。这一版把 `speech-to-captions` 与 `imitate-imported-edit` 也接上，
+并把「哪一条要哪些参数」从模型移到配方口径里：`files` / `preset_id` / `filename` 变成可选形状，
+缺什么由 `recipe_run` 在建工程之前按名字拒（422 `RECIPE_PARAM_MISSING`，`details.missing`
+点名缺的那几样、`details.required` 给出整张清单）。`recipes()` 因此不再带 `why_not`，
+每条改带一句 `params`。
+
+`speech-to-captions`（15 步，`request_id` 贯穿）：
+
+```
+POST /v1/agent/recipes/speech-to-captions/run
+{
+  "request_id": "cut-voice-1", "name": "口播一条", "files": ["D:/media/talk.wav"],
+  "language": "zh", "caption_max_chars": 16,
+  "filler_patterns": ["嗯", "就是说"], "cut_gap_ms": 600,
+  "preset_id": "h264-720p-web", "filename": "voice.mp4", "render": true, "wait_seconds": 90.0
+}
+```
+
+* 「剪哪几行」是数据不是代码：`filler_patterns` 命中的那一句、`cut_gap_ms` 长过那档的句间静音，
+  段的位置一律取自 `GET /v1/projects/{id}/transcript` 那份 `phrases` / `silences`，一刀里没有第二处判断。
+* 这条要本机备着语音模型（`features.speech_captions`）。没备着时 `captions_auto` 那一行是
+  `ran: false` 并说明为什么，其余步骤照走完——不假装出了字幕。
+* 回执里 `captions_export` 那行给 `srt_chars`；`include_text: true` 才带全文（几 MB 不该默认塞进一刀）。
+
+`imitate-imported-edit`（16 步）：`interchange_document` 是那一份工程文件的正文，格式仍由引擎认
+（`interchange_format` 只在你想强制时给），`files` 是那份文档指着的素材。两处门槛是真门槛，
+配方文本已写明：
+
+1. 读那一边按**名字**认素材，只肯用这台引擎已经验过的，所以素材要先探测并登记成这个工程的
+   asset——否则交回来的 `clip.add` 指着别的工程里的 id；
+2. 读那一边要求**轨道先存在**：五种格式各有一句 `*_TRACK_COUNT`，并把缺的条数直接数给你
+   （`wanted` 有 `{video,audio}` 与单个整数两种形状）。这一刀按它数的条数补 `track.add`
+   再读一次，最多六轮；一轮补不出进展就把那份拒绝原样抛出，不静悄悄猜。
+
+实测（同一份源码与随包二进制各跑一遍）：口播 7.77 s 真中文素材 → cue 2 条、SRT 88 字、
+交付 7.07 s；把自己导出的 FCPXML 搬回来 → 落库 2 条命令、两份交付 115,866 B / 166,062 B。
