@@ -3510,3 +3510,9 @@ POST /v1/agent/recipes/speech-to-captions/run
 
 实测（同一份源码与随包二进制各跑一遍）：口播 7.77 s 真中文素材 → cue 2 条、SRT 88 字、
 交付 7.07 s；把自己导出的 FCPXML 搬回来 → 落库 2 条命令、两份交付 115,866 B / 166,062 B。
+
+1.313 起，`cut-from-media`（14 步）与 `speech-to-captions`（16 步）多一步 `master_loudness`：
+给了 `loudness_target_lufs` 才落混音（引擎走的是导出那同一张音频图测出来的数，写一次
+`project.update`、涨一个 revision），没给就那一行 `ran: false` 点名缺的是哪一样——
+一刀不替人决定片子该多响。门禁拿 FFmpeg 自己的 `ebur128` 量交付文件：目标 -16.0、
+实测 -16.1 LUFS；把那一步偷偷跳过，同一档立刻量到 -21.7 并红。

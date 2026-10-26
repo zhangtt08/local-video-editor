@@ -6649,3 +6649,30 @@ revision 3，等到终态 531 ms，关掉按 PID 收子树不留尸。
 「外壳画出来 / 第一次真用到看见内容 / 重载到看见列表」那三段的地板由 `packaged_ui_check` 在
 这一跑的 177/177 里守住；最近一次逐段数值记在 1.311 那一节（518 ms / 1232 ms / 206 ms），
 这一版渲染层只改了 `engine.ts` 里两句中文提示，不重抄一遍数——要新数就再跑那一档，别手抄。
+
+## 1.313：一刀把混音也落到位——配方里多了 `master_loudness` 那一步
+
+「能直接发出去的片子」不只要剪对，还要响度对。以前这一刀剪完就把混音原样交出去，
+调用方还得自己知道要再叫一次 `master_loudness`、并且**在它之后**重新排队交付——
+一次调用变成两次，中间那条依赖关系只有读文档的人才知道。
+
+现在 `cut-from-media`（14 步）与 `speech-to-captions`（16 步）都带这一步，位置在剪完之后、
+`render_plan` 之前：
+
+* 给了 `loudness_target_lufs` 就落：那一步走 `POST /v1/projects/{id}/master/loudness`，
+  `apply=true`，写一次 `project.update`、涨一个 revision，撤销一步就把 `master_gain` 取回去。
+* 没给就明写不动：那一行是 `ran: false`，`why` 里点名缺的就是 `loudness_target_lufs`——
+  **一刀不替人决定片子该多响**。
+* 那一句「已经坐在目标上了」（引擎回 `INVALID_LOUDNESS_TARGET`）当答案收，不当失败：
+  行里 `changed: false` 并带着引擎自己算出的 `predicted_lufs`。
+
+### 量法刻意不 self-consistent
+
+门禁不信引擎交回的那个数，它拿 FFmpeg 自己的 `ebur128` 量**交付出去的那个文件**：
+目标 -16.0 LUFS，实测 **-16.1**（允差 1.5 LU 内）。这一档能红不是修辞——把那一步偷偷改成
+永远跳过，同一道立刻量到 **-21.7 LUFS** 并红在响度那两条断言上。另两刀：落完响度不推进
+revision（下一扇门直接 `REVISION_CONFLICT`，红在「一次调用跑完」与重放那几道）、执行表里
+不登记这一步（三条「每一步都有执行步」加运行时 `RECIPE_STEP_UNIMPLEMENTED` 一起红）。
+
+这一步多写一个 revision（那一趟从 1.312 的 revision 3 变成本版的 4），交付仍是同一次调用里
+等到终态——实测那一刀 `waited_ms` 500 ms、交付 1.00 s、响度 -16.1 LUFS。`APP_VERSION` 1.313.0。
