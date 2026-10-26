@@ -269,6 +269,7 @@ def main() -> None:
             assert rect["bottom"] <= size["h"] - 3, (rect, size)
             assert rect["top"] >= 8, rect
             assert rect["bottom"] <= size["h"] - 4 + 1, "没有翻到指针上方"
+            assert facts.get("menuDismissedMs"), "Escape 之后那份菜单两秒内没收掉（量到还在）"
             assert facts.get("menuAtEnd") is None, "最后那一份菜单没收掉"
             print(f"   右下角：菜单翻到指针上方，右缘 {rect['right']} ≤ {size['w'] - 8}，"
                   f"下缘 {rect['bottom']} ≤ {size['h'] - 4}")

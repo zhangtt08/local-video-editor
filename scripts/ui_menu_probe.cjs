@@ -362,7 +362,13 @@ async function main() {
     facts.cornerMenu = await evaluate(MENU_READ);
     facts.cornerTarget = await evaluate("({ w: window.innerWidth, h: window.innerHeight })");
     await key("Escape", "Escape");
-    await sleep(150);
+    // 机器忙时 React 的卸载会慢一拍：等它真的落定（最多两秒），而不是死等 150 毫秒再认输。
+    let settledMs = null;
+    for (let wait = 1; wait <= 20 && settledMs === null; wait += 1) {
+      await sleep(100);
+      if ((await evaluate(MENU_READ)) === null) settledMs = wait * 100;
+    }
+    facts.menuDismissedMs = settledMs;
     facts.menuAtEnd = await evaluate(MENU_READ);
   } finally {
     if (cdp) cdp.close();
