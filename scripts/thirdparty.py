@@ -41,12 +41,17 @@ MANIFEST = ROOT / "THIRD-PARTY.md"
 RUNTIME = ["fastapi", "uvicorn", "pydantic", "httpx", "mcp", "vosk"]
 BUILD_ONLY = ["pyinstaller", "ruff"]
 
-# 这些外部库只要出现在 `-buildconf` 里，那支 ffmpeg 就只能按 GPL 一档再分发。
-GPL_ONLY = ("--enable-gpl", "--enable-libx264", "--enable-libx265", "--enable-libxvid",
-            "--enable-libsrt", "--enable-libopencore-amrnb", "--enable-libmp3lame",
-            "--enable-libspeex", "--enable-libass", "--enable-libfreetype")
-LGPL_ONLY = ("--enable-gnutls", "--enable-libvpx", "--enable-libaom", "--enable-libopus",
-             "--enable-libfdk-aac", "--enable-libbluray")
+# FFmpeg 的口径只有一句话：默认 LGPL，**显式 `--enable-gpl` 之后按 GPL 分发**；
+# `--enable-version3` 表示这一支里还编进了只允许 GPLv3 的组件。判定只读这两个开关。
+GPL_TRIGGER = "--enable-gpl"
+VERSION3_TRIGGER = "--enable-version3"
+# 下面这些是 FFmpeg 文档点名的 GPL-only 外部库，只当**佐证**列出来，不当触发器：
+# 把 libmp3lame（LGPL）、libass（BSD）、libsrt（MPL2）、libfreetype（FTPL）也算成
+# GPL 的证据，是「今天恰好都对」那种错判的来源。
+GPL_EVIDENCE = ("--enable-libx264", "--enable-libx265", "--enable-libxvid",
+                "--enable-libcdio", "--enable-libzvbi")
+LGPL_EVIDENCE = ("--enable-gnutls", "--enable-libvpx", "--enable-libaom", "--enable-libopus",
+                 "--enable-libfdk-aac", "--enable-libbluray")
 
 
 def fail(message: str) -> None:
@@ -67,19 +72,19 @@ def media_binary(name: str) -> dict[str, object]:
     version_line = banner[0] if banner else ""
     flags = [line.strip() for line in run(exe, "-hide_banner", "-buildconf").splitlines()
              if line.strip().startswith("--")]
-    hit_gpl = [flag for flag in flags if flag in GPL_ONLY]
-    hit_lgpl = [flag for flag in flags if flag in LGPL_ONLY]
-    if not hit_gpl:
-        fail(f"{name} 的 -buildconf 里一个 GPL-only 开关都没命中，判定规则该重读：{flags[:6]}")
-    if "--enable-version3" in hit_gpl or "--enable-version3" in flags:
-        license_id = "GPL-2.0-or-later（且 --enable-version3：含只有 GPLv3 才允许的组件）"
+    hit_gpl = [flag for flag in flags if flag in GPL_EVIDENCE]
+    hit_lgpl = [flag for flag in flags if flag in LGPL_EVIDENCE]
+    if GPL_TRIGGER in flags:
+        license_id = ("GPL-2.0-or-later（带 --enable-version3：还含只允许 GPLv3 的组件）"
+                      if VERSION3_TRIGGER in flags else "GPL-2.0-or-later")
     else:
-        license_id = "GPL-2.0-or-later"
+        license_id = "LGPL-2.1-or-later（这一支没带 --enable-gpl）"
     payload = exe.read_bytes()
     return {
         "name": name,
         "version_line": version_line,
         "flags": len(flags),
+        "flags_all": flags,
         "hit_gpl": hit_gpl,
         "hit_lgpl": hit_lgpl,
         "license": license_id,
@@ -308,6 +313,8 @@ def build() -> str:
     models = asr_rows()
     package = read_json(DESKTOP / "package.json")
     builder = str((package.get("devDependencies") or {}).get("electron-builder", "?"))
+    gpl_count = sum(1 for item in binaries if GPL_TRIGGER in item["flags_all"])
+    version3_count = sum(1 for item in binaries if VERSION3_TRIGGER in item["flags_all"])
     lines: list[str] = ["# 三方清单与许可（THIRD-PARTY）", ""]
     lines += [
         "这一页由 `scripts/thirdparty.py` 生成，判它的是 `tests/thirdparty_check.py`——"
@@ -326,8 +333,10 @@ def build() -> str:
     )
     lines += [
         "",
-        "两支都带 `--enable-gpl`，其中 ffmpeg 那一支还带 `--enable-version3`，所以再分发的口径按 "
-        "**GPL** 一档走，不是 LGPL：AgentCut 不修改这两支二进制，交回的是**逐字节相同的上游构建**"
+        f"{gpl_count}/{len(binaries)} 支带 `--enable-gpl`（其中 {version3_count} 支还带 "
+        f"`--enable-version3`），所以再分发的口径按 **GPL** 一档走，不是 LGPL；这个数字是从上面"
+        f"那张表的开关里数出来的，不是写死的。AgentCut 不修改这两支二进制，交回的是"
+        f"**逐字节相同的上游构建**"
         "（上表的 sha256 就是那一件的指纹）。需要对应源码时：FFmpeg 的完整对应源码在 "
         "<https://ffmpeg.org/download.html>，Windows 的这份构建（6.1.1-essentials_build）在 "
         "<https://www.gyan.dev/ffmpeg/builds/>，构建脚本与配置开关随上游 releases 一起发布；"

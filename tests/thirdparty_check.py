@@ -20,7 +20,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -55,6 +57,41 @@ def rows_of(text: str, header: str) -> list[list[str]]:
     return rows
 
 
+def buildconf(name: str) -> str:
+    exe = ROOT / "desktop/resources/bin" / name
+    done = subprocess.run([str(exe), "-hide_banner", "-buildconf"], capture_output=True,
+                          text=True, encoding="utf-8", errors="replace", timeout=120)
+    return done.stdout or ""
+
+
+def media_legs(text: str) -> None:
+    """媒体那两行不许由生成器说了算：sha256 门禁自己算，档位门禁自己跑一遍 `-buildconf`。
+
+    现场重算再逐字节比，只挡得住「文件与生成器不一致」；判定本身写错时两份**一起错**。
+    1.319 那三方版本号一起停旧、1.315 那构建者换掉了随包 FFmpeg 而门禁照绿，都是这一形状。
+    """
+    for row in rows_of(text, "文件"):
+        name = row[0]
+        build_input = ROOT / "desktop/resources/bin" / name
+        inside = ROOT / "desktop/release/win-unpacked/resources/bin" / name
+        if not (build_input.is_file() and inside.is_file()):
+            check(f"没法自己算：{name} 的两份都不在", False,
+                  (build_input.is_file(), inside.is_file()))
+            continue
+        digest = hashlib.sha256(build_input.read_bytes()).hexdigest()
+        check(f"{name} 的 sha256 要门禁自己算过一遍", digest == row[5], (digest, row[5]))
+        check(f"{name} 装机那一份与构建输入必须是同一件东西",
+              hashlib.sha256(inside.read_bytes()).hexdigest() == digest, str(inside))
+        flags = [line.strip() for line in buildconf(name).splitlines()
+                 if line.strip().startswith("--")]
+        gpl = thirdparty.GPL_TRIGGER in flags
+        check(f"{name} 那一格许可要由门禁自己跑一遍 -buildconf 推出来",
+              ("GPL-2.0-or-later" in row[2]) == gpl, (row[2], gpl, len(flags)))
+        listed = [item for item in row[3].replace("、", " ").split() if item.startswith("--")]
+        check(f"{name} 的佐证列只能列 FFmpeg 点名的 GPL-only 那几个外部库",
+              all(item in thirdparty.GPL_EVIDENCE for item in listed), row[3][:120])
+
+
 def license_legs(text: str) -> None:
     py_rows = rows_of(text, "包")
     check("Python 依赖那张表读得出行", len(py_rows) >= 10, len(py_rows))
@@ -73,7 +110,7 @@ def license_legs(text: str) -> None:
     media = rows_of(text, "文件")
     check("两支媒体程序各有一行", len(media) == 2, media)
     for row in media:
-        check(f"{row[0]} 的许可判定要写明依据的开关", "--enable-" in row[3], row[3])
+        check(f"{row[0]} 的许可那一格不许留空", bool(row[2].strip()), row[2])
         check(f"{row[0]} 要有 64 位十六进制的 sha256",
               bool(re.fullmatch(r"[0-9a-f]{64}", row[5])), row[5])
 
@@ -143,6 +180,7 @@ def main() -> None:
               f"第 {head} 个字符起不一致："
               f"仓里 {committed[head:head + 120]!r} / 现场 {fresh[head:head + 120]!r}")
     license_legs(committed)
+    media_legs(committed)
     obligation_legs(committed)
     packaged_legs(committed)
     collected_leg(committed)

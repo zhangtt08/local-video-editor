@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -67,6 +68,16 @@ def predicate_leg() -> None:
     check("人自己的工程目录一个都不算", runner.scratch_roots(human) == [],
           runner.scratch_roots(human))
 
+    # mkdtemp 的后缀字母表是 `abcdefghijklmnopqrstuvwxyz0123456789_`——**带下划线**。
+    # 少认这一点，`agentcut-plimit-ci36g46_` 就会被认成 `agentcut-plimit`（那半截当然不存在），
+    # 于是「正在跑的那一趟」被当活口收掉。1.321 的整套验收就是这么红的，
+    # 上一轮加的逐 PID 摊开自己点名了这一条。
+    under = (r"D:\tools\python.exe -m agentcut api --data-dir"
+             r" D:\runner\scratch\agentcut-plimit-ci36g46_/engine")
+    check("后缀里带下划线的那一个临时目录要认全",
+          runner.scratch_roots(under) == [r"D:\runner\scratch\agentcut-plimit-ci36g46_"],
+          runner.scratch_roots(under))
+
 
 def roots_of(pids: list[int]) -> list[tuple[int, list[str], list[bool]]]:
     """把每一条命中的命令行摊开：认出的是哪个目录、那个目录在不在。
@@ -102,6 +113,15 @@ def live_leg() -> None:
          "--data-dir", str(keep / "engine"), "--media-root", str(keep)],
         cwd=str(ROOT), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
     )
+    # 后缀里带下划线的那一种临时目录真起一台：mkdtemp 的字母表里有 `_`，认不全就会把
+    # 这一趟正在跑的引擎当活口收掉——1.321 的整套验收就是这么红的。
+    under = Path(tempfile.gettempdir()) / "agentcut-undr-ab12c3_"
+    (under / "engine").mkdir(parents=True, exist_ok=True)
+    underscore = subprocess.Popen(
+        [sys.executable, "-m", "agentcut", "api", "--port", "0", "--json",
+         "--data-dir", str(under / "engine"), "--media-root", str(under)],
+        cwd=str(ROOT), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
+    )
     # 正例借一个「不会被建出来」的临时目录：命令行里那个名字在，目录不在——
     # 那正是崩在半路的那一台留下的形状。名字每一趟都新，别的趟留下的假活口不算这一趟的数。
     gone = Path(tempfile.gettempdir()) / f"agentcut-gone-{os.urandom(4).hex()}"
@@ -121,6 +141,8 @@ def live_leg() -> None:
               ghost.pid in found, roots_of(found + [engine.pid, ghost.pid]))
         check("临时目录还在的那一趟不算活口", engine.pid not in found,
               roots_of(found + [engine.pid, ghost.pid]))
+        check("后缀里带下划线的那一趟也不算活口", underscore.pid not in found,
+              roots_of(found + [underscore.pid]))
         killed, stuck = runner.sweep()
         check("兜底按 PID 收的就是那一个", ghost.pid in killed, killed)
         check("没有收不掉的", stuck == [], stuck)
@@ -131,13 +153,17 @@ def live_leg() -> None:
         else:
             check("假活口收完就该没了", ghost.poll() is not None, ghost.poll())
         check("那一台真引擎没被这一刀打断", engine.poll() is None, (engine.poll(), killed))
+        check("后缀带下划线的那一台也没被打断", underscore.poll() is None,
+              (underscore.poll(), killed))
     finally:
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(engine.pid)],
-                       capture_output=True, timeout=60)
-        try:
-            engine.wait(timeout=30)
-        except subprocess.TimeoutExpired:
-            engine.kill()
+        for proc in (engine, underscore):
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                           capture_output=True, timeout=60)
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        shutil.rmtree(under, ignore_errors=True)
     leftover = runner.strays()
     check("这一档自己也不留活口", leftover == [], leftover)
 

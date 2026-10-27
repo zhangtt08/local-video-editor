@@ -40,16 +40,19 @@ def emit(line: str) -> None:
 
 
 # 门禁的临时地方都建在 `%TEMP%\agentcut-xxxxxxxx` 下面（tests/scratch.py 是唯一入口）。
+# 后缀那八位取自 mkdtemp 的字母表 `a-z0-9_`——**下划线必须在字符类里**：漏了它，
+# `agentcut-plimit-ci36g46_` 会被认成半截 `agentcut-plimit`（当然不存在），
+# 正在跑的那一趟就被当活口收掉（1.321 的整套验收就是这么红的）。
 # 只把「那个目录已经不在了、进程还在服」算活口：那正是漏下的那一手（实测一台崩掉的
 # `lease_check` 留下 4 个）；而另一趟正在跑的验收，它的临时目录还在，不该被这一刀收走。
 STRAY_SCRIPT = (
     "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;"
     " Get-CimInstance Win32_Process -Filter \"Name='python.exe' OR Name='pythonw.exe'\" |"
     " Where-Object { $_.CommandLine -match"
-    " '[\\\\/]agentcut-(?:[a-z0-9]+-)?[a-z0-9]{8}(?![a-z0-9])' } |"
+    " '[\\\\/]agentcut-(?:[a-z0-9]+-)?[a-z0-9_]{8}(?![a-z0-9_])' } |"
     " ForEach-Object { $_.ProcessId.ToString() + \" :: \" + $_.CommandLine }"
 )
-SCRATCH = re.compile(r"agentcut-(?:[a-z0-9]+-)?[a-z0-9]{8}(?![a-z0-9])")
+SCRATCH = re.compile(r"agentcut-(?:[a-z0-9]+-)?[a-z0-9_]{8}(?![a-z0-9_])")
 
 
 def scratch_roots(command: str) -> list[str]:

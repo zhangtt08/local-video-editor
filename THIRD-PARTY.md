@@ -6,10 +6,10 @@
 
 | 文件 | 版本行 | 许可（按 -buildconf 判定） | 命中的 GPL 开关 | 字节 | sha256 |
 |---|---|---|---|---|---|
-| ffmpeg.exe | ffmpeg version 6.1.1-essentials_build-www.gyan.dev Copyright (c) 2000-2023 the FFmpeg developers | GPL-2.0-or-later（且 --enable-version3：含只有 GPLv3 才允许的组件） | --enable-gpl、--enable-libsrt、--enable-libx264、--enable-libx265、--enable-libxvid、--enable-libass、--enable-libfreetype、--enable-libmp3lame、--enable-libopencore-amrnb、--enable-libspeex | 82,797,568 | 04e1307997530f9cf2fe35cba2ca7e8875ca91da02f89d6c7243df819c94ad00 |
-| ffprobe.exe | ffprobe version 4.0.2 Copyright (c) 2007-2018 the FFmpeg developers | GPL-2.0-or-later（且 --enable-version3：含只有 GPLv3 才允许的组件） | --enable-gpl、--enable-libass、--enable-libfreetype、--enable-libmp3lame、--enable-libopencore-amrnb、--enable-libx264、--enable-libx265、--enable-libspeex、--enable-libxvid | 63,059,968 | 4303ec85855340689b1f8aa5d9c1dc06ef3e3090682de3034edc3fca2b0798d5 |
+| ffmpeg.exe | ffmpeg version 6.1.1-essentials_build-www.gyan.dev Copyright (c) 2000-2023 the FFmpeg developers | GPL-2.0-or-later（带 --enable-version3：还含只允许 GPLv3 的组件） | --enable-libx264、--enable-libx265、--enable-libxvid | 82,797,568 | 04e1307997530f9cf2fe35cba2ca7e8875ca91da02f89d6c7243df819c94ad00 |
+| ffprobe.exe | ffprobe version 4.0.2 Copyright (c) 2007-2018 the FFmpeg developers | GPL-2.0-or-later（带 --enable-version3：还含只允许 GPLv3 的组件） | --enable-libx264、--enable-libx265、--enable-libxvid | 63,059,968 | 4303ec85855340689b1f8aa5d9c1dc06ef3e3090682de3034edc3fca2b0798d5 |
 
-两支都带 `--enable-gpl`，其中 ffmpeg 那一支还带 `--enable-version3`，所以再分发的口径按 **GPL** 一档走，不是 LGPL：AgentCut 不修改这两支二进制，交回的是**逐字节相同的上游构建**（上表的 sha256 就是那一件的指纹）。需要对应源码时：FFmpeg 的完整对应源码在 <https://ffmpeg.org/download.html>，Windows 的这份构建（6.1.1-essentials_build）在 <https://www.gyan.dev/ffmpeg/builds/>，构建脚本与配置开关随上游 releases 一起发布；上表的 `-buildconf` 开关就是那一份源码被这样配置的证据。GPL 的对应源码义务落在**分发方**：本包只交未修改的上游构建，上面两个 URL 就是对应源码的取得指引；企业把这份清单随自己的产品再分发时，要按同样的条款附上这份指引。
+2/2 支带 `--enable-gpl`（其中 2 支还带 `--enable-version3`），所以再分发的口径按 **GPL** 一档走，不是 LGPL；这个数字是从上面那张表的开关里数出来的，不是写死的。AgentCut 不修改这两支二进制，交回的是**逐字节相同的上游构建**（上表的 sha256 就是那一件的指纹）。需要对应源码时：FFmpeg 的完整对应源码在 <https://ffmpeg.org/download.html>，Windows 的这份构建（6.1.1-essentials_build）在 <https://www.gyan.dev/ffmpeg/builds/>，构建脚本与配置开关随上游 releases 一起发布；上表的 `-buildconf` 开关就是那一份源码被这样配置的证据。GPL 的对应源码义务落在**分发方**：本包只交未修改的上游构建，上面两个 URL 就是对应源码的取得指引；企业把这份清单随自己的产品再分发时，要按同样的条款附上这份指引。
 
 这两支的**载荷**是 GPL 一档；把它们拷进包里的 npm 包装工是另一回事，见下面「构建期与打包期工具」——**包装工的 MIT 字段不等于载荷的许可**，这正是这一页要拆开写的地方。
 
