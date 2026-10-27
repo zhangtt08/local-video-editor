@@ -20,6 +20,11 @@ const flag = (name, fallback) => {
   return at >= 0 && process.argv[at + 1] ? process.argv[at + 1] : fallback;
 };
 const EXE = path.resolve(flag("exe", path.join(REPO, "desktop/release/win-unpacked/AgentCut.exe")));
+// 1.315：外壳拉起引擎用的是 `desktop --port 0`（main.ts 那一行），而 census 过去只认
+// `api --port`——于是「关掉之后一台引擎都不许留」这一条永远数不到引擎，绿得没有根据。
+// 两种模式都认，且只认那一个可执行文件名的进程：node 的命令行里带着 --exe …\AgentCut.exe，
+// 按命令行找会把量具自己数进去。
+const ENGINE_LINE = /agentcut\.exe"?\s+(?:desktop|api)\s+--port/i;
 const PROFILE = path.resolve(flag("profile", path.join(REPO, "build/packaged-ui-profile")));
 const OUT = path.resolve(flag("out", path.join(REPO, "build/packaged-ui.json")));
 const SHOT = path.resolve(flag("shot", path.join(REPO, "build/packaged-ui.png")));
@@ -114,6 +119,52 @@ async function main() {
   child.unref();
   let cdp = null;
   const facts = {};
+  // 1.315：同一趟 census 多要一列 WorkingSetSize。计数故意不数 Electron 的帮助进程
+  // （--type=…），但**占用必须**把它们算进外壳合计——拿只数主进程的那套去报 MB，
+  // 读数会少一大截，那正是「数错=假绿」。引擎按 ImageName + 「 api --port」认，
+  // 与关掉之后那次数法同一口径。
+  const memoryOnce = function () {
+    const census = "Get-CimInstance -Query \"select Name,WorkingSetSize,CommandLine"
+      + " from Win32_Process\" | ForEach-Object { \"{0}={1}={2}\" -f $_.Name, "
+      + "$_.WorkingSetSize, $_.CommandLine }";
+    const listed = execFileSync("powershell", ["-NoProfile", "-Command", census],
+      { encoding: "utf8" });
+    let shellBytes = 0;
+    let helperBytes = 0;
+    let engineBytes = 0;
+    let shellProcs = 0;
+    let helperProcs = 0;
+    let engineProcs = 0;
+    for (const line of listed.split(/\r?\n/)) {
+      const first = line.indexOf("=");
+      const second = line.indexOf("=", first + 1);
+      if (first < 0 || second < 0) continue;
+      const name = line.slice(0, first);
+      const bytes = Number(line.slice(first + 1, second)) || 0;
+      const command = line.slice(second + 1);
+      if (name === "agentcut.exe" && ENGINE_LINE.test(command)) {
+        engineProcs += 1;
+        engineBytes += bytes;
+      } else if (name === "AgentCut.exe" && / --type=/.test(command)) {
+        helperProcs += 1;
+        helperBytes += bytes;
+      } else if (name === "AgentCut.exe") {
+        shellProcs += 1;
+        shellBytes += bytes;
+      }
+    }
+    const mb = (value) => Math.round((value / 1048576) * 10) / 10;
+    return {
+      shellMb: mb(shellBytes + helperBytes),
+      shellMainMb: mb(shellBytes),
+      helperMb: mb(helperBytes),
+      engineMb: mb(engineBytes),
+      totalMb: mb(shellBytes + helperBytes + engineBytes),
+      shellProcs,
+      helperProcs,
+      engineProcs,
+    };
+  };
   try {
     let target = null;
     for (let attempt = 0; attempt < 90 && !target; attempt += 1) {
@@ -175,8 +226,20 @@ async function main() {
       throw new Error("打开窗口那一下该直接出外壳、不带全屏门：" + openState);
     }
     if (fs.existsSync(path.join(PROFILE, "agentcut.token"))) {
-      throw new Error("用户还没真使用，引擎令牌就写出来了：说明开机就拉起了进程");
+      // 1.315：这一条在第一趟 1.315 装机腿里红过一次，第二次又绿——先让它红得带证据：
+      // 令牌什么时候写的、那一刻机器上有几台引擎、各自多大。
+      let evidence = "";
+      try {
+        const seen = memoryOnce();
+        const when = fs.statSync(path.join(PROFILE, "agentcut.token")).mtime.toISOString();
+        evidence = " | token mtime " + when + " | census " + JSON.stringify(seen);
+      } catch (censusError) {
+        evidence = " | census failed: " + censusError;
+      }
+      throw new Error("用户还没真使用，引擎令牌就写出来了：说明开机就拉起了进程" + evidence);
     }
+    // 用户还没真用的那一刻：外壳与它的帮助进程都在，引擎那一列必须是 0。
+    facts.memoryIdle = memoryOnce();
     // 第一次真使用：一次真指针落在首页标题那一行（那里没有可点的控件），引擎这才在后台起来。
     if (!atOpen.headX || !atOpen.headY) throw new Error("首页标题没画出来：外壳不是预期那一屏");
     const pressedAt = Date.now();
@@ -189,6 +252,9 @@ async function main() {
       if (String(landed) === "true") firstUseMs = Date.now() - pressedAt;
     }
     facts.firstUseToListMs = firstUseMs;
+    // 真用过之后：给后台那台引擎一点时间把模型与索引起来，再称一次。
+    await sleep(1500);
+    facts.memoryAfterUse = memoryOnce();
 
     let body = "";
     // 1.291：版本号不再画在界面上（「引擎在线 v1.290.0」那种小字正是被删掉的东西），
@@ -332,7 +398,7 @@ async function main() {
       for (const line of listed.split(/\r?\n/)) {
         const name = line.slice(0, line.indexOf("="));
         const command = line.slice(line.indexOf("=") + 1);
-        if (name === "agentcut.exe" && / api --port/.test(command)) engine += 1;
+        if (name === "agentcut.exe" && ENGINE_LINE.test(command)) engine += 1;
         else if (name === "AgentCut.exe" && !/ --type=/.test(command)) shell += 1;
       }
       return { engine, shell };

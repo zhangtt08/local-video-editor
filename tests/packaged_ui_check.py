@@ -24,6 +24,11 @@ from agentcut.contracts import APP_VERSION  # noqa: E402
 
 EXE = ROOT / "desktop/release/win-unpacked/AgentCut.exe"
 PROBE = ROOT / "scripts/packaged_ui_probe.cjs"
+# 1.315 实测（三趟取最大再留一档机器抖动）：空闲外壳 336.8 MB、真用过之后合计 425.4 MB、
+# 其中引擎 80.5 MB。额度只挡增长，不当目标值；探针把两个数都写进 ui.json。
+IDLE_SHELL_MB = 400.0
+USED_TOTAL_MB = 500.0
+ENGINE_MB = 120.0
 # 装机窗口里那五颗工具胶囊的名字，按屏幕上的顺序点出来。1.294 把「历史与视图 / 加轨道」
 # 两胶囊收进「更多」（复制属性、按标记切开、加轨道、适应窗口都在那份菜单里，走的还是同一批
 # store 函数），1.296 又给「更多」补上自己的胶囊——名单跟着改，但少一颗、换名字、调顺序仍红。
@@ -131,6 +136,28 @@ def main() -> None:
         size = shot.stat().st_size if shot.is_file() else 0
         assert shot.is_file() and size > 20_000, size
 
+        # ⑦ 占用：同一趟 census 多要一列工作集，按「外壳 / 帮助进程 / 引擎」三类求和。
+        idle = facts.get("memoryIdle") or {}
+        used = facts.get("memoryAfterUse") or {}
+        assert idle and used, f"探针没交回内存读数：idle={idle} used={used}"
+        assert idle["engineProcs"] == 0 and idle["engineMb"] == 0, (
+            f"用户还没真用，引擎就在场且占了 {idle['engineMb']} MB"
+        )
+        assert idle["helperProcs"] >= 1, idle
+        assert abs(idle["shellMb"] - idle["shellMainMb"] - idle["helperMb"]) <= 0.3, idle
+        assert idle["shellMb"] <= IDLE_SHELL_MB, (idle, IDLE_SHELL_MB)
+        # 正向那一条：真用过之后引擎必须在场。判据瞎掉时（1.315 之前两处 census 只认
+        # `api --port`，而外壳拉起引擎用的是 `desktop --port 0`）这里红，而不是绿得没有根据。
+        assert used["engineProcs"] == 1, f"真用过了却数不到引擎：{used}"
+        assert used["engineMb"] > 0, used
+        assert used["engineMb"] <= ENGINE_MB, (used, ENGINE_MB)
+        assert used["totalMb"] <= USED_TOTAL_MB, (used, USED_TOTAL_MB)
+        print(
+            f"   占用：空闲 {idle['shellMb']} MB（主进程 {idle['shellMainMb']} + 帮助进程 "
+            f"{idle['helperMb']}，引擎 0）；用过之后 {used['totalMb']} MB"
+            f"（其中引擎 {used['engineMb']} MB）"
+        )
+
     # 临时目录删不掉是影子，进程还挂着才是问题。归因要分清：Windows 的进程名匹配不分大小写，
     # `tasklist /FI IMAGENAME eq agentcut.exe` 会把外壳 AgentCut.exe 一起数进来。所以：
     # 一把抓的那条留给「一台都不许在」这一硬判（它宁可多算也不漏），
@@ -149,7 +176,7 @@ def main() -> None:
 
     print(
         f"PASS: 发布包真窗口（{APP_VERSION}）里工作台是圆角卡片 + 10px 呼吸位 + 五枚工具胶囊，"
-        "走带是胶囊，轨道头只有锁定/显隐/更多三颗，正文 14px，截图已落盘"
+        "走带是胶囊，轨道头只有锁定/显隐/更多三颗，正文 14px，截图已落盘，占用有额度"
     )
 
 
