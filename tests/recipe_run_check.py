@@ -49,7 +49,7 @@ MODELS = ROOT / "desktop/resources/asr"
 PRESET = "h264-720p-web"
 FAILURES: list[str] = []
 
-STEP_COUNTS = {"cut-from-media": 15, "speech-to-captions": 17, "imitate-imported-edit": 17}
+STEP_COUNTS = {"cut-from-media": 16, "speech-to-captions": 18, "imitate-imported-edit": 17}
 
 
 def check(label: str, ok: bool, evidence: object = "") -> None:
@@ -192,7 +192,7 @@ def cut_from_media(client: TestClient, folder: Path) -> dict:
         return {}
     made = first.json()
     rows = shape_of(client, made)
-    check("步骤顺序就是配方那 15 步",
+    check("步骤顺序就是配方那 16 步",
           [row["step"] for row in made["steps"]] == recipe_run.declared_steps("cut-from-media"),
           [row["step"] for row in made["steps"]])
     check("PNG 那两步明写没跑，且给了名字",
@@ -260,7 +260,7 @@ def speech_to_captions(client: TestClient, folder: Path) -> None:
         return
     made = answer.json()
     rows = shape_of(client, made)
-    check("口播这一刀的步骤就是配方那 17 步",
+    check("口播这一刀的步骤就是配方那 18 步",
           [row["step"] for row in made["steps"]]
           == recipe_run.declared_steps("speech-to-captions"),
           [row["step"] for row in made["steps"]])
@@ -361,6 +361,72 @@ def imitate_imported(client: TestClient, folder: Path, document: str, sources: l
     if len(present) == 2:
         print(f"   搬一刀：落库 {edits[-1]['commands']} 条命令，"
               f"两份交付 {present[0]} / {present[1]} B，等了 {made['waited_ms']} ms")
+
+
+def picture_size(path: Path) -> tuple[int, int]:
+    done = subprocess.run(
+        [str(FFPROBE), "-v", "error", "-select_streams", "v:0", "-show_entries",
+         "stream=width,height", "-of", "json", str(path)],
+        capture_output=True, text=True, timeout=120,
+    )
+    stream = (json.loads(done.stdout or "{}").get("streams") or [{}])[0]
+    return int(stream.get("width") or 0), int(stream.get("height") or 0)
+
+
+def batch_delivery(client: TestClient, folder: Path) -> None:
+    """⑦ 批量那一档：只要 deliver_items，也必须在一次调用里真的排出三份并逐条验。
+
+    1.316 之前这一档是静默空转：配方里没有 render_batch 这一步，`render_start` 与 `job_wait`
+    都以「走批量交付」跳过，调用方拿到时间线和零个文件，HTTP 还是 200。
+    """
+    payload = {
+        "request_id": "rr-batch",
+        "name": "三种画幅",
+        "files": [str(folder / "src0.mp4")],
+        "deliver_items": [
+            {"preset_id": PRESET, "filename": "batch-wide.mp4"},
+            {"preset_id": "h264-1080x1920-vertical", "filename": "batch-vertical.mp4",
+             "fit": "cover"},
+            {"preset_id": "h264-1080-square", "filename": "batch-square.mp4", "fit": "cover"},
+        ],
+        "render": True,
+        "wait_seconds": 120.0,
+    }
+    answer = client.post("/v1/agent/recipes/cut-from-media/run", json=payload)
+    check("只给 deliver_items 也跑得完（不再逼着交 preset_id 与 filename）",
+          answer.status_code == 200, answer.text[:400])
+    if answer.status_code != 200:
+        return
+    made = answer.json()
+    rows = shape_of(client, made)
+    batch_row = rows.get("render_batch") or {}
+    start_row = rows.get("render_start") or {}
+    verify_row = rows.get("deliver_verify") or {}
+    check("批量那一格真的排了", batch_row.get("ran") is True and batch_row.get("jobs") == 3,
+          batch_row)
+    check("单预设那两步明写让位（指向同一趟里的 render_batch）",
+          start_row.get("ran") is False and "render_batch" in str(start_row.get("why")),
+          start_row)
+    jobs = made.get("jobs") or []
+    check("三条都等到终态", len(jobs) == 3
+          and all(job.get("status") == "succeeded" for job in jobs),
+          [(job.get("filename"), job.get("status")) for job in jobs])
+    verdicts = verify_row.get("verdicts") or []
+    check("三条交付各带自己的 verdict",
+          verify_row.get("ran") is True and len(verdicts) == 3
+          and all(row["verdict"] for row in verdicts)
+          and sorted(row["job_id"] for row in verdicts) == sorted(job["id"] for job in jobs),
+          verify_row)
+    want = {"batch-wide.mp4": (1280, 720), "batch-vertical.mp4": (1080, 1920),
+            "batch-square.mp4": (1080, 1080)}
+    seen = []
+    for job in jobs:
+        out = Path(job.get("output_path") or "")
+        size = picture_size(out) if out.is_file() else None
+        seen.append((job.get("filename"), size))
+        check(f"{job.get('filename')} 就是它那个预设的画幅",
+              size == want.get(str(job.get("filename"))), size)
+    print(f"   三种画幅：{seen}，逐条 verdict 全真")
 
 
 def refusals_and_replay(client: TestClient, folder: Path, made: dict) -> None:
@@ -482,6 +548,7 @@ def main() -> None:
                              [folder / "src0.mp4", folder / "src1.mp4"])
         speech_to_captions(client, folder)
         refusals_and_replay(client, folder, made)
+        batch_delivery(client, folder)
     mcp_surface()
     bridge_dispatch(folder)
     if FAILURES:

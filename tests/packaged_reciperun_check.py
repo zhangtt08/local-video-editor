@@ -8,7 +8,7 @@
 四道：
 ① 现场读随包引擎的 `/v1/agent/manifest`：`recipe_run` 的端点就是那条路由，三条配方都带
    `runnable: true` 与一句参数说明；
-② 真一刀：4 秒源（前 2 秒有声、后 2 秒静）→ 一次 run（render + wait）→ 15 行步骤、
+② 真一刀：4 秒源（前 2 秒有声、后 2 秒静）→ 一次 run（render + wait）→ 16 行步骤、
    作业 succeeded、交付文件在盘上、ffprobe 量到的长度对得上计划；
 ③ 真搬一刀：把 ② 那条工程自己导出的 FCPXML 再读进来 → 17 行步骤、一次排一条交付并等到终态——
    证明「补轨道那一圈」在随包二进制上也是同一句话；
@@ -143,7 +143,7 @@ def one_cut_leg(base: str, folder: Path) -> None:
     if status != 200:
         return ""
     steps = made.get("steps") or []
-    check("步骤就是 15 行", len(steps) == 15, [row.get("step") for row in steps])
+    check("步骤就是 16 行", len(steps) == 16, [row.get("step") for row in steps])
     loudness = next((row for row in steps if row.get("step") == "master_loudness"), {})
     check("响度那一刀在随包引擎上也落了混音",
           loudness.get("ran") is True and abs(float(loudness.get("predicted_lufs") or 99) + 16.0)

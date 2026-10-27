@@ -28,7 +28,9 @@ RECIPES: tuple[dict[str, Any], ...] = (
         "title": "从素材到一条粗剪并交付",
         "when": "手上只有几个原始文件，要出一条能直接发出去的片子。",
         "params": (
-            "name、files（1..64 个）、preset_id、filename；render=false 时后两样可以不给。"
+            "name、files（1..64 个）；交付两种形状择一：preset_id 与 filename（单预设），"
+            "或 deliver_items（1..4 条，每条自带预设与文件名、可以各自 fit）；"
+            "render=false 时都不必给。"
             "量程：threshold_db 与 min_silence_ms（去停顿）、keep_ms 与 scene_threshold、"
             "min_scene_ms（镜头粗剪）、loudness_target_lufs（整条混音落的响度，不给就不动）。"
         ),
@@ -54,7 +56,11 @@ RECIPES: tuple[dict[str, Any], ...] = (
             {"tool": "timeline_overview", "why": "一张接触表看完整条时间线，确认剪的是什么"},
             {"tool": "preview_frame", "why": "抽查几个刻度：预览与导出读的是同一份编译"},
             {"tool": "render_plan", "why": "只编译不渲染：看清 ffmpeg 的 argv 与图"},
-            {"tool": "render_start", "why": "对固定 revision 排队交付"},
+            {"tool": "render_start", "why": "对固定 revision 排队交付（单预设那一档）"},
+            {
+                "tool": "render_batch",
+                "why": "给了 deliver_items 就在这一格里一次排完，每一条各带预设与文件名",
+            },
             {
                 "tool": "job_wait",
                 "why": "一次调用等到终态，拿回输出路径与校验过的长度",
@@ -67,7 +73,8 @@ RECIPES: tuple[dict[str, Any], ...] = (
         "title": "口播转字幕并按句子剪",
         "when": "一条讲话素材，要字幕、要按句剪、要能改字。",
         "params": (
-            "name、files（一段口播）、preset_id、filename；剪哪几行交给数据：filler_patterns"
+            "name、files（一段口播）；交付两种形状择一：preset_id 与 filename，"
+            "或 deliver_items（1..4 条）；剪哪几行交给数据：filler_patterns"
             "（文本命中就剪）与 cut_gap_ms（停顿长过就剪），可选 language 与 caption_max_chars；"
             "loudness_target_lufs 决定要不要顺手把混音落到位。"
             "这一条要本机备着语音模型，没备着那一步会明说不做。"
@@ -96,7 +103,11 @@ RECIPES: tuple[dict[str, Any], ...] = (
             {"tool": "timeline_overview", "why": "一张接触表看完整条时间线，确认剪的是什么"},
             {"tool": "preview_frame", "why": "抽查几个刻度：预览与导出读的是同一份编译"},
             {"tool": "render_plan", "why": "只编译不渲染：看清 ffmpeg 的 argv 与图"},
-            {"tool": "render_start", "why": "对固定 revision 排队交付"},
+            {"tool": "render_start", "why": "对固定 revision 排队交付（单预设那一档）"},
+            {
+                "tool": "render_batch",
+                "why": "给了 deliver_items 就在这一格里一次排完，每一条各带预设与文件名",
+            },
             {"tool": "job_wait", "why": "一次调用等到终态，拿回输出路径与校验过的长度"},
             {"tool": "deliver_verify", "why": "交付文件由引擎自己读，不靠调用方再拿 ffprobe 量"},
         ],

@@ -68,7 +68,14 @@ def refusal(recipe_id: str) -> EditorError:
 
 
 def missing_params(recipe_id: str, request: RecipeRun) -> list[str]:
-    """The parameters this recipe cannot do without, named as the model names them."""
+    """The parameters this recipe cannot do without, named as the model names them.
+
+    The delivery shape is either one preset (`preset_id` + `filename`) or a batch
+    (`deliver_items`, each item naming its own) — so asking for a batch must not also demand the
+    single-shape pair, which used to make the batch shape unreachable by name.
+    """
+    if recipe_id != "imitate-imported-edit" and request.render and request.deliver_items:
+        return [name for name in ("files",) if not getattr(request, name)]
     return [name for name in required_fields(recipe_id, request) if not getattr(request, name)]
 
 
@@ -608,6 +615,8 @@ async def _jianying(door: Door, request: RecipeRun, ctx: dict[str, Any]) -> dict
 async def _render_batch(door: Door, request: RecipeRun, ctx: dict[str, Any]) -> dict[str, Any]:
     if not request.render:
         return skipped("render=false：没有排交付")
+    if not request.deliver_items:
+        return skipped("没给 deliver_items：单预设那一档走上面 render_plan 与 render_start 两步")
     items = [item.model_dump(mode="json") for item in (request.deliver_items or [])]
     payload = {
         "request_id": f"{request.request_id}-batch",
@@ -697,7 +706,7 @@ async def _render_start(door: Door, request: RecipeRun, ctx: dict[str, Any]) -> 
     if not request.render:
         return skipped("render=false：没有排交付")
     if request.deliver_items:
-        return skipped("这一刀走批量交付（render_batch）")
+        return skipped("这一刀走批量交付（render_batch），单预设不排")
     payload = {
         "request_id": f"{request.request_id}-render",
         "expected_revision": ctx["revision"],
@@ -713,7 +722,9 @@ async def _render_start(door: Door, request: RecipeRun, ctx: dict[str, Any]) -> 
 async def _job_wait(door: Door, request: RecipeRun, ctx: dict[str, Any]) -> dict[str, Any]:
     jobs = ctx.get("jobs") or ([ctx["job"]] if ctx.get("job") else [])
     if not jobs:
-        return skipped("render=false 或没排上交付：没有作业可等")
+        if not request.render:
+            return skipped("render=false：没有排交付，也就没有作业可等")
+        return skipped("这一刀没有排上作业：单预设走 render_start，批量走 render_batch")
     if request.wait_seconds <= 0:
         return skipped("wait_seconds=0：交付已排队，要在这刀里等到终态就把它设到 1..120")
     poll = min(0.5, max(0.05, request.wait_seconds / 20))
@@ -748,7 +759,7 @@ async def _deliver_verify(door: Door, request: RecipeRun, ctx: dict[str, Any]) -
     if not request.verify:
         return skipped("verify=false：这一刀不验交付，文件与作业照旧交回")
     if not jobs:
-        return skipped("没有交付作业可验（render=false）")
+        return skipped("没有交付作业可验：这一刀没排上任何作业（render=false 或两步都跳过）")
     query = "?duration_tolerance=0.25"
     if request.loudness_target_lufs is not None:
         query += f"&target_lufs={request.loudness_target_lufs}"
