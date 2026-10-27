@@ -7025,3 +7025,21 @@ TLS 要么由反向代理要么由引擎自己收 `--tls-cert/--tls-key`；**渲
 那个死作业——**同一条 `request_id` 重启后永远渲不出第二遍**。后一条是从源码读出来的形状，现场读数
 是 1.319 开工的第一件事，量不到就不写进这一档的账；**没有 `/v1/metrics`**；
 **没有三方许可清单**（随包 FFmpeg 与 libx264、vosk 模型、Electron 与 Python 依赖）。
+
+### 1.318 的账
+
+- 门禁 **179 档**（新增 `tests/serving_check.py`）；空机单跑 **179/179（`SUITE_EXIT=0`）**，整套约
+  36 分钟，跑在精简之前那一份完整环境里。`serving_check` 自己 2.8 秒。
+- 变异台六刀（`bench1318.py`，仓外）全 RED，每刀跑完按 sha256 逐字节还原；基线先绿才往下递刀。
+- 目录从 **2600.2 MB 收到 416.6 MB**（释放 2183.6 MB：`desktop/release` 927.0、
+  `desktop/node_modules` 827.6、冻结引擎 160.1、`build` 127.9、`.venv` 138.5、`dist` 与
+  `dist-electron` 共 1.0、`__pycache__` 1.7）；`git status` 报「被删的 tracked 文件 0」。
+- 根 `AgentCut.exe` **185,461,454 B**，sha256 前缀 `85c6e157d41ac078`，与
+  `desktop/release/AgentCut-便携版.exe` 逐字节核过（`released_package_check` 当场比的就是这一对）。
+- 冻结引擎那台 `--verify` 交回的读数：ready 行带 `bind=127.0.0.1` / `remote=false` /
+  `tokens=["local"]` / `audit=<数据目录>/audit.jsonl` 四个新字段，`app_version` 1.318.0，
+  裸启（不给 `--ffmpeg/--ffprobe`）冷启动 835 ms，杀掉之后端口不再应答。
+- 重建链一字未改，仍然按这个顺序：`uv sync --group dev` → **`npm --prefix desktop ci` 必须在
+  `build_engine` 之前**（那脚本先清空 `desktop/resources/bin`）→ `scripts/build_engine.py --no-uv
+  --verify` → `npm --prefix desktop run dist` → 把
+  `desktop/release/AgentCut-便携版.exe` 拷到根目录。
