@@ -81,11 +81,14 @@ class Lease:
             return {**raw, "alive": True}
         return None
 
-    def acquire(self, *, port: int, mode: str) -> dict[str, Any]:
+    def acquire(self, *, port: int, mode: str, tls: bool = False) -> dict[str, Any]:
         record = {
             "pid": self.owner_pid,
             "port": port,
             "mode": mode,
+            # 记下加密与否：附身那一条腿要靠它说清「这一台是 TLS 服务的」，
+            # 而不是把附不上演成「数据目录被别人占着」。老租约没这一格就当没加密。
+            "tls": bool(tls),
             "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         }
         self._write(record)

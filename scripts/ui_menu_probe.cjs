@@ -55,6 +55,12 @@ function killByProfile(profileDir) {
     execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
       { stdio: "ignore", timeout: 90000 });
   } catch {}
+  // 杀完进程把这一份 Edge profile 还掉：只杀不删，一趟全套就在 %TEMP% 里留下几十个
+  // `agentcut-*`（这台机器实测积到 346 个 / 7.2 GB）。刚退出的 Edge 可能还攥着句柄，
+  // 所以带重试；删不掉也不报错——那是量具的抖动，不是产品的缺陷。
+  try {
+    fs.rmSync(profileDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
+  } catch {}
 }
 
 function listenable(port) {

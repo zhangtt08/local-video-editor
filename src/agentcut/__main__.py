@@ -105,7 +105,9 @@ def build_services(args, data_dir: Path, token: str, db_file: Path):
         pending_per_actor=args.queue_per_token,
         min_free_mb=args.min_free_mb,
     )
-    base_url = f"http://127.0.0.1:{args.port}"
+    # 这一份 base_url 会被写进流地址那类对外读数里，所以它必须跟着加密走：
+    # 一台用 TLS 服务的引擎不能交回 `http://` 的链接让人去撞明文。
+    base_url = f"{'https' if args.tls_cert else 'http'}://127.0.0.1:{args.port}"
     info = {
         "instance": secrets.token_hex(6),
         "app_version": APP_VERSION,
@@ -200,6 +202,19 @@ def main():
         default=[],
         help="允许哪个网页来源调这台引擎（可重复）；不给就只放行桌面端与本机",
     )
+    parser.add_argument(
+        "--tls-cert",
+        default="",
+        help="用 TLS 服务这一台：证书（PEM）。给了它就必须同时给 --tls-key",
+    )
+    parser.add_argument(
+        "--tls-key", default="", help="用 TLS 服务这一台：证书对应的私钥（PEM）"
+    )
+    parser.add_argument(
+        "--allow-insecure-remote",
+        action="store_true",
+        help="明知故犯：绑定到非本机地址时不加密就服务（写操作在整个网段里是明文）",
+    )
     parser.add_argument("--add-label", default="", help="发一枚具名令牌，例：studio-a")
     parser.add_argument(
         "--scopes", default="write", help="配 --add-label：read / write / both（默认 write）"
@@ -280,6 +295,13 @@ def main():
         # 从它自己嘴里取。版本对不上时必须停下——新界面配旧引擎会凑成一件谁也没测过的软件。
         from .contracts import APP_VERSION
 
+        if holder.get("tls"):
+            raise SystemExit(
+                f"数据目录 {data_dir} 被一台**用 TLS 服务**的引擎服着（PID {holder['pid']}，"
+                f"端口 {holder.get('port')}）。外壳附到它身上这一手还没做：外壳与引擎在同一台"
+                "机器上，用 --host 127.0.0.1 不加密地起就够了；要给别的机器用，"
+                "走 HTTP/MCP 那扇门。"
+            )
         attached = holder_info(holder, args.token_file)
         if attached is None:
             raise SystemExit(held_message(data_dir, holder))
@@ -383,6 +405,22 @@ def main():
     from .serving import AuditLog, TokenTable
 
     loopback = args.host in ("127.0.0.1", "localhost")
+    # TLS 的规矩：要么给一对，要么一对都不给——只给一半是配错了，不是选了不加密。
+    if bool(args.tls_cert) != bool(args.tls_key):
+        raise SystemExit(
+            "--tls-cert 与 --tls-key 得一起给：只给一半的 TLS 配置是最容易在半夜发现的那种"
+        )
+    tls = bool(args.tls_cert)
+    if tls:
+        for cert_path, name in ((args.tls_cert, "--tls-cert"), (args.tls_key, "--tls-key")):
+            if not Path(cert_path).is_file():
+                raise SystemExit(f"{name} 指的东西不存在：{cert_path}")
+    if not loopback and not tls and not args.allow_insecure_remote:
+        raise SystemExit(
+            f"要绑到 {args.host} 就得加密：给一对 --tls-cert/--tls-key，或者干脆只听本机"
+            "（反向代理终止 TLS 之后，这一台还是听 127.0.0.1，那条路照旧通）。明知故犯要裸跑"
+            "明文就加 --allow-insecure-remote——但要知道写接口在网段里就是明文"
+        )
     if not loopback and not os.environ.get("AGENTCUT_TOKEN", "").strip():
         raise SystemExit(
             f"要绑到 {args.host} 就得自己交一枚令牌（AGENTCUT_TOKEN）——自动生成的那一只"
@@ -395,7 +433,7 @@ def main():
     # 明知故犯那一手不写也不删租约：它既然选择共享，就不该把原来那台的名字从租约上抹掉——
     # 否则第三台看「没有租约」就堂而皇之进来，而那两台的活儿其实一直在互相改写。
     record = (
-        lease.acquire(port=args.port, mode=args.mode)
+        lease.acquire(port=args.port, mode=args.mode, tls=tls)
         if not args.allow_shared_data_dir
         else {"pid": os.getpid()}
     )
@@ -416,7 +454,7 @@ def main():
         ready = {
             "event": "ready",
             "port": args.port,
-            "base_url": f"http://{args.host}:{args.port}",
+            "base_url": f"{'https' if tls else 'http'}://{args.host}:{args.port}",
             "token_file": str(args.token_file),
             "media_ready": media.enabled,
             "media_roots": media.describe_roots(),
@@ -434,12 +472,18 @@ def main():
             "queue_per_token": jobs.pending_per_actor,
             "requeued": len(jobs.requeued),
             "min_free_mb": args.min_free_mb,
+            "tls": tls,
             "pid": record["pid"],
             "lease": str(lease.path),
         }
         print(json.dumps(ready, ensure_ascii=False), flush=True)
     config = uvicorn.Config(
-        app, host=args.host, port=args.port, log_level="warning", access_log=False
+        app,
+        host=args.host,
+        port=args.port,
+        log_level="warning",
+        access_log=False,
+        **({"ssl_certfile": args.tls_cert, "ssl_keyfile": args.tls_key} if tls else {}),
     )
     server = uvicorn.Server(config)
     try:

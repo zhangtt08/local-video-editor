@@ -280,6 +280,7 @@ async function main() {
     } catch {}
     try {
       fs.rmSync(PROFILE, { recursive: true, force: true, maxRetries: 3, retryDelay: 300 });
+      fs.rmSync(PS, { force: true });  // 那支临时 powershell 脚本同理：写在临时地方就得还
     } catch {}
   }
 
