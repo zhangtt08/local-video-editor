@@ -160,12 +160,29 @@ function connect(webSocketUrl) {
 }
 
 async function projectState() {
-  const response = await fetch(new URL("/v1/projects/" + encodeURIComponent(PROJECT), ENGINE), {
-    headers: { Authorization: "Bearer " + TOKEN },
-  });
-  if (!response.ok) throw new Error("project read -> " + response.status);
-  const body = await response.json();
-  return body.project ?? body;
+  // 这一手在 1.321 的全套里红过一次：`TypeError: fetch failed` 把整档量具带走（roughui）。
+  // 前一档刚把引擎按 PID 收掉、端口还在 TIME_WAIT 的那种一瞬间就会撞上——所以这里读到为止，
+  // 而不是读一次就走。等到为止不等于读不到就算过：过了时限照样抛，并把最后几次怎么错的带上。
+  const url = new URL("/v1/projects/" + encodeURIComponent(PROJECT), ENGINE);
+  const deadline = Date.now() + 90000;
+  const attempts = [];
+  for (;;) {
+    try {
+      const response = await fetch(url, { headers: { Authorization: "Bearer " + TOKEN } });
+      if (response.ok) {
+        const body = await response.json();
+        return body.project ?? body;
+      }
+      attempts.push("HTTP " + response.status);
+    } catch (error) {
+      attempts.push(String((error && error.message) || error));
+    }
+    if (Date.now() > deadline) {
+      throw new Error("工程读不出来（试过 " + attempts.length + " 次）：" +
+        attempts.slice(-4).join(" / "));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
 }
 
 const ROW_READ = `(function () {
