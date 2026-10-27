@@ -796,6 +796,7 @@ export function errorHints(): Record<string, string> {
       AUDIT_UNAVAILABLE: "这台引擎没开动作台账（启动时带了 --no-audit）：查不到谁改过什么。",
       QUEUE_FULL: "待渲队列压满了：等前面的交付落了地再投这一单，或让启动这台引擎的人把队列额度调大。",
       QUOTA_EXCEEDED: "这只令牌名下的待渲单压满了额度：等它自己的交付落了地再投——别人的单子不占它的名额。",
+      OUTPUT_DISK_TIGHT: "输出盘快满了：这一单没排进队列。清一清那块盘，或让启动这台引擎的人把底线调低。",
       RECIPE_STEP_UNIMPLEMENTED: "Agent 配方里有一步这一版引擎还没实现：升级软件，或按步骤逐条调用。",
       CLIP_OVERLAP: "同轨重叠需要转场。先将镜头首尾衔接，再在后一个镜头的属性面板添加转场。",
       INVALID_TRANSITION: "选择首尾衔接的两个镜头，转场需短于每个镜头。",

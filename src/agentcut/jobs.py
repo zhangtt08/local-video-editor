@@ -8,6 +8,7 @@ render is reported as failed on restart instead of pretending it is still runnin
 import hashlib
 import json
 import queue
+import shutil
 import subprocess
 import threading
 import time
@@ -37,7 +38,18 @@ MAX_LOG = 3000
 MAX_RENDER_SLOTS = 8
 DEFAULT_MAX_PENDING = 64
 DEFAULT_PENDING_PER_ACTOR = 16
+# 输出盘的下限：默认留 2 GB 底。这一档故意不猜「这条交付要写多大」——CRF 编码的体积只有渲完
+# 才知道；它说的是「盘上还剩多少、低于这个数就别再往队列里塞」，而拒绝里附的那个体积预估
+# 只在这台引擎真的渲过同一种预设时才给（用的就是那几单实测的字节/秒）。
+DEFAULT_MIN_FREE_MB = 2048
 
+
+def _clock_seconds(text: str):
+    """把入库那个本地时间串读成秒，只用来量两笔读数之间的间隔；读不出就说读不出。"""
+    try:
+        return time.mktime(time.strptime(text[:19], "%Y-%m-%dT%H:%M:%S"))
+    except ValueError:
+        return None
 
 def plan_for(
     project: Project,
@@ -457,6 +469,7 @@ class JobRuntime:
         slots: int = 1,
         max_pending: int = DEFAULT_MAX_PENDING,
         pending_per_actor: int = DEFAULT_PENDING_PER_ACTOR,
+        min_free_mb: int = DEFAULT_MIN_FREE_MB,
     ):
         self.db_path = db_path
         self.ffmpeg = ffmpeg.resolve() if ffmpeg else None
@@ -471,6 +484,7 @@ class JobRuntime:
         self.workers: list[threading.Thread] = []
         self.max_pending = max(1, int(max_pending))
         self.pending_per_actor = max(1, int(pending_per_actor))
+        self.min_free_bytes = max(0, int(min_free_mb)) * 1024 * 1024
         self.job_actor: dict[str, str] = {}
         output_dir.mkdir(parents=True, exist_ok=True)
         with self.connection() as db:
@@ -675,6 +689,53 @@ class JobRuntime:
 
     # ---------- lifecycle ----------
 
+    def _guard_disk(self, target: Path, seconds: float, preset_id: str) -> None:
+        """往队列里塞之前先看一眼那块盘还剩多少。
+
+        拒得早才有用：盘满时 FFmpeg 会渲到一半失败、留下一截 `.part`，而调用方拿到的是一句
+        「渲染失败」，不是「这一单根本不该排」。体积预估只在同一预设真渲过的时候给——CRF 的
+        产物大小没有别处的可信来源，编一个常数等于把猜测写成度量。
+        """
+        root = target.parent
+        try:
+            usage = shutil.disk_usage(root)
+        except OSError:
+            return  # 盘不在了另有那一手的拒绝（_target_path 会点名），这里不重复报
+        if usage.free >= self.min_free_bytes:
+            return
+        details = {
+            "root": str(root),
+            "free_bytes": int(usage.free),
+            "reserve_bytes": int(self.min_free_bytes),
+        }
+        per_second = self._measured_bytes_per_second(preset_id)
+        if per_second is not None and seconds > 0:
+            details["needed_bytes"] = int(per_second * seconds)
+            details["basis"] = f"measured {round(per_second)} B/s of preset {preset_id}"
+        raise EditorError(
+            "OUTPUT_DISK_TIGHT",
+            f"{root} 只剩 {usage.free // 1024 // 1024} MB，低于这一台引擎守的 "
+            f"{self.min_free_bytes // 1024 // 1024} MB 底线，所以 {target.name} 这一单没排进队列——"
+            "清一清那块盘，或者把 --min-free-mb 调低（说的是这台机器的底线，不是别的机器的）",
+            503,
+            **details,
+        )
+
+    def _measured_bytes_per_second(self, preset_id: str) -> int | None:
+        """同一预设真渲过的交付，交回的字节/秒中位数——没渲过就说「不知道」，不编。"""
+        samples = []
+        for row in self.list_all(limit=200):
+            if row.get("status") != "succeeded" or row.get("preset_id") != preset_id:
+                continue
+            path = Path(str(row.get("output_path") or ""))
+            ticks = int(row.get("total_ticks") or 0)
+            if not path.is_file() or ticks <= 0:
+                continue
+            samples.append(path.stat().st_size / (ticks / TIMEBASE))
+        if not samples:
+            return None
+        samples.sort()
+        return int(samples[len(samples) // 2])
     def _receipt_job_id(self, request_id: str) -> str | None:
         with self.connection() as db:
             row = db.execute(
@@ -749,6 +810,9 @@ class JobRuntime:
             colour_tag=request.colour_tag,
         )
         target = self._target_path(request)
+        self._guard_disk(
+            target, float(plan.as_dict().get("duration_seconds") or 0.0), request.preset_id
+        )
         now = time.strftime("%Y-%m-%dT%H:%M:%S")
         job = RenderJob(
             id=uuid4().hex[:16],
@@ -880,7 +944,12 @@ class JobRuntime:
             self._kill(process)
             job = job.model_copy(update={"status": "cancelled", "message": "已取消渲染"})
             return self._save(job)
-        return job.model_copy(update={"status": "cancelled", "message": "已取消排队中的渲染"})
+        # 排队中那一手也要把状态落进账里。过去只交回一个「 cancelled」的对象却不写库：
+        # 于是这一单在 `/v1/jobs/{id}`、`/v1/metrics` 与等待那一门里永远算「还在排」，
+        # 而它其实已经被叫停了（1.320 的 metrics 腿就是把这件事读出来的）。
+        return self._save(
+            job.model_copy(update={"status": "cancelled", "message": "已取消排队中的渲染"})
+        )
 
     def ensure_worker(self) -> None:
         """把渲染槽补到 `self.slots` 条。
@@ -909,6 +978,80 @@ class JobRuntime:
 
     def pending_count(self) -> int:
         return self.queue.unfinished_tasks
+
+    def metrics(self, recent: int = 50) -> dict:
+        """运维那一面要的读数：队列、槽、最近这些单的成败与耗时、失败的码分布。
+
+        全部从 `jobs` 那本账现算。第二份统计迟早与第一份不一致，而这里已经有一条现成的账；
+        耗时取的是入库时间戳那一头（秒的分辨率），所以短单子会读成 0 秒——读数说得出多少
+        就说多少，不装作有毫秒。
+        """
+        rows = self.list_all(limit=max(1, min(int(recent), 500)))
+        by_status = {status: 0 for status in STATUS_STEPS}
+        durations = []
+        codes = {}
+        delivered_bytes = 0
+        for row in rows:
+            status = str(row.get("status") or "")
+            if status in by_status:
+                by_status[status] += 1
+            created = str(row.get("created_at") or "")
+            updated = str(row.get("updated_at") or "")
+            if status in TERMINAL:
+                started, ended = _clock_seconds(created), _clock_seconds(updated)
+                if started is not None and ended is not None:
+                    span = ended - started
+                    if 0 <= span <= 86400:
+                        durations.append(span)
+            if status == "failed":
+                code = str(row.get("error_code") or "UNSPECIFIED")
+                codes[code] = codes.get(code, 0) + 1
+            if status == "succeeded":
+                path = Path(str(row.get("output_path") or ""))
+                if path.is_file():
+                    delivered_bytes += path.stat().st_size
+        durations.sort()
+
+        def percentile(part: float):
+            if not durations:
+                return None
+            index = min(len(durations) - 1, max(0, int(round(part * (len(durations) - 1)))))
+            return durations[index]
+
+        outputs = []
+        for root in self.output_roots:
+            try:
+                usage = shutil.disk_usage(root)
+            except OSError:
+                continue
+            outputs.append({
+                "path": str(root),
+                "free_bytes": int(usage.free),
+                "total_bytes": int(usage.total),
+                "reserve_bytes": int(self.min_free_bytes),
+            })
+        return {
+            "queue": {
+                "pending": self.pending_count(),
+                "slots": self.slots,
+                "live_slots": self.live_slots(),
+                "max_pending": self.max_pending,
+                "pending_per_actor": self.pending_per_actor,
+                "requeued": len(self.requeued),
+            },
+            "jobs": {
+                "recent": len(rows),
+                "by_status": by_status,
+                "failure_codes": dict(sorted(codes.items(), key=lambda item: (-item[1], item[0]))),
+                "duration_seconds": {
+                    "p50": percentile(0.5),
+                    "p95": percentile(0.95),
+                    "max": durations[-1] if durations else None,
+                },
+                "delivered_bytes": delivered_bytes,
+            },
+            "outputs": outputs,
+        }
 
     def _loop(self):
         while True:

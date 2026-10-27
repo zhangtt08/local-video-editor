@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import secrets
 import threading
 import time
@@ -25,6 +26,90 @@ from typing import Any
 SCOPES = ("read", "write")
 LOCAL_LABEL = "local"
 LEDGER_LIMIT = 500
+LEASE_NAME = "engine.lock"
+
+
+def pid_alive(pid: int) -> bool:
+    """问一句「这个 PID 还活着吗」。Windows 上没有 `os.kill(pid, 0)` 那套 POSIX 语义。
+
+    打不开句柄要分两种：进程没了，与「那是别人的进程、我没权限看」——后者不能当成「死了」，
+    否则一台别人名下的引擎就等于不存在。
+    """
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return kernel32.GetLastError() == 5  # ERROR_ACCESS_DENIED：活着，只是不归我看
+        code = ctypes.c_ulong()
+        ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+        kernel32.CloseHandle(handle)
+        return bool(ok) and code.value == 259  # STILL_ACTIVE
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+class Lease:
+    """One data directory, one engine.
+
+    `--port 0` 让每个引擎自己挑端口，所以两台引擎不会互相撞在端口上；它们撞的是同一份
+    `agentcut.sqlite3`、同一本 `audit.jsonl` 与同一枚令牌。1.319 量到过那是什么后果：一台的渲染
+    线程把另一台标成 INTERRUPTED 的行改回 succeeded，收据被错的那本删掉，状态两头都会说谎。
+    租约记的是「谁在服这份数据目录」，读起来是一行 JSON，企业可以按它做单实例检查。
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.owner_pid = os.getpid()
+        self.taken = False
+
+    def holder(self) -> dict[str, Any] | None:
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(raw, dict):
+            return None
+        pid = int(raw.get("pid") or 0)
+        if pid and pid != self.owner_pid and pid_alive(pid):
+            return {**raw, "alive": True}
+        return None
+
+    def acquire(self, *, port: int, mode: str) -> dict[str, Any]:
+        record = {
+            "pid": self.owner_pid,
+            "port": port,
+            "mode": mode,
+            "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+        self._write(record)
+        self.taken = True
+        return record
+
+    def _write(self, record: dict[str, Any]) -> None:
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n",
+                       encoding="utf-8")
+        tmp.replace(self.path)
+
+    def release(self) -> None:
+        """只放自己那一份：别人的租约（比如接管过的那台）不许被误删。"""
+        if not self.taken:
+            return
+        current = None
+        try:
+            current = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            current = None
+        if isinstance(current, dict) and int(current.get("pid") or 0) == self.owner_pid:
+            self.path.unlink(missing_ok=True)
+        self.taken = False
 
 
 def _hash(secret: str) -> str:

@@ -199,6 +199,7 @@ TOOL_ENDPOINTS: dict[str, tuple[str, str]] = {
     "audio_beats": ("POST", "/v1/projects/{project_id}/audio/beats"),
     "captions_auto": ("POST", "/v1/projects/{project_id}/speech-captions"),
     "agent_audit": ("GET", "/v1/agent/audit"),
+    "agent_metrics": ("GET", "/v1/metrics"),
     "captions_export": ("GET", "/v1/projects/{project_id}/captions/{track_id}"),
     "clip_attribute_plan": ("POST", "/v1/projects/{project_id}/clips/{clip_id}/attribute-plan"),
     "clip_auto_grade": ("POST", "/v1/projects/{project_id}/clips/{clip_id}/auto-grade"),

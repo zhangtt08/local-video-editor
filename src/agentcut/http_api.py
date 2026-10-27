@@ -501,6 +501,16 @@ def create_app(
             "written": audit.seq,
         }
 
+    @app.get("/v1/metrics", dependencies=auth)
+    def read_metrics(recent: Annotated[int, Query(ge=1, le=500)] = 50):
+        """How the queue and the recent jobs look, counted from the engine's own ledger.
+
+        Nothing here is kept a second time: slots and pending depth come from the runtime,
+        durations and failure codes from the same `jobs` rows the console reads.
+        """
+        runtime = require_jobs()
+        return runtime.metrics(recent=recent)
+
     @app.get("/v1/agent/manifest", dependencies=auth)
     async def agent_manifest(request: Request):
         """The whole agent contract in one read: routes, MCP tools, capabilities, recipes.

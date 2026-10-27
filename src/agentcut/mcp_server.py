@@ -1250,6 +1250,15 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
             query += f"&project_id={quote(project_id, safe='')}"
         return await call("GET", f"/v1/agent/audit{query}")
 
+    @server.tool(annotations=read)
+    async def agent_metrics(recent: int = 50) -> dict[str, Any]:
+        """Read the engine's own operating numbers: queue depth, slots, recent outcomes.
+
+        排队深度与槽数是 runtime 此刻的样子，成败与耗时是从 `jobs` 那本账现数的——
+        自动化流水线盯的就是这几格：还有几单在排、上一批渲一单要多久、失败都栽在哪些码上。
+        """
+        return await call("GET", f"/v1/metrics?recent={int(recent)}")
+
     @server.resource("project://{project_id}")
     async def project_resource(project_id: str) -> str:
         # Resource templates also validate ids; they may not inject URL paths.

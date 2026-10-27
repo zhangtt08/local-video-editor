@@ -5,6 +5,7 @@ loopback API is actually serving, so the Electron shell never has to guess a por
 """
 
 import argparse
+import atexit
 import json
 import os
 import secrets
@@ -102,6 +103,7 @@ def build_services(args, data_dir: Path, token: str, db_file: Path):
         slots=args.render_slots,
         max_pending=args.max_queue,
         pending_per_actor=args.queue_per_token,
+        min_free_mb=args.min_free_mb,
     )
     base_url = f"http://127.0.0.1:{args.port}"
     info = {
@@ -152,6 +154,33 @@ def parent_watchdog(pid: int, interval: float = 2.0) -> None:
     os._exit(0)
 
 
+def held_message(data_dir: Path, holder: dict) -> str:
+    return (
+        f"数据目录 {data_dir} 已经被另一台 AgentCut 引擎服着（PID {holder.get('pid')}，"
+        f"端口 {holder.get('port')}，模式 {holder.get('mode')}，起于 "
+        f"{holder.get('started_at')}）。两台引擎共用一份工程、一本台账与一枚令牌会互相改写"
+        "状态：先关掉那一台，或给这一台换一个 --data-dir；明知故犯就加 --allow-shared-data-dir"
+    )
+
+
+def holder_info(holder: dict, token_file: Path) -> dict | None:
+    """问一句那台在服的引擎「你是谁、你服成什么样」。
+
+    附上去的每个读数都必须来自它自己，不是这里抄一份——不然外壳看到的是这台壳以为的样子。
+    """
+    import urllib.request
+
+    token = token_file.read_text(encoding="utf-8").strip() if token_file.is_file() else ""
+    url = f"http://127.0.0.1:{holder.get('port')}/v1/info"
+    request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(request, timeout=8) as got:
+            payload = json.loads(got.read().decode("utf-8"))
+    except (OSError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="agentcut", description="AgentCut 本地剪辑引擎（HTTP + MCP + 媒体引擎）"
@@ -196,6 +225,17 @@ def main():
         default=16,
         help="一只具名令牌名下最多压几单，超了按名字拒（QUOTA_EXCEEDED）",
     )
+    parser.add_argument(
+        "--allow-shared-data-dir",
+        action="store_true",
+        help="明知故犯：让两台引擎共用同一份工程、台账与令牌（状态会互相改写，1.319 量到过）",
+    )
+    parser.add_argument(
+        "--min-free-mb",
+        type=int,
+        default=2048,
+        help="输出盘至少留多少 MB 才肯再排新交付（盘满时拒在排队前，不是渲到一半才失败）",
+    )
     parser.add_argument("--data-dir", default=str(_app_dir() / "data"))
     parser.add_argument("--cache-dir", default="")
     parser.add_argument("--output-dir", default="")
@@ -221,11 +261,65 @@ def main():
 
     data_dir = Path(args.data_dir).resolve()
     data_dir.mkdir(parents=True, exist_ok=True)
+    from .serving import LEASE_NAME, Lease
+
+    # 一台数据目录只服一台引擎。`--port 0` 让每台自己挑端口，所以两台不会撞在端口上——它们撞的是
+    # 同一份工程、一本台账与同一枚令牌，而那正是 1.319 量到的那种状态翻脸。检查放在读令牌之前：
+    # 第二台连令牌都不该去碰。
+    lease = Lease(data_dir / LEASE_NAME)
+    holder = lease.holder() if args.mode in ("api", "desktop") else None
+    if holder and not args.allow_shared_data_dir and args.mode == "api":
+        raise SystemExit(held_message(data_dir, holder))
     if args.port == 0:
         args.port = free_port()
     if not args.token_file:
         args.token_file = str(data_dir / "agentcut.token")
     args.token_file = Path(args.token_file)
+    if holder and not args.allow_shared_data_dir and args.mode == "desktop":
+        # 双击第二个窗口不该变成「引擎起不来」：租约在谁手上就照着那一台报地址，读数全部
+        # 从它自己嘴里取。版本对不上时必须停下——新界面配旧引擎会凑成一件谁也没测过的软件。
+        from .contracts import APP_VERSION
+
+        attached = holder_info(holder, args.token_file)
+        if attached is None:
+            raise SystemExit(held_message(data_dir, holder))
+        if attached.get("app_version") != APP_VERSION:
+            raise SystemExit(
+                f"数据目录 {data_dir} 被另一台**不同版本**的引擎服着（它报 "
+                f"{attached.get('app_version')}，这一份是 {APP_VERSION}）——先关掉那一台，"
+                "或给这一台换一个 --data-dir"
+            )
+        print(
+            json.dumps(
+                {
+                    "event": "ready",
+                    "port": int(holder["port"]),
+                    "base_url": attached.get("base_url")
+                    or f"http://127.0.0.1:{holder['port']}",
+                    "token_file": str(args.token_file),
+                    "media_ready": attached.get("media_ready"),
+                    "media_roots": attached.get("media_roots") or [],
+                    "render_ready": attached.get("render_ready"),
+                    "output_roots": attached.get("output_roots") or [],
+                    "data_dir": str(data_dir),
+                    "output_dir": attached.get("output_dir") or "",
+                    "ffmpeg": attached.get("ffmpeg") or "",
+                    "bind": "127.0.0.1",
+                    "remote": False,
+                    "attached_to_pid": int(holder["pid"]),
+                    "lease": str(lease.path),
+                    "pid": os.getpid(),
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+        if args.exit_with_parent > 0:
+            threading.Thread(
+                target=parent_watchdog, args=(args.exit_with_parent,), daemon=True
+            ).start()
+        while True:
+            time.sleep(3600)
     if args.mode == "tokens":
         from .serving import TokenTable
 
@@ -298,6 +392,15 @@ def main():
     media, jobs, info = build_services(args, data_dir, token, db_file)
     tokens = TokenTable(data_dir / "tokens.json")
     audit = None if args.no_audit else AuditLog(data_dir / "audit.jsonl")
+    # 明知故犯那一手不写也不删租约：它既然选择共享，就不该把原来那台的名字从租约上抹掉——
+    # 否则第三台看「没有租约」就堂而皇之进来，而那两台的活儿其实一直在互相改写。
+    record = (
+        lease.acquire(port=args.port, mode=args.mode)
+        if not args.allow_shared_data_dir
+        else {"pid": os.getpid()}
+    )
+    if not args.allow_shared_data_dir:
+        atexit.register(lease.release)
     app = create_app(
         db_file,
         token,
@@ -330,6 +433,9 @@ def main():
             "max_queue": jobs.max_pending,
             "queue_per_token": jobs.pending_per_actor,
             "requeued": len(jobs.requeued),
+            "min_free_mb": args.min_free_mb,
+            "pid": record["pid"],
+            "lease": str(lease.path),
         }
         print(json.dumps(ready, ensure_ascii=False), flush=True)
     config = uvicorn.Config(
