@@ -7239,3 +7239,109 @@ metrics 槽数是抄的、底线不判、没渲过也编体积、取消又不写
 - 还没做、也记在账上的：**传输仍是明文 HTTP**（`--tls-cert/--tls-key` 没做）；没有三方许可
   清单/BOM；没有企业手册与一键冒烟；量具在 `%TEMP%` 攒目录那一手只还了债、没根治。
   这四样分别是 1.321 与 1.322 的活。
+
+## 1.321：企业问的第一句话不是「能不能跑」，是「你随包发出去的东西都是什么许可」
+
+前两档把引擎做成了可以进流水线的一台服务。这一档做的是**进企业门之前那三张纸**：
+三方许可清单、运维手册、一键冒烟。三张都不许是抄来的。
+
+**许可那一格必须由开关推出来，不是由字段抄下来。** 随包的 `ffmpeg.exe` 是
+`6.1.1-essentials_build-www.gyan.dev`，`-buildconf` 里命中 `--enable-gpl`、`libx264`、
+`libx265`、`libxvid`、`libsrt`、`libmp3lame`、`libopencore-amrnb`、`libspeex`、`libass`，
+还命中 `--enable-version3`——所以这一支按 **GPL 一档**再分发，不是 LGPL，也不是
+`ffmpeg-static` 那个 npm 包装工自己写的 MIT。**包装工的许可字段不等于载荷的许可**，
+这一句就是这一页存在的理由。`ffprobe.exe` 是 4.0.2 那一支，同一把尺量下来也是 GPL 一档。
+清单里每一支都交回逐字节的 sha256，而且量**两遍**：构建输入那一份，与
+`desktop/release/win-unpacked/resources/bin/` 里装机那一份。这一手钉的是 1.315 记过的旧账
+——构建者的回退把随包的 FFmpeg 换掉了，所有门禁照绿。
+
+**Python 那一档走 `uv.lock` 的必带依赖边**（41 项），许可读装出来的 `METADATA`，
+每行还写明读的是哪一格：`License-Expression` → `License` → `Classifier`。
+`vosk` 的 wheel 把 `License` 写成 `UNKNOWN`，是 `Classifier: Apache Software License`
+那一格把它认下来的——这个转折写在纸上，而不是假装那一格本来就有。
+JS 只算生产闭包（5 项，MIT），`devDependencies` 那一档不进产品；
+`PyInstaller` 的 GPL-with-exception 单独列在「构建期」那一节，并写明那份例外覆盖的正是
+「用它打包自己的程序不会把程序变成 GPL」。
+
+**语音模型那一格是空的，而且如实写着空。** `vosk-model-small-cn-0.22` 是数据不是代码，
+19 个文件里没有许可文件。清单没有替它编一个许可，而是把「商用再分发之前要补上那一份条款」
+记成交付方的动作。一个空着的格子比一个编出来的许可值钱。
+
+**冒烟脚本只用标准库。** 企业机器上没有这个仓库、没有 `httpx`，所以
+`scripts/enterprise_smoke.py` 只用 `urllib` + `subprocess` 打对外的门，16 条腿一张表一个退出码。
+两条腿是自己踩出来的：① 预设与文件名后缀要对上——按「面积最小」挑预设挑中了 `vp9-1080p-web`
+（webm），交的文件名却是 `smoke-out.mp4`，引擎 422 拒掉，这一手把「现场读预设」这件事
+逼成了必须连同容器一起读；② 配方那一刀交回的是**排上了**，不是渲完了——渲到一半时
+那个文件已经在盘上、但是 0 字节，直接读就把空气量成交付。所以冒烟等的是那一单自己走到
+终态（`succeeded`），再去量文件字节与逐条验收。③ 还有一手是令牌长度：`load_token` 认的是
+**至少 32 个字符**，短了会被静默忽略、改用文件里现生成的那一枚——冒烟一开始用了一枚 22 字的
+环境令牌，读出来满屏 401，那不是我写的判定错，是那枚令牌根本没被认。
+
+**冒烟的门禁带一条反向腿。** `--engine` 指到不存在的那一支，脚本必须停在「引擎不存在」那句上、
+退出码 2，并且不许留下半张结果表。没有这一条，一支被砍空的脚本也能让外层门禁拿到绿灯。
+
+门禁两道：`tests/thirdparty_check.py`（现场重算与仓里那份逐字节比、许可与证据不许空、
+`_internal` 里每一份 `dist-info` 都要在表里有一行、手册必须指到这一页，另加两条**不许只信
+生成器**的腿：sha256 由门禁自己 `hashlib` 算一遍、许可那一格由表里记着的开关自己推一遍）与
+`tests/enterprise_smoke_check.py`（16 条腿齐且全绿 + 上面那条反向腿）。
+为什么补那两条独立腿：重算逐字节比只挡得住「文件与生成器不一致」；判定本身写错时
+**两份一起错**，绿灯照旧——这正是 1.319 那三方版本号一起停旧那一手的形状。
+
+### 1.321 的账
+
+- 门禁 **185 档**（这一档新增 `tests/thirdparty_check.py` 与
+  `tests/enterprise_smoke_check.py`，并把上一档刚立的 `tests/proc_leak_check.py` 订正到位）；
+  空机单跑 **185/185（`SUITE_EXIT=0`）**，各档秒数合计 1948 秒，跑在精简之前那一份完整环境里。
+- 三方清单那一份（`THIRD-PARTY.md`，由 `scripts/thirdparty.py` 现场生成）里的条数：
+  Python 运行时依赖 **41 项**、JS 生产依赖 **5 项**、随包媒体程序 **2 支**、语音模型 **1 份**、
+  Electron **33.4.11**（`LICENSE.electron.txt` 1,096 B 与 `LICENSES.chromium.html` 9,170,910 B
+  都在装机那一份的根上，量到才写）。许可那一格每一行都跟着「读的是哪一格」的证据；
+  `vosk` 的 wheel 写 `License: UNKNOWN`，是 `Classifier` 那一格把它认成 Apache 一档的，
+  这个转折写在纸上而不是抹平。
+- 两支媒体程序的档位**由 `-buildconf` 推**：`2/2 支带 --enable-gpl`（其中 2 支还带
+  `--enable-version3`），所以按 GPL 一档再分发，不是 LGPL；`--enable-libx264 / libx265 / libxvid`
+  只当佐证列出来。sha256 量两遍（构建输入与 win-unpacked 里那一份），这一手钉的是
+  「构建者换掉了随包的 FFmpeg 而所有门禁照绿」那笔旧账。
+- 一键冒烟 `scripts/enterprise_smoke.py` **16 条腿全绿**（只用标准库；起引擎、第二台被拒且没碰
+  令牌、素材现场探测、`cut-from-media` 一刀跑到交付、等那一单自己走到终态再量文件与逐条验收、
+  台账点名是谁、只读令牌 403 `SCOPE_DENIED`、吊销后 401、`/v1/metrics` 三张表、底线 503
+  `OUTPUT_DISK_TIGHT`）。外带一条反向腿：`--engine` 指到不存在的那一支 → 退出码 2 且不留结果表。
+- 变异台**九刀**，全红在自家断言上、逐字节还原（`bench1321.py` / `bench1321b.py`，仓外）：
+  生成器侧三刀（许可那一格写成 MIT、删掉「包装工的 MIT 不等于载荷」那句、记下的 sha256 不是
+  那件东西的指纹）红在「现场重算与仓里那份不一致」；冒烟侧三刀（令牌短于 `load_token` 认的
+  32 个字符 → 满屏 401、不等终态就去读交付 → 读到 0 字节与 `queued`、挑 webm 那档却交 `.mp4`
+  → 422 `INVALID_REQUEST`）各红在自己那几条腿上；文档侧三刀（只改 `THIRD-PARTY.md`：
+  许可那一格、sha256 一位、佐证列塞进 `--enable-libmp3lame`）分别红在
+  「由门禁自己再跑一遍 `-buildconf` 推出来」「sha256 要门禁自己算过一遍」
+  「佐证列只能列 FFmpeg 点名的 GPL-only 那几个」——**这三条腿不信生成器**，
+  因为重算逐字节比只挡得住「文件与生成器不一致」，判定本身写错时两份一起错。
+- 两把尺被自己的门禁读出来并订正：① `strays()` 的临时目录口令 `agentcut-[a-z0-9]{8}`
+  漏了 mkdtemp 字母表里的**下划线**，`agentcut-plimit-ci36g46_` 会退化成半截匹配，
+  于是「正在跑的那一趟」被当活口收掉——上一趟 184/185 红的那一格就是它，
+  而它是靠上一轮加的「逐 PID 把认出的目录与存在性摊开」自己点名的；② GPL 那一条判定原来
+  把 `libfreetype`（FTPL/LGPL）、`libass`（BSD）、`libmp3lame`（LGPL）、`libsrt`（MPL2）
+  也算成 GPL 的证据——今天两支都带 `--enable-gpl`，结论对、尺错，改成只读
+  `--enable-gpl` 与 `--enable-version3` 两个开关。
+- 第三把尺也是全套读出来的：`roughui_check` 红在 `TypeError: fetch failed`——共用量具
+  `ui_scene_probe.cjs` 读 `GET /v1/projects/{id}` 只发一次，而前一档刚把引擎按 PID 收掉、
+  端口还在 TIME_WAIT 的那一瞬间，Node 的 `fetch` 会把连不上直接抛出、带走整档
+  （这台机器上未监听的本地端口常常是**挂住**而不是拒）。改成读到为止（90 秒），
+  过时限照样抛并把最后几次的错法带上——**等到为止不等于读不到就算过**。
+  `roughui` 与 `sceneui` 各单跑一遍绿。这一趟红过的那一格修好之后，
+  发布账上的 185/185 是**修完之后那一趟**的读数（判据没放软，只是把等的事等对）。
+- 版本三方对齐 **1.321.0**（契约印的、随包引擎答的、`desktop/package.json` 那份），引擎与包按链
+  重产：根 `AgentCut.exe` **185,476,719 B**，sha256 前缀 `e8295651efdaee6d`，与
+  `desktop/release/AgentCut-便携版.exe` 逐字节核过。
+- 目录收到 **562.7 MB**（2606.4 → 562.7，本轮释放 2043.7 MB：`desktop/node_modules` 827.6、
+  `desktop/release` 927.1、冻结引擎 160.1、`build` 128.0、`dist` 与 `dist-electron` 1.0）；
+  `git status` 报「被删的 tracked 文件 **0**」。`.venv` 那 138.4 MB 整份留着——机器上那台
+  `--port 8765` 的引擎（PID 53804/22724）用的就是它的解释器，删它等于替别人关掉一台正在服务的引擎。
+  `%TEMP%` 里门禁与量具留下的 `agentcut-*` 目录这一趟清掉 30 个、释出 755.5 MB（句柄占着 0 个）；
+  根治仍在 1.322 的账上：量具得自己在 `finally` 里删。
+- 还没做、也记在账上的：**传输仍是明文 HTTP**（`--tls-cert/--tls-key`）；没有工程级 ACL 与
+  用户目录接入；没有 webhook（调用方轮询）；没有 watch folder；**界面上没有读许可清单的位置**
+  （`THIRD-PARTY.md` 在仓与包里，App 里点不到）；语音模型的许可文本要由分发方补。
+- 重建链一字未改：`uv sync --group dev` → **`npm --prefix desktop ci` 必须在 `build_engine` 之前**
+  → `scripts/build_engine.py --no-uv --verify` → `npm --prefix desktop run dist` →
+  把 `desktop/release/AgentCut-便携版.exe` 拷到根目录 → `uv run python scripts/thirdparty.py`
+  （清单要在包产好之后重跑，那两条「装机那份」的读数才量得到）。
