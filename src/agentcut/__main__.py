@@ -154,9 +154,26 @@ def main():
         prog="agentcut", description="AgentCut 本地剪辑引擎（HTTP + MCP + 媒体引擎）"
     )
     parser.add_argument(
-        "mode", choices=["api", "mcp", "desktop", "tools"], nargs="?", default="api"
+        "mode", choices=["api", "mcp", "desktop", "tools", "tokens"], nargs="?", default="api"
     )
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="绑定地址。默认只听本机；要交给别的机器上的 agent 用，才显式改这里",
+    )
+    parser.add_argument(
+        "--allow-origin",
+        action="append",
+        default=[],
+        help="允许哪个网页来源调这台引擎（可重复）；不给就只放行桌面端与本机",
+    )
+    parser.add_argument("--add-label", default="", help="发一枚具名令牌，例：studio-a")
+    parser.add_argument(
+        "--scopes", default="write", help="配 --add-label：read / write / both（默认 write）"
+    )
+    parser.add_argument("--revoke-label", default="", help="吊销一枚具名令牌，立刻生效")
+    parser.add_argument("--no-audit", action="store_true", help="不写 audit.jsonl 台账")
     parser.add_argument("--data-dir", default=str(_app_dir() / "data"))
     parser.add_argument("--cache-dir", default="")
     parser.add_argument("--output-dir", default="")
@@ -181,6 +198,37 @@ def main():
     if not args.token_file:
         args.token_file = str(data_dir / "agentcut.token")
     args.token_file = Path(args.token_file)
+    if args.mode == "tokens":
+        from .serving import TokenTable
+
+        table = TokenTable(data_dir / "tokens.json")
+        if args.add_label:
+            scopes = {"read": ["read"], "write": ["write"], "both": ["read", "write"]}.get(
+                args.scopes
+            )
+            if scopes is None:
+                raise SystemExit(f"--scopes 只认 read / write / both，给的是 {args.scopes}")
+            row, secret = table.add(args.add_label, scopes)
+            print(
+                json.dumps(
+                    {"issued": row["label"], "scopes": row["scopes"], "token": secret},
+                    ensure_ascii=False,
+                )
+            )
+            return
+        if args.revoke_label:
+            ok = table.revoke(args.revoke_label)
+            print(
+                json.dumps(
+                    {"revoked": args.revoke_label if ok else None, "tokens": table.summary()},
+                    ensure_ascii=False,
+                )
+            )
+            if not ok:
+                raise SystemExit(f"没有叫 {args.revoke_label} 的活令牌")
+            return
+        print(json.dumps({"tokens": table.summary()}, ensure_ascii=False))
+        return
     token = load_token(args.token_file, required=args.mode == "mcp")
     if args.exit_with_parent > 0:
         threading.Thread(
@@ -210,15 +258,34 @@ def main():
     import uvicorn
 
     from .http_api import create_app
+    from .serving import AuditLog, TokenTable
 
+    loopback = args.host in ("127.0.0.1", "localhost")
+    if not loopback and not os.environ.get("AGENTCUT_TOKEN", "").strip():
+        raise SystemExit(
+            f"要绑到 {args.host} 就得自己交一枚令牌（AGENTCUT_TOKEN）——自动生成的那一只"
+            "只配听本机，别把没设防的写接口放到网上"
+        )
     db_file = database_path(data_dir)
     media, jobs, info = build_services(args, data_dir, token, db_file)
-    app = create_app(db_file, token, media, jobs, info)
+    tokens = TokenTable(data_dir / "tokens.json")
+    audit = None if args.no_audit else AuditLog(data_dir / "audit.jsonl")
+    app = create_app(
+        db_file,
+        token,
+        media,
+        jobs,
+        info,
+        tokens=tokens,
+        audit=audit,
+        bind_host=args.host,
+        allow_origins=args.allow_origin or None,
+    )
     if args.json or args.mode == "desktop":
         ready = {
             "event": "ready",
             "port": args.port,
-            "base_url": f"http://127.0.0.1:{args.port}",
+            "base_url": f"http://{args.host}:{args.port}",
             "token_file": str(args.token_file),
             "media_ready": media.enabled,
             "media_roots": media.describe_roots(),
@@ -227,10 +294,14 @@ def main():
             "data_dir": str(data_dir),
             "output_dir": str(jobs.output_dir),
             "ffmpeg": str(jobs.ffmpeg or ""),
+            "bind": args.host,
+            "remote": not loopback,
+            "tokens": [row["label"] for row in tokens.summary() if not row["revoked_at"]],
+            "audit": None if audit is None else str(audit.path),
         }
         print(json.dumps(ready, ensure_ascii=False), flush=True)
     config = uvicorn.Config(
-        app, host="127.0.0.1", port=args.port, log_level="warning", access_log=False
+        app, host=args.host, port=args.port, log_level="warning", access_log=False
     )
     server = uvicorn.Server(config)
     try:

@@ -1234,6 +1234,22 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
             query += f"&ceiling_dbtp={float(ceiling_dbtp)}"
         return await call("GET", f"/v1/jobs/{job_id}/verify{query}")
 
+    @server.tool(annotations=read)
+    async def agent_audit(
+        limit: int = 50, actor: str | None = None, project_id: str | None = None
+    ) -> dict[str, Any]:
+        """Read the engine's own ledger: which token wrote what, when, and what came back.
+
+        台账只记写与拒（桌面端一直在轮询读，全记就把动作埋了）。企业接自动化流水线时，
+        这一张表回答的是「这条片子是谁改的」。
+        """
+        query = f"?limit={int(limit)}"
+        if actor:
+            query += f"&actor={quote(actor, safe='')}"
+        if project_id:
+            query += f"&project_id={quote(project_id, safe='')}"
+        return await call("GET", f"/v1/agent/audit{query}")
+
     @server.resource("project://{project_id}")
     async def project_resource(project_id: str) -> str:
         # Resource templates also validate ids; they may not inject URL paths.

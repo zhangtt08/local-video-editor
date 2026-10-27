@@ -7,7 +7,9 @@ the desktop client and an external Agent share exactly one command semantic.
 import asyncio
 import hashlib
 import hmac
+import json
 import math
+import re
 import secrets
 import sqlite3
 import tempfile
@@ -33,6 +35,7 @@ from . import (
     overview,
     recipe_run,
     scenes,
+    serving,
     silence,
     stability,
     transcript,
@@ -195,22 +198,115 @@ def _meter_clip(engine: MediaService, project, clip, request) -> tuple[dict, dic
     return measured, plan
 
 
+class AuditLedger:
+    """One line per call that changed something, or was refused — with the caller's own id.
+
+    A desktop polls reads constantly, so a ledger of GETs buries the one thing an enterprise asks
+    for: who asked for this clip to change. A refusal is an event — that is the line a security
+    review reads first.
+
+    Written as a plain ASGI layer on purpose: it *tees* the receive channel instead of consuming
+    it, so the route still gets every byte of the body it wants to parse, and the `request_id`
+    from that body still lands in the ledger. Reading the body from a `BaseHTTPMiddleware` instead
+    would starve the endpoint below — the bug this shape exists to avoid.
+    """
+
+    def __init__(self, app, audit: "serving.AuditLog") -> None:
+        self.app = app
+        self.audit = audit
+
+    def _record(self, scope, method: str, started: float, status: int, seen: list[bytes]) -> None:
+        refused = status in (401, 403)
+        if method in ("GET", "HEAD", "OPTIONS") and not refused:
+            return
+        request_id = None
+        try:
+            parsed = json.loads(b"".join(seen).decode("utf-8", errors="replace") or "{}")
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict):
+            request_id = parsed.get("request_id")
+        parts = str(scope.get("path", "")).split("/")
+        project_id = parts[3] if len(parts) > 3 and parts[2] == "projects" else None
+        state = scope.get("state") or {}
+        self.audit.write(
+            actor=state.get("actor"),
+            method=method,
+            path=scope.get("path"),
+            status=status,
+            duration_ms=round((time.monotonic() - started) * 1000),
+            project_id=project_id,
+            request_id=request_id,
+        )
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http" or not str(scope.get("path", "")).startswith("/v1/"):
+            await self.app(scope, receive, send)
+            return
+        method = str(scope.get("method", ""))
+        seen: list[bytes] = []
+        status = {"code": 0}
+
+        async def tee() -> dict:
+            message = await receive()
+            if message.get("type") == "http.request" and len(b"".join(seen)) <= 65536:
+                seen.append(message.get("body", b"") or b"")
+            return message
+
+        async def watch(event: dict, *args) -> None:
+            if event.get("type") == "http.response.start":
+                status["code"] = int(event.get("status") or 0)
+            await send(event, *args)
+
+        started = time.monotonic()
+        try:
+            await self.app(scope, tee, watch)
+        except Exception:
+            self._record(scope, method, started, status["code"] or 500, seen)
+            raise
+        self._record(scope, method, started, status["code"], seen)
+
+
 def create_app(
     db_path: Path,
     token: str,
     media: MediaService | None = None,
     jobs: JobRuntime | None = None,
     app_info: dict | None = None,
+    tokens: serving.TokenTable | None = None,
+    audit: serving.AuditLog | None = None,
+    bind_host: str = "127.0.0.1",
+    allow_origins: list[str] | None = None,
 ) -> FastAPI:
     if len(token) < 32:
         raise ValueError("AGENTCUT_TOKEN must contain at least 32 characters")
     bearer = HTTPBearer(auto_error=False)
+    if tokens is not None:
+        # 桌面端那枚共享令牌也进表，标 `local`：一条路同时管得住老用法与新发的具名令牌。
+        tokens.grant_legacy(token)
 
-    def authorize(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]):
-        if credentials is None or not secrets.compare_digest(
-            credentials.credentials.encode(), token.encode()
-        ):
+    def authorize(
+        request: Request,
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+    ):
+        secret = "" if credentials is None else credentials.credentials
+        identity = None
+        if tokens is not None:
+            identity = tokens.resolve(secret)
+        if identity is None and secrets.compare_digest(secret.encode(), token.encode()):
+            identity = {"label": serving.LOCAL_LABEL, "scopes": list(serving.SCOPES)}
+        if identity is None:
             raise EditorError("UNAUTHORIZED", "valid Bearer token required", 401)
+        request.state.actor = identity["label"]
+        if request.method not in ("GET", "HEAD", "OPTIONS") and "write" not in identity["scopes"]:
+            raise EditorError(
+                "SCOPE_DENIED",
+                f"令牌 {identity['label']} 只有读的作用域，这一手要写",
+                403,
+                actor=identity["label"],
+                method=request.method,
+                scopes=identity["scopes"],
+            )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -226,10 +322,17 @@ def create_app(
             "编辑需要 expected_revision；dry_run 不落地。"
         ),
     )
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
+    hosts = ["127.0.0.1", "localhost"]
+    if bind_host not in ("127.0.0.1", "localhost", "0.0.0.0"):
+        hosts.append(bind_host)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=hosts)
     app.add_middleware(
         CORSMiddleware,
-        allow_origin_regex=r"^(agentcut://app|http://(127\.0\.0\.1|localhost)(:\d+)?)$",
+        allow_origin_regex=(
+            r"^(agentcut://app|http://(127\.0\.0\.1|localhost)(:\d+)?)$"
+            if not allow_origins
+            else "^(" + "|".join(re.escape(origin) for origin in allow_origins) + ")$"
+        ),
         allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["Authorization", "Content-Range", "Range", "X-Requested-With"],
         allow_credentials=False,
@@ -242,6 +345,9 @@ def create_app(
 
     Store = Annotated[ProjectStore, Depends(store)]
     auth = [Depends(authorize)]
+
+    if audit is not None:
+        app.add_middleware(AuditLedger, audit=audit)
 
     def require_media() -> MediaService:
         if media is None or not media.enabled:
@@ -360,6 +466,25 @@ def create_app(
                 RecipeRun,
                 RenderRequest,
             )
+        }
+
+    @app.get("/v1/agent/audit", dependencies=auth)
+    def read_audit(
+        limit: Annotated[int, Query(ge=1, le=serving.LEDGER_LIMIT)] = 50,
+        actor: str | None = None,
+        project_id: str | None = None,
+    ):
+        """The ledger of what this engine was asked to do — newest last.
+
+        Actions and refusals only. `path` says where the file itself is, so an enterprise can
+        ship it to whatever keeps logs.
+        """
+        if audit is None:
+            raise EditorError("AUDIT_UNAVAILABLE", "这台引擎没开台账", 503)
+        return {
+            "events": audit.recent(limit=limit, actor=actor, project_id=project_id),
+            "path": str(audit.path),
+            "written": audit.seq,
         }
 
     @app.get("/v1/agent/manifest", dependencies=auth)
