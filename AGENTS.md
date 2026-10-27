@@ -6843,3 +6843,25 @@ Chromium 那三个帮助进程（244 MB），砍它们只有两个办法——�
 （不带 CDP、30 秒里每秒钟数一次）也没见引擎或令牌先冒出来。所以这一条**不声称已修**——只让它在
 红的时候带上证据：令牌的写入时刻、那一刻机器上有几台引擎、各自多大。下一回再红，先看那段证据再
 改产品。
+
+### 发布账与交付清单（1.315 收口）
+
+- 引擎侧只改了版本号（`APP_VERSION` 1.315.0）；产品行为一行没动，动的是**量具**：探针多要一列
+  工作集、引擎判据并成一份 `desktop|api`、装机腿多两条内存断言（空闲那一刻引擎必须为 0、
+  真用过之后 `engineProcs` 必须正好 1）与三条额度（空闲外壳 400 MB、用过之后合计 500 MB、
+  引擎 120 MB）。
+- 装机腿实测：空闲 **332.2 MB**（主进程 87.7 + 帮助进程 244.4，引擎 0）、用过之后 **421.8 MB**
+  （引擎 80.7 MB）；外壳画出来 1903 ms、DOM ready 350 ms、第一次真用到看见内容 1252 ms、
+  重载到看见列表 207 ms——四个时间地板与三条内存额度在同一趟里一起量。
+- 变异四刀各红在自家断言上（判据回到只认 `api --port`、占用漏算帮助进程、判据把量具自己数进
+  引擎、空闲读数不写进 ui.json），跑完逐字节还原。
+- 门禁总数仍是 **178 档**；空机单跑 **178/178（`SUITE_EXIT=0`）** 跑在精简之前那一份完整环境里。
+- 目录从 **2596.3 MB 收到 412.8 MB**（1.314 收口时是 412.0 MB）；删掉的是同一批可再生产物
+  （`desktop/node_modules` 827.6 MB、`desktop/release` 927.0 MB、`.venv` 138.5 MB、`build`
+  127.8 MB、`desktop/resources/bin/agentcut` 160.0 MB、`desktop/dist` 0.9 MB、
+  `desktop/dist-electron` 0.1 MB、`__pycache__` 1.6 MB），`git status` 报「被删的 tracked 文件 0」。
+- 根 `AgentCut.exe` **185,444,597 B**（比 1.314 少 1,130 B），sha256 前缀 `8d178d8e0b637b1d`，
+  与 `desktop/release/AgentCut-便携版.exe` 逐字节核过；asar **1.315.0** / 84 文件 / 73 句可读中文。
+- 重建链依旧是那一串：`npm ci` → `npm run build` → `scripts/build_engine.py --verify --no-uv`
+  → `npm run dist` + 复制便携版 → 空机单跑；这一轮照样是先跑 `uv sync`（带 `--group dev` 才装得上
+  PyInstaller）再建引擎。
