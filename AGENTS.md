@@ -6781,3 +6781,21 @@ verdict 永远为真（红在「目标点歪就转为假」与「换了片子就
 第一次真用到看见内容 1259 ms、重载接回列表 206 ms。
 
 空机单跑 **178/178 checks passed**（`SUITE_EXIT=0`），跑的就是交付出去的那一份树。
+
+### 交付清单与体积（1.314 收口）
+
+这一刀释放 **2183.5 MB**，目录现在 **412.0 MB**（1.313 收口时是 410.6 MB，差的那 1.4 MB 是这一版的
+源码与文档）。留下的清单与 1.313 那一节一字不改——能双击的、能读的、重建要的都还在：
+
+- 根 `AgentCut.exe` **185,445,727 B**（比 1.313 多 7,397 B），sha256 前缀 `d75ca9c62c10e609`，
+  与 `desktop/release/AgentCut-便携版.exe` 逐字节核过；asar **1.314.0** / 84 文件 / 随包引擎就是
+  建出来的那一份 / 随包 73 句可读中文。
+- 门禁总数 **178 档**（新增 `tests/deliver_verify_check.py`，`recipe_run_check` 与
+  `packaged_reciperun_check` 各加一格）；空机单跑 **178/178（`SUITE_EXIT=0`）** 跑在精简之前那一份
+  完整环境里，删完 `git status` 报「被删的 tracked 文件 0」。
+- 这一版删掉的是：`desktop/node_modules` 827.6 MB、`desktop/release` 927.0 MB、`.venv` 138.5 MB、
+  `build` 127.8 MB、`desktop/resources/bin/agentcut` 160.0 MB、`desktop/dist` 0.9 MB、
+  `desktop/dist-electron` 0.1 MB、`__pycache__` 1.7 MB。
+- 重建链同 1.312 那一节：`npm ci` → `npm run build` → `scripts/build_engine.py --verify --no-uv`
+  → `npm run dist` + 复制便携版 → 空机单跑。README 里那三个数（配方步数、门禁总数、契约面读数）
+  现在都由门禁现数，重建之后不必手抄。
