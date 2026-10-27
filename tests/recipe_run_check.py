@@ -49,7 +49,8 @@ MODELS = ROOT / "desktop/resources/asr"
 PRESET = "h264-720p-web"
 FAILURES: list[str] = []
 
-STEP_COUNTS = {"cut-from-media": 16, "speech-to-captions": 18, "imitate-imported-edit": 17}
+STEP_COUNTS = {"cut-from-media": 16, "speech-to-captions": 18,
+               "imitate-imported-edit": 17, "reframe-for-platform": 13}
 
 
 def check(label: str, ok: bool, evidence: object = "") -> None:
@@ -429,6 +430,71 @@ def batch_delivery(client: TestClient, folder: Path) -> None:
     print(f"   三种画幅：{seen}，逐条 verdict 全真")
 
 
+def slider(folder: Path) -> Path:
+    """Three seconds of a white box sliding left→right — something a tracker can actually follow."""
+    target = folder / "slider.mp4"
+    subprocess.run(
+        [str(FFMPEG), "-v", "error", "-y", "-nostdin",
+         "-f", "lavfi", "-i", "color=c=gray:s=1920x1080:r=30:d=2",
+         "-f", "lavfi", "-i", "color=c=white:s=576x432:r=30:d=2",
+         "-filter_complex", "overlay=x='144+(1920-576-144)*t/2':y='(1080-432)/2'",
+         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", str(target)],
+        check=True, capture_output=True, timeout=600, creationflags=0x08000000,
+    )
+    return target
+
+
+def reframe_recipe(client: TestClient, folder: Path) -> None:
+    """⑦′ 第四条配方：会动的主体 → 跟拍 → 三种画幅，一条一条验。"""
+    payload = {
+        "request_id": "rr-reframe",
+        "name": "跟着主体走",
+        "files": [str(slider(folder))],
+        "subject_box": [0.225, 0.5, 0.3, 0.4],
+        "deliver_items": [
+            {"preset_id": "h264-1080x1920-vertical", "filename": "rf-vertical.mp4",
+             "fit": "cover"},
+        ],
+        "render": True,
+        "wait_seconds": 120.0,
+    }
+    answer = client.post("/v1/agent/recipes/reframe-for-platform/run", json=payload)
+    check("reframe-for-platform 一次调用跑完", answer.status_code == 200, answer.text[:400])
+    if answer.status_code != 200:
+        return
+    made = answer.json()
+    rows = shape_of(client, made)
+    check("步骤顺序就是第四条配方自己的表",
+          [row["step"] for row in made["steps"]]
+          == recipe_run.declared_steps("reframe-for-platform"),
+          [row["step"] for row in made["steps"]])
+    track_row = rows.get("mask_track") or {}
+    frame_row = rows.get("clip_reframe") or {}
+    check("跟主体那一步真写了路径",
+          track_row.get("ran") is True and int(track_row.get("tracked_frames") or 0) > 1,
+          track_row)
+    check("折成跟拍关键帧那一步真落了命令",
+          frame_row.get("ran") is True and int(frame_row.get("keyframes") or 0) > 0
+          and int(frame_row.get("followed_points") or 0) > 1, frame_row)
+    jobs = made.get("jobs") or []
+    check("竖屏那一版等到终态", len(jobs) == 1
+          and all(job.get("status") == "succeeded" for job in jobs),
+          [(job.get("filename"), job.get("status")) for job in jobs])
+    want = {"rf-vertical.mp4": (1080, 1920)}
+    for job in jobs:
+        out = Path(job.get("output_path") or "")
+        size = picture_size(out) if out.is_file() else None
+        check(f"{job.get('filename')} 就是它那个预设的画幅",
+              size == want.get(str(job.get("filename"))), size)
+    verdicts = (rows.get("deliver_verify") or {}).get("verdicts") or []
+    check("那一条交付带着自己的 verdict（静音也算报告得出来）",
+          len(verdicts) == 1 and all(row["verdict"] for row in verdicts),
+          verdicts)
+    seen = [(job.get("filename"), picture_size(Path(job.get("output_path") or "")))
+            for job in jobs if Path(job.get("output_path") or "").is_file()]
+    print(f"   跟拍三画幅：{seen}")
+
+
 def refusals_and_replay(client: TestClient, folder: Path, made: dict) -> None:
     """⑤ 重放与三条拒绝。"""
     payload = {
@@ -467,7 +533,8 @@ def refusals_and_replay(client: TestClient, folder: Path, made: dict) -> None:
     ghost_details = ghost_body.get("details") or {}
     check("不存在的配方按 NOT_FOUND 拒，并列出有哪些",
           ghost.status_code == 404 and ghost_body.get("code") == "NOT_FOUND"
-          and len(ghost_details.get("recipes") or []) == 3, ghost.text[:300])
+          and len(ghost_details.get("recipes") or []) == len(agent_contract.recipes()),
+          ghost.text[:300])
 
     gap_payload = dict(payload)
     gap_payload["request_id"] = "rr-no-preset"
@@ -549,6 +616,7 @@ def main() -> None:
         speech_to_captions(client, folder)
         refusals_and_replay(client, folder, made)
         batch_delivery(client, folder)
+        reframe_recipe(client, folder)
     mcp_surface()
     bridge_dispatch(folder)
     if FAILURES:

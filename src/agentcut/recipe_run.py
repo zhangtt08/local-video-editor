@@ -38,8 +38,10 @@ TRACK_COUNT_REFUSALS = tuple(
 # 每条配方非有不可的参数：缺哪一样就点名拒掉，不许半路才撞在某个路由上。
 # render=false 的刀不排交付，所以交付那一档的参数也就不再必需。
 def required_fields(recipe_id: str, request: RecipeRun) -> tuple[str, ...]:
-    if recipe_id == "imitate-imported-edit":
-        base: tuple[str, ...] = ("interchange_document", "files")
+    if recipe_id in {"imitate-imported-edit", "reframe-for-platform"}:
+        base: tuple[str, ...] = ("files",)
+        if recipe_id == "imitate-imported-edit":
+            base = ("interchange_document", "files")
         delivery: tuple[str, ...] = ("deliver_items",)
     else:
         base = ("files",)
@@ -180,6 +182,7 @@ async def _media_import(door: Door, request: RecipeRun, ctx: dict[str, Any]) -> 
         verified.append(dict(body["verified"]))
     ctx["verified"] = verified
     ticks = sum(int(item["duration_ticks"]) for item in verified)
+    ctx["clip_seconds"] = ticks / TIMEBASE
     return ran(
         "POST",
         "/v1/media/import",
@@ -189,7 +192,7 @@ async def _media_import(door: Door, request: RecipeRun, ctx: dict[str, Any]) -> 
     )
 
 
-def seed_commands(ctx: dict[str, Any]) -> list[dict[str, Any]]:
+def seed_commands(ctx: dict[str, Any], request: RecipeRun) -> list[dict[str, Any]]:
     """Lay the files end to end, each on the track whose kind it is.
 
     The ids come from the `ids_request` step above, so nothing here invents a key the server might
@@ -233,6 +236,14 @@ def seed_commands(ctx: dict[str, Any]) -> list[dict[str, Any]]:
         )
         placed[track_id] += int(item["duration_ticks"])
         ctx.setdefault("clip_ids", []).append(clip_id)
+        if request.subject_box and len(ctx["clip_ids"]) == 1:
+            # 1.317：跟主体那一档要一个起点。方框与片段同一批落库，跟拍那两步才读得到。
+            box = [float(value) for value in request.subject_box]
+            commands.append(
+                {"op": "clip.mask", "clip_id": clip_id,
+                 "mask": {"shape": "rectangle", "center_x": box[0], "center_y": box[1],
+                          "width": box[2], "height": box[3]}}
+            )
     return commands
 
 
@@ -277,7 +288,7 @@ async def _timeline_edit(door: Door, request: RecipeRun, ctx: dict[str, Any]) ->
         commands, evidence = await borrow_plan(door, request, ctx)
         suffix = "import"
     else:
-        commands = seed_commands(ctx)
+        commands = seed_commands(ctx, request)
         suffix = "seed"
     payload = {
         "request_id": f"{request.request_id}-{suffix}",
@@ -783,6 +794,66 @@ async def _deliver_verify(door: Door, request: RecipeRun, ctx: dict[str, Any]) -
     )
 
 
+async def _mask_track(door: Door, request: RecipeRun, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Follow the starting box across the clip, landing the whole path in one revision."""
+    if not request.subject_box:
+        return skipped("没给 subject_box：这一刀不猜要跟谁，只按画幅裁")
+    clip_id = str((ctx.get("clip_ids") or [None])[0])
+    if not clip_id:
+        return skipped("这一刀没有落上片段，没有可跟的主体")
+    seconds = float(ctx.get("clip_seconds") or 0.0)
+    frames = max(2, min(120, int(round(seconds * 30)) or 2))
+    path = f"/v1/projects/{ctx['project_id']}/mask-track"
+    payload = {
+        "request_id": f"{request.request_id}-track",
+        "expected_revision": ctx["revision"],
+        "targets": [{"clip_id": clip_id, "frames": frames}],
+    }
+    _status, body = await ask(door, "POST", path, payload)
+    ctx["revision"] = int((body.get("project") or {}).get("revision") or ctx["revision"])
+    tracking = body.get("tracking") or {}
+    targets = tracking.get("targets") or []
+    return ran(
+        "POST",
+        "/v1/projects/{id}/mask-track",
+        clip_id=clip_id,
+        frames=frames,
+        tracked_frames=sum(int(row.get("tracked_frames") or 0) for row in targets),
+        frames_decoded=tracking.get("frames_decoded"),
+        revision=ctx["revision"],
+    )
+
+
+async def _clip_reframe(door: Door, request: RecipeRun, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Turn that path into the pan-and-zoom that keeps the subject centred."""
+    if not request.subject_box:
+        return skipped("没给 subject_box：没有路径可折，跟拍这一格不做")
+    clip_id = str((ctx.get("clip_ids") or [None])[0])
+    if not clip_id:
+        return skipped("这一刀没有落上片段，没有可折的路径")
+    path = f"/v1/projects/{ctx['project_id']}/clips/{clip_id}/reframe"
+    payload: dict[str, Any] = {
+        "request_id": f"{request.request_id}-reframe",
+        "expected_revision": ctx["revision"],
+        "max_scale": request.max_scale,
+        "apply": True,
+    }
+    if request.tolerance is not None:
+        payload["tolerance"] = request.tolerance
+    _status, body = await ask(door, "POST", path, payload)
+    ctx["revision"] = int((body.get("project") or {}).get("revision") or ctx["revision"])
+    notes = body.get("reframe") or {}
+    return ran(
+        "POST",
+        "/v1/projects/{id}/clips/{clip_id}/reframe",
+        keyframes=len(body.get("commands") or []),
+        followed_points=notes.get("followed_points"),
+        max_scale=notes.get("max_scale"),
+        warning=notes.get("warning"),
+        revision=ctx["revision"],
+    )
+
+
 RUNNERS: dict[str, Handler] = {
     "editor_capabilities": _capabilities,
     "media_config": _media_config,
@@ -809,6 +880,8 @@ RUNNERS: dict[str, Handler] = {
     "render_start": _render_start,
     "job_wait": _job_wait,
     "deliver_verify": _deliver_verify,
+    "mask_track": _mask_track,
+    "clip_reframe": _clip_reframe,
 }
 
 # 同一个 request_id 再叫一次：建工程那一步会交回它当时的凭据，后面这些写步就不能再写一遍。
@@ -826,6 +899,8 @@ WRITE_STEPS = frozenset(
         "render_start",
         "render_batch",
         "job_wait",
+        "mask_track",
+        "clip_reframe",
     }
 )
 REPLAY_NOTE = "这一刀已经跑过（同一个 request_id），交回它当时的工程与交付，不重写一遍"

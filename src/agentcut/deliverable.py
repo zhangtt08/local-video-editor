@@ -138,35 +138,44 @@ def verify_delivery(
             )
         )
         if read["has_audio"] and ffmpeg:
-            loudness = measure(ffmpeg, path)
-            measured_lufs = float(loudness.get("integrated_lufs"))
-            measured_peak = float(loudness.get("true_peak_dbtp"))
-            if target_lufs is None:
+            try:
+                loudness = measure(ffmpeg, path)
+            except EditorError as error:
+                # 1.317：一条数字静音的交付（静音轨、纯动画）量不出响度——那是答案，不是异常。
                 checks.append(
-                    _check("loudness", "报告，不判", measured_lufs, True,
-                           true_peak_dbtp=measured_peak)
+                    _check("loudness", "有声音可量", None, True,
+                           note=f"这一段没有可量的声音（{error.code}），响度报不了")
                 )
+                loudness = {}
             else:
-                checks.append(
-                    _check(
-                        "loudness",
-                        target_lufs,
-                        measured_lufs,
-                        abs(measured_lufs - target_lufs) <= LOUDNESS_TOLERANCE_LU,
-                        tolerance_lu=LOUDNESS_TOLERANCE_LU,
-                        true_peak_dbtp=measured_peak,
+                measured_lufs = float(loudness.get("integrated_lufs"))
+                measured_peak = float(loudness.get("true_peak_dbtp"))
+                if target_lufs is None:
+                    checks.append(
+                        _check("loudness", "报告，不判", measured_lufs, True,
+                               true_peak_dbtp=measured_peak)
                     )
-                )
-            if ceiling_dbtp is not None:
-                checks.append(
-                    _check(
-                        "true_peak",
-                        ceiling_dbtp,
-                        measured_peak,
-                        measured_peak <= ceiling_dbtp + PEAK_TOLERANCE_DB,
-                        tolerance_db=PEAK_TOLERANCE_DB,
+                else:
+                    checks.append(
+                        _check(
+                            "loudness",
+                            target_lufs,
+                            measured_lufs,
+                            abs(measured_lufs - target_lufs) <= LOUDNESS_TOLERANCE_LU,
+                            tolerance_lu=LOUDNESS_TOLERANCE_LU,
+                            true_peak_dbtp=measured_peak,
+                        )
                     )
-                )
+                if ceiling_dbtp is not None:
+                    checks.append(
+                        _check(
+                            "true_peak",
+                            ceiling_dbtp,
+                            measured_peak,
+                            measured_peak <= ceiling_dbtp + PEAK_TOLERANCE_DB,
+                            tolerance_db=PEAK_TOLERANCE_DB,
+                        )
+                    )
         elif not read["has_audio"]:
             checks.append(_check("loudness", "这一条没有声轨", "none", True))
     verdict = all(row["ok"] for row in checks)

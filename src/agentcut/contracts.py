@@ -71,7 +71,7 @@ PATH_BOX_SCHEMA_VERSION = 13  # the last shape that needs fitting on load; see `
 
 # One place: /v1/info, the OpenAPI document and the desktop shell must agree.
 
-APP_VERSION = "1.316.0"
+APP_VERSION = "1.317.0"
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 # 1.215：读的那一侧可以写 id，也可以写**唯一的合成名**（人看得到的那一行）。
@@ -6394,6 +6394,20 @@ class RecipeRun(Contract):
     # 交回 verdict 与逐条实测数。false 就只排队、不验。
 
     verify: bool = True
+
+
+    # 1.317：要跟的那个主体，归一化方框 [cx, cy, w, h]（0..1）。不给就不跟——
+    # 多画幅照裁，只是不跟着人走；给了才走 mask_track 与 clip_reframe 那两步。
+
+    subject_box: Annotated[list[float], Field(min_length=4, max_length=4)] | None = None
+
+
+    # 跟上主体那一刀的缩放上限（1..4）与松紧（0..0.25 个画幅宽）。默认值与
+    # ReframeRequest 同一档，不另开一套。
+
+    max_scale: Annotated[float, Field(ge=1.0, le=4.0)] = 2.0
+
+    tolerance: Annotated[float, Field(gt=0.0, le=0.25)] | None = None
 
 
 

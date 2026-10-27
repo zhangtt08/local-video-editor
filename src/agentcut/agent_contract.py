@@ -151,12 +151,42 @@ RECIPES: tuple[dict[str, Any], ...] = (
             {"tool": "deliver_verify", "why": "批量那几条交付，每一条都由引擎读回文件说"},
         ],
     },
+    {
+        "id": "reframe-for-platform",
+        "title": "一条素材出多个画幅，跟着主体走",
+        "when": "口播或单主体画面要同时发横屏、竖屏与方形，竖屏那一版不能只靠居中裁。",
+        "params": (
+            "name、files（一条素材）、deliver_items（1..4 条，各自预设与文件名；竖屏与方形建议"
+            " fit=cover）；subject_box 是 [cx, cy, w, h] 的归一化方框，给了才跟主体，不给就只按"
+            "画幅裁；max_scale（1..4）与 tolerance 是跟上主体那一刀的缩放上限与松紧。"
+        ),
+        "steps": [
+            {"tool": "editor_capabilities", "why": "先问这台引擎认哪些预设与跟踪能力"},
+            {"tool": "media_config", "why": "素材必须落在授权根目录里，先看清是哪几个目录"},
+            {"tool": "media_import", "why": "探测出真实时长、帧率与声轨，交回可信的素材记录"},
+            {"tool": "project_create", "why": "一个 request_id 一次创建，重复提交拿回同一个工程"},
+            {"tool": "ids_request", "why": "轨道/素材/片段的 id 由服务端发，避免两边撞号"},
+            {
+                "tool": "timeline_edit",
+                "why": "把素材落上轨道；给了 subject_box 就在同一批里给片段安上起始方框",
+            },
+            {"tool": "mask_track", "why": "沿着那个方框把主体的路径跟出来，整组一个 revision"},
+            {"tool": "clip_reframe", "why": "把路径折成 x/y/scale 的跟拍关键帧，仍是普通命令"},
+            {"tool": "timeline_overview", "why": "一张接触表看完整条时间线，确认跟的是谁"},
+            {"tool": "preview_frame", "why": "抽几个刻度：预览与导出读的是同一份编译"},
+            {"tool": "render_batch", "why": "横屏、竖屏、方形各排一条，一单交付"},
+            {"tool": "job_wait", "why": "一次调用等到终态，拿回输出路径与校验过的长度"},
+            {"tool": "deliver_verify", "why": "每条交付由引擎自己读那个文件验，画幅对预设"},
+        ],
+    },
 )
 
 
 # 1.312：三条配方都能一把跑完了——各自缺的那一样东西变成参数交给调用方
 # （口播要剪哪几行给数据，搬别人的剪辑给那一份文档）。跑不完的那一条仍然点名说为什么。
-RUNNABLE_RECIPES = frozenset({"cut-from-media", "speech-to-captions", "imitate-imported-edit"})
+RUNNABLE_RECIPES = frozenset(
+    {"cut-from-media", "speech-to-captions", "imitate-imported-edit", "reframe-for-platform"}
+)
 
 
 # 每一只 MCP 工具背后就是这一条路由——两条门面因此是同一批口，不是两套规则。

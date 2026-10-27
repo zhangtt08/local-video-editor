@@ -224,23 +224,24 @@ def main() -> None:
     #    README，就是留一句关于产品的假话——期望一律现算：`agent_contract.RECIPES` 与
     #    `suite_check.discover`，不是文档里的字。反向也钉：那三句话在 README 里绝迹同样红。
     counts = [len(recipe["steps"]) for recipe in agent_contract.RECIPES]
-    stated = re.search(r"交回 (\d+) / (\d+) / (\d+) 行步骤日志", text)
+    stated = re.search(r"交回 (\d+(?: / \d+)+) 行步骤日志", text)
     if stated is None:
         problems.append(
-            "README 不再写「交回 N / M / K 行步骤日志」——那三个数现在没人认领了"
+            "README 不再写「交回 N / M / K … 行步骤日志」——那些数现在没人认领了"
         )
-    elif [int(row) for row in stated.groups()] != counts:
+    elif [int(row) for row in stated.group(1).split(" / ")] != counts:
         problems.append(
-            f"README 的步骤数是 {stated.groups()}，而 RECIPES 按配方顺序交回 {counts}"
+            f"README 的步骤数是 {stated.group(1)}，而 RECIPES 按配方顺序交回 {counts}"
         )
     borrowed = re.search(r"跑一趟 (\d+) 步", text)
-    want_borrow = len(agent_contract.RECIPES[-1]["steps"])
+    want_borrow = len(next(row for row in agent_contract.RECIPES
+                          if row["id"] == "imitate-imported-edit")["steps"])
     if borrowed is None:
         problems.append("README 不再写搬别人那一刀「跑一趟 N 步」")
     elif int(borrowed.group(1)) != want_borrow:
         problems.append(
-            f"README 说搬一刀跑一趟 {borrowed.group(1)} 步，而 "
-            f"{agent_contract.RECIPES[-1]['id']} 现在声明 {want_borrow} 步"
+            f"README 说搬一刀跑一趟 {borrowed.group(1)} 步，而 imitate-imported-edit "
+            f"现在声明 {want_borrow} 步"
         )
     total = len(suite_check.discover([]))
     suite_claim = re.search(r"空机单跑 (\d+)/(\d+) 全绿", text)
