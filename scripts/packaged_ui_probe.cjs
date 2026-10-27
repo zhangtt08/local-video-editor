@@ -182,7 +182,12 @@ async function main() {
     // 1.308 的第一笔账：窗口打开那一刻，界面直接是外壳，没有那块「正在启动本地引擎」的全屏门，
     // 也没有一台引擎被替用户拉起来。令牌由引擎自己写进 user-data-dir——它不在场，才是
     // 「进程真没起」的证据；只看窗口里没有进度条是不够的。
-    const openState = String(await evaluate(cdp, `(function () {
+    // 1.317：这一笔过去是「连上就读一次」。整套验收里它红过一次：3.1 秒就答了
+    // `{"shell":false,…}`——CDP 连上时页面还没挂载，读到的是一张空页。先等外壳出现再读，
+    // 读的仍是「打开那一刻」那一份快照（等的是挂载，不是等引擎）。
+    let openState = "{}";
+    for (let wait = 0; wait < 80; wait += 1) {
+      openState = String(await evaluate(cdp, `(function () {
       var frame = document.querySelector(".app-frame");
       var box = frame ? frame.getBoundingClientRect() : null;
       var title = document.querySelector(".start-title");
@@ -196,6 +201,10 @@ async function main() {
         headY: head ? Math.round(head.top + head.height / 2) : 0,
       });
     })()`));
+      const seen = JSON.parse(openState);
+      if (seen.shell) break;
+      await sleep(250);
+    }
     const atOpen = JSON.parse(openState);
     facts.openState = atOpen;
     // 外壳什么时候**真画出来**：不看 DOM 里有没有那个节点，而是拿中点做命中测试——
