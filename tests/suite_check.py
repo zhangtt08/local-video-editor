@@ -9,6 +9,7 @@ be runnable only by hand, which meant a green documented gate said nothing about
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import time
@@ -36,6 +37,53 @@ def emit(line: str) -> None:
     # The console on Windows may be GBK while the checks print Chinese.
     sys.stdout.buffer.write((line + "\n").encode("utf-8", errors="replace"))
     sys.stdout.buffer.flush()
+
+
+# 门禁的临时地方都建在 `%TEMP%\agentcut-xxxxxxxx` 下面（tests/scratch.py 是唯一入口）。
+# 只把「那个目录已经不在了、进程还在服」算活口：那正是漏下的那一手（实测一台崩掉的
+# `lease_check` 留下 4 个）；而另一趟正在跑的验收，它的临时目录还在，不该被这一刀收走。
+STRAY_SCRIPT = (
+    "Get-CimInstance Win32_Process -Filter \"Name='python.exe' OR Name='pythonw.exe'\" |"
+    " Where-Object { $_.CommandLine -match"
+    " '[\\\\/]agentcut-(?:[a-z0-9]+-)?[a-z0-9]{8}(?![a-z0-9])' } |"
+    " ForEach-Object { $_.ProcessId.ToString() + \" :: \" + $_.CommandLine }"
+)
+SCRATCH = re.compile(r"agentcut-(?:[a-z0-9]+-)?[a-z0-9]{8}(?![a-z0-9])")
+
+
+def scratch_roots(command: str) -> list[str]:
+    """命令行里每一个 `%TEMP%\\agentcut-xxxxxxxx`，走回完整路径（碰到空格或引号就停）。"""
+    roots: list[str] = []
+    for hit in SCRATCH.finditer(command or ""):
+        start = hit.start()
+        while start > 0 and command[start - 1] not in (" ", '"', "'"):
+            start -= 1
+        roots.append(command[start:hit.end()])
+    # data-dir 与 media-root 常常指着同一个地方，数一份就够。
+    return list(dict.fromkeys(roots))
+
+
+def strays() -> list[int]:
+    done = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", STRAY_SCRIPT],
+        capture_output=True, text=True, timeout=180,
+    )
+    leaked = []
+    for line in (done.stdout or "").splitlines():
+        pid, _, command = line.partition(" :: ")
+        roots = scratch_roots(command)
+        # 只要有一个临时地方还在，那就是别人正在跑的那一趟，不许碰。
+        if pid.strip().isdigit() and roots and not any(Path(root).exists() for root in roots):
+            leaked.append(int(pid.strip()))
+    return leaked
+
+
+def sweep() -> tuple[list[int], list[int]]:
+    """先数活口，再按 PID 连子树收；交回「数到的」与「收不掉的」两个读数。"""
+    found = strays()
+    for pid in found:
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True, timeout=60)
+    return found, strays()
 
 
 def run(path: Path) -> tuple[bool, float, str]:
@@ -87,7 +135,11 @@ def main() -> int:
                 emit(f"    {line}")
             emit("    ---------------------")
 
-    emit(f"\n{len(checks) - len(failures)}/{len(checks)} checks passed")
+    found, stuck = sweep()
+    if stuck:
+        failures.append(("还有引擎收不掉", str(stuck)))
+    emit(f"\n门禁引擎活口：数到 {len(found)} 个，收完之后剩 {len(stuck)} 个 {stuck}")
+    emit(f"{len(checks) - len(failures)}/{len(checks)} checks passed")
     for name, _ in failures:
         emit(f"  FAILED: {name}")
     return 1 if failures else 0

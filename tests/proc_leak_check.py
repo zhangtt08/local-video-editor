@@ -1,0 +1,135 @@
+"""跑完验收不许在机器上攒引擎进程——这一档量的是那个兜底本身。
+
+1.320 实测：一台半途崩掉的 `lease_check` 在机器上留下 4 个还在服务的引擎，它们的
+`--data-dir` 指着已经被 atexit 还掉的临时目录，自己不会退。`tests/suite_check.py` 里的
+`strays()` / `sweep()` 是那一手的兜底，而**兜底自己也得被量**，三条判据：
+
+① 谓词认得对：一条命令行里只该认出 `%TEMP%\\agentcut-xxxxxxxx` 那一个目录，
+   人在仓库里的工程目录（`agentcut` 目录下那个 `data`）不算，exe 路径里那一段 `agentcut`
+   也不算（v2 就是从行首一路吃到临时目录，把一台目录还在的引擎认成活口，红在量具自己身上）；
+② 正在跑的那一趟不许碰：临时目录还在，就不是活口；
+③ 漏下的那一个收得掉：目录已经不在了的，按 PID 连子树收，收完机器上没有残留。
+
+跑法：空闲机器单跑 `uv run python tests/proc_leak_check.py`（要本机 powershell）。
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tests"))
+
+import scratch  # noqa: E402
+import suite_check as runner  # noqa: E402
+
+FAILURES: list[str] = []
+
+
+def check(label: str, ok: bool, evidence: object = "") -> None:
+    if not ok:
+        FAILURES.append(f"{label}: {str(evidence)[:400]}")
+
+
+def predicate_leg() -> None:
+    """谓词单测：把三条真实形状的命令行车喂进去，看认出的是哪一个目录。"""
+    quoted = (r'"C:\Program Files\Python312\python.exe" -m agentcut api --port 0 --json'
+              r' --data-dir C:\Users\A\AppData\Local\Temp\agentcut-lease-evkff857\engine'
+              r' --media-root C:\Users\A\AppData\Local\Temp\agentcut-lease-evkff857')
+    check("认出的就是那一个临时目录（media-root 与 data-dir 是同一个，不许多数一份）",
+          runner.scratch_roots(quoted)
+          == [r"C:\Users\A\AppData\Local\Temp\agentcut-lease-evkff857"],
+          runner.scratch_roots(quoted))
+
+    stub = (r"C:\Users\A\Desktop\项目\agentcut\.venv\Scripts\python.exe -m agentcut api"
+            r" --data-dir C:\Users\A\AppData\Local\Temp\agentcut-ops-1a2b3c4d/engine")
+    check("壳那条命令行认出的必须是临时目录本身，不是从行首吃到那里的混合串",
+          runner.scratch_roots(stub)
+          == [r"C:\Users\A\AppData\Local\Temp\agentcut-ops-1a2b3c4d"],
+          runner.scratch_roots(stub))
+
+    # 中间那段标签自己就占满 8 个字符：认出的是「标签-后缀」整串，不是标签那半截。
+    # 少认半截就是认了一个不存在的目录，正在跑的那一趟会被当成活口收掉。
+    named = (r"C:\x\python.exe -m agentcut api --data-dir"
+             r" C:\Users\A\AppData\Local\Temp\agentcut-procleak-ab12cd34/engine")
+    check("带标签的那一个临时目录认出的是整串，不是标签那半截",
+          runner.scratch_roots(named)
+          == [r"C:\Users\A\AppData\Local\Temp\agentcut-procleak-ab12cd34"],
+          runner.scratch_roots(named))
+
+    human = (r"C:\Users\A\agentcut\.venv\Scripts\python.exe -m agentcut api"
+             r" --data-dir C:\Users\A\Desktop\项目\agentcut\data")
+    check("人自己的工程目录一个都不算", runner.scratch_roots(human) == [],
+          runner.scratch_roots(human))
+
+
+def live_leg() -> None:
+    """一条反例 + 一条正例：目录还在的那一趟不许碰，目录没了的必须收掉。"""
+    keep = scratch.make("agentcut-procleak-")
+    (keep / "engine").mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ)
+    env.pop("ELECTRON_RUN_AS_NODE", None)
+    env["PYTHONIOENCODING"] = "utf-8"
+    engine = subprocess.Popen(
+        [sys.executable, "-m", "agentcut", "api", "--port", "0", "--json",
+         "--data-dir", str(keep / "engine"), "--media-root", str(keep)],
+        cwd=str(ROOT), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
+    )
+    # 正例借一个「不会被建出来」的临时目录：命令行里那个名字在，目录不在——
+    # 那正是崩在半路的那一台留下的形状。
+    gone = Path(tempfile.gettempdir()) / "agentcut-gone0000"
+    ghost = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(180)", str(gone / "engine")],
+        cwd=str(ROOT), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
+    )
+    try:
+        found: list[int] = []
+        deadline = time.time() + 40.0
+        while time.time() < deadline and ghost.pid not in found:
+            found = runner.strays()
+            if ghost.pid in found:
+                break
+            time.sleep(1.0)
+        check("目录已经不在了的那一个，数得到（等来的，不是睡出来的）",
+              ghost.pid in found, found)
+        check("临时目录还在的那一趟不算活口", engine.pid not in found, found)
+        killed, stuck = runner.sweep()
+        check("兜底按 PID 收的就是那一个", ghost.pid in killed, killed)
+        check("没有收不掉的", stuck == [], stuck)
+        try:
+            ghost.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            check("假活口收完就该没了", False, ghost.poll())
+        else:
+            check("假活口收完就该没了", ghost.poll() is not None, ghost.poll())
+        check("那一台真引擎没被这一刀打断", engine.poll() is None, engine.poll())
+    finally:
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(engine.pid)],
+                       capture_output=True, timeout=60)
+        try:
+            engine.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            engine.kill()
+    leftover = runner.strays()
+    check("这一档自己也不留活口", leftover == [], leftover)
+
+
+def main() -> None:
+    predicate_leg()
+    live_leg()
+    if FAILURES:
+        print(f"失败 {len(FAILURES)} 项：")
+        for line in FAILURES:
+            print(f"  - {line}")
+        raise SystemExit(1)
+    print("PASS: 活口令牌认得对、正在跑的那一趟碰不得、漏下的那一个收得掉，"
+          "整套验收跑完机器上不攒引擎进程")
+
+
+if __name__ == "__main__":
+    main()

@@ -28,6 +28,7 @@ import time
 from pathlib import Path
 
 import httpx
+import reaper
 import scratch
 from fastapi.testclient import TestClient
 
@@ -247,7 +248,7 @@ def start_engine(rig: Rig) -> tuple[subprocess.Popen, dict, str]:
     env = dict(os.environ)
     env.pop("ELECTRON_RUN_AS_NODE", None)
     env["PYTHONIOENCODING"] = "utf-8"
-    proc = subprocess.Popen(
+    proc = reaper.note(subprocess.Popen(
         [
             sys.executable, "-m", "agentcut", "api",
             "--data-dir", str(rig.data_dir), "--port", "0", "--json",
@@ -257,7 +258,7 @@ def start_engine(rig: Rig) -> tuple[subprocess.Popen, dict, str]:
         ],
         cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, encoding="utf-8", env=env,
-    )
+    ))
     deadline = time.time() + 40.0
     ready: dict = {}
     while time.time() < deadline and not ready:
@@ -427,13 +428,19 @@ def contract_leg() -> None:
 def main() -> None:
     folder = scratch.make("agentcut-ops-")
     rig = Rig(folder)
-    slow = seeded(rig, 20, 20000, "slow")
-    fast = seeded(rig, 4, 4000, "fast")
-    slots_leg(rig)
-    quota_leg(rig, slow, fast)
-    recovery_leg(rig, slow[0], slow[1])
-    info_leg(rig, slow[0], slow[1])
-    contract_leg()
+    try:
+        slow = seeded(rig, 20, 20000, "slow")
+        fast = seeded(rig, 4, 4000, "fast")
+        slots_leg(rig)
+        quota_leg(rig, slow, fast)
+        recovery_leg(rig, slow[0], slow[1])
+        info_leg(rig, slow[0], slow[1])
+        contract_leg()
+    finally:
+        strays = reaper.survivors()
+        strays_after = reaper.sweep(stop_engine)
+    check("每一腿自己收掉了拉起的引擎（漏一个就是在替这台机器攒进程）",
+          not strays and not strays_after, (strays, strays_after))
     if FAILURES:
         print(f"失败 {len(FAILURES)} 项：")
         for line in FAILURES:

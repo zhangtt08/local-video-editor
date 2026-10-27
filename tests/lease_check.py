@@ -35,6 +35,7 @@ import time
 import urllib.request
 from pathlib import Path
 
+import reaper
 import scratch
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -54,12 +55,12 @@ def spawn(data_dir: Path, *extra: str) -> subprocess.Popen:
     env = dict(os.environ)
     env.pop("ELECTRON_RUN_AS_NODE", None)
     env["PYTHONIOENCODING"] = "utf-8"
-    return subprocess.Popen(
+    return reaper.note(subprocess.Popen(
         [sys.executable, "-m", "agentcut", "api", "--port", "0", "--json",
          "--data-dir", str(data_dir), "--media-root", str(data_dir), *extra],
         cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, encoding="utf-8", errors="replace", env=env,
-    )
+    ))
 
 
 def wait_ready(proc: subprocess.Popen, seconds: float = 40.0) -> dict:
@@ -200,8 +201,9 @@ def alive_leg(folder: Path) -> None:
                                  "started_at": "now"}), encoding="utf-8")
     check("PID 不在了的租约不算占用", Lease(other).holder() is None, Lease(other).holder())
     live = folder / "live.lock"
-    sitter = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    sitter = reaper.note(subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
     try:
         live.write_text(json.dumps({"pid": sitter.pid, "port": 7, "mode": "api",
                                     "started_at": "now"}), encoding="utf-8")
@@ -210,8 +212,8 @@ def alive_leg(folder: Path) -> None:
               bool(holder) and holder.get("pid") == sitter.pid and holder.get("port") == 7,
               holder)
     finally:
-        sitter.terminate()
-        sitter.wait(timeout=20)
+        # terminate() 只打得着 venv 那个壳，真在睡的解释器是它的子进程——按 PID 连子树收。
+        stop(sitter)
     check("那位走了租约就不算占用", Lease(live).holder() is None, Lease(live).holder())
 
 
@@ -246,12 +248,12 @@ def attach_leg(folder: Path) -> None:
     env = dict(os.environ)
     env.pop("ELECTRON_RUN_AS_NODE", None)
     env["PYTHONIOENCODING"] = "utf-8"
-    shell = subprocess.Popen(
+    shell = reaper.note(subprocess.Popen(
         [sys.executable, "-m", "agentcut", "desktop", "--port", "0",
          "--data-dir", str(data), "--media-root", str(data)],
         cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, encoding="utf-8", errors="replace", env=env,
-    )
+    ))
     attached = {}
     deadline = time.time() + 40.0
     while time.time() < deadline and not attached:
@@ -277,11 +279,18 @@ def attach_leg(folder: Path) -> None:
 
 def main() -> None:
     folder = scratch.make("agentcut-lease-")
-    serving_legs(folder)
-    release_leg(folder)
-    alive_leg(folder)
-    attach_leg(folder)
-    quiet_modes_leg(folder)
+    try:
+        serving_legs(folder)
+        release_leg(folder)
+        alive_leg(folder)
+        attach_leg(folder)
+        quiet_modes_leg(folder)
+    finally:
+        # 先数活口再收：漏了停法要红在自己那一行，兜底收活口只是不让这台机器被攒进程。
+        strays = reaper.survivors()
+        strays_after = reaper.sweep(stop)
+    check("每一腿自己收掉了拉起的引擎（漏一个就是在替这台机器攒进程）",
+          not strays and not strays_after, (strays, strays_after))
     if FAILURES:
         print(f"失败 {len(FAILURES)} 项：")
         for line in FAILURES:

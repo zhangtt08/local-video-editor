@@ -121,6 +121,20 @@ def main() -> None:
             missing = [scope for scope in SCOPES if scope not in scopes]
             assert not missing, f"这些作用域没量到：{missing}（量到 {sorted(scopes)}）"
 
+            # Shift 加选，并把「两段选中」与「没有菜单挡着」都记成读数：名字与量到的
+            # 东西必须对得上，否则「全部命中自己」这句绿灯说的是空气。
+            selected = facts.get("selectedForMulti")
+            pressed = facts.get("multiPressed") or []
+            menu_was_open = facts.get("menuCoversMulti")
+            assert isinstance(selected, list) and len(selected) >= 2, (
+                f"Shift 加选之后只选中 {selected}，multi 这一格量的是空气"
+                f"（按下的是 {pressed}）", selected)
+            assert set(pressed) <= set(selected), (
+                "按过的两段没有都进选择（命中点没落在那一段身上？）：", pressed, selected)
+            assert menu_was_open is False, (
+                "multi 这一格要量的是「两段选中、没有菜单挡着」：当时菜单还开着"
+                "（那会被轨道头的命中测试读成缺陷）：", menu_was_open)
+
             problems = []
             for scope in SCOPES:
                 found = scopes[scope]
@@ -136,7 +150,9 @@ def main() -> None:
             print(
                 "   "
                 + "；".join(f"{scope} {scopes[scope]['buttons']}" for scope in SCOPES)
-                + " 个可见按钮，全部命中自己、无横向溢出"
+                + f" 个可见按钮（multi 那一格：Shift 加选到 {len(selected)} 段 "
+                  f"{'/'.join(selected)}、当时没有菜单挡着），"
+                + "全部命中自己、无横向溢出"
             )
 
             size = shot.stat().st_size if shot.is_file() else 0

@@ -297,19 +297,62 @@ async function main() {
     }
     const spots = await evaluate(`(function () {
       return Array.from(document.querySelectorAll('.clip:not(.ghost)')).slice(0, 2).map(function (node) {
-        node.scrollIntoView({ block: 'nearest' });
+        node.scrollIntoView({ block: 'nearest', inline: 'nearest' });
         const r = node.getBoundingClientRect();
-        return { x: Math.round(r.left + Math.min(r.width - 12, 40)), y: Math.round(r.top + 12) };
+        return { id: node.dataset.id, x: Math.round(r.left + Math.min(r.width - 12, 40)), y: Math.round(r.top + 12) };
       });
     })()`);
     if (!spots || spots.length < 2) throw new Error("时间线上不足两段");
-    await press(spots[0].x, spots[0].y, 0);
+    facts.multiPressed = spots.map(function (s) { return s.id; });
+    // 每次按之前重新量一次，并且先证明这个点命中的就是那一段。轨道头是粘在左侧的一列，
+    // 时间线横向滚过之后那一段会被它盖住：按在轨道头上是「选这条轨」，不是「加选这一段」，
+    // 于是「两段都选中」被量成一段——1.320 的这一格就是这么假绿的，加了这个命中测试才红。
+    const spotOf = async (want) => {
+      let where = {};
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        where = await evaluate(`(function () {
+          const want = ${JSON.stringify(want)};
+          const n = Array.from(document.querySelectorAll('.clip:not(.ghost)'))
+            .filter(function (node) { return node.dataset.id === want; })[0];
+          if (!n) return { gone: true };
+          n.scrollIntoView({ block: 'nearest', inline: 'center' });
+          const box = n.getBoundingClientRect();
+          const head = document.querySelector('.tl-head');
+          const floor = head ? Math.ceil(head.getBoundingClientRect().right) + 8 : 0;
+          const left = Math.max(box.left, floor);
+          const x = Math.round((left + box.right) / 2);
+          const y = Math.round(box.top + Math.min(12, box.height / 2));
+          const hit = document.elementFromPoint(x, y);
+          const clip = hit && hit.closest ? hit.closest('.clip') : null;
+          const scroller = document.querySelector('.tl-scroll');
+          return { x: x, y: y, under: clip ? clip.dataset.id : (hit ? String(hit.className) : null),
+                   vis: Math.round(box.right - left), scroll: scroller ? Math.round(scroller.scrollLeft) : -1 };
+        })()`);
+        if (where.gone) throw new Error("段 " + want + " 从时间线上消失了");
+        if (where.under === want) return where;
+        // 还没命中就把那一列让开：横向滚回去，直到那一段真的露在轨道头右边。
+        const moved = await evaluate("(function () { const s = document.querySelector('.tl-scroll');" +
+          " if (!s) return null; s.scrollLeft = Math.max(0, s.scrollLeft - 120); return Math.round(s.scrollLeft); })()");
+        if (moved === null) break;
+      }
+      throw new Error("按点本该命中段 " + want + "，量了六次还是：" + JSON.stringify(where));
+    };
+    const first = await spotOf(spots[0].id);
+    await press(first.x, first.y, 0);
     await sleep(400);
     await evaluate("document.querySelectorAll('.panel-scroll details').forEach(function (d) { d.open = true; });");
     await sleep(600);
     await audit("clip");
-    await press(spots[1].x, spots[1].y, 2);
+    const second = await spotOf(spots[1].id);
+    await press(second.x, second.y, 8);  // Shift+点：加选（Ctrl/Meta 同样加选，Timeline 的 start()）
     await sleep(600);
+    // multi 这一格要的是「两段真的都选中、并且没有菜单挡着」：读数先取到手，再把可能开着
+    // 的菜单关掉去量按钮命中——别把「被自己的菜单盖住」读成界面缺陷。
+    facts.selectedForMulti = await evaluate(
+      "Array.from(document.querySelectorAll('.clip[data-id][aria-pressed=\"true\"]')).map(function (n) { return n.dataset.id; })");
+    facts.menuCoversMulti = await evaluate("!!document.querySelector('[role=\"menu\"]')");
+    await escape();
+    await sleep(250);
     await audit("multi");
     if (SHOT) {
       await cdp.send("Page.captureScreenshot", { format: "png" }, 30000).then((shot) => {
