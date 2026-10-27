@@ -273,12 +273,74 @@ async function main() {
     };
 
     // ① 真鼠标右键：菜单画出来、焦点在第一项、那一段被选中。
-    const centre = { x: clip.rect.left + Math.round(clip.rect.width / 2), y: clip.rect.top + Math.round(clip.rect.height / 2) };
-    facts.rightClickAt = centre;
-    await click(centre.x, centre.y, "right");
+    // 矩形要在**按下去的那一刻**量：缩略图解码完会把轨道行长高，早先测的那一份 rect 会把点
+    // 落到片段外面——菜单画不出来，而读数量到的只是「没有菜单」，看不出自己点错了地方。
+    // 所以按之前先确认这一点真的落在这段 clip 上，落不到就重测（最多五秒），并把点到的东西交回。
+    const safeId = String(clip.id || '');
+    if (!/^[A-Za-z0-9_.-]{1,64}$/.test(safeId)) throw new Error('unexpected clip id: ' + safeId);
+    const centreOf = `(function () {
+      const node = document.querySelector('.clip[data-id=\"${safeId}\"]');
+      if (!node) return null;
+      const rect = node.getBoundingClientRect();
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + rect.height / 2);
+      const hit = document.elementFromPoint(x, y);
+      const owner = hit && hit.closest ? hit.closest('.clip[data-id]') : null;
+      return { x: x, y: y, hit: owner ? owner.getAttribute('data-id') : String(hit ? hit.className : 'none') };
+    })();`;
+    let spot = null;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      spot = await evaluate(centreOf);
+      if (spot && spot.hit === clip.id) break;
+      await sleep(250);
+    }
+    if (!spot) throw new Error("clip left the screen: " + clip.id);
+    facts.rightClickAt = { x: spot.x, y: spot.y };
+    facts.rightClickHit = spot.hit;
+    // 关掉菜单有五只手（pointerdown / contextmenu / wheel / resize / blur）。看不见是哪一只
+    // 关的，就只能猜「菜单没画出来」——所以在按下去之前把五只手都记下账。
+    await evaluate(`window.__triggers = []; window.__t0 = performance.now();
+      [['pointerdown', document], ['contextmenu', document], ['wheel', document],
+       ['resize', window], ['blur', window]].forEach(function (pair) {
+        pair[1].addEventListener(pair[0], function (event) {
+          if (window.__triggers.length > 24) return;
+          const node = event.target;
+          window.__triggers.push({ kind: pair[0], ms: Math.round(performance.now() - window.__t0),
+            on: String((node && (node.className || node.tagName)) || 'none').slice(0, 40) });
+        }, true);
+      }); 0`);
+    await click(spot.x, spot.y, "right");
     await sleep(350);
-    facts.menu = await readMenuSettled(() => evaluate(MENU_READ));
-    facts.selectedAfterRightClick = await evaluate("document.querySelectorAll('.clip[data-id][aria-pressed=\"true\"]').length");
+    // 菜单在 window blur 时自己关掉（人把焦点挪走就是这个语义）。这台机器上会有别的会话抢前台，
+    // headless 的窗口因此可能「刚画出来就被关掉」——那不是被测件的缺陷，是量具没把「页面有焦点」
+    // 当成前提。所以：拿不到菜单就先看清焦点、把窗口提到前面再按一次，并把试了几次交回。
+    facts.menuAttempts = 0;
+    facts.menuTrail = [];
+    facts.menu = null;
+    for (let attempt = 0; attempt < 6 && !facts.menu; attempt += 1) {
+      facts.menuAttempts += 1;
+      if (attempt > 0) {
+        // 上一轮被 blur 关掉了：把窗口提到前面、拿回焦点，再按一次。
+        await cdp.send("Page.bringToFront");
+        await evaluate("window.focus()");
+        const back = await evaluate(centreOf);
+        await click((back || spot).x, (back || spot).y, "right");
+        await sleep(300);
+      }
+      facts.menu = await readMenuSettled(() => evaluate(MENU_READ));
+      facts.menuTrail.push({
+        attempt: facts.menuAttempts,
+        menu: facts.menu ? 'box' : null,
+        focus: await evaluate("document.hasFocus()"),
+        triggers: await evaluate("(window.__triggers || []).slice(-3)"),
+      });
+    }
+    facts.windowFocused = await evaluate("document.hasFocus()");
+    facts.triggers = await evaluate("window.__triggers || []");
+    if (!facts.menu) {
+      throw new Error("菜单一次都没能留住（这台机器上有别的应用在抢前台焦点）；最后几次读数 "
+        + JSON.stringify(facts.menuTrail).slice(-420));
+    }    facts.selectedAfterRightClick = await evaluate("document.querySelectorAll('.clip[data-id][aria-pressed=\"true\"]').length");
     facts.clipPressedAfterRightClick = await evaluate(`(document.querySelector('.clip[data-id="${clip.id}"]') || {}).getAttribute && document.querySelector('.clip[data-id="${clip.id}"]').getAttribute('aria-pressed')`);
 
     // ② 按方向键真的在能按的项之间走。
@@ -299,8 +361,9 @@ async function main() {
     const after = await projectState();
     facts.after = { revision: after.revision ?? after.project?.revision, clips: Object.keys(after.project?.clips ?? after.clips ?? {}).length };
 
-    // ④ 再开一次，Escape 关掉，焦点交回那个片段。
-    await click(centre.x, centre.y, "right");
+    // ④ 再开一次，Escape 关掉，焦点交回那个片段。矩形照样当场重测（上面那一手刚加过一段）。
+    const againSpot = await evaluate(centreOf);
+    await click((againSpot || spot).x, (againSpot || spot).y, "right");
     await sleep(300);
     facts.menuBeforeEscape = await evaluate(MENU_READ);
     await key("Escape", "Escape");

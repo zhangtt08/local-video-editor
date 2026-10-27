@@ -324,9 +324,19 @@ async function main() {
       return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
     })()`);
     if (more) {
-      await press(more.x, more.y, 0);
-      await sleep(500);
-      await audit("track-menu", '[role="menu"]');
+      // 菜单在 window blur 时自己关掉。这台机器上别的应用会抢前台，所以「一次点开没读到」
+      // 不等于「没有可点的按钮」：先把窗口提回前面，最多试四轮，读数里留下试了几次。
+      facts.trackMenuAttempts = 0;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        facts.trackMenuAttempts += 1;
+        await cdp.send("Page.bringToFront");
+        await evaluate("window.focus()");
+        await press(more.x, more.y, 0);
+        await sleep(500);
+        await audit("track-menu", '[role="menu"]');
+        if ((facts.scopes["track-menu"] || {}).buttons > 0) break;
+        await escape();
+      }
       await escape();
     }
 
