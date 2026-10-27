@@ -3530,7 +3530,7 @@ worker 要渲染的那一份，所以「期望」不是这一档现编的数。
   决定片子该多响；给了才判，允差 1.5 LU。`ceiling_dbtp`（-9..0）另钉真峰值，允差 0.5 dB。
 * `duration_tolerance` 默认 0.25 s，与 `recipe_run` 里那一格用的是同一档。
 
-三条配方把它接成最后一步：现在按配方顺序交回 **15 / 17 / 17** 行步骤。搬别人那一刀走批量交付，所以
+三条配方把它接成最后一步（1.316 起按配方顺序交回 **16 / 18 / 17** 行步骤，多出来的是`render_batch`）。搬别人那一刀走批量交付，所以
 那一格逐条验——两条交付就交回两个 `job_id` 与两个 verdict，不会只验第一条就当全对；`verify=false`
 就不验，那一行 `ran: false` 说清为什么。MCP 同名工具 `deliver_verify`，能力位 `deliver_verify`。
 
@@ -3538,3 +3538,22 @@ worker 要渲染的那一份，所以「期望」不是这一档现编的数。
 收起来，原位置放 3 秒 320x180 的那一片，再叫同一扇门——它必须转为假，假在 `duration` 与
 `resolution`，而实测数只能是 3.0 s 与 320x180。这一条把「实测 = 复述计划」那类写法钉死：变异台
 真把 `round(read["seconds"], 3)` 改成 `expected_seconds`，交回的 `measured` 就成了 2.0，当场红。
+
+## 1.316 批量交付那一档：`deliver_items` 不再是一条「点了没反应」的路
+
+交付形状两种，择一：
+
+* **单预设**：`preset_id` + `filename`——`render_plan` 编译、`render_start` 排队；
+* **批量**：`deliver_items`（1..4 条，每条自带 `preset_id` / `filename`，可各自 `fit`）——
+  `render_batch` 一次排完，`job_wait` 逐条等到终态，`deliver_verify` 逐条验。
+
+1.316 之前第二种形状是静默空转：配方里没有 `render_batch` 这一步，`render_start` 以
+「这一刀走批量交付」跳过，`job_wait` 与 `deliver_verify` 接着以「没有交付作业可验」跳过——
+HTTP 200、时间线剪好、一个文件都没有；而只交 `deliver_items` 还会被 `preset_id`/`filename`
+的必填挡在 422。现在两条媒体配方（`cut-from-media` **16** 步、`speech-to-captions`
+**18** 步）里 `render_batch` 是真的一步：给了 items 就排，没给就那一行 `ran: false`
+并指出单预设走上面两步。
+
+实测：一条 3 秒素材只要 `deliver_items`，一趟排三条——`h264-720p-web` 1280×720、
+`h264-1080x1920-vertical` 1080×1920（`fit: cover`）、`h264-1080-square` 1080×1080（`cover`），
+三条 `succeeded`，三条 verdict 全真，ffprobe 量到的画幅与预设一字不差。

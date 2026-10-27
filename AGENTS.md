@@ -6865,3 +6865,54 @@ Chromium 那三个帮助进程（244 MB），砍它们只有两个办法——�
 - 重建链依旧是那一串：`npm ci` → `npm run build` → `scripts/build_engine.py --verify --no-uv`
   → `npm run dist` + 复制便携版 → 空机单跑；这一轮照样是先跑 `uv sync`（带 `--group dev` 才装得上
   PyInstaller）再建引擎。
+
+## 1.316：批量交付那一档从「跳过」变成真排一次——顺带堵掉一个 200 的空转
+
+先量后改：给 `cut-from-media` 传 `deliver_items`（要两条预设各出一份），一次调用回了 **200**，
+时间线剪好了，`out/` 里**一个文件都没有**，而步骤日志里写着「这一刀走批量交付（render_batch）」
+——可这两条配方的步骤表里根本没有 `render_batch` 这一步。`job_wait` 与 `deliver_verify` 接着以
+「没有交付作业可验（render=false）」跳过，连 `render` 是 true 都说错了。想按名字只交批量那一档
+更不行：`preset_id` 与 `filename` 被当成必填，先挡在 422 上。
+
+三处一起改：
+
+* 交付形状择一：`preset_id` + `filename`（单预设）**或** `deliver_items`（1..4 条，每条自带预设、
+  文件名，可各自 `fit`）。缺参数那一步按这条规则判，批量形状不再被单预设那两样挡住。
+* 两条媒体配方里 `render_batch` 成为真的一步（`cut-from-media` 15 → **16**、`speech-to-captions`
+  17 → **18**）：给了 `deliver_items` 就排，没给就那一行 `ran: false` 并指出单预设走上面两步——
+  与 `master_loudness` 同一套「数据决定，跳过要说清」的口径。
+* `render_batch` 自己也得把「没给 items」当成一句答案，否则单预设那一趟会被它拿着空列表撞成
+  422（这正是改完第一版的真回归，第二刀变异把它钉住）。
+
+### 量到的东西
+
+一条 3 秒素材，只要 `deliver_items`，一趟里排三条：`h264-720p-web`（1280×720）、
+`h264-1080x1920-vertical`（1080×1920，`fit: cover`）、`h264-1080-square`（1080×1080，`fit: cover`）。
+三条都等到 `succeeded`，`deliver_verify` 逐条交回 verdict 全真，ffprobe 量到的画幅与预设一字不差：
+`[('batch-wide.mp4', (1280, 720)), ('batch-vertical.mp4', (1080, 1920)),
+('batch-square.mp4', (1080, 1080))]`。单预设那一档照旧：`render_batch` 明写让位，`render_start`
+把一条交付交到终态。
+
+变异四刀各红在自家断言上：配方里不再声明 `render_batch`（红在「批量那一格真的排了」）、
+没给 items 也去排一单空的（红在单预设那一趟 422）、缺参数时又要 `preset_id` 与 `filename`
+（红在「只给 deliver_items 也跑得完」）、批量只验第一条（红在「三条交付各带自己的 verdict」）。
+跑完都按 sha256 逐字节还原。
+
+### 发布账与交付清单（1.316 收口）
+
+- 配方：`cut-from-media` 15 → **16** 步、`speech-to-captions` 17 → **18** 步（`render_batch` 进表），
+  `imitate-imported-edit` 仍 17 步；三张表的顺序仍由 `agent_contract.RECIPES` 独占，执行表逐条对得上。
+  缺参数那条规则改成「交付形状择一」，`params` 那句话同步点名 `deliver_items`。
+- 装机腿：一刀 16 行步骤、交付 0.60 s 对计划 0.60 s、revision 4、等了 532 ms；搬一刀 17 行、
+  一条交付 1032 ms 到终态；两条拒绝照旧；关掉按 PID 收子树不留进程。
+- 装机窗口：1.316.0，占用空闲 **330.6 MB**（主 87.2 + 帮助 243.3，引擎 0）、用过之后 **420.3 MB**
+  （引擎 80.7）；四个时间地板同趟量过（这一版没有回归，数值随机器抖动）。
+- `released_package_check` 认下 asar **1.316.0** / 84 文件 / 随包引擎就是建出来的那一份 / 73 句可读中文。
+- 门禁总数仍是 **178 档**（批量那一档加在 `recipe_run_check` 里，没有新增文件）；空机单跑
+  **178/178（`SUITE_EXIT=0`）** 跑在精简之前那一份完整环境里。
+- 目录从 **2596.8 MB 收到 413.3 MB**（1.315 收口时 412.8 MB）；删掉的还是同一批可再生产物，
+  `git status` 报「被删的 tracked 文件 0」。
+- 根 `AgentCut.exe` **185,446,749 B**，sha256 前缀 `cb8a31c274143445`，与
+  `desktop/release/AgentCut-便携版.exe` 逐字节核过。
+- 重建链同前：`npm ci` → `uv sync --group dev` → `scripts/build_engine.py --verify --no-uv`
+  → `npm run dist` + 复制便携版 → 空机单跑 → 精简。
