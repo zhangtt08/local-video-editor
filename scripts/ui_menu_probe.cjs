@@ -194,13 +194,18 @@ const MENU_READ = `(function () {
 })()`;
 
 // 菜单刚挂上去时，自动聚焦要等一次 React 提交；满载的机器上那一下会慢半拍，
-// 所以读之前先等焦点真的落到菜单项上（最多两秒），而不是读一次就判红。
+// 所以读之前先等焦点真的落到菜单项上，而不是读一次就判红。上限从两秒放宽到八秒：
+// 1.319 整套验收里这一格红过一次（焦点还停在片段上，而那一段的缩略图正在解码），
+// 单独重跑就过——两秒不够一台正在满载的机器把一次 React 提交排完。
+// 等不到位照样红，只是交回的读数里现在写着等了多久。
 async function readMenuSettled(read) {
+  const started = Date.now();
   let result = await read();
-  for (let wait = 0; wait < 20 && !(result && result.focused === "menuitem"); wait += 1) {
+  for (let wait = 0; wait < 80 && !(result && result.focused === "menuitem"); wait += 1) {
     await sleep(100);
     result = await read();
   }
+  if (result) result.settledInMs = Date.now() - started;
   return result;
 }
 

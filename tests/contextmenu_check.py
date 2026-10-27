@@ -198,7 +198,7 @@ def main() -> None:
             print(
                 f"   菜单 {page['rect']['width']}×{page['rect']['height']}，"
                 f"圆角 {page['radius']}px，{len(page['items'])} 项，"
-                f"焦点在「{page['focusedLabel']}」"
+                f"焦点在「{page['focusedLabel']}」，等了 {page.get('settledInMs')} ms 落到菜单项"
             )
 
             # ① 身份与标题：这是「片段操作」，标题写的是被点的那一段。
