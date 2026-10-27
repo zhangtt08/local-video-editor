@@ -198,6 +198,14 @@ def main():
                 f"{caps['project_schema_version']}"
             )
             assert caps["app_version"] == APP_VERSION, (caps["app_version"], APP_VERSION)
+            # 版本号有两个主人：`contracts.APP_VERSION`（引擎与契约都从这一处印）与
+            # `desktop/package.json`（外壳与安装包那份）。两处不一样时，Agent 读到的契约版本与
+            # 人装到手的应用就不是同一件软件——1.319 正撞在这格上：包已经是 1.319.0，随包的引擎
+            # 还印着 1.318.0。这一道门把三方钉成同一个数。
+            shell = json.loads((ROOT / "desktop" / "package.json").read_text(encoding="utf-8"))
+            assert caps["app_version"] == shell["version"], (
+                caps["app_version"], shell["version"])
+
             assert caps["project_schema_version"] == SCHEMA_VERSION
             assert caps["features"]["color_manage_auto"] is True, caps["features"]
             assert caps["features"]["colour_tag_delivery"] is True, caps["features"]
