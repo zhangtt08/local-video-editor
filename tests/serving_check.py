@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -150,9 +151,16 @@ def identity_leg(folder: Path) -> None:
         check("共享令牌也在表里、标 local、作用域齐",
               labels.get("local", {}).get("scopes") == ["read", "write"], labels)
         stored = json.loads((folder / "tokens.json").read_text(encoding="utf-8"))
-        check("表里存的是哈希，不是密钥本身",
-              all("secret_sha256" in row and "token" not in row for row in stored["tokens"]),
-              stored["tokens"][:1])
+        hex64 = set("0123456789abcdef")
+        check("表里存的是 64 位十六进制摘要，不是密钥本身",
+              all(re.fullmatch(r"[0-9a-f]{64}", str(row.get("secret_sha256")))
+                  and set(str(row.get("secret_sha256"))) <= hex64
+                  for row in stored["tokens"]),
+              [row.get("secret_sha256") for row in stored["tokens"][:1]])
+        check("令牌文件里搜不到任何一只发出去的密钥",
+              reader not in (folder / "tokens.json").read_text(encoding="utf-8")
+              and writer not in (folder / "tokens.json").read_text(encoding="utf-8"),
+              "secret stored in the clear")
         ledger_path = folder / "audit.jsonl"
         check("台账就是数据目录里那个文件，企业可以自己搬走",
               ledger_path.is_file() and listed.json().get("path") == str(ledger_path),
