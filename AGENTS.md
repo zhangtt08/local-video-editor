@@ -6916,3 +6916,29 @@ Chromium 那三个帮助进程（244 MB），砍它们只有两个办法——�
   `desktop/release/AgentCut-便携版.exe` 逐字节核过。
 - 重建链同前：`npm ci` → `uv sync --group dev` → `scripts/build_engine.py --verify --no-uv`
   → `npm run dist` + 复制便携版 → 空机单跑 → 精简。
+
+## 1.317：第四条配方——跟着主体走的多画幅，以及一条被静音撞出来的异常
+
+三条配方覆盖的是「一条片子怎么剪」，但「同一场戏同时要横、竖、方三种画幅，而且竖屏不能只居中裁」
+一直要调用方自己拼：`clip.mask` → `mask_track` → `clip_reframe` → `render_batch` → `job_wait` →
+`deliver_verify`，六扇门、三处 revision 依赖、一次 `TRACK_FAILED` 就可能半途而废。
+
+`reframe-for-platform`（**13** 步）把这条链收进一次调用，规则没有第二套：跟拍用的还是
+`reframe.plan`（`scale >= 1/(1-2|0.5-cx|)`、`MAX_SCALE_LIMIT=4`、采样细化到 `REFRAME_TOLERANCE`），
+写库走的还是 `/edits` 与 `/renders/batch`。`subject_box`（`[cx, cy, w, h]`，0..1）是这一刀唯一的新
+参数：给了才跟，不给就明写 `ran: false` 并照裁。
+
+### 量到的两件事
+
+* 跟踪器的下限不是「有个方框就行」：60×40 的白块在灰底上滑过，`TRACK_FAILED: matched 1/90`；
+  换成 96×72 就能整条跟住（48 个跟拍点、3 条关键帧），交付的竖屏 1080×1920 与预设一字不差。
+  这条写进夹具：源必须让主体真动、且够大。
+* 验交付那一扇门会被**数字静音**撞出异常：静音轨的片子量不出 LUFS，`loudness.measure` 抛
+  `LOUDNESS_FAILED`，整条配方在最后一步 422——而「量不出来」本来就是一种答案。现在响度那一条是
+  `_check("loudness", "有声音可量", None, True, note=…)`，verdict 照常，报「报不了」。
+  这一条不是设计出来的，是这一轮的夹具（无音轨）撞出来的。
+
+变异三刀：执行表里没有 `mask_track`（红在「一次调用跑完」）、有主体也不折关键帧（红在
+「折成跟拍关键帧那一步真落了命令」）、静音又把异常抛回来（红在「一次调用跑完」）。三刀跑完都按
+sha256 逐字节还原。
+

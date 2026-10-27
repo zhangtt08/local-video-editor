@@ -3557,3 +3557,24 @@ HTTP 200、时间线剪好、一个文件都没有；而只交 `deliver_items` �
 实测：一条 3 秒素材只要 `deliver_items`，一趟排三条——`h264-720p-web` 1280×720、
 `h264-1080x1920-vertical` 1080×1920（`fit: cover`）、`h264-1080-square` 1080×1080（`cover`），
 三条 `succeeded`，三条 verdict 全真，ffprobe 量到的画幅与预设一字不差。
+
+## 1.317 第四条配方：`reframe-for-platform`——跟着主体走的多画幅
+
+口播与单主体画面要同时发横屏、竖屏、方形时，竖屏那一版不能只靠居中裁。这条配方把三扇已有的门
+串成一次调用：
+
+1. `timeline_edit` 落素材；给了 `subject_box`（`[cx, cy, w, h]`，0..1）就在同一批里给片段安上
+   起始方框（`clip.mask`，一个 revision）；
+2. `mask_track` 沿那个方框把主体的路径跟出来（整组一个 revision，交回
+   `tracking.targets[].tracked_frames`）；
+3. `clip_reframe` 把路径折成 `x/y/scale` 的跟拍关键帧（`max_scale` 1..4、`tolerance` ≤0.25，
+   超限与跟不上都由 `reframe.plan` 点名说清）；
+4. `render_batch` 按 `deliver_items` 一次排完（竖屏/方形建议 `fit: "cover"`），`job_wait` 等到终态，
+   `deliver_verify` 逐条验画幅。
+
+不给 `subject_box` 就不猜要跟谁：跟拍那两步明写 `ran: false`，多画幅照裁。这条配方
+**13** 步，按配方顺序交回 **16 / 18 / 17 / 13** 行步骤日志。
+
+这一轮同时修掉一个真缺陷：**数字静音的交付会让整条验交付抛异常**（`LOUDNESS_FAILED`）——静音轨、
+纯动画这类片子本来就没有可量的响度。现在那一条是 `_check("loudness", "有声音可量", None, True,
+note=…)`，verdict 照常成立，响度报「报不了」而不是把整趟打成 422。
