@@ -3661,3 +3661,45 @@ note=…)`，verdict 照常成立，响度报「报不了」而不是把整趟�
 写这条门禁时撞到自己一次：两条腿都用了 `ops-render-0` 这个 `request_id`，于是「重启找回排队单」
 那一腿读到的 `succeeded` 其实是上一条腿留下的交付——量具自己也得按名字分账，否则它测的是别人的
 成绩单。现在每条腿有自己的前缀（`ops-tight-`、`ops-actor-`、`ops-boot-`、`ops-live-`）。
+
+
+## 1.320 一台数据目录只服一台引擎：`GET /v1/metrics` 与输出盘底线
+
+1.319 记下过一句「两台 runtime 共用一本库时，状态两头都会说谎」，当时它只是量尺上的意外；
+这一档把它变成引擎界会挡的事。
+
+* `engine.lock`（数据目录里一行 JSON）说的是**谁在服这份数据目录**：`pid / port / mode /
+  started_at`。第二台引擎在**读令牌之前**就停下，那句点名是谁在服（PID、端口、模式、起于何时）
+  与两条出路：`--data-dir` 换一个，或 `--allow-shared-data-dir` 明知故犯（它不写也不删租约——
+  把别人的名字抹掉，第三台就会看「没有租约」堂而皇之进来）。
+* `desktop` 模式遇到在服的引擎**不拒而是附上去**：双击第二个窗口不该变成「引擎起不来」。ready 行
+  报的是那一台的端口与地址，`attached_to_pid` 说清附到了谁身上，读数（媒体根、输出根、
+  `media_ready`…）一律从那一台的 `/v1/info` 现取，不抄第二份。**版本对不上时必须停下**——
+  新界面配旧引擎会凑成一件谁也没测过的软件，这一条 1.319 已经用哈希核过一次。
+* 引擎自己的 PID 也进了 ready 行（`pid`），运维脚本第一次能按名字收进程，而不是按镜像名。
+
+`GET /v1/metrics?recent=1..500`（MCP 同名工具 `agent_metrics`，能力面三面同源）交回三张表：
+
+* `queue`：`pending` / `slots` / `live_slots` / `max_pending` / `pending_per_actor` / `requeued`
+  ——读的就是 runtime 自己那本数；
+* `jobs`：`by_status`（五种状态各几单）、`failure_codes`（失败栽在哪些码上、各几次）、
+  `duration_seconds` 的 `p50 / p95 / max`、`delivered_bytes`（真交付文件的字节数，量文件不估）；
+* `outputs`：每块输出根的 `free_bytes / total_bytes / reserve_bytes`。
+
+耗时那三个数取的是入库时间戳（秒的分辨率），所以短单子会读成 0 秒——读数说得出多少就说多少。
+
+输出盘守的是**底线**，不是体积：`--min-free-mb`（默认 2048）低于就拒在排队之前，
+503 `OUTPUT_DISK_TIGHT`，`details` 点名 `root / free_bytes / reserve_bytes`。为什么不是「按体积
+预估」：CRF 编码的产物大小没有别处的可信来源，编一个常数等于把猜测写成度量。所以拒绝里那个
+`needed_bytes` + `basis: "measured … B/s of preset …"` **只在这台引擎真渲过同一预设之后**才出现，
+用的是那几单实测的字节/秒中位数；没渲过就说没渲过。
+
+这一档顺手修掉一个真缺陷，而且是 metrics 那条腿读出来的：**取消一个还在排队的交付只返回一个
+`cancelled` 对象、不写库**——于是 `/v1/jobs/{id}` 与 `job_wait` 里那一单永远算「还在排」，
+`/v1/metrics` 也看不见它。现在取消会落进那本账（`by_status.cancelled` 当场多一格）。
+
+门禁是 `tests/lease_check.py`（八道：服务、被拒、陈旧租约接得上、明知故犯不碰名字、`release()`
+只放自己那份、`pid_alive` 两面、桌面模式附上去、`tokens` 一面不取租约）与
+`tests/ops2_check.py`（五道，含反向腿：底线设 0 时正常出货不许被挡住）。变异台七刀：租约不认人、
+第二个窗口不附上去、`release` 谁的都删、metrics 的槽数是抄的、底线不判、没渲过也编体积、
+取消又不写库——每刀红在自家断言上，源码逐字节还原。
