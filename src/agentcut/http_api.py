@@ -440,6 +440,20 @@ def create_app(
         payload["render_ready"] = bool(jobs and jobs.ffmpeg)
         payload["media_roots"] = media.describe_roots() if media else []
         payload["output_roots"] = jobs.describe_output_roots() if jobs else []
+        # 1.319：槽数与队列额度是运行时的数，不是契约里的静态上限——自动流水线要能在投单之前
+        # 问一句「你还放得下几单」，而不是撞上一次 429 才知道今天排到哪儿了。
+        payload["queue"] = (
+            {
+                "slots": jobs.slots,
+                "live_slots": jobs.live_slots(),
+                "max_pending": jobs.max_pending,
+                "pending_per_actor": jobs.pending_per_actor,
+                "pending": jobs.pending_count(),
+                "requeued": len(jobs.requeued),
+            }
+            if jobs
+            else None
+        )
         payload["capabilities"] = capabilities(
             bool(media and media.enabled), speech_ready(), text_fonts_available()
         )
@@ -3130,10 +3144,13 @@ def create_app(
     # ---------- render jobs ----------
 
     @app.post("/v1/projects/{project_id}/renders", dependencies=auth)
-    def create_render(project_id: Identifier, request: RenderRequest, projects: Store):
+    def create_render(
+        project_id: Identifier, http_request: Request, request: RenderRequest, projects: Store
+    ):
         runtime = require_jobs()
         project = projects.get(project_id)
-        job, plan = runtime.submit(project, request)
+        actor = getattr(http_request.state, "actor", None)
+        job, plan = runtime.submit(project, request, actor=actor)
         return {"job": job.model_dump(), "plan": plan}
 
     @app.get("/v1/projects/{project_id}/bundle", dependencies=auth)
@@ -3496,11 +3513,18 @@ def create_app(
         return {**mutation.model_dump(), "master": reported}
 
     @app.post("/v1/projects/{project_id}/renders/batch", dependencies=auth)
-    def create_render_batch(project_id: Identifier, request: RenderBatch, projects: Store):
+    def create_render_batch(
+        project_id: Identifier,
+        http_request: Request,
+        request: RenderBatch,
+        projects: Store,
+    ):
         """Queue a whole delivery in one call: every item compiles or nothing is queued."""
         runtime = require_jobs()
         project = projects.get(project_id)
-        results = runtime.submit_batch(project, request)
+        results = runtime.submit_batch(
+            project, request, actor=getattr(http_request.state, "actor", None)
+        )
         return {
             "committed": not request.dry_run,
             "jobs": [job.model_dump() for job, _ in results],

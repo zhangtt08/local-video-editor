@@ -31,6 +31,12 @@ from .render import RenderPlan, compile_render_plan, marked_range, preset_by_id
 STATUS_STEPS = ("queued", "running", "succeeded", "failed", "cancelled")
 TERMINAL = ("succeeded", "failed", "cancelled")
 MAX_LOG = 3000
+# 1.319 的两个额度与一个槽数上限。槽数不按物理核数封顶——FFmpeg 自己会用满核，硬说「核数就等于
+# 能同时渲几路」是假的保证；这里只挡住明显打不开的那个数。额度是「一个调用方最多压多少单」，
+# 不是「引擎最多能干多少活」：前者是流水线互相保护，后者是这一档管不着的。
+MAX_RENDER_SLOTS = 8
+DEFAULT_MAX_PENDING = 64
+DEFAULT_PENDING_PER_ACTOR = 16
 
 
 def plan_for(
@@ -443,7 +449,14 @@ def request_fingerprint(project_id: str, request: RenderRequest) -> str:
 
 class JobRuntime:
     def __init__(
-        self, db_path: Path, ffmpeg: Path | None, output_dir: Path, output_roots: list[Path]
+        self,
+        db_path: Path,
+        ffmpeg: Path | None,
+        output_dir: Path,
+        output_roots: list[Path],
+        slots: int = 1,
+        max_pending: int = DEFAULT_MAX_PENDING,
+        pending_per_actor: int = DEFAULT_PENDING_PER_ACTOR,
     ):
         self.db_path = db_path
         self.ffmpeg = ffmpeg.resolve() if ffmpeg else None
@@ -454,7 +467,11 @@ class JobRuntime:
         self.processes: dict[str, subprocess.Popen] = {}
         self.lock = threading.Lock()
         self.submit_lock = threading.Lock()
-        self.worker: threading.Thread | None = None
+        self.slots = max(1, min(int(slots), MAX_RENDER_SLOTS))
+        self.workers: list[threading.Thread] = []
+        self.max_pending = max(1, int(max_pending))
+        self.pending_per_actor = max(1, int(pending_per_actor))
+        self.job_actor: dict[str, str] = {}
         output_dir.mkdir(parents=True, exist_ok=True)
         with self.connection() as db:
             db.execute(
@@ -474,7 +491,12 @@ class JobRuntime:
                 root = Path(row["path"])
                 if root.is_dir() and root not in self.output_roots:
                     self.output_roots.append(root)
-        self._recover()
+        self.requeued = self._recover()
+        for job_id in self.requeued:
+            self.queue.put(job_id)
+        if self.requeued:
+            # 找回来的那几单不该等下一次投单才有人拉：重启的意义就是「把没干完的接着干完」。
+            self.ensure_worker()
 
     @contextmanager
     def connection(self, write: bool = False):
@@ -522,24 +544,38 @@ class JobRuntime:
             raise EditorError("NOT_FOUND", "no such job", 404, job_id=job_id)
         return RenderJob.model_validate_json(row["document"])
 
-    def _recover(self):
+    def _recover(self) -> list[str]:
+        """重启之后：没开始过的接着排，渲到一半的那一单才是真被打断。
+
+        1.319 之前这两件事合成了一句「都标 failed/INTERRUPTED」，后果是自动流水线一次重启就永久
+        卡住：那条 `request_id` 的收据还钉着那个死作业，重投只拿回同一句失败，一个文件也渲不出来
+        （现场读数由 `tests/ops_check.py` 钉着）。所以「running」除了标中断还要把收据一起删掉——
+        幂等在这里的说法是「同一个请求最多渲一次」，不是「那个失败的作业永远代表这个请求」。
+        `queued` 的那几单根本没动过手，重新入队就行：文件名在提交那一刻已经占下了，不会与别人抢。
+        """
+        requeued: list[str] = []
         with self.connection(write=True) as db:
             rows = db.execute(
                 "SELECT id,document FROM jobs WHERE status IN ('queued','running')"
             ).fetchall()
             for row in rows:
                 job = RenderJob.model_validate_json(row["document"])
+                if job.status == "queued":
+                    requeued.append(job.id)
+                    continue
                 stale = job.model_copy(
                     update={
                         "status": "failed",
                         "error_code": "INTERRUPTED",
-                        "message": "服务重启时该渲染任务被中断，请重新提交渲染",
+                        "message": "服务重启时该渲染任务被中断，请按同一个 request_id 重新提交",
                     }
                 )
                 db.execute(
                     "UPDATE jobs SET document=?, status='failed' WHERE id=?",
                     (stale.model_dump_json(), job.id),
                 )
+                db.execute("DELETE FROM render_receipts WHERE job_id=?", (job.id,))
+        return requeued
 
     def list_for_project(self, project_id: str, limit: int = 50) -> list[dict]:
         with self.connection() as db:
@@ -639,13 +675,27 @@ class JobRuntime:
 
     # ---------- lifecycle ----------
 
-    def submit(self, project: Project, request: RenderRequest) -> tuple[RenderJob, dict]:
+    def _receipt_job_id(self, request_id: str) -> str | None:
+        with self.connection() as db:
+            row = db.execute(
+                "SELECT job_id FROM render_receipts WHERE request_id=?", (request_id,)
+            ).fetchone()
+        return row["job_id"] if row else None
+
+    def submit(
+        self, project: Project, request: RenderRequest, actor: str | None = None
+    ) -> tuple[RenderJob, dict]:
         # One lock for check-then-insert: two concurrent submits can never pick the
         # same target name or double-queue the same request.
         with self.submit_lock:
-            return self._submit_locked(project, request)
+            # 重放不计额度：一次重试被队列挡回，调用方只会以为自己的交付丢了。
+            if self._receipt_job_id(request.request_id) is None:
+                self._guard_pending(1, actor)
+            return self._submit_locked(project, request, actor)
 
-    def _submit_locked(self, project: Project, request: RenderRequest) -> tuple[RenderJob, dict]:
+    def _submit_locked(
+        self, project: Project, request: RenderRequest, actor: str | None = None
+    ) -> tuple[RenderJob, dict]:
         if not self.ffmpeg:
             raise EditorError("MEDIA_TOOL_MISSING", "ffmpeg is not configured, cannot render", 503)
         fingerprint = request_fingerprint(project.id, request)
@@ -727,10 +777,15 @@ class JobRuntime:
                 (request.request_id, job.id, fingerprint),
             )
         self.queue.put(job.id)
+        if actor:
+            with self.lock:
+                self.job_actor[job.id] = actor
         self.ensure_worker()
         return job, plan.as_dict()
 
-    def submit_batch(self, project: Project, batch: RenderBatch) -> list[tuple[RenderJob, dict]]:
+    def submit_batch(
+        self, project: Project, batch: RenderBatch, actor: str | None = None
+    ) -> list[tuple[RenderJob, dict]]:
         """Queue several deliverables from one read of the timeline, all or nothing.
 
         Every item is compiled before anything is enqueued, so an unknown preset or a filename the
@@ -739,6 +794,16 @@ class JobRuntime:
         returns the same jobs and changing one item is a conflict rather than a silent extra file.
         """
         with self.submit_lock:
+            if not batch.dry_run:
+                # 整批按「这一趟真会新增几单」计一次额度，而不是逐条扣——半批排上、半批被拒就是
+                # 这一档反对的那种「留下半截交付」。重放的那几条不占额度。
+                fresh = sum(
+                    1
+                    for index in range(len(batch.items))
+                    if self._receipt_job_id(f"{batch.request_id}-{index}") is None
+                )
+                if fresh:
+                    self._guard_pending(fresh, actor)
             for item in batch.items:
                 plan_for(
                     project,
@@ -798,7 +863,7 @@ class JobRuntime:
                         )
                     )
                     continue
-                results.append(self._submit_locked(project, request))
+                results.append(self._submit_locked(project, request, actor))
             return results
 
     def get(self, job_id: str) -> RenderJob:
@@ -817,12 +882,33 @@ class JobRuntime:
             return self._save(job)
         return job.model_copy(update={"status": "cancelled", "message": "已取消排队中的渲染"})
 
-    def ensure_worker(self):
+    def ensure_worker(self) -> None:
+        """把渲染槽补到 `self.slots` 条。
+
+        多出来的那几条不是「并发保证」，只是「允许同时开几支 FFmpeg」：一支 FFmpeg 自己会用满核，
+        所以两槽能不能真的快一倍是量出来的，不是推出来的（`ops_check` 那一条按墙钟读数说话）。
+        """
         with self.lock:
-            if self.worker and self.worker.is_alive():
-                return
-            self.worker = threading.Thread(target=self._loop, name="agentcut-render", daemon=True)
-        self.worker.start()
+            self.workers = [thread for thread in self.workers if thread.is_alive()]
+            missing = self.slots - len(self.workers)
+            fresh = [
+                threading.Thread(
+                    target=self._loop,
+                    name=f"agentcut-render-{len(self.workers) + index + 1}",
+                    daemon=True,
+                )
+                for index in range(missing)
+            ]
+            self.workers.extend(fresh)
+        for thread in fresh:
+            thread.start()
+
+    def live_slots(self) -> int:
+        with self.lock:
+            return sum(1 for thread in self.workers if thread.is_alive())
+
+    def pending_count(self) -> int:
+        return self.queue.unfinished_tasks
 
     def _loop(self):
         while True:
@@ -845,7 +931,44 @@ class JobRuntime:
                 except EditorError:
                     pass
             finally:
+                self._settle(job_id)
                 self.queue.task_done()
+
+    def _settle(self, job_id: str) -> None:
+        """一单走到终态就从「某只令牌名下压了几单」那本账里划掉。
+
+        划不掉的话额度会只涨不落：流水线跑一天之后，谁都被自己以前投的单挡住了。
+        """
+        with self.lock:
+            self.job_actor.pop(job_id, None)
+
+    def _guard_pending(self, incoming: int, actor: str | None) -> None:
+        """排队前先看额度，而不是等 FFmpeg 起来才说不行——拒得要早，说得要具体。"""
+        pending = self.queue.unfinished_tasks
+        if pending + incoming > self.max_pending:
+            raise EditorError(
+                "QUEUE_FULL",
+                f"待渲队列最多排 {self.max_pending} 单，现在已排 {pending} 单，这一趟还要排 "
+                f"{incoming} 单——等前面的交付落了地再投，或者把 --max-queue 调大",
+                429,
+                pending=pending,
+                limit=self.max_pending,
+                incoming=incoming,
+            )
+        if actor:
+            with self.lock:
+                mine = sum(1 for owner in self.job_actor.values() if owner == actor)
+            if mine + incoming > self.pending_per_actor:
+                raise EditorError(
+                    "QUOTA_EXCEEDED",
+                    f"令牌 {actor} 名下已排 {mine} 单，每只令牌最多 {self.pending_per_actor} 单，"
+                    f"这一趟还要排 {incoming} 单",
+                    429,
+                    actor=actor,
+                    pending=mine,
+                    limit=self.pending_per_actor,
+                    incoming=incoming,
+                )
 
     @staticmethod
     def _kill(process: subprocess.Popen):

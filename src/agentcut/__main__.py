@@ -99,6 +99,9 @@ def build_services(args, data_dir: Path, token: str, db_file: Path):
         ffmpeg,
         output_dir,
         [output_dir, data_dir / "outputs", *roots],
+        slots=args.render_slots,
+        max_pending=args.max_queue,
+        pending_per_actor=args.queue_per_token,
     )
     base_url = f"http://127.0.0.1:{args.port}"
     info = {
@@ -174,6 +177,25 @@ def main():
     )
     parser.add_argument("--revoke-label", default="", help="吊销一枚具名令牌，立刻生效")
     parser.add_argument("--no-audit", action="store_true", help="不写 audit.jsonl 台账")
+    parser.add_argument(
+        "--render-slots",
+        type=int,
+        default=0,
+        help="同时开几支 FFmpeg 渲交付（1-8）。0 是按用法定：`api` 两槽（16 核实测四单交付 "
+        "25.14 s → 19.77 s，1.27 倍），`desktop` 一槽——坐在机器前的人不该被交付抢走 CPU",
+    )
+    parser.add_argument(
+        "--max-queue",
+        type=int,
+        default=64,
+        help="待渲队列最多压几单，超了按名字拒（QUEUE_FULL）",
+    )
+    parser.add_argument(
+        "--queue-per-token",
+        type=int,
+        default=16,
+        help="一只具名令牌名下最多压几单，超了按名字拒（QUOTA_EXCEEDED）",
+    )
     parser.add_argument("--data-dir", default=str(_app_dir() / "data"))
     parser.add_argument("--cache-dir", default="")
     parser.add_argument("--output-dir", default="")
@@ -190,6 +212,12 @@ def main():
         help="父进程 PID：它不在了引擎自己退出（无人值守的 agent 用完不该留一台引擎）",
     )
     args = parser.parse_args()
+
+    # 槽数按用法定，不是按「机器能开多少」定：桌面端一槽是为了编辑时的手感；服务化两槽是量出来的
+    # 1.27 倍（四单 20 秒噪点竖屏交付，1 / 2 / 3 槽 = 25.14 / 19.77 / 18.88 秒——第三槽只再多 5%，
+    # 因为一支 FFmpeg 自己就用满核）。
+    if args.render_slots == 0:
+        args.render_slots = 2 if args.mode == "api" else 1
 
     data_dir = Path(args.data_dir).resolve()
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -298,6 +326,10 @@ def main():
             "remote": not loopback,
             "tokens": [row["label"] for row in tokens.summary() if not row["revoked_at"]],
             "audit": None if audit is None else str(audit.path),
+            "slots": jobs.slots,
+            "max_queue": jobs.max_pending,
+            "queue_per_token": jobs.pending_per_actor,
+            "requeued": len(jobs.requeued),
         }
         print(json.dumps(ready, ensure_ascii=False), flush=True)
     config = uvicorn.Config(
