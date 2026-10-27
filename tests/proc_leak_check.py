@@ -37,35 +37,57 @@ def check(label: str, ok: bool, evidence: object = "") -> None:
 
 
 def predicate_leg() -> None:
-    """谓词单测：把三条真实形状的命令行车喂进去，看认出的是哪一个目录。"""
-    quoted = (r'"C:\Program Files\Python312\python.exe" -m agentcut api --port 0 --json'
-              r' --data-dir C:\Users\A\AppData\Local\Temp\agentcut-lease-evkff857\engine'
-              r' --media-root C:\Users\A\AppData\Local\Temp\agentcut-lease-evkff857')
+    """谓词单测：把四条真实形状的命令行车喂进去，看认出的是哪一个目录。
+
+    合成路径一律用 `D:` 那个假盘，不写任何机器上的主目录（`mediabinary_check` 钉着这条）。
+    """
+    quoted = (r'"D:\tools\Python312\python.exe" -m agentcut api --port 0 --json'
+              r' --data-dir D:\runner\scratch\agentcut-lease-evkff857\engine'
+              r' --media-root D:\runner\scratch\agentcut-lease-evkff857')
     check("认出的就是那一个临时目录（media-root 与 data-dir 是同一个，不许多数一份）",
-          runner.scratch_roots(quoted)
-          == [r"C:\Users\A\AppData\Local\Temp\agentcut-lease-evkff857"],
+          runner.scratch_roots(quoted) == [r"D:\runner\scratch\agentcut-lease-evkff857"],
           runner.scratch_roots(quoted))
 
-    stub = (r"C:\Users\A\Desktop\项目\agentcut\.venv\Scripts\python.exe -m agentcut api"
-            r" --data-dir C:\Users\A\AppData\Local\Temp\agentcut-ops-1a2b3c4d/engine")
+    stub = (r"D:\work\repo\agentcut\.venv\Scripts\python.exe -m agentcut api"
+            r" --data-dir D:\runner\scratch\agentcut-ops-1a2b3c4d/engine")
     check("壳那条命令行认出的必须是临时目录本身，不是从行首吃到那里的混合串",
-          runner.scratch_roots(stub)
-          == [r"C:\Users\A\AppData\Local\Temp\agentcut-ops-1a2b3c4d"],
+          runner.scratch_roots(stub) == [r"D:\runner\scratch\agentcut-ops-1a2b3c4d"],
           runner.scratch_roots(stub))
 
     # 中间那段标签自己就占满 8 个字符：认出的是「标签-后缀」整串，不是标签那半截。
     # 少认半截就是认了一个不存在的目录，正在跑的那一趟会被当成活口收掉。
-    named = (r"C:\x\python.exe -m agentcut api --data-dir"
-             r" C:\Users\A\AppData\Local\Temp\agentcut-procleak-ab12cd34/engine")
+    named = (r"D:\tools\python.exe -m agentcut api --data-dir"
+             r" D:\runner\scratch\agentcut-procleak-ab12cd34/engine")
     check("带标签的那一个临时目录认出的是整串，不是标签那半截",
-          runner.scratch_roots(named)
-          == [r"C:\Users\A\AppData\Local\Temp\agentcut-procleak-ab12cd34"],
+          runner.scratch_roots(named) == [r"D:\runner\scratch\agentcut-procleak-ab12cd34"],
           runner.scratch_roots(named))
 
-    human = (r"C:\Users\A\agentcut\.venv\Scripts\python.exe -m agentcut api"
-             r" --data-dir C:\Users\A\Desktop\项目\agentcut\data")
+    human = (r"D:\work\agentcut\.venv\Scripts\python.exe -m agentcut api"
+             r" --data-dir D:\work\project\agentcut\data")
     check("人自己的工程目录一个都不算", runner.scratch_roots(human) == [],
           runner.scratch_roots(human))
+
+
+def roots_of(pids: list[int]) -> list[tuple[int, list[str], list[bool]]]:
+    """把每一条命中的命令行摊开：认出的是哪个目录、那个目录在不在。
+
+    失败的时候这一列要跟着交回——「一台目录还在的引擎被数成活口」这件事，光看 PID 列表
+    说不出是谁认错了。
+    """
+    wanted = set(pids)
+    done = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+         runner.STRAY_SCRIPT],
+        capture_output=True, text=True, timeout=120, encoding="utf-8", errors="replace",
+    )
+    rows = []
+    for line in (done.stdout or "").splitlines():
+        pid, _, command = line.partition(" :: ")
+        number = int(pid.strip()) if pid.strip().isdigit() else 0
+        if number in wanted:
+            found = runner.scratch_roots(command)
+            rows.append((number, found, [Path(root).exists() for root in found]))
+    return rows
 
 
 def live_leg() -> None:
@@ -81,8 +103,8 @@ def live_leg() -> None:
         cwd=str(ROOT), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
     )
     # 正例借一个「不会被建出来」的临时目录：命令行里那个名字在，目录不在——
-    # 那正是崩在半路的那一台留下的形状。
-    gone = Path(tempfile.gettempdir()) / "agentcut-gone0000"
+    # 那正是崩在半路的那一台留下的形状。名字每一趟都新，别的趟留下的假活口不算这一趟的数。
+    gone = Path(tempfile.gettempdir()) / f"agentcut-gone-{os.urandom(4).hex()}"
     ghost = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(180)", str(gone / "engine")],
         cwd=str(ROOT), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
@@ -96,8 +118,9 @@ def live_leg() -> None:
                 break
             time.sleep(1.0)
         check("目录已经不在了的那一个，数得到（等来的，不是睡出来的）",
-              ghost.pid in found, found)
-        check("临时目录还在的那一趟不算活口", engine.pid not in found, found)
+              ghost.pid in found, roots_of(found + [engine.pid, ghost.pid]))
+        check("临时目录还在的那一趟不算活口", engine.pid not in found,
+              roots_of(found + [engine.pid, ghost.pid]))
         killed, stuck = runner.sweep()
         check("兜底按 PID 收的就是那一个", ghost.pid in killed, killed)
         check("没有收不掉的", stuck == [], stuck)
@@ -107,7 +130,7 @@ def live_leg() -> None:
             check("假活口收完就该没了", False, ghost.poll())
         else:
             check("假活口收完就该没了", ghost.poll() is not None, ghost.poll())
-        check("那一台真引擎没被这一刀打断", engine.poll() is None, engine.poll())
+        check("那一台真引擎没被这一刀打断", engine.poll() is None, (engine.poll(), killed))
     finally:
         subprocess.run(["taskkill", "/F", "/T", "/PID", str(engine.pid)],
                        capture_output=True, timeout=60)

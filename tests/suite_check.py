@@ -43,7 +43,8 @@ def emit(line: str) -> None:
 # 只把「那个目录已经不在了、进程还在服」算活口：那正是漏下的那一手（实测一台崩掉的
 # `lease_check` 留下 4 个）；而另一趟正在跑的验收，它的临时目录还在，不该被这一刀收走。
 STRAY_SCRIPT = (
-    "Get-CimInstance Win32_Process -Filter \"Name='python.exe' OR Name='pythonw.exe'\" |"
+    "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;"
+    " Get-CimInstance Win32_Process -Filter \"Name='python.exe' OR Name='pythonw.exe'\" |"
     " Where-Object { $_.CommandLine -match"
     " '[\\\\/]agentcut-(?:[a-z0-9]+-)?[a-z0-9]{8}(?![a-z0-9])' } |"
     " ForEach-Object { $_.ProcessId.ToString() + \" :: \" + $_.CommandLine }"
@@ -67,6 +68,9 @@ def strays() -> list[int]:
     done = subprocess.run(
         ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", STRAY_SCRIPT],
         capture_output=True, text=True, timeout=180,
+        # 这台机器的控制台是 cp936，而 PYTHONIOENCODING 可能是 utf-8：命令行里的中文路径
+        # 按 utf-8 解会当场抛异常，把整趟验收的兜底读成空。我们只要那些 ASCII 的临时路径。
+        encoding="utf-8", errors="replace",
     )
     leaked = []
     for line in (done.stdout or "").splitlines():
