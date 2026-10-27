@@ -65,7 +65,6 @@ def metrics_leg(rig: oc.Rig, fast: tuple[str, int]) -> None:
                   "preset_id": oc.PRESET, "filename": "ops2-0.mp4"},
         )
         check("守卫在 0 底线时不挡正常出货", made.status_code == 200, made.text[:200])
-        job_id = (made.json().get("job") or {}).get("id")
         check("渲得出文件", oc.wait_for([rig.out / "ops2-0.mp4"]), "ops2-0.mp4 没落地")
         after = hub.get("/v1/metrics?recent=20").json()
         by_status = after["jobs"]["by_status"]
@@ -80,19 +79,33 @@ def metrics_leg(rig: oc.Rig, fast: tuple[str, int]) -> None:
               {"p50", "p95", "max"} <= set(span) and span["max"] is None or span["max"] >= 0,
               span)
 
-    # 一次取消：状态与码分布都要如实反映，而不是只统计成功。
+    # 一次取消：状态与账都要如实反映，而不是只统计成功。
+    # 取消的是**第二单**：一槽时它一定还排在队列里（第一单正渲着），所以这一手测的就是
+    # 「排队中被叫停的那一单不许永远留在 queued」；读账之前先等它落到终态，不然读的是过程。
     cancelled = rig.runtime(slots=1, min_free_mb=0)
     with hub_for(rig, cancelled) as hub:
-        made = hub.post(
+        busy = hub.post(
             f"/v1/projects/{fast_id}/renders",
             json={"request_id": "ops2-render-1", "expected_revision": revision,
                   "preset_id": oc.PRESET, "filename": "ops2-1.mp4"},
         )
-        job_id = (made.json().get("job") or {}).get("id")
-        hub.post(f"/v1/jobs/{job_id}/cancel", json={})
-        row = hub.get("/v1/metrics?recent=50").json()["jobs"]["by_status"]
-        check("取消那一手也记在账上", row.get("cancelled", 0) >= 1, row)
-        oc.drain(cancelled, 120.0)
+        parked = hub.post(
+            f"/v1/projects/{fast_id}/renders",
+            json={"request_id": "ops2-render-2", "expected_revision": revision,
+                  "preset_id": oc.PRESET, "filename": "ops2-2.mp4"},
+        )
+        parked_id = (parked.json().get("job") or {}).get("id")
+        check("第一单在跑的时候第二单确实排在队列里",
+              (parked.json().get("job") or {}).get("status") == "queued"
+              and (busy.json().get("job") or {}).get("status") in ("queued", "running"),
+              (busy.json().get("job"), parked.json().get("job")))
+        hub.post(f"/v1/jobs/{parked_id}/cancel", json={})
+        row_now = hub.get(f"/v1/jobs/{parked_id}").json().get("job") or {}
+        check("叫停之后那一单不再算「还在排」",
+              row_now.get("status") == "cancelled", row_now)
+        counts = hub.get("/v1/metrics?recent=50").json()["jobs"]["by_status"]
+        check("取消那一手也记在账上", counts.get("cancelled", 0) >= 1, counts)
+        oc.drain(cancelled, 180.0)
 
 
 def disk_leg(rig: oc.Rig, fast: tuple[str, int], slow: tuple[str, int]) -> None:
