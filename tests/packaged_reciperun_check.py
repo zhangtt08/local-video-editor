@@ -31,6 +31,8 @@ import httpx
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
+from agentcut import agent_contract  # noqa: E402
+
 ENGINE = ROOT / "desktop/resources/bin/agentcut/agentcut.exe"
 FFMPEG = ROOT / "desktop/resources/bin/ffmpeg.exe"
 FFPROBE = ROOT / "desktop/resources/bin/ffprobe.exe"
@@ -113,8 +115,9 @@ def manifest_leg(base: str) -> None:
     check("随包那一份登记了这扇门",
           entry == {"method": "POST", "path": "/v1/agent/recipes/{recipe_id}/run"}, entry)
     recipes = {row["id"]: row for row in contract.get("recipes") or []}
-    check("随包那一份三条配方都开了这一刀",
-          len(recipes) == 3 and all(row.get("runnable") is True for row in recipes.values()),
+    check("随包那一份每条配方都开了这一刀",
+          len(recipes) == len(agent_contract.recipes())
+          and all(row.get("runnable") is True for row in recipes.values()),
           {key: row.get("runnable") for key, row in recipes.items()})
     check("每条都带着参数那句话（回执说清要哪几样）",
           all(str(row.get("params") or "").strip() for row in recipes.values()),
