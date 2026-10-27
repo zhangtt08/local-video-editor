@@ -7107,3 +7107,32 @@ A 用一台**不起线程**的 runtime 把三单钉在 `queued`（测试侧的�
 共用一本库时，先那台仍在跑的线程会把已经标成 `INTERRUPTED` 的行改回 `succeeded`**
 ——状态两头都会说谎。引擎界没有阻止第二个进程用同一个
 `--data-dir`，这一条要在下一轮用租约/单实例挡掉，而不是靠「别这么部署」的口头约定。
+
+### 1.319 的账
+
+- 门禁 **180 档**（新增 `tests/ops_check.py`，自己 56.3 秒）；空机单跑 **180/180
+  （`SUITE_EXIT=0`）**，各档秒数合计 2089 秒，跑在精简之前那一份完整环境里。
+- 这一档跑了**两遍**全套：第一遍 179/180，红的是 `contextmenu_check`——焦点还停在片段上、
+  那一段的缩略图正在解码，单独重跑就过。判据没放软：等的是「焦点真的落到菜单项上」这件事，
+  只是把上限从两秒放宽到八秒，并把等了多久一起交回（空机 2 ms）。第二遍 180/180。
+- 版本那一格也是这两遍之间揪出来的：包已经打成交付版，随包引擎答的 `/v1/info` 还是上一轮的
+  版本号——`packed_engine_surface_check` 过去只把「随包引擎」与 `contracts.APP_VERSION` 对表，
+  两边一起停旧就查不出来。现在三方（契约印的、随包引擎答的、`desktop/package.json` 那份）必须
+  同一个数，这一条先被证明能红：包还是旧的那份时它报 `('1.318.0', '1.319.0')`。
+- 变异台七刀（`bench1319.py`，仓外）全 RED、逐字节还原；其中两刀最初红在**门禁崩掉**上，
+  已包成 `check(...)` 的干净红（`bench1319b.py` 单独重跑那两刀确认）。
+- 吞吐读数（16 逻辑核，四单 20 秒噪点竖屏交付）：1 / 2 / 3 槽总墙钟 25.14 / 19.77 / 18.88 秒，
+  三种跑法交付总字节一字不差（528,526,476 B）。
+- 目录收到 **445.6 MB**：本轮释放约 2045 MB（`desktop/node_modules` 827.6、`desktop/release` 927.0、
+  冻结引擎 160.1、`build` 127.9、`dist` 与 `__pycache__` 共 2.7）；`git status` 报「被删的 tracked
+  文件 0」。**为什么比 1.318 那一档的 416.6 MB 大**：机器上此刻有**两台不是本会话起的 AgentCut
+  引擎**在跑（`-m agentcut api --port 8765` 与 `--port 8799`，其中一台的解释器正是
+  `.venv\Scripts\python.exe`），删 `.venv` 等于替别人关掉一台正在服务的引擎，所以这一档让着它——
+  `.venv` 停在 25.9 MB 的残骸上（删到解释器就停了），下一档开工第一件事是 `uv sync --group dev`。
+  这恰好就是 1.319 记进「还没做」的那条：**两台引擎共用同一个数据目录，而引擎界没有任何东西
+  阻止这件事**，这一条要有租约。
+- 根 `AgentCut.exe` **185,465,960 B**，sha256 前缀 `322d8d15af24783f`，与
+  `desktop/release/AgentCut-便携版.exe` 逐字节核过（`released_package_check` 当场比的就是这一对）。
+- 重建链一字未改：`uv sync --group dev` → **`npm --prefix desktop ci` 必须在 `build_engine` 之前**
+  → `scripts/build_engine.py --no-uv --verify` → `npm --prefix desktop run dist` →
+  把 `desktop/release/AgentCut-便携版.exe` 拷到根目录。
