@@ -3498,7 +3498,7 @@ POST /v1/agent/recipes/speech-to-captions/run
   `ran: false` 并说明为什么，其余步骤照走完——不假装出了字幕。
 * 回执里 `captions_export` 那行给 `srt_chars`；`include_text: true` 才带全文（几 MB 不该默认塞进一刀）。
 
-`imitate-imported-edit`（16 步）：`interchange_document` 是那一份工程文件的正文，格式仍由引擎认
+`imitate-imported-edit`：`interchange_document` 是那一份工程文件的正文，格式仍由引擎认
 （`interchange_format` 只在你想强制时给），`files` 是那份文档指着的素材。两处门槛是真门槛，
 配方文本已写明：
 
@@ -3511,8 +3511,30 @@ POST /v1/agent/recipes/speech-to-captions/run
 实测（同一份源码与随包二进制各跑一遍）：口播 7.77 s 真中文素材 → cue 2 条、SRT 88 字、
 交付 7.07 s；把自己导出的 FCPXML 搬回来 → 落库 2 条命令、两份交付 115,866 B / 166,062 B。
 
-1.313 起，`cut-from-media`（14 步）与 `speech-to-captions`（16 步）多一步 `master_loudness`：
+1.313 起，`cut-from-media` 与 `speech-to-captions` 多一步 `master_loudness`：
 给了 `loudness_target_lufs` 才落混音（引擎走的是导出那同一张音频图测出来的数，写一次
 `project.update`、涨一个 revision），没给就那一行 `ran: false` 点名缺的是哪一样——
 一刀不替人决定片子该多响。门禁拿 FFmpeg 自己的 `ebur128` 量交付文件：目标 -16.0、
 实测 -16.1 LUFS；把那一步偷偷跳过，同一档立刻量到 -21.7 并红。
+
+## 1.314 交付对不对：`GET /v1/jobs/{job_id}/verify`
+
+`output_checked` 那句的意思只是「有个探测在旁边认同这个文件读得开」。这一扇门把「对不对」收回引擎：
+它拿 `ffprobe` 读那个文件（长度、画幅、帧率、有没有声轨），拿 `loudness.measure`（FFmpeg 自己的
+EBU R128 表）读它的响度与真峰值，再和**这个作业当时编出来的那张计划**逐条对——`plan_for` 就是
+worker 要渲染的那一份，所以「期望」不是这一档现编的数。
+
+* 交回 `verdict` 与 `checks[]`，每条带 `expected` / `measured`；不合格不抛异常：文件被删了仍然
+  200，假在 `file` 那一条，后面写着「没有可读的文件，后面的量法都无从下手」。
+* `target_lufs`（-30..-6）不给就不判响度，那一条的 `expected` 写「报告，不判」——这一扇门不替人
+  决定片子该多响；给了才判，允差 1.5 LU。`ceiling_dbtp`（-9..0）另钉真峰值，允差 0.5 dB。
+* `duration_tolerance` 默认 0.25 s，与 `recipe_run` 里那一格用的是同一档。
+
+三条配方把它接成最后一步：现在按配方顺序交回 **15 / 17 / 17** 行步骤。搬别人那一刀走批量交付，所以
+那一格逐条验——两条交付就交回两个 `job_id` 与两个 verdict，不会只验第一条就当全对；`verify=false`
+就不验，那一行 `ran: false` 说清为什么。MCP 同名工具 `deliver_verify`，能力位 `deliver_verify`。
+
+门禁最要紧的一条不是「验出来的数对」，而是**把交付换成另一条片子**：2.00 s / 1280x720 那条改名
+收起来，原位置放 3 秒 320x180 的那一片，再叫同一扇门——它必须转为假，假在 `duration` 与
+`resolution`，而实测数只能是 3.0 s 与 320x180。这一条把「实测 = 复述计划」那类写法钉死：变异台
+真把 `round(read["seconds"], 3)` 改成 `expected_seconds`，交回的 `measured` 就成了 2.0，当场红。

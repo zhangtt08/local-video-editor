@@ -6716,3 +6716,68 @@ revision 4、等了 516 ms；搬那一趟 514 ms 到终态；关掉按 PID 收�
   完整环境里跑的，删完 `git status` 报「被删的 tracked 文件 0」。
 - 删掉的可再生产物与重建链同 1.312 那一节（`npm ci` → `npm run build` →
   `scripts/build_engine.py --verify --no-uv` → `npm run dist` + 复制便携版 → 空机单跑）。
+
+## 1.314：交付对不对，由引擎自己读那个文件说——配方最后一步是 `deliver_verify`
+
+`GET /v1/jobs/{job_id}` 交回的 `output_checked` 一直是那句最容易被读多的话：它的意思只是
+「有个探测在旁边认同这个文件读得开」，不是「这条交付就是计划里那一条」。引擎明明知道那个作业
+当时编出来的是哪一张图（`jobs.plan_for` 就是 worker 要渲染的那一份），却把「对不对」留给调用方
+自己拿 ffprobe 量——于是本仓两道门禁各自手抄了一份 `ffprobe` / `ebur128` 的读法，下一个 agent
+接手会抄出第三份。
+
+现在量的人换回引擎，一扇门：
+
+* `GET /v1/jobs/{job_id}/verify`（MCP 同名工具 `deliver_verify`）逐条交回
+  `status / file / duration / resolution / frame_rate / loudness`，每条带 `expected` 与 `measured`，
+  外面再套一个 `verdict`。
+* 期望那一侧的数全部来自这个作业自己的记录——计划、预设、它自己的 revision，不是这一档现编的；
+  实测那一侧只有两个来源：`ffprobe` 读容器，`loudness.measure` 用 FFmpeg 的 EBU R128 表读文件本身。
+* 响度不点名目标就只报不判（那一条的 `expected` 写着「报告，不判」）——这一扇门不替人决定片子
+  该多响；点名了才判，允差 1.5 LU，真峰值另给一档 `ceiling_dbtp`（允差 0.5 dB）。
+* 不合格不是异常：文件被删了仍然 200，`verdict: false` 假在 `file` 那一条，后面的量法明写
+  「没有可读的文件，后面的量法都无从下手」。
+
+三条配方都把它接成最后一步：`cut-from-media` 14 → **15** 步、`speech-to-captions` 16 → **17** 步、
+`imitate-imported-edit` 16 → **17** 步。搬别人那一刀走的是批量交付，所以那一格是逐条验：两条交付
+就交回两个 verdict 与两个 job_id，不会只验第一条就当全对。`verify=false` 就不验，那一行 `ran: false`
+说清为什么；`render=false` 时那一格说的是「没有交付作业可验」。
+
+### 计划里的数与文件里的数，必须在这一道里是两个数
+
+新门禁 `tests/deliver_verify_check.py` 最要紧的一条不是「验出来的数对」，而是**把交付换成另一条
+片子**：那条 2.00 s / 1280x720 的交付改名收起来，原位置放上 3 秒 320x180 的那一片，再叫同一扇门。
+它必须转为假，假在 `duration` 与 `resolution` 两条上，而交回的实测数只能是 `3.0 s` 与 `320x180`。
+这一条把「实测 = 复述计划」那类写法钉死了——变异台里真把 `round(read["seconds"], 3)` 改成
+`expected_seconds`，交回的 `measured` 就成了 2.0 而文件是 3.0，当场红。
+
+真交付那一条也不自证：verdict 为真时实测响度 **-16.0 LUFS**、长度 **2.0 s**（计划 2.0 s），
+目标点歪成 -30 就转假并点名 `loudness`，且说得出差 14 LU。六刀各红在自家断言上——
+verdict 永远为真（红在「目标点歪就转为假」与「换了片子就转为假」）、长度复述计划（红在实测数）、
+给了 `verify` 反而跳过那一格（红在「配方最后一步真跑了」）、执行表不登记这一步（红在运行时
+`RECIPE_STEP_UNIMPLEMENTED` 那一趟 500）、配方不再声明这一步（红在「三条配方最后一步都是它」，
+回执里那一格变成空的）、文件不在也当它在（红在「文件没了也不掀桌」——它真的 410 抛出来了）。
+六刀跑完都按 sha256 逐字节核过还原。
+
+### 发布账（1.314）
+
+引擎侧只多了一个模块与一扇门，规则没有第二套：
+
+* 新增 `src/agentcut/deliverable.py`（`probe` + `verify_delivery`），路由
+  `GET /v1/jobs/{job_id}/verify`，MCP 工具 `deliver_verify`，能力位 `deliver_verify`
+  （与 `recipe_run` 同一档：媒体就绪才开）。`RecipeRun` 多一个 `verify: bool = True`。
+* 三条配方的步骤数 15 / 17 / 17；`recipe_run` 的回执里那一格交回 `verdicts`（逐条 `job_id`、
+  `verdict`、`failed`、`loudness`）与一个 `all_ok`。
+* 界面一行没改：`engine.ts` 的提示表沿用 1.313 那一份，`deliver_verify` 是只读门，不新增错误码。
+* 门禁 **+1 → 178 档**：新增 `tests/deliver_verify_check.py`；`recipe_run_check` 与
+  `packaged_reciperun_check` 各加一格「最后那一格真跑了、且验的就是排出去的那条作业」。
+
+装机腿（随包那台 `agentcut.exe`）现场读 manifest：三条配方都 `runnable` 且带 `params`，一刀
+**15 行**步骤、`deliver_verify` 那一行 `all_ok: true` 且只有一个 verdict，交付仍是 4.00 s 源 →
+**0.60 s**（等于计划 0.60 s）、revision 4、等了 **515 ms**；搬那一趟 **17 行**步骤、一条交付
+516 ms 到终态并同样带着自己的 verdict；两趟拒绝照旧（未知配方 404、缺参数在建工程之前 422）；
+关掉按 PID 收子树不留进程。`released_package_check` 认下 asar **1.314.0** / 84 文件 / 随包引擎
+就是建出来的那一份 / 73 句可读中文。引擎冷启 **837 ms**（走 `main.ts` 那条读法）/ **760 ms**（裸）。
+装机窗口那一档仍钉着「打开就看见外壳、引擎不先露面」：骨架到首帧 518 ms、DOM ready 311 ms、
+第一次真用到看见内容 1259 ms、重载接回列表 206 ms。
+
+空机单跑 **178/178 checks passed**（`SUITE_EXIT=0`），跑的就是交付出去的那一份树。

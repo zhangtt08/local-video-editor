@@ -17,15 +17,24 @@ engine's own table agrees with it, read at check time.
 
 Mutation-tested: dropping a container from the bullet, bumping SCHEMA_VERSION, changing a numeral,
 and restoring the old "no MXF/DPX" sentence each turn this red on their own assertion.
+
+1.314 adds two more derived claims: README's per-recipe step counts must equal
+``agent_contract.RECIPES`` and its ``空机单跑 N/N 全绿`` must equal
+``len(suite_check.discover([]))`` — both counted at check time, not copied from a release note.
 """
 
+import re
 import sys
 import typing
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "src"))
+sys.path.insert(0, str(HERE))
 
-from agentcut import contracts  # noqa: E402
+import suite_check  # noqa: E402
+
+from agentcut import agent_contract, contracts  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 README = ROOT / "README.md"
@@ -211,13 +220,46 @@ def main() -> None:
             f"contracts.COLOUR_TAG_CODES publishes"
         )
 
+    # 6. 1.314：配方的步骤数与门禁总数都是此刻从产品表里数得出的数。加一步、加一档而不挪
+    #    README，就是留一句关于产品的假话——期望一律现算：`agent_contract.RECIPES` 与
+    #    `suite_check.discover`，不是文档里的字。反向也钉：那三句话在 README 里绝迹同样红。
+    counts = [len(recipe["steps"]) for recipe in agent_contract.RECIPES]
+    stated = re.search(r"交回 (\d+) / (\d+) / (\d+) 行步骤日志", text)
+    if stated is None:
+        problems.append(
+            "README 不再写「交回 N / M / K 行步骤日志」——那三个数现在没人认领了"
+        )
+    elif [int(row) for row in stated.groups()] != counts:
+        problems.append(
+            f"README 的步骤数是 {stated.groups()}，而 RECIPES 按配方顺序交回 {counts}"
+        )
+    borrowed = re.search(r"跑一趟 (\d+) 步", text)
+    want_borrow = len(agent_contract.RECIPES[-1]["steps"])
+    if borrowed is None:
+        problems.append("README 不再写搬别人那一刀「跑一趟 N 步」")
+    elif int(borrowed.group(1)) != want_borrow:
+        problems.append(
+            f"README 说搬一刀跑一趟 {borrowed.group(1)} 步，而 "
+            f"{agent_contract.RECIPES[-1]['id']} 现在声明 {want_borrow} 步"
+        )
+    total = len(suite_check.discover([]))
+    suite_claim = re.search(r"空机单跑 (\d+)/(\d+) 全绿", text)
+    if suite_claim is None:
+        problems.append("README 不再写「空机单跑 N/N 全绿」那一句")
+    elif suite_claim.groups() != (str(total), str(total)):
+        problems.append(
+            f"README 说空机单跑 {suite_claim.group(1)}/{suite_claim.group(2)}，"
+            f"而 suite_check 现在发现 {total} 档"
+        )
+
     assert not problems, "\n".join(problems)
     print(
         f"PASS: {len(contracts.OUTPUT_CONTAINERS)} containers named, schema "
         f"{contracts.SCHEMA_VERSION} quoted, "
         f"{count_of('EffectProperty')}+{count_of('MaskProperty')}+{count_of('SpatialProperty')} "
         f"animated properties and {count_of('BlendMode')} blend modes match the contract, "
-        f"{len(contracts.COLOUR_TAG_CODES)} delivery colour tag(s) counted"
+        f"{len(contracts.COLOUR_TAG_CODES)} delivery colour tag(s) counted, "
+        f"recipes {'/'.join(str(n) for n in counts)} steps, {total} checks in the suite"
     )
 
 
