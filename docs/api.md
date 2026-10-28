@@ -3785,3 +3785,38 @@ X-AgentCut-Delivery: <job_id>-<第几次尝试>
 判它的是 `tests/callback_check.py`：真引擎、真渲染、真取消、真重启；接收端先 503 两次再 200
 （投第三次才成）、一直 500（按上限认栽）、签名用这台引擎的令牌重算验得回而篡改过的验不过、
 `_save()` 炸在提交那一刻时作业行与那条欠账一起回滚。
+
+## 1.324 素材入口：`--watch-dir` 与 `GET /v1/watch`
+
+引擎自己盯目录收素材，走的是与 `POST /v1/media/import` **同一个函数**（`MediaService.import_file`）——
+第二条导入路径就会有两份「什么算可用的素材」，而这类分叉最后都变成「界面能收、自动收不进」。
+
+| 字段 | 说的是什么 |
+|---|---|
+| `dirs` | 这台在盯哪些目录（`--watch-dir` 的原文） |
+| `config` | `configured` / `dirs` / `missing_dirs` / `imported` / `pending` / `failed` / `ignored_unsupported` / `interval_seconds` / `grace_seconds` / `last_scan_age_seconds` |
+| `watch[]` | 每一份文件的现在时：`path`、`name`、`size_bytes`、`state`、`probe_id`、`detail`、`updated_at` |
+
+`/v1/metrics` 的 `watch` 那一格与这里的 `config` 同源现算。没配目录时这一面照样答得出来：
+`configured: false`、`dirs: []`、一条账也没有——缺一个键与读出 `false` 是两件事，前者会让人
+以为引擎没这一面。
+
+状态词表只有三个：`pending`（第一次看见，或在等静默期）、`imported`（收了，`probe_id` 可以直接
+拿去排交付）、`failed`（按名字拒，原因在 `detail`，例如 `MEDIA_EMPTY`）。不支持的后缀不进这本账，
+只在 `ignored_unsupported` 里计数：旁挂的 `.srt` 不是失败。
+
+两道闸的读法：`pending` 不是「卡住了」——第一次看见只记观察，大小或时间戳一变就重新等，两趟一致
+且过了 `--watch-grace` 才真收。想知道引擎有没有在扫，看 `last_scan_age_seconds`；想知道目录还在不在，
+看 `missing_dirs`。
+
+启动的门：`--watch-dir` 必须是**存在的绝对目录**，而且**不许罩住 `--output-dir` 或 `--cache-dir`**
+（等于它、或是它的父目录都不行）。watch 是递归扫的，交付件（mp4/mov）与代理（也是 mp4）都落在
+可收的扩展名里，于是引擎会把自己刚写出来的东西当新素材再收一遍，代理再生成代理，越滚越大。实测过
+这一手：watch 目录＝输出目录，一刀配方跑完，46 KB 的交付件当场被记成 `imported`。与写出目录**同级**
+的目录照常起得来——门禁里正反两腿都有。
+
+文件名不挑：中文、空格、方括号与 `#` 都原样带过去，探针与缩略图照建。扫描成本是实测的：1000 个
+已收过的文件一趟 **76 ms**（整趟共用一条 sqlite 连接；一文件一条连接的旧写法在同一台机器上是
+445 ms）。MCP 那一面叫 `agent_watch`（只读），与 `GET /v1/watch` 交回同一份 JSON；`agent_callbacks`
+同理对应 `GET /v1/callbacks`。两只都在 `tests/self_check.py` 里被**真的经 MCP 叫过**
+（`call_tool` + 形状断言），不只是躺在名单里。

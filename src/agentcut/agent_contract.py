@@ -201,6 +201,7 @@ TOOL_ENDPOINTS: dict[str, tuple[str, str]] = {
     "agent_audit": ("GET", "/v1/agent/audit"),
     "agent_callbacks": ("GET", "/v1/callbacks"),
     "agent_metrics": ("GET", "/v1/metrics"),
+    "agent_watch": ("GET", "/v1/watch"),
     "captions_export": ("GET", "/v1/projects/{project_id}/captions/{track_id}"),
     "clip_attribute_plan": ("POST", "/v1/projects/{project_id}/clips/{clip_id}/attribute-plan"),
     "clip_auto_grade": ("POST", "/v1/projects/{project_id}/clips/{clip_id}/auto-grade"),

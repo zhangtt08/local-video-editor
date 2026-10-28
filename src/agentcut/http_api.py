@@ -39,6 +39,7 @@ from . import (
     silence,
     stability,
     transcript,
+    watch,
 )
 from . import asr as asr_module
 from . import autograde as autograde_module
@@ -277,6 +278,7 @@ def create_app(
     audit: serving.AuditLog | None = None,
     bind_host: str = "127.0.0.1",
     allow_origins: list[str] | None = None,
+    watcher: watch.Watcher | None = None,
 ) -> FastAPI:
     if len(token) < 32:
         raise ValueError("AGENTCUT_TOKEN must contain at least 32 characters")
@@ -362,6 +364,13 @@ def create_app(
         if jobs is None:
             raise EditorError("RENDER_UNAVAILABLE", "render engine is not configured", 503)
         return jobs
+
+    def watch_readout() -> dict:
+        """素材入口那一面的读数。没装 watcher 的那几台（桌面门面与所有 TestClient 档）
+        也说得出「没配」——缺一个键与读出 false 是两件事，前者会让人以为引擎没这一面。"""
+        if watcher is None:
+            return {"configured": False, "dirs": 0, "imported": 0, "pending": 0, "failed": 0}
+        return watcher.summary()
 
     def urls_for(probe: MediaProbe) -> dict:
         base = (app_info or {}).get("base_url", "")
@@ -509,7 +518,21 @@ def create_app(
         durations and failure codes from the same `jobs` rows the console reads.
         """
         runtime = require_jobs()
-        return runtime.metrics(recent=recent)
+        numbers = runtime.metrics(recent=recent)
+        numbers["watch"] = watch_readout()
+        return numbers
+
+    @app.get("/v1/watch", dependencies=auth)
+    def read_watch(recent: Annotated[int, Query(ge=1, le=500)] = 50):
+        """素材入口：盯了哪些目录、收到哪一份、哪一份为什么还没收/收不进。
+
+        有了 watch folder，「素材怎么进来」不再是一家人写一份外部脚本：那脚本最容易出的事是
+        「文件还在拷就被收走」，而它自己看不见这件事。这里的账说得出每一个文件被第几次看见、
+        当时多大、结果如何。
+        """
+        rows = [] if watcher is None else watcher.recent(recent)
+        return {"dirs": list(watcher.dirs) if watcher is not None else [],
+                "config": watch_readout(), "watch": rows}
 
     @app.get("/v1/callbacks", dependencies=auth)
     def read_callbacks(recent: Annotated[int, Query(ge=1, le=500)] = 50):

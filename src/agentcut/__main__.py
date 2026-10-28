@@ -83,9 +83,16 @@ def build_services(args, data_dir: Path, token: str, db_file: Path):
     from .jobs import JobRuntime
     from .media import MediaService
 
-    cache_dir = Path(args.cache_dir) if args.cache_dir else data_dir / "media-cache"
-    output_dir = Path(args.output_dir) if args.output_dir else data_dir / "outputs"
+    written = _write_dirs(args, data_dir)
+    cache_dir = written["缓存"]
+    output_dir = written["交付"]
     roots = [Path(item) for item in args.media_root] or [data_dir / "media"]
+    for item in args.watch_dir:
+        # 盯进来的目录本身就是媒体根：不这么做，watcher 收的每一手都会被
+        # 「file is outside the allowed media roots」挡在门外——那才是真正难查的那种配置错。
+        watched = Path(str(item).strip())
+        if watched.is_dir() and watched.resolve() not in [root.resolve() for root in roots]:
+            roots.append(watched)
     for root in roots:
         root.mkdir(parents=True, exist_ok=True)
     ffmpeg = _find_binary("ffmpeg", args.ffmpeg)
@@ -126,6 +133,7 @@ def build_services(args, data_dir: Path, token: str, db_file: Path):
         "signature_hint": signature(token, "stream:example"),
         "frozen": bool(getattr(sys, "frozen", False)),
         "callback_urls": list(args.callback_url),
+        "watch_dirs": [str(item).strip() for item in args.watch_dir if str(item).strip()],
     }
     return media, jobs, info
 
@@ -148,6 +156,54 @@ def _callback_problems(urls: list[str]) -> list[str]:
         if parts.scheme not in ("http", "https") or not parts.netloc or "@" in parts.netloc:
             bad.append(text)
     return bad
+
+
+def _write_dirs(args, data_dir: Path) -> dict[str, Path]:
+    """这台引擎**自己会往里写**的目录。门与 `build_services` 都读这里，不许各算各的。"""
+    return {
+        "交付": Path(args.output_dir) if args.output_dir else data_dir / "outputs",
+        "缓存": Path(args.cache_dir) if args.cache_dir else data_dir / "media-cache",
+    }
+
+
+def _covers(ancestor: Path, target: Path) -> bool:
+    """盯的那个目录是不是就是它、或者是它的父目录——watch 是递归扫的，父目录一样看得见。"""
+    try:
+        top, inner = ancestor.resolve(), target.resolve()
+    except OSError:
+        return False
+    return top == inner or top in inner.parents
+
+
+def _watch_problems(dirs: list[str], written: dict[str, Path]) -> list[str]:
+    """盯的地方要真的在、真的是目录、**罩不住引擎自己写出东西的地方**，而且这台真的有 ffmpeg。
+
+    「配了 watch 却没有媒体程序」必须停下，而不是静默什么都不收：那种配置的现场表现是素材一直
+    躺在目录里没人管、流水线的另一端在等回执——最难查的缺件都是这种「谁都没报错」的。
+
+    「盯的目录把输出/缓存目录盖住了」同样必须停：watch 是递归扫的，交付件（mp4/mov）与代理
+    （也是 mp4）都落在 `ALLOWED_SUFFIXES` 里，于是引擎会把自己刚写出来的东西当新素材再收一遍——
+    代理再生成代理，越滚越大，直到撞上输出盘底线。1.324 实测过这一手（watch 目录＝输出目录，
+    一刀配方跑完，交付件当场被记成 imported）。这里判「包含」而不是只判「相等」：父目录一样罩住。
+    """
+    problems: list[str] = []
+    cleaned = [str(item).strip() for item in (dirs or []) if str(item).strip()]
+    for text in cleaned:
+        path = Path(text)
+        if not path.is_absolute():
+            problems.append(f"{text} 不是绝对路径（引擎按路径记账，相对路径会跟着启动目录一起漂）")
+        elif not path.is_dir():
+            problems.append(f"{text} 不存在或不是一个目录")
+        else:
+            for label, target in written.items():
+                if _covers(path, target):
+                    problems.append(
+                        f"{text} 罩住了这台自己写{label}的地方 {target}：{label}件会被当成新素材"
+                        "再收一遍（代理还会越滚越大），把写出目录挪到这棵树外面再盯"
+                    )
+    if cleaned and _find_binary("ffmpeg", "") is None:
+        problems.append("这一台找不到 ffmpeg：探测与缓存都是它做的，没有它盯到的文件一个也收不进")
+    return problems
 
 
 def parent_watchdog(pid: int, interval: float = 2.0) -> None:
@@ -212,6 +268,7 @@ def holder_info(holder: dict, token_file: Path) -> dict | None:
 
 def main():
     from .notify import DEFAULT_ATTEMPTS, DEFAULT_TIMEOUT_SECONDS
+    from .watch import DEFAULT_GRACE_SECONDS, DEFAULT_INTERVAL_SECONDS
 
     parser = argparse.ArgumentParser(
         prog="agentcut", description="AgentCut 本地剪辑引擎（HTTP + MCP + 媒体引擎）"
@@ -292,6 +349,25 @@ def main():
         type=int,
         default=DEFAULT_ATTEMPTS,
         help="一份回执最多投几次，用完还不成就记成 gave_up（读数在 /v1/callbacks 与 metrics）",
+    )
+    parser.add_argument(
+        "--watch-dir",
+        action="append",
+        default=[],
+        help="盯这个目录收素材：新落地且写完的文件按引擎自己那条导入路径收下（可重复给多个）；"
+        "这一台会把它当作一个媒体根",
+    )
+    parser.add_argument(
+        "--watch-interval",
+        type=float,
+        default=DEFAULT_INTERVAL_SECONDS,
+        help="多久扫一轮目录（秒）",
+    )
+    parser.add_argument(
+        "--watch-grace",
+        type=float,
+        default=DEFAULT_GRACE_SECONDS,
+        help="文件落地后再静默多久才收（秒）——半拷的文件就在这一步被挡下来",
     )
     parser.add_argument(
         "--callback-timeout",
@@ -451,6 +527,7 @@ def main():
 
     from .http_api import create_app
     from .serving import AuditLog, TokenTable
+    from .watch import Watcher
 
     loopback = args.host in ("127.0.0.1", "localhost")
     # TLS 的规矩：要么给一对，要么一对都不给——只给一半是配错了，不是选了不加密。
@@ -468,11 +545,14 @@ def main():
     naked = not loopback and not tls and not args.allow_insecure_remote
     anonymous = not loopback and not os.environ.get("AGENTCUT_TOKEN", "").strip()
     callback_bad = _callback_problems(args.callback_url)
-    if naked or anonymous or callback_bad:
+    watch_bad = _watch_problems(args.watch_dir, _write_dirs(args, data_dir))
+    if naked or anonymous or callback_bad or watch_bad:
         doors = []
         if callback_bad:
             doors.append("--callback-url 只认不带账号的 http/https，这几条不是："
                          + "、".join(callback_bad))
+        if watch_bad:
+            doors.append("--watch-dir 指的地方不能用：" + "；".join(watch_bad))
         if naked:
             doors.append(f"要绑到 {args.host} 就得加密——给一对 --tls-cert/--tls-key，"
                          "或者干脆只听本机（反向代理终止 TLS 之后，这一台还是听 127.0.0.1，"
@@ -499,6 +579,13 @@ def main():
     if not args.allow_shared_data_dir:
         atexit.register(lease.release)
     media, jobs, info = build_services(args, data_dir, token, db_file)
+    watcher = Watcher(
+        db_file,
+        media,
+        [str(item).strip() for item in args.watch_dir if str(item).strip()],
+        interval_seconds=args.watch_interval,
+        grace_seconds=args.watch_grace,
+    )
     tokens = TokenTable(data_dir / "tokens.json")
     audit = None if args.no_audit else AuditLog(data_dir / "audit.jsonl")
     app = create_app(
@@ -511,6 +598,7 @@ def main():
         audit=audit,
         bind_host=args.host,
         allow_origins=args.allow_origin or None,
+        watcher=watcher,
     )
     if args.json or args.mode == "desktop":
         ready = {
@@ -535,6 +623,7 @@ def main():
             "requeued": len(jobs.requeued),
             "min_free_mb": args.min_free_mb,
             "callbacks": jobs.outbox.summary(),
+            "watch": watcher.summary(),
             "tls": tls,
             "pid": record["pid"],
             "lease": str(lease.path),
@@ -552,12 +641,15 @@ def main():
     # 投送线程在服务起来之后开：起来了才算这台真的在服这份数据目录。没配地址时 start()
     # 自己会跳过，不留一个空转的线程。
     jobs.outbox.start()
+    watcher.start()
     try:
         server.run()
     finally:
-        # 先停投送线程再说「停了」：一台已经宣布自己停了的引擎，不该随后又递出一条回执。
+        # 先停投送与扫描线程再说「停了」：一台已经宣布自己停了的引擎，不该随后又递出一条回执、
+        # 或者把目录里刚落地一半的文件收进账里。
         # 欠着没投出去的那些仍在 `job_outbox` 里，下一台起来的引擎会接着补。
         jobs.outbox.stop()
+        watcher.stop()
         print(json.dumps({"event": "stopped", "port": args.port}, ensure_ascii=False), flush=True)
 
 

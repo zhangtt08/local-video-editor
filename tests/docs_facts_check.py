@@ -253,6 +253,33 @@ def main() -> None:
             f"而 suite_check 现在发现 {total} 档"
         )
 
+    # 7. 1.324：给集成方看的那两页上的每一支旗标都得真的存在。行内反引号写出的旗标，以及
+    #    代码块里 `python -m agentcut …` 那一行上的旗标，都必须能在某个解析器的 `add_argument`
+    #    里找到——旗标名从代码里读，不抄文档。这一条是拿真事换来的：`--token`（命令行直接写
+    #    令牌）与 `tokens --list` 两支都从没存在过，而照做的人只会拿到一句
+    #    argparse 的 unrecognized arguments；文档里最贵的一句假话就是「照这样做」。
+    flag_pattern = r"--[a-z][a-z0-9-]*"
+    universe: set[str] = set()
+    for rel in ("src/agentcut/__main__.py", "scripts/build_engine.py",
+                "scripts/thirdparty.py", "scripts/enterprise_smoke.py"):
+        source = (ROOT / rel).read_text(encoding="utf-8")
+        universe |= set(re.findall(r'add_argument\(\s*"(' + flag_pattern + r')"', source))
+    assert len(universe) > 20, f"只从解析器里读到 {len(universe)} 支旗标：读法过时了"
+    for doc in ("docs/enterprise.md", "docs/api.md"):
+        body = (ROOT / doc).read_text(encoding="utf-8")
+        for name in sorted(set(re.findall(r"`(" + flag_pattern + r")`", body))):
+            if name not in universe:
+                problems.append(f"{doc} 里写了旗标 {name}，而解析器里没有这一支")
+        fenced = False
+        for number, line in enumerate(body.splitlines(), 1):
+            if line.strip().startswith("```"):
+                fenced = not fenced
+                continue
+            if fenced and line.strip().startswith(("python -m agentcut", "agentcut ")):
+                for name in sorted(set(re.findall(flag_pattern, line))):
+                    if name not in universe:
+                        problems.append(f"{doc}:{number} 那一行命令用了不存在的旗标 {name}")
+
     assert not problems, "\n".join(problems)
     print(
         f"PASS: {len(contracts.OUTPUT_CONTAINERS)} containers named, schema "
@@ -260,7 +287,8 @@ def main() -> None:
         f"{count_of('EffectProperty')}+{count_of('MaskProperty')}+{count_of('SpatialProperty')} "
         f"animated properties and {count_of('BlendMode')} blend modes match the contract, "
         f"{len(contracts.COLOUR_TAG_CODES)} delivery colour tag(s) counted, "
-        f"recipes {'/'.join(str(n) for n in counts)} steps, {total} checks in the suite"
+        f"recipes {'/'.join(str(n) for n in counts)} steps, {total} checks in the suite, "
+        f"every flag named on the two integration pages exists ({len(universe)} live flags)"
     )
 
 

@@ -4,7 +4,7 @@
 也没有 `httpx`。它打的全是产品对外的那扇门：`/v1` 的 HTTP 与 `agentcut tokens` 那条 CLI。
 默认起的是随包的冻结引擎，`--engine` 可以指到 `AgentCut.exe` 那一支便携版。
 
-十条腿，一条都不能含糊：
+每一条都不能含糊（①…⑫ 十二个圈号；腿的条数由 `tests/enterprise_smoke_check.py` 钉住）：
 
 ① 引擎起得来（ready 行报得出台数、额度、底线、租约；`/health` 200）
 ② 一台数据目录只服一台（第二台被拒，而且没碰令牌、没抢租约）
@@ -16,6 +16,8 @@
 ⑧ 吊销立刻生效（同一枚令牌变 401）
 ⑨ 排队现数读得出（`/v1/metrics` 三张表都在，`jobs.by_status.succeeded` ≥ 1）
 ⑩ 输出盘底线拒得对（底线抬到天上，投单 503 `OUTPUT_DISK_TIGHT` 并点名是哪个根）
+⑪ 事件出口这一面（默认没配就要说得出「没配」；`--callback-url` 写错就起不来）
+⑫ 素材入口这一面（丢进 `--watch-dir` 的片子被引擎自己收了、读得回来；目录不存在就起不来）
 
 跑法：`python scripts/enterprise_smoke.py`（加 `--json out.json` 交回机器可读的结果）。
 判它的是 `tests/enterprise_smoke_check.py`。
@@ -90,6 +92,20 @@ def engine_command(folder: Path, engine: Path, *extra: str) -> list[str]:
 
 def token_file(folder: Path) -> Path:
     return folder / "engine/agentcut.token"
+
+
+def watch_command(folder: Path, engine: Path, dropbox: Path, *extra: str,
+                  home: Path | None = None) -> list[str]:
+    """⑫ 那一台：媒体根与盯的目录**分开**——合在一起就量不到「盯的目录自动成为媒体根」。"""
+    root = home or (folder / "watch")
+    return [
+        str(engine), "api", "--port", "0", "--json",
+        "--data-dir", str(root / "data"), "--cache-dir", str(root / "cache"),
+        "--output-dir", str(root / "out"), "--media-root", str(root / "lib"),
+        "--token-file", str(root / "data/agentcut.token"),
+        "--ffmpeg", str(FFMPEG), "--ffprobe", str(FFPROBE),
+        "--watch-dir", str(dropbox), *extra,
+    ]
 
 
 def stop(proc: subprocess.Popen) -> None:
@@ -174,6 +190,7 @@ def main() -> int:
     first: subprocess.Popen | None = None
     second: subprocess.Popen | None = None
     third: subprocess.Popen | None = None
+    fourth: subprocess.Popen | None = None
     try:
         data_dir = folder / "engine"
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -314,8 +331,63 @@ def main() -> int:
         leg("⑪ 事件出口配错就起不来，那句点名 --callback-url",
             bad_url.returncode != 0 and "--callback-url" in bad_text,
             (bad_url.returncode, bad_text[-160:]))
+
+        # ⑫ 素材入口：丢进目录的那一段路，由这台引擎自己走完（没人再调 media_import）。
+        # 媒体根与盯的目录刻意**分开**：重合时「盯的目录自动成为媒体根」这一手量不到——
+        # 1.324 的 W4 那把变异刀就是从这里漏过去的。
+        dropbox = folder / "dropbox"
+        watch_home = folder / "watch"
+        for item in (dropbox, watch_home / "lib", watch_home / "data"):
+            item.mkdir(parents=True, exist_ok=True)
+        (watch_home / "data/agentcut.token").write_text(TOKEN, encoding="utf-8")
+        fourth, watch_ready = start(watch_command(folder, engine, dropbox))
+        watch_base = str(watch_ready.get("base_url") or "")
+        watch_config = watch_ready.get("watch") or {}
+        leg("⑫ 素材入口这一台起得来：watch 读数说得出盯了一个目录且它还在",
+            bool(watch_base) and watch_config.get("configured") is True
+            and watch_config.get("dirs") == 1 and watch_config.get("missing_dirs") == 0,
+            (watch_base, watch_config))
+        info_body = call(watch_base, "GET", "/v1/info")[1] if watch_base else {}
+        echo = info_body.get("info") if isinstance(info_body.get("info"), dict) else info_body
+        roots = [str(item) for item in (echo.get("media_roots") or [])]
+        leg("⑫ 盯的目录自动成为一个媒体根，且不重复登记",
+            sum(1 for item in roots if Path(item).name == "dropbox") == 1, roots)
+        shutil.copyfile(source, dropbox / "watched.mp4")
+        row: dict = {}
+        watch_deadline = time.time() + 120
+        while time.time() < watch_deadline:
+            listed = call(watch_base, "GET", "/v1/watch")[1]
+            row = next((item for item in (listed.get("watch") or [])
+                        if str(item.get("name")) == "watched.mp4"
+                        and str(item.get("state")) == "imported"), {})
+            if row:
+                break
+            time.sleep(0.5)
+        leg("⑫ 丢进目录的素材被引擎自己收了（外面不用再写一个 watcher）",
+            bool(row.get("probe_id")), row)
+        probe_id = str(row.get("probe_id") or "")
+        read_status, media = (call(watch_base, "GET", f"/v1/media/{probe_id}")
+                              if probe_id else (0, {}))
+        verified = media.get("verified") or {}
+        leg("⑫ 收进来的那份从正常读路径读得回来，读数是现场探出来的",
+            read_status == 200 and int(verified.get("duration_ticks") or 0) > 0
+            and verified.get("width") == 320,
+            (read_status, verified.get("duration_ticks"), verified.get("width")))
+        bad_watch = subprocess.run(
+            watch_command(folder, engine, folder / "nope-folder",
+                          home=folder / "watchbad"),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            env=base_env(), cwd=str(ROOT), timeout=90,
+        )
+        watch_text = (bad_watch.stdout or "") + (bad_watch.stderr or "")
+        # 判的是引擎自己那句「指的地方不能用」，不是 "--watch-dir" 这几个字：
+        # 老引擎不认这个旗标时 argparse 也会把 --watch-dir 与路径一起打进 stderr。
+        leg("⑫ 盯的目录不存在就起不来，那句点名不能用的是哪一个目录",
+            bad_watch.returncode != 0 and "指的地方不能用" in watch_text
+            and "nope-folder" in watch_text,
+            (bad_watch.returncode, watch_text[-160:]))
     finally:
-        for proc in (first, second, third):
+        for proc in (first, second, third, fourth):
             if proc is not None:
                 stop(proc)
         if arguments.json:

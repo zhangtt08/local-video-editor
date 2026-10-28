@@ -457,6 +457,7 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
                 "agent_audit",
                 "agent_callbacks",
                 "agent_metrics",
+                "agent_watch",
             }
             assert set(tools) == expected, set(tools) ^ expected
             # 上面这一份是手写的名单，手写的东西会漂；契约那张表才是唯一的真源。两侧一起钉住：
@@ -590,6 +591,26 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
             }, sorted(tools["animation_layer_curve"].inputSchema["properties"])
             assert tools["preview_candidate"].annotations.readOnlyHint
             await check_curve_mcp(session)
+            # 1.324：登记进名单还不够——这两只新工具得**真的能经 MCP 叫出来**，而且没配的时候
+            # 交回的形状要与 HTTP 那扇门一样（`configured: false` + 空表）。1.323 就漏在
+            # 这一层：名字进了契约与桥、MCP 名单里没有，而所有门禁照绿。
+            watch_tool = await session.call_tool("agent_watch", {})
+            callbacks_tool = await session.call_tool("agent_callbacks", {})
+            assert not watch_tool.isError and not callbacks_tool.isError, (
+                "agent_watch / agent_callbacks 经 MCP 叫不动：",
+                watch_tool.content, callbacks_tool.content,
+            )
+            watch_body = watch_tool.structuredContent or {}
+            callbacks_body = callbacks_tool.structuredContent or {}
+            assert (watch_body.get("config") or {}).get("configured") is False, (
+                "agent_watch 经 MCP 叫回来，没配的时候也得说 configured=false", watch_body)
+            assert watch_body.get("watch") == [], (
+                "agent_watch 经 MCP 叫回来，没配的时候表得是空的", watch_body)
+            assert (callbacks_body.get("config") or {}).get("configured") is False, (
+                "agent_callbacks 经 MCP 叫回来，没配的时候也得说 configured=false",
+                callbacks_body)
+            assert callbacks_body.get("callbacks") == [], (
+                "agent_callbacks 经 MCP 叫回来，没配的时候表得是空的", callbacks_body)
             result = await session.call_tool("project_get", {"project_id": project_id})
             assert not result.isError and result.structuredContent["revision"] == 6
             created = await session.call_tool(

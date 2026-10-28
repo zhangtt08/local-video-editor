@@ -1269,6 +1269,16 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         """
         return await call("GET", f"/v1/callbacks?recent={int(recent)}")
 
+    @server.tool(annotations=read)
+    async def agent_watch(recent: int = 50) -> dict[str, Any]:
+        """Read the watch-folder ledger: which directories are watched and what was taken in.
+
+        素材入口这一面的读数：盯了哪几个目录、哪一份已经收进媒体库（带 `probe_id`，可以直接拿去
+        排交付）、哪一份还在等静默期、哪一份按名字被拒了（`MEDIA_EMPTY` 这类）。自动流水线要的
+        是「素材丢进去了，引擎承认收下了」这句话，而不是自己再写一个 watcher。
+        """
+        return await call("GET", f"/v1/watch?recent={int(recent)}")
+
     @server.resource("project://{project_id}")
     async def project_resource(project_id: str) -> str:
         # Resource templates also validate ids; they may not inject URL paths.
