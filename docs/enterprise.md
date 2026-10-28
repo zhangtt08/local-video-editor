@@ -46,8 +46,30 @@ ready 行现在说得出现场读数：`port`、`base_url`、`bind`、`remote`�
 各自的读数：`tls` 是布尔，`callbacks` 与 `watch` 是**现算的摘要**（配了回执地址的引擎，ready
 那一行就答得出它欠着几条；配了目录的那台答得出盯了几处、有几个目录已经不在了）。
 
-## 一台数据目录只服一台引擎
+## 无人值守：崩了有人接着把它起来
 
+`agentcut supervise` 是常驻的看门人，后面跟的是引擎自己的参数：
+
+```
+python -m agentcut supervise -- api --port 8765 --data-dir data --media-root D:\media \
+    --output-dir D:\out --watch-dir D:\drop --callback-url https://hook.example/agentcut
+```
+
+- **崩了就拉**：子进程退出码非 0（或被杀）就按 1 / 2 / 5 / 30 秒退避重拉，**不设上限**；
+  60 秒内崩三次以上按最长那一档等——继续试，不是放弃。桌面外壳那条路第 5 次之后永久放弃，
+  而且前提是「有人坐在这台机器前」；服务器上没有那个人。
+- **不留孤儿**：子进程带 `--exit-with-parent <看门人 PID>`，看门人没了它自己走。
+- **账在数据目录**：`supervisor.json`（state / restarts / last_exit_code / last_uptime_seconds /
+  next_delay_seconds / storm）、`server.log`（子进程输出，崩之前那几行是唯一现场）。
+  `GET /v1/metrics` 的 `supervisor` 那一格就是那份现读；没人看门时是 `configured: false`。
+- **干净收摊**：往数据目录放一个 `supervisor.stop` 文件——看门人停子进程、写 `stopped`、退出 0。
+  用文件而不是信号：Windows 上给别的进程发 Ctrl-C 没有可靠写法，而「放一个文件」在服务、
+  计划任务与容器里都成立。
+- **和前面几档的关系**：宕机期间丢进 `--watch-dir` 的素材，起来之后会被补收（账是活的）；
+  宕机前欠着的回执，起来之后接着投（次数接着数）；被 SIGKILL 留下的陈旧 `engine.lock`，
+  新的那一台接得回来——这三条门禁里都是真杀真等量出来的。
+
+## 一台数据目录只服一台引擎
 `--port 0` 让每台自己挑端口，所以两台机器**从不撞端口**——撞的是同一本 sqlite、同一本台账
 与同一枚令牌，两台会互相改写状态。因此数据目录里有一份 `engine.lock`（`pid / port / mode /
 started_at`）：
@@ -241,6 +263,7 @@ FCP7 XML / EDL / 剪映草稿，也能搬回来——所以「备份」最小可
 
 | 项 | 现状 |
 |---|---|
+| 无人值守 | 进程级已给（`agentcut supervise`，见上一节）。**没有**的是：开机自启/装成系统服务（交给计划任务、服务包装器或容器编排的 `restart: always`），也没有多机 HA——一台数据目录只服一台引擎这条不变 |
 | 传输加密 | 引擎侧已给（`--tls-cert/--tls-key`，见上一节）。**没有**的是：桌面外壳附到一台 TLS 引擎上（会停下并说明），以及证书自动轮转（交给代理或运维的定时重启） |
 | 多租户与权限模型 | 只有「具名令牌 + read/write 作用域」，没有工程级 ACL、没有用户目录接入 |
 | 目录监听入库 | 已给（见「素材入口」那一节）。还没做的是：写完与否只看大小与 mtime 两个读数，写入端若提前盖上源文件的时间戳，理论上可能在写完前就被收；文件被删掉之后，台账里那一行不回收 |

@@ -267,6 +267,12 @@ def holder_info(holder: dict, token_file: Path) -> dict | None:
 
 
 def main():
+    # `supervise` 排在解析器之前：它后面跟的是**引擎自己的**参数（`api --port … --watch-dir …`），
+    # 拿这台解析器去认只会认出一半。看门人只做一件事：把那些参数原样交给子进程并负责把它拉起。
+    if len(sys.argv) > 1 and sys.argv[1] == "supervise":
+        from .supervise import main as supervise_main
+
+        raise SystemExit(supervise_main(sys.argv[2:]))
     from .notify import DEFAULT_ATTEMPTS, DEFAULT_TIMEOUT_SECONDS
     from .watch import DEFAULT_GRACE_SECONDS, DEFAULT_INTERVAL_SECONDS
 

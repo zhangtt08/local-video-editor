@@ -3820,3 +3820,34 @@ X-AgentCut-Delivery: <job_id>-<第几次尝试>
 445 ms）。MCP 那一面叫 `agent_watch`（只读），与 `GET /v1/watch` 交回同一份 JSON；`agent_callbacks`
 同理对应 `GET /v1/callbacks`。两只都在 `tests/self_check.py` 里被**真的经 MCP 叫过**
 （`call_tool` + 形状断言），不只是躺在名单里。
+
+## 1.325 无人值守：`agentcut supervise`（看门人）与 `metrics.supervisor`
+
+```
+python -m agentcut supervise -- api --port 8765 --data-dir data --media-root D:\media \
+    --output-dir D:\out --watch-dir D:\drop --callback-url https://hook.example/agentcut
+```
+
+`supervise` 后面跟的是**引擎自己的参数**（原样交给子进程）；它只做一件事：把那个子进程拉起来，
+崩了按退避再拉起来，并把每一次都记在账上。子进程带 `--exit-with-parent <看门人 PID>`：看门人死了
+它自己走，不留一台没人管的引擎占着数据目录。
+
+退避是 1 / 2 / 5 / 30 秒；60 秒内崩三次以上就按最长那一档等——**不是放弃**：一台无人值守的机器
+宁可每 30 秒试一次，也不该在第三次之后安静地躺着。（桌面外壳那条路是另一回事：它第 5 次之后
+永久放弃，前提是「有人坐在这台机器前」。）
+
+账在数据目录里：
+
+| 文件 | 是什么 |
+|---|---|
+| `supervisor.json` | 一行一态：`state`（`starting`/`running`/`restarting`/`stopped`）、`supervisor_pid`、`child_pid`、`restarts`、`last_exit_code`、`last_uptime_seconds`、`next_delay_seconds`、`backoff_seconds`、`storm`、`reason`、`updated_at` |
+| `server.log` | 子进程的 stdout/stderr 原样追加（崩之前那几行是唯一现场），同时照抄到看门人的 stdout |
+| `supervisor.stop` | 一出现就干净收摊：停子进程、写 `stopped`、退出 0。用文件而不是信号——Windows 上给别的进程发 Ctrl-C 没有可靠写法，而「放一个文件」在服务、计划任务与容器里都成立 |
+
+`GET /v1/metrics` 多了 `supervisor` 那一格，内容就是 `supervisor.json` 的现读；没人看门时
+（直接起的引擎、TestClient 档）是 `{"configured": false}`——缺一个键与读出 false 是两件事。
+
+判它的是 `tests/supervisor_check.py`：真起一台、按 PID 杀掉子进程看它自己拉回来（同一个端口）、
+被 SIGKILL 留下的陈旧租约接得回来、`/v1/metrics` 与盘上那份同源、宕机期间丢进素材目录的那一份
+起来之后被补收且只收一次、宕机前欠着的回执跨崩溃活着（尝试次数不归零）、崩溃风暴里不退出且
+间隔抬到 30 秒、放 stop 文件干净收摊且不留孤儿（按命令行查，不按镜像名）。
