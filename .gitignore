@@ -20,3 +20,6 @@ __pycache__/
 
 # agent/server.py 每次启动都重写的那一行：运行态，不是源
 agent/.endpoint
+
+# 1.326：occupancy 门禁启动真窗口用的临时 profile（跑完还留在仓库根，不入库）
+.footprint-profile/

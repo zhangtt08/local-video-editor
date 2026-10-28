@@ -221,10 +221,21 @@ def main() -> None:
             status = str((call(port, "GET", f"/v1/jobs/{job_id}")[1].get("job") or {})
                          .get("status") or status)
             time.sleep(1.0)
-        owed = call(port, "GET", "/v1/callbacks")[1]
-        rows = [row for row in (owed.get("callbacks") or []) if row.get("job_id") == job_id]
-        check("② 宕机之前那一单终态了，回执欠着（地址是死的）",
-              status == "succeeded" and bool(rows) and int(rows[0].get("attempts") or 0) >= 1,
+        # 终态那一刻只保证「欠账记下了」；第一次投递在后台线程里，可能晚几毫秒才发生。
+        # 这一腿要的是「投过至少一次、而后仍欠着」，所以等它一次，而不是拿终态那一瞬的 0 判红。
+        owed: dict = {}
+        rows: list[dict] = []
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            owed = call(port, "GET", "/v1/callbacks")[1]
+            rows = [row for row in (owed.get("callbacks") or [])
+                    if row.get("job_id") == job_id]
+            if rows and int(rows[0].get("attempts") or 0) >= 1:
+                break
+            time.sleep(0.3)
+        check("② 宕机之前那一单终态了，回执投过至少一次且仍欠着（地址是死的）",
+              status == "succeeded" and bool(rows) and int(rows[0].get("attempts") or 0) >= 1
+              and str(rows[0].get("status")) in ("pending", "gave_up"),
               (status, rows[:1]))
         attempts_before = int(rows[0].get("attempts") or 0) if rows else 0
 

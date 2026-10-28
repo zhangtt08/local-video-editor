@@ -152,6 +152,12 @@ def build_engine(layout: str, command: list[str]) -> Path:
         # capability query would 500. Collect the whole package so it looks like a normal install.
         "--collect-all",
         "vosk",
+        # 1.326：`cryptography` 只有 `tests/tls_check.py` 在用（造自签证书），引擎一条 import
+        # 都没有——它进包纯粹是构建用的 venv 里装着它。TLS 服务走的是标准库 `ssl`（_ssl.pyd +
+        # libssl/libcrypto），不需要这个包。排除之后要用**冻结引擎真连一次 https** 来证明，
+        # 而不是只看门禁绿：源跑的那几档根本碰不到冻结包里的 import。
+        "--exclude-module",
+        "cryptography",
         "--distpath",
         str(dist),
         "--workpath",

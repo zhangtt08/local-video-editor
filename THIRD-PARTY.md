@@ -27,7 +27,7 @@
 | resources/bin/ffmpeg.exe | 82,797,568 | 04e1307997530f9cf2fe35cba2ca7e8875ca91da02f89d6c7243df819c94ad00 | 逐字节相同 |
 | resources/bin/ffprobe.exe | 63,059,968 | 4303ec85855340689b1f8aa5d9c1dc06ef3e3090682de3034edc3fca2b0798d5 | 逐字节相同 |
 
-冻结引擎在 `resources/bin/agentcut/agentcut.exe`（9,301,983 B），它旁边那份 `_internal` 里量到 10 份 `dist-info`——上面那张 Python 表的「从哪儿看到」那一列就是拿它对出来的。这一节由 `tests/thirdparty_check.py` 现量现比：**清单说的和包里装的是同一件东西**，这句话在这里不是修辞。
+冻结引擎在 `resources/bin/agentcut/agentcut.exe`（9,134,855 B），它旁边那份 `_internal` 里量到 9 份 `dist-info`——上面那张 Python 表的「从哪儿看到」那一列就是拿它对出来的。这一节由 `tests/thirdparty_check.py` 现量现比：**清单说的和包里装的是同一件东西**，这句话在这里不是修辞。
 
 ## 引擎的 Python 依赖（被冻结进 `agentcut.exe`）
 
@@ -42,7 +42,6 @@
 | charset-normalizer | 3.5.2 | MIT | METADATA 的 License | lock 闭包 |
 | click | 8.5.0 | BSD-3-Clause | METADATA 的 License-Expression | 两者 |
 | colorama | 0.4.6 | BSD License | METADATA 的 Classifier | lock 闭包 |
-| cryptography | 50.0.2 | Apache-2.0 OR BSD-3-Clause | METADATA 的 License-Expression | 冻结包内 |
 | fastapi | 0.142.2 | MIT | METADATA 的 License-Expression | lock 闭包 |
 | h11 | 0.16.0 | MIT | METADATA 的 License | lock 闭包 |
 | httpcore | 1.0.9 | BSD-3-Clause | METADATA 的 License-Expression | lock 闭包 |
@@ -77,7 +76,7 @@
 
 口径：从 `pyproject.toml` 的直接依赖（fastapi、uvicorn、pydantic、httpx、mcp、vosk）出发，按 `uv.lock` 的**必带**依赖边算传递闭包（`optional-dependencies` 里那些 extra 我们没装，就不虚列）。许可读的是这台机器上装出来的那一份 `METADATA`，版本号必须与 `uv.lock` 对上，对不上生成器就停。
 
-「从哪儿看到」那一列还带一次**反向核**：PyInstaller 实际搬进 `agentcut/_internal` 的 10 份 `dist-info` 每了一份都要在表里有一行。那份清单**不是**完整枚举（PyInstaller 只给一部分包拷元数据），所以它只兜住「包里带着、清单上没写」这一手——真漏了一行，`tests/thirdparty_check.py` 就该红。
+「从哪儿看到」那一列还带一次**反向核**：PyInstaller 实际搬进 `agentcut/_internal` 的 9 份 `dist-info` 每了一份都要在表里有一行。那份清单**不是**完整枚举（PyInstaller 只给一部分包拷元数据），所以它只兜住「包里带着、清单上没写」这一手——真漏了一行，`tests/thirdparty_check.py` 就该红。
 
 ## 界面的 JS 生产依赖（打进 `app.asar`）
 
@@ -115,7 +114,6 @@
 | BSD-3-Clause | 10 | 归属与全文见各包自己的许可文件；这一页把每一格的名字与出处列出来，随包文本以各包内的 LICENSE 为准 |
 | Apache-2.0 | 3 | 归属与全文见各包自己的许可文件；这一页把每一格的名字与出处列出来，随包文本以各包内的 LICENSE 为准 |
 | Apache Software License | 1 | 归属与全文见各包自己的许可文件；这一页把每一格的名字与出处列出来，随包文本以各包内的 LICENSE 为准 |
-| Apache-2.0 OR BSD-3-Clause | 1 | 归属与全文见各包自己的许可文件；这一页把每一格的名字与出处列出来，随包文本以各包内的 LICENSE 为准 |
 | BSD License | 1 | 归属与全文见各包自己的许可文件；这一页把每一格的名字与出处列出来，随包文本以各包内的 LICENSE 为准 |
 | MIT-0 | 1 | 归属与全文见各包自己的许可文件；这一页把每一格的名字与出处列出来，随包文本以各包内的 LICENSE 为准 |
 | MPL-2.0 | 1 | 归属与全文见各包自己的许可文件；这一页把每一格的名字与出处列出来，随包文本以各包内的 LICENSE 为准 |
@@ -123,4 +121,4 @@
 | PSF | 1 | 归属与全文见各包自己的许可文件；这一页把每一格的名字与出处列出来，随包文本以各包内的 LICENSE 为准 |
 | PSF-2.0 | 1 | 归属与全文见各包自己的许可文件；这一页把每一格的名字与出处列出来，随包文本以各包内的 LICENSE 为准 |
 
-合计：Python 运行时依赖 41 项、JS 生产依赖 5 项、随包媒体程序 2 支、语音模型 1 份。每一项的名字与数字都由 `tests/thirdparty_check.py` 现算现比。
+合计：Python 运行时依赖 40 项、JS 生产依赖 5 项、随包媒体程序 2 支、语音模型 1 份。每一项的名字与数字都由 `tests/thirdparty_check.py` 现算现比。

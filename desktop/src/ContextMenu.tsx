@@ -121,9 +121,35 @@ function ContextMenu({ request, onClose }: { request: MenuRequest; onClose: () =
   useEffect(() => {
     if (!place) return;
     // Chromium 的默认焦点动作发生在 JS 之后：右键那一下最后会把焦点放回片段，
-    // 同一帧里给的焦点会被它盖掉（满载的机器上量到过）。等一帧再搬，键盘才真进得来。
-    const id = requestAnimationFrame(() => focusStep(box.current, 0));
-    return () => cancelAnimationFrame(id);
+    // 同一帧里给的焦点会被它盖掉。**等一帧不够**——满载的机器上那个默认动作会晚到几十毫秒，
+    // 套件里三次里红过一次（`activeElement` 是 `clip image selected`）。现在的口径：
+    // 连搬几帧，并且只要菜单还开着、焦点被搬到菜单外，就把它拽回来（用户点到别处时
+    // pointerdown 会先关菜单，这里不会跟它抢）。
+    const pull = () => {
+      const host = box.current;
+      if (!host) return;
+      const active = document.activeElement;
+      if (active && host.contains(active)) return;
+      focusStep(host, 0);
+    };
+    let frames = 0;
+    let id = requestAnimationFrame(function tick() {
+      pull();
+      frames += 1;
+      if (frames < 6) id = requestAnimationFrame(tick);
+    });
+    const onFocusIn = (event: FocusEvent) => {
+      const host = box.current;
+      if (!host) return;
+      const target = event.target as Node | null;
+      if (target && host.contains(target)) return;
+      requestAnimationFrame(pull);
+    };
+    document.addEventListener("focusin", onFocusIn, true);
+    return () => {
+      cancelAnimationFrame(id);
+      document.removeEventListener("focusin", onFocusIn, true);
+    };
   }, [place]);
 
   const choose = (entry: Extract<MenuEntry, { kind: "item" }>) => {
