@@ -415,17 +415,21 @@ def main():
         for cert_path, name in ((args.tls_cert, "--tls-cert"), (args.tls_key, "--tls-key")):
             if not Path(cert_path).is_file():
                 raise SystemExit(f"{name} 指的东西不存在：{cert_path}")
-    if not loopback and not tls and not args.allow_insecure_remote:
-        raise SystemExit(
-            f"要绑到 {args.host} 就得加密：给一对 --tls-cert/--tls-key，或者干脆只听本机"
-            "（反向代理终止 TLS 之后，这一台还是听 127.0.0.1，那条路照旧通）。明知故犯要裸跑"
-            "明文就加 --allow-insecure-remote——但要知道写接口在网段里就是明文"
-        )
-    if not loopback and not os.environ.get("AGENTCUT_TOKEN", "").strip():
-        raise SystemExit(
-            f"要绑到 {args.host} 就得自己交一枚令牌（AGENTCUT_TOKEN）——自动生成的那一只"
-            "只配听本机，别把没设防的写接口放到网上"
-        )
+    # 两道门一起判，不许一道把另一道演没了：1.322 只报「得加密」那一句，于是 1.318 那句
+    # 「没令牌不许上网」在同一个场景里再也没被说过——serving_check 就是抓红这一手的。
+    naked = not loopback and not tls and not args.allow_insecure_remote
+    anonymous = not loopback and not os.environ.get("AGENTCUT_TOKEN", "").strip()
+    if naked or anonymous:
+        doors = []
+        if naked:
+            doors.append("加密——给一对 --tls-cert/--tls-key，或者干脆只听本机"
+                         "（反向代理终止 TLS 之后，这一台还是听 127.0.0.1，那条路照旧通）。"
+                         "明知故犯要裸跑明文就加 --allow-insecure-remote："
+                         "写接口在网段里就是明文")
+        if anonymous:
+            doors.append("身份——显式交一枚 AGENTCUT_TOKEN：自动生成的那一只只配听本机，"
+                         "别把没设防的写接口放到网上")
+        raise SystemExit(f"要绑到 {args.host} 还差这几道门：{'；'.join(doors)}")
     db_file = database_path(data_dir)
     media, jobs, info = build_services(args, data_dir, token, db_file)
     tokens = TokenTable(data_dir / "tokens.json")
