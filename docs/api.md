@@ -3728,3 +3728,60 @@ TLS 打开之后，交回给外界的读数一起改口：ready 行带 `tls: tru
 证书路径不存在、裸跑明文的非本机绑定）与收摊之后端口不再答。同档还有
 `tests/temp_hygiene_check.py`：Node 那些量具在 `%TEMP%` 建的 Edge profile 必须自己 `fs.rmSync`
 还掉（这台机器实测积到 346 个目录 / 7.2 GB），只杀进程不删目录就红在那一支的名字上。
+
+## 1.323 事件出口（回执与出站读数）
+
+引擎在作业走到终态时主动 POST 一份回执，调用方不必再轮询 `/v1/jobs/{job_id}`。
+
+`--callback-url <http(s)://…>`（可重复）、`--callback-attempts`（默认 4）、`--callback-timeout`
+（默认 5 秒）。地址只认不带账号的 http/https：`file:`、`ftp:`、`user:pass@host` 三种写法
+引擎直接不起，并与「非本机绑定要加密」「非本机绑定要令牌」一起在同一句话里点名。
+
+### 回执长什么样
+
+```
+POST /hook
+Content-Type: application/json
+X-AgentCut-Event: agentcut.job.terminal
+X-AgentCut-Signature: sha256=<整条 HMAC-SHA256，密钥是这台引擎的令牌>
+X-AgentCut-Delivery: <job_id>-<第几次尝试>
+```
+
+正文（只放引擎量到过的东西，缺席就是没量到）：
+
+| 字段 | 说的是什么 |
+|---|---|
+| `event` / `instance` | 固定 `agentcut.job.terminal`；投出去的这一台引擎的实例号 |
+| `job_id` / `project_id` / `sequence_id` / `preset_id` / `filename` / `revision` | 哪一单、哪条时间线、哪一档、落什么名、哪个版本 |
+| `status` / `error_code` / `message` | `succeeded`、`failed`、`cancelled` 之一；失败时点名那个码；引擎自己那句话 |
+| `output_name` / `output_dir` / `output_size_bytes` | 落地文件叫什么、在哪个输出根、多少字节 |
+| `output_checked` | 交付有没有被复检过（那一档没有 ffprobe 时这里是 `false`，不是省略） |
+| `elapsed_seconds` / `total_ticks` / `rendered_ticks` | 渲染耗时与帧数读数 |
+| `created_at` / `updated_at` | 那一单的入库时间（秒分辨率） |
+
+`request_id` 不在回执里：那一格属于提交时那本凭据（`render_receipts`），不属于作业；
+对账请用 `job_id`，或回到 `/v1/jobs/{job_id}` 看完整文档。
+
+### 出站读数
+
+`GET /v1/callbacks`（只读作用域即可读）交回 `callbacks`（每条欠账的现在时）与 `config`：
+
+- `callbacks[]`：`job_id`、`url`、`status`（`pending` / `delivered` / `gave_up`）、`attempts`、
+  `last_error`（`HTTP 500`、`URLError: …` 这样一句话）、`created_at` / `updated_at`，
+  外加从正文里读回来的 `job_status`、`error_code`、`output_name`；
+- `config`：`configured`、`urls`、`pending`、`delivered`、`gave_up`、`attempts_limit`、
+  `timeout_seconds`。没配地址时 `configured` 是 `false`，四张计数都是 0。
+
+`GET /v1/metrics` 的 `callbacks` 那一格是同一张表现算的，不是第二份统计。
+
+### 三条行为值得记住
+
+1. **欠账不会被弄丢**：出站记录与作业状态写在同一个事务里；进程死在两步之间不会出现
+   「库里成功了但没人知道」。A 那台欠着被杀掉，B 那台在同一个数据目录上接着补投，
+   `attempts` 从上一次接着数。
+2. **认栽要说得出为什么**：投到上限就记 `gave_up` 并留下 `last_error`，不再无限空转。
+3. **投递不占渲染槽**：投送在后台线程里跑，单次等多久由 `--callback-timeout` 定。
+
+判它的是 `tests/callback_check.py`：真引擎、真渲染、真取消、真重启；接收端先 503 两次再 200
+（投第三次才成）、一直 500（按上限认栽）、签名用这台引擎的令牌重算验得回而篡改过的验不过、
+`_save()` 炸在提交那一刻时作业行与那条欠账一起回滚。

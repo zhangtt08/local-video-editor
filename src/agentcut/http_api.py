@@ -511,6 +511,16 @@ def create_app(
         runtime = require_jobs()
         return runtime.metrics(recent=recent)
 
+    @app.get("/v1/callbacks", dependencies=auth)
+    def read_callbacks(recent: Annotated[int, Query(ge=1, le=500)] = 50):
+        """每一条终态回执欠没欠：投给了谁、试了几次、上一次为什么没成。
+
+        调用方不必再轮询 `/v1/jobs/{id}` 才知道片渲完没有，但**得有一条路问「通知到了没有」**——
+        出站这件事自己会失败（接收端挂了、网络断了、地址写错了），那种失败不能只留在日志里。
+        """
+        runtime = require_jobs()
+        return {"callbacks": runtime.outbox.recent(recent), "config": runtime.outbox.summary()}
+
     @app.get("/v1/agent/manifest", dependencies=auth)
     async def agent_manifest(request: Request):
         """The whole agent contract in one read: routes, MCP tools, capabilities, recipes.

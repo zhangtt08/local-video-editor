@@ -1259,6 +1259,16 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
         """
         return await call("GET", f"/v1/metrics?recent={int(recent)}")
 
+    @server.tool(annotations=read)
+    async def agent_callbacks(recent: int = 50) -> dict[str, Any]:
+        """Read the outbound receipt ledger: who is still owed a notification, and why it failed.
+
+        1.323 事件出口那一面的读数：每一条终态回执欠没欠、投了几次、上一次为什么没成
+        （`HTTP 500` / `URLError: …`）都在这张表里，`config` 那一格说清这台配了几个地址、
+        尝试上限与超时各是多少。回执是引擎往外推的，但「推到了没有」得有一处能问。
+        """
+        return await call("GET", f"/v1/callbacks?recent={int(recent)}")
+
     @server.resource("project://{project_id}")
     async def project_resource(project_id: str) -> str:
         # Resource templates also validate ids; they may not inject URL paths.

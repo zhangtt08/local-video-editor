@@ -294,6 +294,26 @@ def main() -> int:
             refused_render[0] == 503 and "OUTPUT_DISK_TIGHT" in text
             and "free_bytes" in text and "reserve_bytes" in text,
             (refused_render[0], refused_render[1].get("error", {}).get("code")))
+
+        # ⑪ 事件出口这一面：默认没配就要说得出「没配」，配错就要起不来。
+        # 这一台用**自己的数据目录**：单实例那道守卫排在配置门之前（1.320 要的就是「动那本账
+        # 之前先拒」），复用第一台的目录只会听到「目录被占着」，量不到 --callback-url 这一句。
+        status, callbacks = call(base, "GET", "/v1/callbacks")
+        config = callbacks.get("config") or {}
+        leg("⑪ 没配事件出口就说没配：configured 是假、一条欠账也没有",
+            status == 200 and config.get("configured") is False
+            and (callbacks.get("callbacks") or []) == [], (status, config))
+        bad_dir = folder / "badcallback"
+        bad_url = subprocess.run(
+            engine_command(folder, engine, "--callback-url", "file:///C:/nope/nope",
+                           "--data-dir", str(bad_dir)),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            env=base_env(), cwd=str(ROOT), timeout=90,
+        )
+        bad_text = (bad_url.stdout or "") + (bad_url.stderr or "")
+        leg("⑪ 事件出口配错就起不来，那句点名 --callback-url",
+            bad_url.returncode != 0 and "--callback-url" in bad_text,
+            (bad_url.returncode, bad_text[-160:]))
     finally:
         for proc in (first, second, third):
             if proc is not None:

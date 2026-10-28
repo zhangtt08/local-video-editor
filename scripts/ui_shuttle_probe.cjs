@@ -204,13 +204,27 @@ async function main() {
       if (answer.exceptionDetails) throw new Error("probe threw: " + JSON.stringify(answer.exceptionDetails).slice(0, 400));
       return answer.result ? answer.result.value : null;
     };
-    for (let attempt = 0; attempt < 120; attempt += 1) {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
       const clips = await evaluate("document.querySelectorAll('.clip[data-id]').length");
       if (clips > 0) break;
       await sleep(300);
     }
     facts.clipsOnScreen = await evaluate("document.querySelectorAll('.clip[data-id]').length");
-    if (!facts.clipsOnScreen) throw new Error("时间线上没有片段");
+    if (!facts.clipsOnScreen) {
+      // 全套跑的时候这一手红过一次（单跑永远绿）。只说「没有片段」查不出是页面没起来、
+      // 工程没读到还是素材没落地——所以把那一刻页面自己说的话一起交回去。
+      const where = await evaluate(
+        "(function () { return JSON.stringify({"
+        + "clips: document.querySelectorAll('.clip').length,"
+        + "lanes: document.querySelectorAll('.lane').length,"
+        + "timeline: !!document.querySelector('.timeline'),"
+        + "toast: Array.from(document.querySelectorAll('.toast,.error,.banner'))"
+        + ".map(function (n) { return n.textContent; }).slice(0, 3),"
+        + "body: (document.body.innerText || '').replace(/\\s+/g, ' ').slice(0, 220)"
+        + "}); })()"
+      );
+      throw new Error("时间线上没有片段（等了 60 秒）：那一刻页面是 " + where);
+    }
     // 焦点不能停在输入框里，否则键盘会被当成打字。
     await evaluate("document.activeElement && document.activeElement.blur && document.activeElement.blur(); true");
 

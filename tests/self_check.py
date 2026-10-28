@@ -20,6 +20,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from pydantic import ValidationError
 
+from agentcut import agent_contract
 from agentcut.contracts import APP_VERSION, TIMEBASE, EditBatch, FrameRate, SequenceSettings
 from agentcut.projects import ProjectStore
 
@@ -454,9 +455,15 @@ async def check_mcp(env, project_id, log, media_root, ffmpeg, ffprobe):
                 "recipe_run",
                 "deliver_verify",
                 "agent_audit",
+                "agent_callbacks",
                 "agent_metrics",
             }
             assert set(tools) == expected, set(tools) ^ expected
+            # 上面这一份是手写的名单，手写的东西会漂；契约那张表才是唯一的真源。两侧一起钉住：
+            # 加了一只工具忘了登记、或登记了却没在 MCP 上真的出现，都在这格红——1.323 漏的就是
+            # 后者（`agent_callbacks` 进了契约与桥，MCP 名单里没有，而所有门禁照绿）。
+            roster = set(agent_contract.TOOL_ENDPOINTS)
+            assert set(tools) == roster, set(tools) ^ roster
             assert "request" in tools["timeline_edit"].inputSchema["properties"]
             # The Agent-facing schema must name the 1.64 knob, not just accept any key: this is the
             # only place a client that cannot read the contract learns what `clip.patch` may write.

@@ -27,7 +27,7 @@
 | resources/bin/ffmpeg.exe | 82,797,568 | 04e1307997530f9cf2fe35cba2ca7e8875ca91da02f89d6c7243df819c94ad00 | 逐字节相同 |
 | resources/bin/ffprobe.exe | 63,059,968 | 4303ec85855340689b1f8aa5d9c1dc06ef3e3090682de3034edc3fca2b0798d5 | 逐字节相同 |
 
-冻结引擎在 `resources/bin/agentcut/agentcut.exe`（9,272,140 B），它旁边那份 `_internal` 里量到 10 份 `dist-info`——上面那张 Python 表的「从哪儿看到」那一列就是拿它对出来的。这一节由 `tests/thirdparty_check.py` 现量现比：**清单说的和包里装的是同一件东西**，这句话在这里不是修辞。
+冻结引擎在 `resources/bin/agentcut/agentcut.exe`（9,283,710 B），它旁边那份 `_internal` 里量到 10 份 `dist-info`——上面那张 Python 表的「从哪儿看到」那一列就是拿它对出来的。这一节由 `tests/thirdparty_check.py` 现量现比：**清单说的和包里装的是同一件东西**，这句话在这里不是修辞。
 
 ## 引擎的 Python 依赖（被冻结进 `agentcut.exe`）
 

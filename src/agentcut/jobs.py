@@ -27,6 +27,7 @@ from .contracts import (
     RenderRequest,
 )
 from .media import _NO_WINDOW
+from .notify import DEFAULT_ATTEMPTS, DEFAULT_TIMEOUT_SECONDS, Outbox
 from .render import RenderPlan, compile_render_plan, marked_range, preset_by_id
 
 STATUS_STEPS = ("queued", "running", "succeeded", "failed", "cancelled")
@@ -470,6 +471,11 @@ class JobRuntime:
         max_pending: int = DEFAULT_MAX_PENDING,
         pending_per_actor: int = DEFAULT_PENDING_PER_ACTOR,
         min_free_mb: int = DEFAULT_MIN_FREE_MB,
+        callback_urls: list[str] | None = None,
+        callback_secret: str = "",
+        callback_instance: str = "",
+        callback_attempts: int = DEFAULT_ATTEMPTS,
+        callback_timeout: float = DEFAULT_TIMEOUT_SECONDS,
     ):
         self.db_path = db_path
         self.ffmpeg = ffmpeg.resolve() if ffmpeg else None
@@ -505,6 +511,16 @@ class JobRuntime:
                 root = Path(row["path"])
                 if root.is_dir() and root not in self.output_roots:
                     self.output_roots.append(root)
+        # 出站记录要在 `_recover()` 之前就位：重启时被判成 INTERRUPTED 的那几单也是终态，
+        # 调用方有权知道——那一手正是自动流水线最不该被静默吃掉的结果。
+        self.outbox = Outbox(
+            db_path,
+            list(callback_urls or []),
+            callback_secret,
+            instance=callback_instance,
+            attempts=callback_attempts,
+            timeout_seconds=callback_timeout,
+        )
         self.requeued = self._recover()
         for job_id in self.requeued:
             self.queue.put(job_id)
@@ -549,6 +565,9 @@ class JobRuntime:
                     now,
                 ),
             )
+            # 终态的出站记录与作业状态落在同一个事务里。分两步就会出现「作业成功了但没人
+            # 知道」，而且那种事故查不到痕迹——库里那条已经是终态，外头却没人记得欠一次通知。
+            self.outbox.enqueue(db, job)
         return job
 
     def _load(self, job_id: str) -> RenderJob:
@@ -589,6 +608,9 @@ class JobRuntime:
                     (stale.model_dump_json(), job.id),
                 )
                 db.execute("DELETE FROM render_receipts WHERE job_id=?", (job.id,))
+                # 重启把正在渲的那一单判成中断，也得给调用方递一句：这条腿正是回调要有的理由——
+                # 没有人守着页面的流水线，不该靠「有人恰好来问」才知道出事。
+                self.outbox.enqueue(db, stale)
         return requeued
 
     def list_for_project(self, project_id: str, limit: int = 50) -> list[dict]:
@@ -1051,6 +1073,9 @@ class JobRuntime:
                 "delivered_bytes": delivered_bytes,
             },
             "outputs": outputs,
+            # 出站那一面也从表里现算：投没投出去、欠几条、放弃了几条，是运维要判断「这条流水线
+            # 到底通知到了没有」的读数，不是引擎自己记的一份第二真相。
+            "callbacks": self.outbox.summary(),
         }
 
     def _loop(self):

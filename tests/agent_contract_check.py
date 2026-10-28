@@ -70,6 +70,10 @@ def contract_shape(contract: dict[str, Any]) -> None:
     ]
     assert not ghosts, f"契约里的路由在真实路由表里找不到：{ghosts}"
     names = {row["name"] for row in contract["tools"]}
+    # 反方向也要钉：登记进契约却不在 MCP 名单里的那一只，HTTP 与桥都读得到，唯独 agent
+    # 用 MCP 时叫不到——1.323 加 `agent_callbacks` 就正好漏了这一手（表里 78 登记、名单 77 只）。
+    orphans = sorted(set(agent_contract.TOOL_ENDPOINTS) - names)
+    assert not orphans, f"登记了路由却不是 MCP 交回的工具（agent 叫不到它）：{orphans}"
     phantom = [
         (recipe["id"], step["tool"])
         for recipe in contract["recipes"]

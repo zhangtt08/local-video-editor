@@ -95,6 +95,7 @@ def build_services(args, data_dir: Path, token: str, db_file: Path):
     media = MediaService(
         db_file, roots, cache_dir, ffmpeg, ffprobe, asr_dirs=model_dirs([data_dir / "asr"])
     )
+    instance = secrets.token_hex(6)
     jobs = JobRuntime(
         db_file,
         ffmpeg,
@@ -104,12 +105,17 @@ def build_services(args, data_dir: Path, token: str, db_file: Path):
         max_pending=args.max_queue,
         pending_per_actor=args.queue_per_token,
         min_free_mb=args.min_free_mb,
+        callback_urls=list(args.callback_url),
+        callback_secret=token,
+        callback_instance=instance,
+        callback_attempts=args.callback_attempts,
+        callback_timeout=args.callback_timeout,
     )
     # 这一份 base_url 会被写进流地址那类对外读数里，所以它必须跟着加密走：
     # 一台用 TLS 服务的引擎不能交回 `http://` 的链接让人去撞明文。
     base_url = f"{'https' if args.tls_cert else 'http'}://127.0.0.1:{args.port}"
     info = {
-        "instance": secrets.token_hex(6),
+        "instance": instance,
         "app_version": APP_VERSION,
         "data_dir": str(data_dir),
         "output_dir": str(output_dir),
@@ -119,8 +125,29 @@ def build_services(args, data_dir: Path, token: str, db_file: Path):
         "token": token if args.expose_token else None,
         "signature_hint": signature(token, "stream:example"),
         "frozen": bool(getattr(sys, "frozen", False)),
+        "callback_urls": list(args.callback_url),
     }
     return media, jobs, info
+
+
+def _callback_problems(urls: list[str]) -> list[str]:
+    """出站地址只认不带账号的 http/https。
+
+    带 `user:pass@` 的那一种要挡：这一串会原样进台账、进 `/v1/callbacks` 的读数、也进运维的
+    截图，等于把一枚口令发到别人看得见的地方。`file:`/`ftp:` 之类更要挡——回执是引擎主动
+    发起的出站， scheme 放开就是让配置项变成读本地文件的口子。
+    """
+    from urllib.parse import urlsplit
+
+    bad: list[str] = []
+    for raw in urls or []:
+        text = str(raw).strip()
+        if not text:
+            continue
+        parts = urlsplit(text)
+        if parts.scheme not in ("http", "https") or not parts.netloc or "@" in parts.netloc:
+            bad.append(text)
+    return bad
 
 
 def parent_watchdog(pid: int, interval: float = 2.0) -> None:
@@ -184,6 +211,8 @@ def holder_info(holder: dict, token_file: Path) -> dict | None:
 
 
 def main():
+    from .notify import DEFAULT_ATTEMPTS, DEFAULT_TIMEOUT_SECONDS
+
     parser = argparse.ArgumentParser(
         prog="agentcut", description="AgentCut 本地剪辑引擎（HTTP + MCP + 媒体引擎）"
     )
@@ -250,6 +279,25 @@ def main():
         type=int,
         default=2048,
         help="输出盘至少留多少 MB 才肯再排新交付（盘满时拒在排队前，不是渲到一半才失败）",
+    )
+    parser.add_argument(
+        "--callback-url",
+        action="append",
+        default=[],
+        help="作业走到终态时，引擎往这里 POST 一份带签名的回执（可重复给多个）；"
+        "回执头 X-AgentCut-Signature 是 sha256=<整条 HMAC-SHA256>，密钥就是这台引擎的令牌",
+    )
+    parser.add_argument(
+        "--callback-attempts",
+        type=int,
+        default=DEFAULT_ATTEMPTS,
+        help="一份回执最多投几次，用完还不成就记成 gave_up（读数在 /v1/callbacks 与 metrics）",
+    )
+    parser.add_argument(
+        "--callback-timeout",
+        type=float,
+        default=DEFAULT_TIMEOUT_SECONDS,
+        help="单次投递等多久算失败（秒）。投送在后台线程里跑，不占渲染槽",
     )
     parser.add_argument("--data-dir", default=str(_app_dir() / "data"))
     parser.add_argument("--cache-dir", default="")
@@ -415,27 +463,34 @@ def main():
         for cert_path, name in ((args.tls_cert, "--tls-cert"), (args.tls_key, "--tls-key")):
             if not Path(cert_path).is_file():
                 raise SystemExit(f"{name} 指的东西不存在：{cert_path}")
-    # 两道门一起判，不许一道把另一道演没了：1.322 只报「得加密」那一句，于是 1.318 那句
+    # 几道门一起判，不许一道把另一道演没了：1.322 只报「得加密」那一句，于是 1.318 那句
     # 「没令牌不许上网」在同一个场景里再也没被说过——serving_check 就是抓红这一手的。
     naked = not loopback and not tls and not args.allow_insecure_remote
     anonymous = not loopback and not os.environ.get("AGENTCUT_TOKEN", "").strip()
-    if naked or anonymous:
+    callback_bad = _callback_problems(args.callback_url)
+    if naked or anonymous or callback_bad:
         doors = []
+        if callback_bad:
+            doors.append("--callback-url 只认不带账号的 http/https，这几条不是："
+                         + "、".join(callback_bad))
         if naked:
-            doors.append("加密——给一对 --tls-cert/--tls-key，或者干脆只听本机"
-                         "（反向代理终止 TLS 之后，这一台还是听 127.0.0.1，那条路照旧通）。"
-                         "明知故犯要裸跑明文就加 --allow-insecure-remote："
+            doors.append(f"要绑到 {args.host} 就得加密——给一对 --tls-cert/--tls-key，"
+                         "或者干脆只听本机（反向代理终止 TLS 之后，这一台还是听 127.0.0.1，"
+                         "那条路照旧通）。明知故犯要裸跑明文就加 --allow-insecure-remote："
                          "写接口在网段里就是明文")
         if anonymous:
             doors.append("身份——显式交一枚 AGENTCUT_TOKEN：自动生成的那一只只配听本机，"
                          "别把没设防的写接口放到网上")
-        raise SystemExit(f"要绑到 {args.host} 还差这几道门：{'；'.join(doors)}")
+        raise SystemExit(f"这台引擎过不去：{'；'.join(doors)}")
     db_file = database_path(data_dir)
-    media, jobs, info = build_services(args, data_dir, token, db_file)
-    tokens = TokenTable(data_dir / "tokens.json")
-    audit = None if args.no_audit else AuditLog(data_dir / "audit.jsonl")
     # 明知故犯那一手不写也不删租约：它既然选择共享，就不该把原来那台的名字从租约上抹掉——
     # 否则第三台看「没有租约」就堂而皇之进来，而那两台的活儿其实一直在互相改写。
+    #
+    # 这一手必须排在 `build_services()` **之前**：构造 JobRuntime 就会跑 `_recover()`，
+    # 而 `_recover()` 是改写状态的——把 running 判成 INTERRUPTED、删掉那一单的收据，
+    # 1.323 起还要为每一条终态欠一次出站回调。过去它只在库里留下痕迹（第二台被拒之后
+    # 那些改动照旧留着），现在它会往外发通知：一台本来不该起来的引擎，会替一台正在渲的
+    # 机器宣布「这一单中断了」。顺序就是这个意思：先确认这数据目录归我，再动它的活。
     record = (
         lease.acquire(port=args.port, mode=args.mode, tls=tls)
         if not args.allow_shared_data_dir
@@ -443,6 +498,9 @@ def main():
     )
     if not args.allow_shared_data_dir:
         atexit.register(lease.release)
+    media, jobs, info = build_services(args, data_dir, token, db_file)
+    tokens = TokenTable(data_dir / "tokens.json")
+    audit = None if args.no_audit else AuditLog(data_dir / "audit.jsonl")
     app = create_app(
         db_file,
         token,
@@ -476,6 +534,7 @@ def main():
             "queue_per_token": jobs.pending_per_actor,
             "requeued": len(jobs.requeued),
             "min_free_mb": args.min_free_mb,
+            "callbacks": jobs.outbox.summary(),
             "tls": tls,
             "pid": record["pid"],
             "lease": str(lease.path),
@@ -490,9 +549,15 @@ def main():
         **({"ssl_certfile": args.tls_cert, "ssl_keyfile": args.tls_key} if tls else {}),
     )
     server = uvicorn.Server(config)
+    # 投送线程在服务起来之后开：起来了才算这台真的在服这份数据目录。没配地址时 start()
+    # 自己会跳过，不留一个空转的线程。
+    jobs.outbox.start()
     try:
         server.run()
     finally:
+        # 先停投送线程再说「停了」：一台已经宣布自己停了的引擎，不该随后又递出一条回执。
+        # 欠着没投出去的那些仍在 `job_outbox` 里，下一台起来的引擎会接着补。
+        jobs.outbox.stop()
         print(json.dumps({"event": "stopped", "port": args.port}, ensure_ascii=False), flush=True)
 
 

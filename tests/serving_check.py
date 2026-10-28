@@ -46,18 +46,34 @@ def issue(table: TokenTable, label: str, scopes: str) -> str:
     return secret
 
 
-def cli(folder: Path, *args: str, extra_env: dict | None = None) -> subprocess.CompletedProcess:
+def cli(folder: Path, *args: str, extra_env: dict | None = None,
+        wait: float = 60.0) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     env.pop("AGENTCUT_TOKEN", None)
     env["PYTHONIOENCODING"] = "utf-8"
     env.pop("ELECTRON_RUN_AS_NODE", None)
     if extra_env:
         env.update(extra_env)
-    return subprocess.run(
-        [sys.executable, "-m", "agentcut", *args],
-        cwd=str(ROOT), capture_output=True, text=True, encoding="utf-8",
-        errors="replace", timeout=180, env=env,
+    argv = [sys.executable, "-m", "agentcut", *args]
+    proc = subprocess.Popen(
+        argv, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace", env=env,
     )
+    try:
+        out, err = proc.communicate(timeout=wait)
+    except subprocess.TimeoutExpired:
+        # 「该停下」那一手没停下 = 它真的起来了。交回一次 0 退出与一句话，让断言点名是哪一格，
+        # 而不是让门禁抱一段 TimeoutExpired 走人（1.323 的刀就撞在这里：红了但没名字）。
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                       capture_output=True, timeout=60)
+        try:
+            out, err = proc.communicate(timeout=20)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            out, err = "", ""
+        err = (err or "") + f"\n这一手等了 {wait}s 还没退出（它起来了）"
+        return subprocess.CompletedProcess(argv, 0, out, err)
+    return subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
 
 
 def tokens_and_ledger(folder: Path) -> tuple[TokenTable, AuditLog]:
