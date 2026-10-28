@@ -513,6 +513,14 @@ def main():
         from .mcp_server import create_mcp
 
         url = os.environ.get("AGENTCUT_API_URL", f"http://127.0.0.1:{args.port}")
+        # 这一模式**只是桥**：它不读 --data-dir / --media-root，也不会自己起引擎。先把要转发到
+        # 哪里说清（stderr，不污染 stdio 的协议流）——不然指错地址时，agent 只会看到对面那一台
+        # 引擎的 401，根本不知道自己在跟谁说话（1.327 实测就撞在 8765 上别人的引擎上）。
+        print(
+            f"agentcut mcp：工具调用转发到 {url}（引擎要另外起；用 AGENTCUT_API_URL 指过去）",
+            file=sys.stderr,
+            flush=True,
+        )
         create_mcp(url, token).run(transport="stdio")
         return
 

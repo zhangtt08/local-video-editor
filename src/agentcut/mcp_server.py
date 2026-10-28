@@ -7,7 +7,8 @@ re-implemented on this side, so an Agent and the desktop UI cannot diverge.
 import base64
 import hashlib
 import json
-from typing import Any
+from typing import Annotated, Any
+from pydantic import Field
 from urllib.parse import quote, urlsplit
 
 import httpx
@@ -1169,9 +1170,14 @@ def create_mcp(base_url: str, token: str) -> FastMCP:
 
     @server.tool(annotations=read)
     async def job_wait(
-        job_id: Identifier, timeout: float = 30.0, poll: float = 0.25
+        job_id: Identifier,
+        timeout: Annotated[float, Field(gt=0, le=120)] = 30.0,
+        poll: float = 0.25,
     ) -> dict[str, Any]:
-        """Wait for a render job to reach a terminal state; `timed_out` means still running."""
+        """Wait for a render job to reach a terminal state; `timed_out` means still running.
+
+        一次最多等 120 秒（上限就在 schema 里，别等一次 4K 渲染）：超时拿到的
+        `timed_out: true` 表示还在跑，接着再 wait 一次即可。"""
         return await call(
             "GET", f"/v1/jobs/{job_id}/wait?timeout={timeout}&poll={poll}"
         )

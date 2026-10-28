@@ -7741,3 +7741,57 @@ last_uptime_seconds / next_delay_seconds / storm / reason），`server.log` 收�
   版本两处一起改到 `1.326.0`。
 - 空机单跑 191 档全绿：2275 秒（约 38 分钟），孤儿进程与临时目录各 0；
   交付目录 568.2 MB。
+
+## 1.327：真机验收——一支 exe 交给 agent，能不能自己把片子剪出来
+
+这一轮不修产品功能，按「真实测试」来：**真窗口 + 真素材 + 真 agent 会话**，看软件到底能不能用、
+agent 能不能调。两条路各跑一遍，证据都落在产物上。
+
+**真人那半（打包版真窗口）。** 起 `win-unpacked\AgentCut.exe`、真点五枚工具胶囊、真截一张图：
+外壳首帧 **706 ms**（DOM ready 332 ms），空闲 **326.7 MB**（主 86 + 帮助 240，引擎 0），
+第一次真用到看见列表 **1236 ms**，重载 **204 ms**；截图里素材库/时间线/预览/属性四个面都在，
+空态提示、底部五步引导、风格四色都是画出来的像素。用的就是发出去的那一版（1.327.0，
+外壳与引擎报同一版）。
+
+**Agent 那半（随包冻结引擎的 `mcp` 模式）。** 一个真正的 MCP 客户端从零开始：
+建工程 → 导入两段中文名素材（`片段A-绿.mp4` 6 s / `片段B-蓝.mp4` 4 s）→ 加轨道 + 两段上轨
+（agent 自己给的 `c1`/`c2` 被引擎照单收下）→ 2 秒处 `clip.split` + `clip.ripple_remove`
+→ `render_start`（`h264-source-quality`）→ `job_wait` 到终态 → `deliver_verify`。
+读数：终态 `succeeded`、引擎自验 `verdict=true`（status / file / duration 6.0 / 1920×1080 四条全 ok）、
+交付 `agent-验收.mp4` **193,116 B / 6.00 s / 有音有画**——再交给 ffprobe 独立复核一遍。
+
+**实测里绊到两处，当场修掉：**
+
+1. **`agentcut mcp` 只是一座桥**，它把 tool 调用转发给 `AGENTCUT_API_URL`（默认 127.0.0.1:8765），
+   既不读 `--data-dir`，也不自己起引擎。第一趟没指地址，直接撞上这台机器 8765 上别人的引擎，
+   agent 只拿到一句 `UNAUTHORIZED`——根本不知道自己在跟谁说话。现在启动时在 **stderr** 打一行：
+   `agentcut mcp：工具调用转发到 <url>（引擎要另外起；用 AGENTCUT_API_URL 指过去）`，不污染
+   stdio 的协议流。
+2. **`job_wait` 一次最多等 120 秒**，但这句话只写在服务端的校验里，工具说明与 schema 都没写：
+   agent 传 240 会吃一句 `INVALID_REQUEST`。现在上限进了 schema（`maximum: 120`）与说明
+   （超时拿到的 `timed_out: true` 表示还在跑，再 wait 一次）。
+
+**顺带记两条我自己的读数错误（不是产品缺陷）**：`project.clips` 是**按 id 索引的字典**、
+剪辑挂在工程上而不是轨道里——第一版读错位置，三次都读到 `[]`，差点把「引擎没上剪辑」记成缺陷；
+`clip.remove` 不挪后面的段（序列末端仍是 10 秒），要收拢得用 `clip.ripple_remove`。
+这两条都进了这一次的验收脚本，下一轮照着念就不会再错。
+
+**构建自检抓到我一次真错**：给 `job_wait` 加 `Field(le=120)` 时忘了导入，`py_compile` 与
+「import 一下」都过了，是 `build_engine` 末尾**真起一遍冻结引擎的 `mcp` 模式**才炸出来的
+（`NameError: Field`）。那条自检值这一笔：静态检查看不见运行时名字。
+
+### 1.327 的账
+
+- **真机验收两份证据**：打包版真窗口（外壳首帧 **706 ms**、空闲 **326.7 MB**、首次用到看见列表
+  **1236 ms**、重载 **204 ms**，截图落盘），以及一个真 MCP 客户端从建工程到交付的完整会话
+  （79 只工具、中文名素材、`clip.split` + `clip.ripple_remove`、引擎自验 `verdict=true`、
+  交付 **193,116 B / 6.00 s / 1920×1080 / 有音有画**，再由 ffprobe 独立复核）。
+- **两处 agent 易用性修复**：`agentcut mcp` 启动时在 stderr 说明它转发到哪个地址（它只是桥，
+  不读 `--data-dir`、不起引擎）；`job_wait` 的 120 秒上限进了 schema（`maximum: 120`）与说明。
+- **构建自检真抓到一次**：`Field` 忘导入，`py_compile` 与 import 都过，`build_engine` 末尾
+  真起一遍冻结引擎的 `mcp` 模式才炸出来。修好后整链 `ENGINE_EXIT=0`。
+- 包：整链重跑，根 `AgentCut.exe` **175274042 B**、sha256 前缀 `712efb70c1f7fd97`，与
+  `desktop/release/AgentCut-便携版.exe` 逐字节一致；`THIRD-PARTY.md` 打包后重算。
+  版本两处一起改到 `1.327.0`。
+- 空机单跑 191 档全绿：2190 秒（约 36 分钟），孤儿进程与临时目录各 0；
+  交付目录 569.0 MB。
