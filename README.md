@@ -5,6 +5,10 @@
 你和 AI Agent 改的是同一条时间线：界面里的每个动作，最后都变成和 Agent 完全相同的批命令，走同一个服务、同一个数据库。
 没有第二套规则，也没有「只有界面能做、Agent 不能做」的操作。
 
+## 下载（Windows 桌面版）
+
+到 [Releases](https://github.com/zhangtt08/local-video-editor/releases) 下载最新的 `AgentCut.exe`（便携版，免安装，内置 Python 剪辑引擎与 FFmpeg），双击即可使用。系统要求 Windows 10/11 x64。
+
 ## 已完成（本次交付）
 
 | 能力 | 状态 | 证据 |
