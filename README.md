@@ -311,12 +311,12 @@
 
 ## 直接用（桌面版）
 
-**双击本目录下的 `AgentCut.exe` 即可打开，不需要安装、不需要 Python、不需要命令行。**
+**从 [Releases](https://github.com/zhangtt08/local-video-editor/releases) 下载 `AgentCut.exe` 后双击即可打开，不需要安装、不需要 Python、不需要命令行。**
 
 | 文件 | 用途 |
 |---|---|
-| `AgentCut.exe` | 免安装桌面程序，放哪儿都能跑（本工程根目录，双击即用） |
-| `desktop/release/AgentCut-安装版.exe` | 安装向导：桌面快捷方式「AgentCut 剪辑台」、可卸载 |
+| `AgentCut.exe` | 免安装桌面程序，下载后放哪儿都能跑（Releases 提供；不入库） |
+| `desktop/release/AgentCut-安装版.exe` | 本地 `npm run dist` 生成的安装向导，不入库；Releases 提供的是便携版 |
 
 重新打包：先 `uv run python scripts/build_engine.py --verify`，再 `cd desktop && npm ci && npm run typecheck && npm run dist`，产物在 `desktop/release/`；
 自包含引擎由 `uv run python scripts/build_engine.py --verify` 生成到 `desktop/resources/bin/`。
