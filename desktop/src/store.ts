@@ -3088,20 +3088,39 @@ export function jumpEditPoint(direction: number) {
 
 export async function loadLibrary() {
   if (!engine || !(await mediaAvailable())) return;
+  const api = engine; // worker 闭包里 TS 收不到模块级变量的非空收窄，先接住
   try {
-    const listed = await engine.probes();
+    const listed = await api.probes();
+    const rows = listed.probes.slice(0, 200);
+    // 逐条串行 probe 在素材多时是几百次往返；这里用 8 路并发 worker 拉取，
+    // 结果按列表顺序回填，去重仍按"先到先得"的列表序，与串行行为一致。
+    const loaded: ({ probe: Awaited<ReturnType<typeof api.probe>>; path: string; added_at: string } | null)[] =
+      new Array(rows.length).fill(null);
+    let cursor = 0;
+    const workers = Array.from({ length: Math.min(8, rows.length) }, async () => {
+      while (cursor < rows.length) {
+        const index = cursor++;
+        const row = rows[index];
+        try {
+          loaded[index] = {
+            probe: await api.probe(row.id),
+            path: row.path,
+            added_at: row.created_at,
+          };
+        } catch {
+          /* 单条探测记录读取失败不影响其它素材 */
+        }
+      }
+    });
+    await Promise.all(workers);
     const items: LibraryItem[] = [];
     const seen = new Set<string>(); // 同一文件多次导入只显示最新一张卡片
-    for (const row of listed.probes.slice(0, 200)) {
-      try {
-        const probe = await engine.probe(row.id);
-        const hash = probe.verified.content_sha256;
-        if (hash && seen.has(hash)) continue;
-        if (hash) seen.add(hash);
-        items.push({ probe, path: row.path, added_at: row.created_at });
-      } catch {
-        /* 单条探测记录读取失败不影响其它素材 */
-      }
+    for (const item of loaded) {
+      if (!item) continue;
+      const hash = item.probe.verified.content_sha256;
+      if (hash && seen.has(hash)) continue;
+      if (hash) seen.add(hash);
+      items.push({ probe: item.probe, path: item.path, added_at: item.added_at });
     }
     set({ library: items });
   } catch {
@@ -3118,6 +3137,7 @@ async function mediaAvailable() {
 
 export async function importFiles() {
   if (!engine) return;
+  if (state.busy) return; // 探测进行中再点一次会并发第二轮复制+探测，直接忽略
   const picked = await bridge.openMedia();
   if (picked.cancelled) {
     if (picked.error) toast("warn", "无法导入", picked.error);

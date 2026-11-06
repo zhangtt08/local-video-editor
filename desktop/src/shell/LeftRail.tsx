@@ -43,7 +43,7 @@ export function LeftRail() {
       key: "captions",
       label: "字幕",
       icon: "captions",
-      active: false,
+      active: app.captionsOpen,
       onClick: () => {
         if (!project) return;
         setView("editor");

@@ -9,6 +9,7 @@ import { appInfo, boot, copy, createProject, exportBundle, importBundle, retryBu
 export function Home() {
   const app = useApp();
   const [creating, setCreating] = useState(false);
+  const [restarting, setRestarting] = useState(false);
   const bundleInput = useRef<HTMLInputElement | null>(null);
   const features = app.caps?.features ?? {};
   // 引擎还没被用过时能力是未知的，不能说「未找到 FFmpeg」；这一屏只等第一次真使用。
@@ -163,11 +164,11 @@ export function Home() {
                   .join(" · ") || "无"}
               </div>
               <div className="sc-btns">
-                <button className="btn subtle" onClick={() => void bridge.pickMediaRoot().then(() => loadLibrary())}>
+                <button className="btn subtle" disabled={restarting} onClick={() => { setRestarting(true); void bridge.pickMediaRoot().finally(() => { setRestarting(false); boot(); }); }}>
                   <Icon name="plus" size={12} /> 素材文件夹
                 </button>
-                <button className="btn subtle" onClick={() => void bridge.restartEngine().then(() => boot())}>
-                  <Icon name="refresh" size={12} /> 重启引擎
+                <button className="btn subtle" disabled={restarting} onClick={() => { setRestarting(true); void bridge.restartEngine().finally(() => { setRestarting(false); boot(); }); }}>
+                  <Icon name="refresh" size={12} /> {restarting ? "重启中…" : "重启引擎"}
                 </button>
                 <button className="btn subtle" onClick={() => void refreshProjects()}>
                   <Icon name="history" size={12} /> 刷新列表

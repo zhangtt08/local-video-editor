@@ -15,6 +15,8 @@ import subprocess
 import tempfile
 import threading
 import time
+from array import array
+from bisect import bisect_right
 from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
@@ -476,6 +478,11 @@ class MediaService:
         peaks = [0.0] * WAVEFORM_BUCKETS
         total_samples = max(1, int(seconds * 8000))
         per_bucket = total_samples / WAVEFORM_BUCKETS
+        # 每个桶的起始样本号。逐样本的 Python 循环对一小时音频要跑几千万次，
+        # 这里换成逐桶切片：array('h') 一次解出整块样本，桶内 max/min 都在 C 层跑，
+        # 超出估算时长的尾部样本归入最后一桶（与旧的 min() 截断一致）。
+        starts = [math.ceil(k * per_bucket) for k in range(WAVEFORM_BUCKETS + 1)]
+        starts[WAVEFORM_BUCKETS] = total_samples + 10**9
         seen = 0
         deadline = time.monotonic() + WAVEFORM_TIMEOUT
         try:
@@ -487,15 +494,24 @@ class MediaService:
                 chunk = process.stdout.read(64 * 1024 - (64 * 1024) % 2)
                 if not chunk:
                     break
-                for offset in range(0, len(chunk), 2):
-                    value = (
-                        abs(int.from_bytes(chunk[offset : offset + 2], "little", signed=True))
-                        / 32768
-                    )
-                    bucket = min(WAVEFORM_BUCKETS - 1, int(seen / per_bucket))
-                    if value > peaks[bucket]:
-                        peaks[bucket] = value
-                    seen += 1
+                if len(chunk) % 2:
+                    chunk = chunk[:-1]
+                    if not chunk:
+                        continue
+                samples = array("h")
+                samples.frombytes(chunk)
+                n = len(samples)
+                if n:
+                    end = seen + n
+                    b = min(WAVEFORM_BUCKETS - 1, max(0, bisect_right(starts, seen) - 1))
+                    while b < WAVEFORM_BUCKETS and starts[b] < end:
+                        seg = samples[max(starts[b], seen) - seen : min(starts[b + 1], end) - seen]
+                        if seg:
+                            value = max(max(seg), -min(seg)) / 32768
+                            if value > peaks[b]:
+                                peaks[b] = value
+                        b += 1
+                    seen += n
         finally:
             process.kill()
             try:

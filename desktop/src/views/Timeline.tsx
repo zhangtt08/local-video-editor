@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 
 import { Icon, IconBtn } from "../ui";
 import { TIMEBASE, align, frameTicks, humanDuration, timecode } from "../time";
@@ -481,7 +481,20 @@ function revealRow(scroll: HTMLElement, row: HTMLElement) {
           const x = event.clientX, y = event.clientY;
           const base = event.ctrlKey || event.metaKey || event.shiftKey ? app.selectedClips : [];
           selectClips(base);
+          // 框选的每一 move 都要遍历全部片段矩形；rAF 合帧一帧算一次，落点取最后一次事件。
+          let pendingMove: PointerEvent | null = null;
+          let moveFrame = 0;
           const move = (ev: PointerEvent) => {
+            pendingMove = ev;
+            if (moveFrame) return;
+            moveFrame = window.requestAnimationFrame(() => {
+              moveFrame = 0;
+              const latest = pendingMove;
+              pendingMove = null;
+              if (latest) marqueeMove(latest);
+            });
+          };
+          const marqueeMove = (ev: PointerEvent) => {
             const left = Math.min(x, ev.clientX), right = Math.max(x, ev.clientX), top = Math.min(y, ev.clientY), bottom = Math.max(y, ev.clientY);
             const bounds = inner.getBoundingClientRect();
             setMarqueeSpan({
@@ -491,7 +504,16 @@ function revealRow(scroll: HTMLElement, row: HTMLElement) {
             const ids = Array.from(inner.querySelectorAll<HTMLElement>('.clip[data-id]')).filter((e) => { const r = e.getBoundingClientRect(); return r.left < right && r.right > left && r.top < bottom && r.bottom > top; }).map((e) => e.dataset.id!);
             selectClips([...base, ...ids]);
           };
-          const stop = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', stop); window.removeEventListener('pointercancel', stop); setMarquee(null); setMarqueeSpan(null); };
+          const stop = () => {
+            if (moveFrame) window.cancelAnimationFrame(moveFrame);
+            moveFrame = 0;
+            pendingMove = null;
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', stop);
+            window.removeEventListener('pointercancel', stop);
+            setMarquee(null);
+            setMarqueeSpan(null);
+          };
           window.addEventListener('pointermove', move); window.addEventListener('pointerup', stop); window.addEventListener('pointercancel', stop);
         }}>
           {marquee ? <div className="tl-marquee" style={{ left: marquee.x, top: marquee.y, width: marquee.width, height: marquee.height }} aria-hidden="true" /> : null}
@@ -709,12 +731,32 @@ function TrackRow({
 }) {
   const app = useApp();
   const edit = useEdit();
-  const clips = Object.values(project.clips).filter((item) => item.track_id === track.id);
+  // 播放时整个 Timeline 每 20ms 重渲染一次；clips 数组必须保持稳定，
+  // 否则下面的磁吸边表在每一拍都白算一遍（曾是 O(N²)/帧）。
+  const clips = useMemo(
+    () => Object.values(project.clips).filter((item) => item.track_id === track.id),
+    [project.clips, track.id]
+  );
   const emptyTrack = trackToolBlocker(track.id, clips);
   const selectedIds = useMemo(() => new Set(app.selectedClips), [app.selectedClips]);
   // 挑中的段即便在窗口外也照旧画出来：一整组被挑着横向拖是既有手感，裁切不许把它裁掉。
   const q = quantum(project, track.kind);
   const painted = paintClips(clips, paint, selectedIds).shown;
+  // 磁吸边表：每个片段一份「其它片段边缘 + 标记」的数组，按工程变化重建一次，
+  // 片段渲染之间共享同一引用，配合 memo 的 ClipBlock 把播放期的重渲染挡在子树之外。
+  const edgesByClip = useMemo(() => {
+    const markerTicks = (project.markers ?? []).map((mark) => mark.at_ticks);
+    const map = new Map<string, number[]>();
+    for (const clip of clips) {
+      map.set(clip.id, [
+        ...clips
+          .filter((other) => other.id !== clip.id)
+          .flatMap((other) => [other.position_ticks, other.position_ticks + other.duration_ticks]),
+        ...markerTicks,
+      ]);
+    }
+    return map;
+  }, [clips, project.markers]);
 
   /** 1.278：空白处右键——粘贴、全选、标记、按标记切开。每一项都调工具条那颗按钮在调的那个函数，
    *  键位提示读 `keymap()`（改键之后这里跟着改），不另写一份键名。 */
@@ -887,10 +929,7 @@ function TrackRow({
             razor={edit.tool === "razor"}
             snap={edit.snap}
             thumb={media.get(project.assets[clip.asset_id]?.verified?.path ?? "")}
-            edges={[
-              ...clips.filter((other) => other.id !== clip.id).flatMap((other) => [other.position_ticks, other.position_ticks + other.duration_ticks]),
-              ...(project.markers ?? []).map((mark) => mark.at_ticks),
-            ]}
+            edges={edgesByClip.get(clip.id) ?? EMPTY_EDGES}
           />
         ))}
         {ghosts.map((clip) => (
@@ -925,7 +964,11 @@ function TrackRow({
   );
 }
 
-function ClipBlock({
+const EMPTY_EDGES: number[] = [];
+
+// memo：播放头每 20ms 让 Timeline 重渲染一拍，片段子树靠这份浅比较跳过——
+// 触发片段重画的只有真变化（选中、拖拽、工程、磁吸边表、素材缩略图）。
+const ClipBlock = memo(function ClipBlock({
   clip,
   track,
   project,
@@ -1340,10 +1383,24 @@ function ClipBlock({
       return { ...origin, x: ev.clientX - event.clientX, rowShift: mode === "move" && targetRow >= 0 ? targetRow - anchorRow : 0 };
     };
     setDrag(origin);
+    // 高报告率鼠标下 pointermove 能到 120Hz+，每次都 querySelectorAll + 逐行 getBoundingClientRect
+    // 会把主线程吃满；用 rAF 合帧，一帧最多算一次，落点永远取最后一次事件。
+    let pendingMove: PointerEvent | null = null;
+    let moveFrame = 0;
     const move = (ev: PointerEvent) => {
-      setDrag(candidate(ev));
+      pendingMove = ev;
+      if (moveFrame) return;
+      moveFrame = window.requestAnimationFrame(() => {
+        moveFrame = 0;
+        const latest = pendingMove;
+        pendingMove = null;
+        if (latest) setDrag(candidate(latest));
+      });
     };
     const stop = (ev: PointerEvent) => {
+      if (moveFrame) window.cancelAnimationFrame(moveFrame);
+      moveFrame = 0;
+      pendingMove = null;
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", stop);
       window.removeEventListener("pointercancel", stop);
@@ -1618,7 +1675,7 @@ function ClipBlock({
       <span className="trim-handle right" title="拖动改变时长；Shift 涟漪修剪，Ctrl 滚动剪辑；Alt 只动这一边（音画链接时就是 J/L cut）" onPointerDown={(event) => start(event, "trim-r")} />
     </div>
   );
-}
+});
 
 function WaveBars({ values, width }: { values: number[]; width: number }) {
   const count = Math.max(4, Math.floor(width / 3));

@@ -73,7 +73,7 @@ export function Assets() {
         <IconBtn icon="type" label="新建文字片段（打在播放头处）" onClick={addTextClip} disabled={!project} />
         <IconBtn icon="captions" label="导入 SRT 字幕（每条字幕一个文字片段）" onClick={() => { setSubtitle(""); setCaptionsOpen(true); }} disabled={!project} />
         <IconBtn icon="refresh" label="重新读取素材库" onClick={() => void loadLibrary()} />
-        <button className="btn primary tiny" onClick={() => void importFiles()} title="选择视频 / 音频 / 图片，复制进本地素材库并逐块探测">
+        <button className="btn primary tiny" onClick={() => void importFiles()} disabled={Boolean(app.busy)} title="选择视频 / 音频 / 图片，复制进本地素材库并逐块探测">
           <Icon name="plus" size={12} /> 导入
         </button>
       </div>

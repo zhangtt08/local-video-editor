@@ -99,6 +99,11 @@ def _loadable(path: Path) -> Path:
     )
 
 
+# Vosk Model 加载要读几十 MB 的 FST，是秒级操作；按模型路径做进程级缓存，
+# KaldiRecognizer 仍然每次请求新建（它是有状态的，不能跨请求复用）。
+_MODEL_CACHE: dict[str, "object"] = {}
+
+
 def _recognizer(language: str, dirs: list[Path]):
     try:
         from vosk import KaldiRecognizer, Model
@@ -122,14 +127,18 @@ def _recognizer(language: str, dirs: list[Path]):
             installed_languages=sorted(models),
         )
     usable = _loadable(Path(path))
-    try:
-        model = Model(str(usable))
-    except Exception as error:  # vosk raises bare Exception on any unreadable model
-        raise EditorError(
-            "SUBTITLES_UNAVAILABLE",
-            f"the speech model at {usable} could not be loaded: {error}",
-            503,
-        ) from error
+    key = str(usable)
+    model = _MODEL_CACHE.get(key)
+    if model is None:
+        try:
+            model = Model(key)
+        except Exception as error:  # vosk raises bare Exception on any unreadable model
+            raise EditorError(
+                "SUBTITLES_UNAVAILABLE",
+                f"the speech model at {usable} could not be loaded: {error}",
+                503,
+            ) from error
+        _MODEL_CACHE[key] = model
     recognizer = KaldiRecognizer(model, RATE)
     recognizer.SetWords(True)  # word timestamps are the whole point; text alone cannot place cues
     return recognizer, usable.name
